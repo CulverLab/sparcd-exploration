@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import logo from './assets/sparcd.png';
 
 export type BrandSwitcherProps = {
   /** e.g. "Tagger" → wordmark "SPARC'd · Tagger"; also marks the current item. */
@@ -98,7 +99,7 @@ export function BrandSwitcher({ toolName }: BrandSwitcherProps) {
         onKeyDown={onButtonKeyDown}
         className="flex items-center gap-2 px-1.5 py-1 text-ink hover:bg-ruleSoft/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
       >
-        <img src={`${import.meta.env.BASE_URL}sparcd.png`} alt="" className="h-7 w-auto" />
+        <img src={logo} alt="" className="h-7 w-auto" />
         <span className="font-display text-[20px] font-[600] leading-none whitespace-nowrap">
           SPARC'd <span className="text-inkMute">·</span> {toolName}
         </span>
