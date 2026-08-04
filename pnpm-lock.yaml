@@ -175,6 +175,9 @@ importers:
       react:
         specifier: ^18.3.1
         version: 18.3.1
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@20.19.41)
 
   packages/camtrap:
     devDependencies:

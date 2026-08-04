@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
+import { Connection, loadPersistedConnection, useIdleLogout } from '@sparcd/auth-ui';
 import { useStore } from './store';
 import { Chrome } from './components/Chrome';
 import { Browse } from './sections/Browse';
@@ -17,6 +17,12 @@ const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefine
 const persistedConnection = loadPersistedConnection();
 const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: devEndpoint } : {}) };
 
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+// Stable references (module scope, not recreated per render) so the idle
+// timer's effect doesn't tear down/rebuild on every App render.
+const isTaggerBusy = () => useStore.getState().syncState === 'syncing';
+const idleLogout = () => useStore.getState().disconnectIdle();
+
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const section = useStore((s) => s.section);
@@ -27,6 +33,13 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
+
+  useIdleLogout({
+    enabled: !!s3Config,
+    timeoutMs: IDLE_TIMEOUT_MS,
+    isBusy: isTaggerBusy,
+    onIdle: idleLogout,
+  });
 
   if (!s3Config) {
     return (

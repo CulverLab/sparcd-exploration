@@ -45,6 +45,10 @@ type TaggerState = {
 
   connect: (config: S3Config) => void;
   disconnect: () => void;
+  // Idle-triggered logout: same wipe as disconnect() within this tab, but
+  // deliberately does NOT broadcast to sibling tabs (see auth-ui's session
+  // module) — an idle tab shouldn't log out a tab someone's actively using.
+  disconnectIdle: () => void;
   setSection: (section: Section) => void;
   toggleTheme: () => void;
   selectCollection: (key: string | null) => void;
@@ -96,6 +100,22 @@ export const useStore = create<TaggerState>()(
       disconnect: () => {
         clearClientCache();
         clearSharedConnection();
+        set((s) => ({
+          s3Config: null,
+          connectionId: s.connectionId + 1,
+          section: 'browse',
+          selectedCollectionKey: null,
+          selectedUploadPrefix: null,
+          taggerUser: '',
+        }));
+      },
+      disconnectIdle: () => {
+        // Same within-tab wipe as disconnect(), including clearing this tab's
+        // own cached S3 client (purely local module state) — but skips
+        // clearSharedConnection(), so nothing broadcasts to sibling tabs and
+        // this tab's own persisted (non-secret) connection fields are left
+        // alone, so its own Connect screen still autofills afterward.
+        clearClientCache();
         set((s) => ({
           s3Config: null,
           connectionId: s.connectionId + 1,

@@ -11,3 +11,5 @@ export {
   subscribeSharedConnection,
 } from './session';
 export type { PersistedConnection } from './session';
+export { useIdleLogout } from './idleTimer';
+export type { UseIdleLogoutOptions } from './idleTimer';

@@ -47,6 +47,7 @@ type UploaderState = {
   validations: Record<string, FileValidation>;
   scanning: boolean;
   processing: boolean;
+  uploadRunning: boolean; // an actual upload run is in flight (Upload.tsx mirrors this in)
   batchToken: number; // bumps each new batch; identifies a processing run
   // A durable folder handle when the browser granted one (Chromium); drives the
   // resume access mode so a closed tab can re-read the same bytes.
@@ -62,12 +63,17 @@ type UploaderState = {
 
   connect: (config: S3Config) => void;
   disconnect: () => void;
+  // Idle-triggered logout: same wipe as disconnect() within this tab, but
+  // deliberately does NOT broadcast to sibling tabs (see auth-ui's session
+  // module) — an idle tab shouldn't log out a tab someone's actively using.
+  disconnectIdle: () => void;
   setSection: (section: Section) => void;
   toggleTheme: () => void;
   setElevationUnit: (unit: ElevationUnit) => void;
   setStep: (step: WizardStep) => void;
   setScanning: (scanning: boolean) => void;
   setProcessing: (processing: boolean) => void;
+  setUploadRunning: (running: boolean) => void;
   setFiles: (files: ScannedFile[], dirHandle?: FileSystemDirectoryHandle | null) => void;
   applyProgress: (started: string[], results: ProcessResponse[]) => void;
   revalidate: () => void;
@@ -134,6 +140,7 @@ export const useStore = create<UploaderState>()(
       validations: {},
       scanning: false,
       processing: false,
+      uploadRunning: false,
       batchToken: 0,
       dirHandle: null,
       fileAccessMode: 'reselect-required',
@@ -176,6 +183,31 @@ export const useStore = create<UploaderState>()(
           selectedBucket: null,
           uploaderUser: '',
           uploadTimeZone: localTimeZone(),
+          uploadRunning: false,
+        }));
+      },
+      disconnectIdle: () => {
+        // Same within-tab wipe as disconnect(), including clearing this tab's
+        // own cached S3 client (purely local module state) — but skips
+        // clearSharedConnection(), so nothing broadcasts to sibling tabs and
+        // this tab's own persisted (non-secret) connection fields are left
+        // alone, so its own Connect screen still autofills afterward.
+        clearClientCache();
+        invalidateFileIndex();
+        set((s) => ({
+          s3Config: null,
+          connectionId: s.connectionId + 1,
+          section: 'new',
+          step: 'drop',
+          files: [],
+          validations: {},
+          dirHandle: null,
+          fileAccessMode: 'reselect-required',
+          selectedLocationKey: null,
+          selectedBucket: null,
+          uploaderUser: '',
+          uploadTimeZone: localTimeZone(),
+          uploadRunning: false,
         }));
       },
       setSection: (section) => set({ section }),
@@ -184,6 +216,7 @@ export const useStore = create<UploaderState>()(
       setStep: (step) => set({ step }),
       setScanning: (scanning) => set({ scanning }),
       setProcessing: (processing) => set({ processing }),
+      setUploadRunning: (uploadRunning) => set({ uploadRunning }),
 
       // De-dupe by relPath; a re-scan replaces the batch wholesale and bumps the
       // token so the processing controller starts a fresh run.

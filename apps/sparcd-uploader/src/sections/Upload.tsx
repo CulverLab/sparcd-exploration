@@ -28,6 +28,7 @@ export function Upload() {
   const nextBatch = useStore((s) => s.nextBatch);
   const fileAccessMode = useStore((s) => s.fileAccessMode);
   const dirHandle = useStore((s) => s.dirHandle);
+  const setUploadRunning = useStore((s) => s.setUploadRunning);
 
   const { data: locData } = useLocations(s3Config, connectionId);
   const collections = useCollections(s3Config, connectionId);
@@ -41,6 +42,15 @@ export function Upload() {
   const [snap, setSnap] = useState<UploadSnapshot | null>(null);
   const runRef = useRef<UploadRun | null>(null);
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
+
+  // Mirror into the store so the idle-logout timer (which lives outside this
+  // component's tree) can see "an upload is in flight" and postpone itself.
+  // Reset on unmount too — the run is cancelled below, so nothing should be
+  // left reporting "busy" once this step is no longer even mounted.
+  useEffect(() => {
+    setUploadRunning(running);
+    return () => setUploadRunning(false);
+  }, [running, setUploadRunning]);
 
   // Abandon an in-flight run if the step unmounts.
   useEffect(() => () => runRef.current?.cancel(), []);
