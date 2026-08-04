@@ -9,7 +9,9 @@ export type ConnectionProps = {
    *  dev-only endpoint override, or both. Callers never pass a secretKey
    *  here; the field always starts blank regardless. */
   initialConfig?: Partial<S3Config>;
-  onConnect: (config: S3Config) => void;
+  /** `remember` reflects the "Remember me" checkbox at submit time — the
+   *  caller decides what to persist (never the secret key) based on it. */
+  onConnect: (config: S3Config, remember: boolean) => void;
 };
 
 const fieldLabel = 'block font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
@@ -28,6 +30,10 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
   const [accessKey, setAccessKey] = useState(initialConfig?.accessKey ?? '');
   const [secretKey, setSecretKey] = useState(initialConfig?.secretKey ?? '');
+  // Reflects reality by default: pre-filled fields mean a connection is
+  // already being remembered, so the box starts checked to match — not an
+  // opt-in surprise for anyone already relying on the pre-fill today.
+  const [remember, setRemember] = useState(!!initialConfig?.endpoint);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Overrides are undefined until the user explicitly sets one.
@@ -47,14 +53,17 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!canConnect) return;
-    onConnect({
-      endpoint: endpoint.trim(),
-      region,
-      accessKey: accessKey.trim(),
-      secretKey: secretKey.trim(),
-      forcePathStyle,
-      secure,
-    });
+    onConnect(
+      {
+        endpoint: endpoint.trim(),
+        region,
+        accessKey: accessKey.trim(),
+        secretKey: secretKey.trim(),
+        forcePathStyle,
+        secure,
+      },
+      remember,
+    );
   }
 
   return (
@@ -115,6 +124,15 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
               autoComplete="current-password"
             />
           </div>
+          <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-accent"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            Remember endpoint &amp; access key on this device
+          </label>
         </div>
 
         <button

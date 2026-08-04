@@ -43,7 +43,7 @@ type TaggerState = {
   burstGroupingEnabled: boolean; // off by default — our cameras shoot no bursts
   burstThresholdSec: number; // sequence grouping threshold (5–600s), used when enabled
 
-  connect: (config: S3Config) => void;
+  connect: (config: S3Config, remember: boolean) => void;
   disconnect: () => void;
   setSection: (section: Section) => void;
   toggleTheme: () => void;
@@ -83,9 +83,9 @@ export const useStore = create<TaggerState>()(
       burstGroupingEnabled: false,
       burstThresholdSec: 60,
 
-      connect: (config) => {
+      connect: (config, remember) => {
         clearClientCache();
-        saveSharedConnection(config);
+        saveSharedConnection(config, remember);
         set((s) => ({
           s3Config: config,
           connectionId: s.connectionId + 1,
