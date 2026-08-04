@@ -55,6 +55,51 @@ export function Upload() {
   // Abandon an in-flight run if the step unmounts.
   useEffect(() => () => runRef.current?.cancel(), []);
 
+  // Hold a screen wake lock while actively uploading, so OS/display idle-sleep
+  // doesn't interrupt it. Best-effort: unsupported browsers (Firefox, as of
+  // this writing) and rejected requests (e.g. low battery) just mean no lock —
+  // never fatal to the upload itself. The lock is auto-released by the browser
+  // whenever the tab is hidden, so it's re-acquired on regaining visibility.
+  //
+  // Caveats — cases this can't prevent, only recover from (see the auto-resume
+  // effect below): the tab being minimized/backgrounded (the lock releases the
+  // moment it's hidden), the laptop lid closing (a separate sleep trigger the
+  // OS honors regardless of any page's wake lock), and Firefox (no Wake Lock
+  // API support at all, so no lock is ever held there).
+  useEffect(() => {
+    if (!running || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let cancelled = false;
+
+    const acquire = () => {
+      navigator.wakeLock
+        .request('screen')
+        .then((l) => {
+          if (cancelled) {
+            void l.release();
+          } else {
+            lock = l;
+          }
+        })
+        .catch(() => {
+          /* not fatal — e.g. low battery, or acquired while hidden */
+        });
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') acquire();
+    };
+
+    acquire();
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      void lock?.release();
+    };
+  }, [running]);
+
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
 
   const start = () => {
@@ -106,6 +151,34 @@ export function Upload() {
       retryPending.current = false;
     }
   };
+
+  // Self-heal after an interruption Wake Lock can't prevent (tab minimized,
+  // lid closed, Firefox, a dropped connection) — a run that landed on
+  // 'partial' (some files failed after exhausting their own retries) resumes
+  // automatically instead of waiting for the user to notice and click Retry.
+  // Only 'partial' — not the fatal 'error' phase, which usually means
+  // credentials/CORS/policy, not a transient blip a blind retry would fix.
+  //
+  // "Wakes up" on either of two edge-triggered signals, whichever comes
+  // first: the tab regaining visibility (covers minimize/lid-close/sleep —
+  // the OS resumes and the visibilitychange fires), or the browser's `online`
+  // event (covers a network drop that resolves while the tab stayed visible
+  // the whole time, e.g. wifi flapping). Both conditions (visible AND online)
+  // are re-checked at the moment either fires, so a machine that wakes with
+  // wifi still reconnecting won't retry until `online` actually follows.
+  useEffect(() => {
+    const tryAutoResume = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && snap?.phase === 'partial' && !snap.dryRun) {
+        void retryFailed();
+      }
+    };
+    document.addEventListener('visibilitychange', tryAutoResume);
+    window.addEventListener('online', tryAutoResume);
+    return () => {
+      document.removeEventListener('visibilitychange', tryAutoResume);
+      window.removeEventListener('online', tryAutoResume);
+    };
+  });
 
   if (!location || !collection || !slug) {
     return (
