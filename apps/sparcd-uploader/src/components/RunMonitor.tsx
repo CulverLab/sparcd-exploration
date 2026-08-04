@@ -8,6 +8,7 @@ import { formatBytes } from '../lib/scanFiles';
 import type { FileState, UploadSnapshot } from '../lib/upload';
 
 const STATE_DOT: Record<FileState, string> = {
+  inspecting: 'bg-inkMute',
   pending: 'bg-ruleSoft',
   uploading: 'bg-accent',
   verifying: 'bg-accent',
@@ -17,6 +18,15 @@ const STATE_DOT: Record<FileState, string> = {
 };
 
 const ROW = 40;
+
+const PHASE_LABEL: Record<UploadSnapshot['phase'], string> = {
+  idle: 'idle',
+  blobs: 'uploading',
+  metadata: 'publishing',
+  partial: 'partial',
+  done: 'done',
+  error: 'error',
+};
 
 export function Note({ message, tone = 'mute' }: { message: string; tone?: 'mute' | 'warn' }) {
   return (
@@ -135,10 +145,18 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <p className="font-body text-[13px] text-inkSoft">
-          <span className="font-mono text-ink uppercase tracking-[0.12em] text-[11px]">{snap.phase}</span>
+          <span className="font-mono text-ink uppercase tracking-[0.12em] text-[11px]">
+            {PHASE_LABEL[snap.phase]}
+          </span>
           {snap.dryRun && <span className="ml-2 text-warn">dry run</span>}
           {' · '}
           <span className="font-mono text-ok">{counts.done ?? 0}</span> done
+          {counts.inspecting ? (
+            <>
+              {' · '}
+              <span className="font-mono text-inkMute">{counts.inspecting}</span> inspecting
+            </>
+          ) : null}
           {counts.skipped ? (
             <>
               {' · '}

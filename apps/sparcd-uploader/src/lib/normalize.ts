@@ -46,6 +46,31 @@ export function shortSuffix(seed: string): string {
 }
 
 /**
+ * Sanitized-name occurrence counts across a batch — the basis for collision
+ * detection. Depends only on names (relPath/fileName), never on file content,
+ * so it can be computed the instant a folder is scanned, before any file has
+ * been hashed.
+ */
+export function nameCounts(items: { name: string }[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const it of items) counts.set(it.name, (counts.get(it.name) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * Resolve one item's final object name against precomputed counts, appending
+ * a short seed-derived suffix before the extension only if its name collides
+ * with another item in the batch. Deterministic given the same inputs, so two
+ * runs of the same batch produce identical keys.
+ */
+export function resolveOneName(name: string, seed: string, counts: Map<string, number>): string {
+  if ((counts.get(name) ?? 0) <= 1) return name;
+  const dot = name.lastIndexOf('.');
+  const suffix = `-${shortSuffix(seed)}`;
+  return dot > 0 ? name.slice(0, dot) + suffix + name.slice(dot) : name + suffix;
+}
+
+/**
  * Resolve colliding sanitized names by appending a short, seed-derived suffix
  * before the extension. Deterministic given the same inputs, so two runs of the
  * same batch produce identical keys.
@@ -53,18 +78,8 @@ export function shortSuffix(seed: string): string {
 export function resolveCollisions(
   items: { id: string; name: string; seed: string }[],
 ): Map<string, string> {
-  const counts = new Map<string, number>();
-  for (const it of items) counts.set(it.name, (counts.get(it.name) ?? 0) + 1);
-
+  const counts = nameCounts(items);
   const out = new Map<string, string>();
-  for (const it of items) {
-    if ((counts.get(it.name) ?? 0) <= 1) {
-      out.set(it.id, it.name);
-      continue;
-    }
-    const dot = it.name.lastIndexOf('.');
-    const suffix = `-${shortSuffix(it.seed)}`;
-    out.set(it.id, dot > 0 ? it.name.slice(0, dot) + suffix + it.name.slice(dot) : it.name + suffix);
-  }
+  for (const it of items) out.set(it.id, resolveOneName(it.name, it.seed, counts));
   return out;
 }

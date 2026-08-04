@@ -121,7 +121,10 @@ export async function reconcileReselect(
 
   const attached = new Map<string, File>();
   for (const c of candidates) {
-    if (hashes.get(c.record.localPath) !== c.record.sha256) {
+    // A record that never finished Inspect before the interruption has no
+    // prior hash to compare against — path + size matching is all there is
+    // to check; it proceeds into (re-)processing, not a hash mismatch.
+    if (c.record.sha256 !== undefined && hashes.get(c.record.localPath) !== c.record.sha256) {
       problems.push({
         localPath: c.record.localPath,
         fileName: c.record.fileName,

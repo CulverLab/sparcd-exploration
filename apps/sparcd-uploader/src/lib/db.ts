@@ -14,6 +14,7 @@
 
 import Dexie, { type Table } from 'dexie';
 import type { MediaKind } from './scanFiles';
+import type { Location } from './locations';
 
 /**
  * How the source bytes are recovered on resume. `persistent-handle` means a
@@ -23,14 +24,27 @@ import type { MediaKind } from './scanFiles';
  */
 export type FileAccessMode = 'persistent-handle' | 'reselect-required';
 
-/** Per-file persisted state. `uploading` collapses to a restart on resume. */
-export type PersistedFileState = 'pending' | 'uploading' | 'done' | 'failed';
+/**
+ * Per-file persisted state. `uploading` collapses to a restart on resume.
+ * `awaiting-processing` is a file that's part of the batch (scanned, its size
+ * known) but hasn't finished the Inspect worker pipeline yet, so it has no
+ * hash/object-key/capture-time to persist beyond its scanned identity —
+ * streamed runs open a session with files in this state and fill the rest in
+ * as Inspect catches up. Non-streamed resume (an already-complete batch) never
+ * sees this state.
+ */
+export type PersistedFileState = 'awaiting-processing' | 'pending' | 'uploading' | 'done' | 'failed';
 
 export interface BatchRecord {
   id: string; // sessionId — crypto.randomUUID, stable across resume
   targetBucket: string;
   uploadPrefix: string; // Collections/<uuid>/Uploads/<stamp>_<slug>
   deploymentId: string;
+  // The full location, redundant with `deploymentId` (which only embeds
+  // `location.id`) — kept so a bundle-less session (interrupted before
+  // Inspect finished) can rebuild the metadata bundle on resume without a
+  // fresh S3 fetch to re-resolve which location `deploymentId` meant.
+  location: Location;
   uploaderUser: string; // raw identity (the slug is derived at point of use)
   uploaderSlug: string; // sanitized slug actually used in keys
   collectionUuid: string;
@@ -51,18 +65,21 @@ export interface FileRecord {
   sessionId: string;
   localPath: string; // path within the chosen folder (bundle-relative source)
   fileName: string;
-  relPathInBundle: string; // sanitized relative path, pre-collision
-  sanitizedObjectName: string; // resolved object name (post-collision), key tail
-  size: number;
-  sha256: string;
+  relPathInBundle: string; // sanitized relative path, pre-collision — known at scan time
+  size: number; // known at scan time (File.size), before Inspect runs
+  state: PersistedFileState;
+  attempt: number;
+  // The rest depend on this file's own Inspect pass and are absent while
+  // `state === 'awaiting-processing'`; filled in the moment it finishes,
+  // independent of whether any other file in the batch has.
+  sanitizedObjectName?: string; // resolved object name (post-collision), key tail
+  remoteKey?: string; // full key = uploadPrefix/sanitizedObjectName (= media_path)
+  sha256?: string;
   captureTimestamp?: string; // resolved naive-UTC capture time (post-tz), media.csv col 4
   exifCamera?: string;
-  mediaKind: MediaKind;
-  mimeType: string;
-  state: PersistedFileState;
-  remoteKey: string; // full key = uploadPrefix/sanitizedObjectName (= media_path)
+  mediaKind?: MediaKind;
+  mimeType?: string;
   remoteETag?: string;
-  attempt: number;
   lastError?: string;
 }
 
@@ -144,6 +161,7 @@ export async function fileStateCounts(
 ): Promise<Record<PersistedFileState, number>> {
   const rows = await db.files.where('sessionId').equals(sessionId).toArray();
   const counts: Record<PersistedFileState, number> = {
+    'awaiting-processing': 0,
     pending: 0,
     uploading: 0,
     done: 0,
@@ -155,7 +173,11 @@ export async function fileStateCounts(
 
 export type LoadedSession = {
   batch: BatchRecord;
-  bundle: BundleRecord;
+  // Null while the batch is still being discovered/inspected — the metadata
+  // bundle doesn't exist yet because it needs the complete processed set.
+  // Non-null once every file is known and the CSVs/UploadMeta.json have been
+  // built, exactly as it always has been for a fully-known session.
+  bundle: BundleRecord | null;
   files: FileRecord[];
 };
 
@@ -165,14 +187,16 @@ export async function loadSession(sessionId: string): Promise<LoadedSession | nu
     db.bundles.get(sessionId),
     db.files.where('sessionId').equals(sessionId).toArray(),
   ]);
-  if (!batch || !bundle) return null;
-  return { batch, bundle, files };
+  if (!batch) return null;
+  return { batch, bundle: bundle ?? null, files };
 }
 
 /**
- * Persist (or re-persist) a whole session. The file rows are replaced wholesale
- * so a re-stamp — which rebuilds the bundle under a fresh prefix and re-keys
- * every file — leaves no stale rows behind for the same `sessionId`.
+ * Persist (or re-persist) a whole session, bundle included. The file rows are
+ * replaced wholesale so a re-stamp — which rebuilds the bundle under a fresh
+ * prefix and re-keys every file — leaves no stale rows behind for the same
+ * `sessionId`. Used once the full bundle is known: the legacy fully-known-
+ * upfront path, and the re-stamp retry after a prefix collision.
  */
 export async function saveSession(
   batch: BatchRecord,
@@ -185,6 +209,29 @@ export async function saveSession(
     await db.files.where('sessionId').equals(batch.id).delete();
     await db.files.bulkPut(files);
   });
+}
+
+/**
+ * Open a session before the full batch is known: persist the batch shell and
+ * every scanned file's identity (most starting `awaiting-processing`), with
+ * no bundle row yet. `loadSession` on this id returns `bundle: null` until
+ * `attachBundle` is called.
+ */
+export async function openSession(batch: BatchRecord, files: FileRecord[]): Promise<void> {
+  await db.transaction('rw', db.batches, db.files, async () => {
+    await db.batches.put(batch);
+    await db.files.where('sessionId').equals(batch.id).delete();
+    await db.files.bulkPut(files);
+  });
+}
+
+/**
+ * Attach the metadata bundle to an already-open session, once every file has
+ * finished processing and the CSVs/UploadMeta.json can finally be built. From
+ * this point `loadSession` behaves exactly as it always has.
+ */
+export async function attachBundle(bundle: BundleRecord): Promise<void> {
+  await db.bundles.put(bundle);
 }
 
 export async function markFileState(id: string, patch: Partial<FileRecord>): Promise<void> {

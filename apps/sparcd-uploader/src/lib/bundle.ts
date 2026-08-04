@@ -20,8 +20,8 @@ import {
   type UploadCompleteJson,
 } from '@sparcd/camtrap';
 import { locationToDeployment, type Location } from './locations';
-import { sanitizeRelPath, resolveCollisions } from './normalize';
-import { naiveInZoneToUtcIso } from './exifTime';
+import { sanitizeRelPath, nameCounts, resolveOneName } from './normalize';
+import { naiveInZoneToUtcNaive } from './exifTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
 
@@ -70,6 +70,82 @@ async function sha256Hex(parts: Uint8Array[]): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Frozen naming decisions for a batch: the deployment stamp/upload path, and
+ * every scanned file's pre-suffix sanitized name plus collision counts. Names
+ * depend only on relPath/fileName (known at Drop), never on file content, so
+ * this can — and for a streamed run, must — be computed once, before any file
+ * has finished processing, and reused verbatim thereafter: no file's key ever
+ * has to change once it's been decided. */
+export type BatchNaming = {
+  uploadPath: string;
+  nameFor: Map<string, string>; // FileEntry.id -> sanitized (pre-suffix) name
+  counts: Map<string, number>; // sanitized-name occurrence counts, whole batch
+};
+
+export function resolveBatchNaming(input: {
+  collectionUuid: string;
+  uploaderSlug: string;
+  now: Date;
+  files: { id: string; relPath: string; fileName: string }[];
+}): BatchNaming {
+  const stamp = uploadStamp(input.now);
+  const uploadPath = `Collections/${input.collectionUuid}/Uploads/${stamp}_${input.uploaderSlug}`;
+  const nameFor = new Map<string, string>();
+  for (const f of input.files) {
+    const safe = sanitizeRelPath(f.relPath);
+    nameFor.set(f.id, safe.ok ? safe.name : f.fileName);
+  }
+  const counts = nameCounts([...nameFor.values()].map((name) => ({ name })));
+  return { uploadPath, nameFor, counts };
+}
+
+/** Resolve one file's final object name/key once it has a hash, against a
+ * frozen `BatchNaming`. Stable from the moment it's returned — safe to upload
+ * a blob under this key immediately, it will never need to change. */
+export function objectKeyFor(
+  id: string,
+  sha256: string,
+  naming: BatchNaming,
+): { objectName: string; key: string } {
+  const name = naming.nameFor.get(id)!;
+  const objectName = resolveOneName(name, sha256, naming.counts);
+  return { objectName, key: `${naming.uploadPath}/${objectName}` };
+}
+
+const mimeFor = (f: FileEntry): string =>
+  f.mimeType ?? (f.mediaKind === 'video' ? 'video/mp4' : 'image/jpeg');
+
+// Resolve a naive capture time to the DST-correct UTC naive wall-clock, the
+// exact media.csv col-4 byte shape. EXIF (or video container) metadata wins;
+// a manual Assign entry fills the gap for a file that has none.
+const captureFor = (f: FileEntry, timeZone: string): string => {
+  const src = f.exifNaive ?? f.manualNaive;
+  return src ? naiveInZoneToUtcNaive(src, timeZone) : '';
+};
+
+/**
+ * Resolve one ready file's full upload item — key, capture time, mime type —
+ * against a frozen `BatchNaming`. Used both by `buildBundle`'s final pass
+ * (over the complete ready set) and by a streamed run enqueueing one file the
+ * moment it individually finishes Inspect.
+ */
+export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string): UploadItem {
+  const { objectName, key } = objectKeyFor(f.id, f.sha256!, naming);
+  return {
+    id: f.id,
+    localPath: f.relPath,
+    fileName: f.fileName,
+    objectName,
+    key,
+    file: f.file,
+    size: f.size,
+    sha256: f.sha256!,
+    captureTimestamp: captureFor(f, timeZone) || undefined,
+    mediaKind: f.mediaKind,
+    mimeType: mimeFor(f),
+  };
+}
+
 export type BuildInput = {
   location: Location;
   collectionUuid: string;
@@ -79,6 +155,9 @@ export type BuildInput = {
   timeZone: string; // IANA zone the EXIF naive wall-clock is interpreted in
   files: FileEntry[];
   now: Date;
+  /** Reuse an already-frozen naming resolution (a streamed run) instead of
+   * resolving fresh from the currently-ready subset (the Assign preview). */
+  naming?: BatchNaming;
 };
 
 /**
@@ -89,19 +168,17 @@ export type BuildInput = {
 export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
   const { location, collectionUuid, bucket, uploaderSlug, description, timeZone, files, now } = input;
 
-  const stamp = uploadStamp(now);
-  const uploadPath = `Collections/${collectionUuid}/Uploads/${stamp}_${uploaderSlug}`;
-
   const ready = files.filter((f) => f.processState === 'ready' && f.sha256);
 
-  // Resolve the bundle-relative object name for each file (sanitized + any
-  // collision suffix seeded by the content hash), then key it to the upload
-  // prefix to form the full S3 object key used as media_path.
-  const items = ready.map((f) => {
-    const safe = sanitizeRelPath(f.relPath);
-    return { id: f.id, name: safe.ok ? safe.name : f.fileName, seed: f.sha256! };
-  });
-  const names = resolveCollisions(items);
+  const naming =
+    input.naming ??
+    resolveBatchNaming({
+      collectionUuid,
+      uploaderSlug,
+      now,
+      files: ready,
+    });
+  const uploadPath = naming.uploadPath;
 
   const deployment = locationToDeployment(location, collectionUuid);
 
@@ -117,21 +194,8 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
     return src ? naiveInZoneToUtcIso(src, timeZone) : '';
   };
 
-  // Resolve each file's derived values once (capture-time tz conversion is not
-  // free), then project them into both media rows and upload items.
-  const resolved = ready.map((f) => {
-    const objectName = names.get(f.id)!;
-    return {
-      f,
-      objectName,
-      mediaPath: `${uploadPath}/${objectName}`,
-      capture: captureFor(f),
-      mimeType: mimeFor(f),
-    };
-  });
-
-  const media: Media[] = resolved.map((r) => ({
-    mediaId: r.mediaPath,
+  const media: Media[] = uploadItems.map((it) => ({
+    mediaId: it.key,
     deploymentId: deployment.deploymentId,
     mediaPath: r.mediaPath,
     fileName: r.f.fileName,
