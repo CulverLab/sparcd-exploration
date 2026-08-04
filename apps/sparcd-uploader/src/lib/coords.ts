@@ -2,6 +2,12 @@
 // WGS84 UTM forward projection (no proj4/utm dependency — this tool ships as a
 // tight static bundle). The math is the standard Transverse Mercator forward
 // transform; correctness is pinned by test/coords.test.ts against a reference.
+//
+// Lat/lng → IANA timezone, unlike UTM, isn't a formula — it depends on actual
+// political/timezone boundary data, so this one pulls in `tz-lookup` (a small,
+// dependency-free, offline lookup table) rather than hand-rolling it.
+
+import tzlookup from 'tz-lookup';
 
 export type ElevationUnit = 'meters' | 'feet';
 
@@ -104,4 +110,9 @@ export function formatUTM(lat: number, lng: number): string {
 
 export function formatElevation(m: number, unit: ElevationUnit): string {
   return unit === 'feet' ? `${metersToFeet(m)} ft` : `${m} m`;
+}
+
+/** The IANA zone a coordinate falls in — approximate near timezone borders. */
+export function timeZoneForCoords(lat: number, lng: number): string {
+  return tzlookup(lat, lng);
 }

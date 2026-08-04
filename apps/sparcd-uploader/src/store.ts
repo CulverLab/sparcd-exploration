@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { S3Config } from '@sparcd/types';
 import {
-  loadSharedConnection,
+  loadPersistedConnection,
   saveSharedConnection,
   clearSharedConnection,
   subscribeSharedConnection,
@@ -87,19 +87,44 @@ type UploaderState = {
 
 const toEntry = (f: ScannedFile): FileEntry => ({ ...f, processState: 'queued' });
 
+// id -> index cache for `files`, so the high-frequency per-flush updates
+// (applyProgress/setThumbnail, called every ~200ms and once per finished video
+// poster during Inspect) can touch just the entries that changed instead of
+// walking/rebuilding the whole array. Valid as long as the SET and ORDER of
+// files hasn't changed — every call site that adds/removes/reorders files
+// invalidates it; applyProgress/setThumbnail only overwrite existing slots, so
+// they never need to.
+let fileIndexById: Map<string, number> | null = null;
+
+function invalidateFileIndex(): void {
+  fileIndexById = null;
+}
+
+function getFileIndex(files: FileEntry[]): Map<string, number> {
+  if (!fileIndexById) {
+    fileIndexById = new Map();
+    files.forEach((f, i) => fileIndexById!.set(f.id, i));
+  }
+  return fileIndexById;
+}
+
+// Read once at module init for the initial uploaderUser default below (the
+// access key is non-secret, so it's safe to have persisted).
+const initialPersisted = loadPersistedConnection();
+
 export const useStore = create<UploaderState>()(
-  // The S3 connection (secret included) lives in one shared localStorage key,
-  // owned by @sparcd/auth-ui's session module — see `loadSharedConnection`. This
-  // is a deliberate full-persistence posture: log in once in any SPARC'd tool and
-  // every tool (across tabs and tab-close) is logged in; disconnect anywhere
-  // clears it everywhere. This store hydrates s3Config from that shared key on
-  // start and mirrors connect/disconnect back into it. Zustand's own persist here
-  // covers only cheap UI prefs (theme, elevationUnit); s3Config is intentionally
-  // NOT in `partialize` because the shared module owns it. The in-flight batch
-  // (files, handles, validations) is excluded too.
+  // The secret key is NEVER persisted to disk — only the non-secret fields
+  // (endpoint/access key/region/etc.) live in localStorage, purely to pre-fill
+  // the Connect form on reload. s3Config itself always starts null here; the
+  // user re-enters the secret every time, UNLESS another tab in this browser
+  // session is already connected, in which case `subscribeSharedConnection`'s
+  // live (never-persisted) cross-tab relay picks it up within a message
+  // round-trip of mount. Zustand's own persist here covers only cheap UI
+  // prefs (theme, elevationUnit); the in-flight batch (files, handles,
+  // validations) is excluded too.
   persist(
     (set) => ({
-      s3Config: loadSharedConnection(),
+      s3Config: null,
       connectionId: 0,
       section: 'new',
       theme: 'light',
@@ -112,7 +137,10 @@ export const useStore = create<UploaderState>()(
       batchToken: 0,
       dirHandle: null,
       fileAccessMode: 'reselect-required',
-      uploaderUser: '',
+      // Defaults to the connected access key (the closest thing to a "login
+      // name" this app has) — but only ever as a fill-in for blank; a value the
+      // user typed or already had is never overwritten.
+      uploaderUser: initialPersisted?.accessKey ?? '',
       selectedLocationKey: null,
       selectedBucket: null,
       uploadDescription: '',
@@ -128,11 +156,13 @@ export const useStore = create<UploaderState>()(
           connectionId: s.connectionId + 1,
           selectedLocationKey: null,
           selectedBucket: null,
+          uploaderUser: s.uploaderUser || config.accessKey,
         }));
       },
       disconnect: () => {
         clearClientCache();
         clearSharedConnection();
+        invalidateFileIndex();
         set((s) => ({
           s3Config: null,
           connectionId: s.connectionId + 1,
@@ -162,6 +192,7 @@ export const useStore = create<UploaderState>()(
         const entries = scanned
           .filter((f) => (seen.has(f.id) ? false : (seen.add(f.id), true)))
           .map(toEntry);
+        invalidateFileIndex();
         set((s) => ({
           files: entries,
           validations: validateBatch(entries),
@@ -174,37 +205,43 @@ export const useStore = create<UploaderState>()(
 
       applyProgress: (started, results) => {
         if (started.length === 0 && results.length === 0) return;
-        const startedIds = new Set(started);
-        const resultsById = new Map(results.map((result) => [result.id, result]));
         set((s) => {
+          const index = getFileIndex(s.files);
+          const files = s.files.slice();
           const validationUpdates: Record<string, FileValidation> = {};
-          const files = s.files.map((f) => {
-            const result = resultsById.get(f.id);
-            if (!result) {
-              return startedIds.has(f.id) && f.processState === 'queued'
-                ? { ...f, processState: 'processing' as const }
-                : f;
-            }
 
-            let next: FileEntry;
-            if (result.error)
-              next = { ...f, processState: 'error' as const, processError: result.error };
-            else
-              next = {
-                ...f,
-                processState: 'ready' as const,
-                sha256: result.sha256,
-                exifNaive: result.exifNaive,
-                exifCamera: result.exifCamera,
-                gps: result.gps,
-                width: result.width,
-                height: result.height,
-                thumbnail: result.thumbnail,
-                mimeType: result.mimeType,
-              };
-            validationUpdates[f.id] = validateFile(next);
-            return next;
-          });
+          // Started-but-no-result-yet files just flip to "processing"; a file
+          // that also has a result this same tick gets overwritten below with
+          // its final state, so processing order here doesn't matter.
+          for (const id of started) {
+            const i = index.get(id);
+            if (i === undefined) continue;
+            const f = files[i];
+            if (f.processState === 'queued') files[i] = { ...f, processState: 'processing' as const };
+          }
+
+          for (const result of results) {
+            const i = index.get(result.id);
+            if (i === undefined) continue;
+            const f = files[i];
+            const next: FileEntry = result.error
+              ? { ...f, processState: 'error' as const, processError: result.error }
+              : {
+                  ...f,
+                  processState: 'ready' as const,
+                  sha256: result.sha256,
+                  exifNaive: result.exifNaive,
+                  exifCamera: result.exifCamera,
+                  gps: result.gps,
+                  width: result.width,
+                  height: result.height,
+                  thumbnail: result.thumbnail,
+                  mimeType: result.mimeType,
+                };
+            files[i] = next;
+            validationUpdates[result.id] = validateFile(next);
+          }
+
           return { files, validations: { ...s.validations, ...validationUpdates } };
         });
       },
@@ -215,13 +252,18 @@ export const useStore = create<UploaderState>()(
       // the main thread, post-worker). No validation re-run: a poster never
       // changes a verdict.
       setThumbnail: (id, thumbnail) =>
-        set((s) => ({
-          files: s.files.map((f) => (f.id === id ? { ...f, thumbnail } : f)),
-        })),
+        set((s) => {
+          const i = getFileIndex(s.files).get(id);
+          if (i === undefined) return {};
+          const files = s.files.slice();
+          files[i] = { ...files[i], thumbnail };
+          return { files };
+        }),
 
       removeFile: (id) =>
         set((s) => {
           const files = s.files.filter((f) => f.id !== id);
+          invalidateFileIndex();
           return { files, validations: validateBatch(files) };
         }),
 
@@ -236,7 +278,8 @@ export const useStore = create<UploaderState>()(
           return { files, validations: validateBatch(files) };
         }),
 
-      resetBatch: () =>
+      resetBatch: () => {
+        invalidateFileIndex();
         set((s) => ({
           files: [],
           validations: {},
@@ -244,7 +287,8 @@ export const useStore = create<UploaderState>()(
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
-        })),
+        }));
+      },
 
       // Stored raw; sanitizeUploaderUser derives the key-safe slug at point of use.
       setUploaderUser: (value) => set({ uploaderUser: value }),
@@ -258,7 +302,8 @@ export const useStore = create<UploaderState>()(
       // Start a fresh batch after a completed upload, keeping the deployment,
       // uploader, target collection, and description so a researcher can chain
       // batches for the same site without re-entering everything.
-      nextBatch: () =>
+      nextBatch: () => {
+        invalidateFileIndex();
         set((s) => ({
           files: [],
           validations: {},
@@ -266,7 +311,8 @@ export const useStore = create<UploaderState>()(
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
-        })),
+        }));
+      },
     }),
     {
       name: 'sparcd-uploader-session',
@@ -276,16 +322,18 @@ export const useStore = create<UploaderState>()(
   ),
 );
 
-// React to login/logout in OTHER tabs: the shared session module fires this on
-// cross-tab `storage` events. Mirror the new connection into this store and bump
+// React to login/logout in OTHER tabs open right now, live (never persisted —
+// see session.ts). Mirror the new connection into this store and bump
 // connectionId so client-side caches scoped to a connection are invalidated.
+// Also answers a sibling tab's own request with our current s3Config, if any.
 subscribeSharedConnection((cfg) => {
   clearClientCache();
+  if (!cfg) invalidateFileIndex();
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
     ...(cfg
-      ? {}
+      ? { uploaderUser: s.uploaderUser || cfg.accessKey }
       : {
           section: 'new' as const,
           step: 'drop' as const,
@@ -298,4 +346,4 @@ subscribeSharedConnection((cfg) => {
           uploaderUser: '',
         }),
   }));
-});
+}, () => useStore.getState().s3Config);

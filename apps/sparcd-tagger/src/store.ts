@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { S3Config } from '@sparcd/types';
 import {
-  loadSharedConnection,
   saveSharedConnection,
   clearSharedConnection,
   subscribeSharedConnection,
@@ -60,18 +59,18 @@ type TaggerState = {
 };
 
 export const useStore = create<TaggerState>()(
-  // The S3 connection (secret included) lives in one shared localStorage key,
-  // owned by @sparcd/auth-ui's session module — see `loadSharedConnection`. This
-  // is a deliberate full-persistence posture: log in once in any SPARC'd tool and
-  // every tool (across tabs and tab-close) is logged in; disconnect anywhere
-  // clears it everywhere. This store hydrates s3Config from that shared key on
-  // start and mirrors connect/disconnect back into it. Zustand's own persist here
-  // covers only cheap UI prefs (theme); s3Config is intentionally NOT in
-  // `partialize` because the shared module owns it. Transient state (selection,
-  // sync, pendingSnapshots) is excluded too.
+  // The secret key is NEVER persisted to disk — only non-secret connection
+  // fields live in localStorage (see @sparcd/auth-ui's session module), purely
+  // to pre-fill the Connect form on reload. s3Config always starts null here;
+  // the user re-enters the secret every time, UNLESS another tab in this
+  // browser session is already connected, in which case
+  // `subscribeSharedConnection`'s live (never-persisted) cross-tab relay picks
+  // it up within a message round-trip of mount. Zustand's own persist here
+  // covers only cheap UI prefs (theme). Transient state (selection, sync,
+  // pendingSnapshots) is excluded too.
   persist(
     (set) => ({
-      s3Config: loadSharedConnection(),
+      s3Config: null,
       connectionId: 0,
       section: 'browse',
       theme: 'light',
@@ -139,9 +138,10 @@ export const useStore = create<TaggerState>()(
   ),
 );
 
-// React to login/logout in OTHER tabs: the shared session module fires this on
-// cross-tab `storage` events. Mirror the new connection into this store and bump
+// React to login/logout in OTHER tabs open right now, live (never persisted —
+// see session.ts). Mirror the new connection into this store and bump
 // connectionId so client-side caches scoped to a connection are invalidated.
+// Also answers a sibling tab's own request with our current s3Config, if any.
 subscribeSharedConnection((cfg) => {
   clearClientCache();
   useStore.setState((s) => ({
@@ -156,4 +156,4 @@ subscribeSharedConnection((cfg) => {
           taggerUser: '',
         }),
   }));
-});
+}, () => useStore.getState().s3Config);

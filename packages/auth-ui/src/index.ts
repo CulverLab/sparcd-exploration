@@ -5,8 +5,9 @@ export type { BrandSwitcherProps } from './BrandSwitcher';
 export { ConnectionChip } from './ConnectionChip';
 export type { ConnectionChipProps } from './ConnectionChip';
 export {
-  loadSharedConnection,
+  loadPersistedConnection,
   saveSharedConnection,
   clearSharedConnection,
   subscribeSharedConnection,
 } from './session';
+export type { PersistedConnection } from './session';

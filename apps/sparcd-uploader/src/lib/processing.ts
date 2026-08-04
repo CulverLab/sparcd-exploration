@@ -23,6 +23,35 @@ function clearBuffers(): void {
   resultBuffer = [];
 }
 
+// Video poster capture runs on the main thread (needs a <video> element, no
+// worker API for it), so it's lane-limited like the worker pool rather than
+// fired unbounded per flush — a batch heavy on videos would otherwise pile up
+// many concurrent <video>/canvas decodes competing with rendering.
+const POSTER_CONCURRENCY = 2;
+let posterQueue: { id: string; file: File }[] = [];
+let posterActive = 0;
+
+function clearPosterQueue(): void {
+  posterQueue = [];
+  // In-flight decodes (posterActive) finish on their own and are harmless —
+  // setThumbnail on a stale id is a no-op once that file is out of the batch.
+}
+
+function pumpPosterQueue(): void {
+  while (posterActive < POSTER_CONCURRENCY && posterQueue.length > 0) {
+    const next = posterQueue.shift()!;
+    posterActive++;
+    void posterFor(next.file)
+      .then((poster) => {
+        if (poster) useStore.getState().setThumbnail(next.id, poster);
+      })
+      .finally(() => {
+        posterActive--;
+        pumpPosterQueue();
+      });
+  }
+}
+
 function kickVideoPosters(results: ProcessResponse[]): void {
   // Videos can't be decoded in the worker; grab a poster frame on the main
   // thread once the worker reports a video ready. Best-effort — a failure just
@@ -30,13 +59,10 @@ function kickVideoPosters(results: ProcessResponse[]): void {
   for (const r of results) {
     if (!r.error && r.mediaKind === 'video' && !r.thumbnail) {
       const entry = useStore.getState().files.find((f) => f.id === r.id);
-      if (entry) {
-        void posterFor(entry.file).then((poster) => {
-          if (poster) useStore.getState().setThumbnail(r.id, poster);
-        });
-      }
+      if (entry) posterQueue.push({ id: r.id, file: entry.file });
     }
   }
+  pumpPosterQueue();
 }
 
 function flush(token: number): void {
@@ -64,6 +90,7 @@ export function ensureProcessing(): void {
   run?.cancel();
   clearFlushTimer();
   clearBuffers();
+  clearPosterQueue();
   runningToken = batchToken;
 
   const queued = files.filter((f) => f.processState === 'queued');

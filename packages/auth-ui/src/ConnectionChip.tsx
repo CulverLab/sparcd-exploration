@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { S3Config } from '@sparcd/types';
-import { loadSharedConnection, subscribeSharedConnection } from './session';
+import { loadPersistedConnection, subscribeSharedConnection, type PersistedConnection } from './session';
 
 export type ConnectionChipProps = {
   /** Optional human identity, e.g. the SPARC'd username stamped on writes. */
@@ -27,9 +26,14 @@ function maskKey(key: string): string {
  * is no session (the app shows its login gate instead).
  */
 export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) {
-  const [cfg, setCfg] = useState<S3Config | null>(() => loadSharedConnection());
+  // Only ever displays endpoint/accessKey — never the secret — so the
+  // non-persisted (secret-included) shape from a live cross-tab connect and
+  // the persisted (secret-less) shape read back after a reload both work here.
+  const [cfg, setCfg] = useState<PersistedConnection | null>(() => loadPersistedConnection());
 
-  useEffect(() => subscribeSharedConnection(setCfg), []);
+  // This chip is purely a passive display, not a source of truth for "is
+  // anyone connected" — it never answers a sibling tab's request.
+  useEffect(() => subscribeSharedConnection(setCfg, () => null), []);
 
   if (!cfg) return null;
 

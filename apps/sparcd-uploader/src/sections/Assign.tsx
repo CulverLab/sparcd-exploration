@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { useLocations } from '../lib/useLocations';
 import { useCollections, useCollectionDeployments } from '../lib/useCollections';
@@ -8,7 +8,13 @@ import { MetadataPreview } from '../components/MetadataPreview';
 import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
-import { captureTimeComplete } from '../lib/validation';
+import { timeZoneForCoords } from '../lib/coords';
+import { captureTimeComplete, processingComplete } from '../lib/validation';
+
+// How long to wait after the last keystroke before pushing a fresh value into
+// an already-open preview — keeps it feeling live without rebuilding the whole
+// bundle on every keystroke.
+const PREVIEW_DEBOUNCE_MS = 300;
 
 const sectionLabel =
   'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
@@ -40,7 +46,6 @@ export function Assign() {
   const selectedBucket = useStore((s) => s.selectedBucket);
   const setSelectedBucket = useStore((s) => s.setSelectedBucket);
   const elevationUnit = useStore((s) => s.elevationUnit);
-  const setElevationUnit = useStore((s) => s.setElevationUnit);
   const files = useStore((s) => s.files);
 
   const { data, isLoading, isError, error } = useLocations(s3Config, connectionId);
@@ -59,30 +64,96 @@ export function Assign() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
 
-  // Strict filter: the deployment picker only shows locations this collection
-  // has already deployed (derived from its uploads' deployments.csv).
+  // Every location is assignable, not just ones this collection has already
+  // deployed — but the ones it has already deployed (derived from its uploads'
+  // deployments.csv) are listed first, since they're the likely picks.
   const deployments = useCollectionDeployments(s3Config, connectionId, collection);
+  const usedLocationCount = useMemo(
+    () => new Set(deployments.data ?? []).size,
+    [deployments.data],
+  );
   const collectionLocations = useMemo(() => {
     if (!data?.locations || !deployments.data) return [];
     const used = new Set(deployments.data);
-    return data.locations.filter((l) => used.has(l.id));
+    const already = data.locations.filter((l) => used.has(l.id));
+    const rest = data.locations.filter((l) => !used.has(l.id));
+    return [...already, ...rest];
   }, [data?.locations, deployments.data]);
 
-  // Drop a stale location selection when it isn't among the chosen collection's
-  // deployments (e.g. after switching collections).
-  useEffect(() => {
-    if (!deployments.data) return;
-    if (selectedLocationKey && !collectionLocations.some((l) => l.key === selectedLocationKey)) {
-      setSelectedLocationKey(null);
-    }
-  }, [collectionLocations, deployments.data, selectedLocationKey, setSelectedLocationKey]);
-
   const location = collectionLocations.find((l) => l.key === selectedLocationKey) ?? null;
+
+  // Picking a deployment implies a zone — the camera's naive EXIF wall-clock
+  // needs to be interpreted in wherever it physically sits, not the browser's
+  // zone. Fires only when the *selection* changes, so a manual override the
+  // user makes afterward for the same location sticks.
+  useEffect(() => {
+    if (!location) return;
+    setUploadTimeZone(timeZoneForCoords(location.latitude, location.longitude));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.key]);
+
   const needsCaptureTime = files.some(
     (f) => f.processState === 'ready' && !f.exifNaive,
   );
   const captureComplete = captureTimeComplete(files);
-  const canContinue = !!selectedLocationKey && !!slug && !!collection && captureComplete;
+  // Everything EXCEPT background processing being done — this is what actually
+  // disables the button. Processing-incomplete is handled on click instead (see
+  // handleContinue), so the button stays pressable and can explain why it
+  // hasn't moved on yet, rather than just sitting inertly disabled.
+  const baseReady = !!selectedLocationKey && !!slug && !!collection && captureComplete;
+  const processingOk = processingComplete(files);
+  const pendingCount = files.filter(
+    (f) => f.processState === 'queued' || f.processState === 'processing',
+  ).length;
+
+  // Pressing Continue while processing is still running doesn't just show a
+  // message and stop — like the Drop step auto-advancing once scanning
+  // finishes, it queues the move and fires it the moment processing catches
+  // up, so the user never has to click twice.
+  const [waitingToContinue, setWaitingToContinue] = useState(false);
+  useEffect(() => {
+    if (waitingToContinue && baseReady && processingOk) {
+      setWaitingToContinue(false);
+      setStep('upload');
+    }
+  }, [waitingToContinue, baseReady, processingOk, setStep]);
+
+  function handleContinue() {
+    if (!baseReady) return;
+    if (!processingOk) {
+      setWaitingToContinue(true);
+      return;
+    }
+    setStep('upload');
+  }
+
+  // Preview is opt-in (building it rebuilds the whole bundle) and, once open,
+  // only takes the live name/description on a short pause or on blur — not on
+  // every keystroke.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSlug, setPreviewSlug] = useState(slug);
+  const [previewDescription, setPreviewDescription] = useState(description);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const t = window.setTimeout(() => {
+      setPreviewSlug(slug);
+      setPreviewDescription(description);
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [slug, description, previewOpen]);
+
+  function openPreview() {
+    setPreviewSlug(slug);
+    setPreviewDescription(description);
+    setPreviewOpen(true);
+  }
+
+  function flushPreview() {
+    if (!previewOpen) return;
+    setPreviewSlug(slug);
+    setPreviewDescription(description);
+  }
 
   // The chosen zone is always offered even if it isn't in the platform's list.
   const timeZones = useMemo(() => {
@@ -115,17 +186,12 @@ export function Assign() {
                   value={selectedBucket}
                   onChange={(key) => setSelectedBucket(key)}
                 />
-                <p className="font-body text-[12px] text-inkMute">
-                  {collection?.name ? (
-                    <>
-                      <span className="text-inkSoft">{collection.name}</span> ·{' '}
-                    </>
-                  ) : null}
-                  Discovered from{' '}
-                  <span className="font-mono">Collections/{collection?.uuid ?? '<uuid>'}/collection.json</span>
-                  . Uploads land in this bucket under{' '}
-                  <span className="font-mono">Collections/{collection?.uuid ?? '<uuid>'}/Uploads/</span>.
-                </p>
+                {collection && (
+                  <p className="font-body text-[12px] text-inkMute">
+                    <span className="text-inkSoft">{collection.name ?? 'Unnamed collection'}</span> ·{' '}
+                    <span className="font-mono">{collection.uuid}</span>
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -155,10 +221,7 @@ export function Assign() {
         {data && collection && deployments.data && (
           <div className="space-y-2">
             {collectionLocations.length === 0 ? (
-              <LocationsState
-                tone="warn"
-                message="This collection has no deployments yet. Only locations it has already uploaded to can be selected here."
-              />
+              <LocationsState tone="warn" message="No locations found in this connection's registry." />
             ) : (
               <DeploymentPicker
                 locations={collectionLocations}
@@ -167,33 +230,12 @@ export function Assign() {
                 elevationUnit={elevationUnit}
               />
             )}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:flex-wrap">
-              <p className="font-body text-[12px] text-inkMute">
-                <span className="font-mono text-inkSoft">{collectionLocations.length}</span> of{' '}
-                <span className="font-mono text-inkSoft">{data.locations.length}</span> locations —
-                filtered to those <span className="font-mono">{collection.uuid}</span> has already
-                deployed. Each becomes <span className="font-mono">deployment_id</span> ={' '}
-                <span className="font-mono">&lt;collection-uuid&gt;:&lt;location-id&gt;</span>.
-              </p>
-              <label className="flex items-center gap-1.5 shrink-0 font-body text-[12px] text-inkSoft">
-                Elevation
-                <span className="inline-flex border border-rule">
-                  {(['meters', 'feet'] as const).map((u) => (
-                    <button
-                      key={u}
-                      type="button"
-                      onClick={() => setElevationUnit(u)}
-                      aria-pressed={elevationUnit === u}
-                      className={`px-3 py-2 min-h-[44px] sm:min-h-0 sm:px-2 sm:py-0.5 text-[12px] font-mono focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent ${
-                        elevationUnit === u ? 'bg-ink text-paper' : 'text-inkSoft hover:bg-panelHover'
-                      }`}
-                    >
-                      {u === 'meters' ? 'm' : 'ft'}
-                    </button>
-                  ))}
-                </span>
-              </label>
-            </div>
+            <p className="font-body text-[12px] text-inkMute">
+              <span className="font-mono text-inkSoft">{usedLocationCount}</span> of{' '}
+              <span className="font-mono text-inkSoft">{collectionLocations.length}</span> locations
+              already deployed by <span className="text-inkSoft">{collection.name ?? 'this collection'}</span> —
+              listed first, but any location can be assigned.
+            </p>
           </div>
         )}
       </section>
@@ -203,6 +245,7 @@ export function Assign() {
         <input
           value={uploaderUser}
           onChange={(e) => setUploaderUser(e.target.value)}
+          onBlur={flushPreview}
           placeholder="e.g. John Doe"
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
@@ -249,6 +292,7 @@ export function Assign() {
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          onBlur={flushPreview}
           rows={3}
           placeholder="What this batch is — site, date range, notes."
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
@@ -261,15 +305,34 @@ export function Assign() {
       <section>
         <h2 className={sectionLabel}>Preview</h2>
         {location && collection && slug ? (
-          <MetadataPreview
-            location={location}
-            collectionUuid={collection.uuid}
-            bucket={collection.bucket}
-            uploaderSlug={slug}
-            description={description}
-            timeZone={uploadTimeZone}
-            files={files}
-          />
+          previewOpen ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+                className="font-body text-[12px] text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                Hide preview
+              </button>
+              <MetadataPreview
+                location={location}
+                collectionUuid={collection.uuid}
+                bucket={collection.bucket}
+                uploaderSlug={previewSlug}
+                description={previewDescription}
+                timeZone={uploadTimeZone}
+                files={files}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={openPreview}
+              className="w-full border border-rule bg-paper px-3 py-2.5 text-left font-body text-[13px] text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+            >
+              Click to preview the generated bundle files (UploadMeta.json, deployments/media/observations CSVs)…
+            </button>
+          )
         ) : (
           <LocationsState
             tone="mute"
@@ -277,6 +340,13 @@ export function Assign() {
           />
         )}
       </section>
+
+      {waitingToContinue && (
+        <p className="font-body text-[15px] text-inkSoft">
+          Still processing {pendingCount} file{pendingCount === 1 ? '' : 's'} in the background —
+          continuing automatically once that finishes.
+        </p>
+      )}
 
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">
         <button
@@ -286,21 +356,23 @@ export function Assign() {
           Back
         </button>
         <button
-          disabled={!canContinue}
-          onClick={() => setStep('upload')}
+          disabled={!baseReady}
+          onClick={handleContinue}
           title={
-            canContinue
-              ? 'Continue to upload'
-              : !selectedLocationKey
+            !baseReady
+              ? !selectedLocationKey
                 ? 'Select a deployment location first'
                 : !collection
                   ? 'Select a target collection first'
                   : !slug
                     ? 'Set an uploader identity first'
                     : 'Set a capture time for every file missing one'
+              : processingOk
+                ? 'Continue to upload'
+                : 'Continue once processing finishes (or wait — it happens automatically)'
           }
           className={`bg-ink text-paper border border-ink px-3.5 py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-            canContinue ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
+            baseReady ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
           }`}
         >
           Continue

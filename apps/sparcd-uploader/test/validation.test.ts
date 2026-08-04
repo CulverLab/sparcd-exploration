@@ -1,7 +1,7 @@
 // Per-file inspect-step verdicts and the batch-ready gate.
 
 import { describe, it, expect } from 'vitest';
-import { validateBatch, summarize, captureTimeComplete } from '../src/lib/validation';
+import { validateBatch, summarize, captureTimeComplete, processingComplete } from '../src/lib/validation';
 import type { FileEntry } from '../src/store';
 import type { NaiveDateTime } from '../src/lib/exifTime';
 
@@ -96,14 +96,14 @@ describe('validateBatch severities', () => {
 });
 
 describe('summarize / ready gate', () => {
-  it('is not ready while anything is pending', () => {
+  it('stays ready while files are still processing (Inspect no longer blocks on pending)', () => {
     const files = [
       file({ id: 'a', relPath: 'a' }),
       file({ id: 'b', relPath: 'b', processState: 'processing' }),
     ];
     const s = summarize(files, validateBatch(files));
     expect(s.pending).toBe(1);
-    expect(s.ready).toBe(false);
+    expect(s.ready).toBe(true);
   });
 
   it('is not ready while a blocking error stands', () => {
@@ -154,5 +154,24 @@ describe('captureTimeComplete', () => {
   it('ignores non-ready files (still processing / errored)', () => {
     const files = [file({ id: 'a', relPath: 'a', processState: 'processing', exifNaive: undefined })];
     expect(captureTimeComplete(files)).toBe(true);
+  });
+});
+
+describe('processingComplete', () => {
+  it('is false while any file is still queued or processing', () => {
+    expect(processingComplete([file({ id: 'a', relPath: 'a', processState: 'queued' })])).toBe(false);
+    expect(processingComplete([file({ id: 'a', relPath: 'a', processState: 'processing' })])).toBe(false);
+  });
+
+  it('is true once every file is ready or errored — an error still counts as finished', () => {
+    const files = [
+      file({ id: 'a', relPath: 'a', processState: 'ready' }),
+      file({ id: 'b', relPath: 'b', processState: 'error', processError: 'boom' }),
+    ];
+    expect(processingComplete(files)).toBe(true);
+  });
+
+  it('is false for an empty batch', () => {
+    expect(processingComplete([])).toBe(false);
   });
 });

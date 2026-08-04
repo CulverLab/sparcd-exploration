@@ -5,6 +5,7 @@ import {
   formatUTM,
   formatLatLng,
   formatElevation,
+  timeZoneForCoords,
 } from '../src/lib/coords';
 
 describe('latLngToUTM', () => {
@@ -61,5 +62,15 @@ describe('elevation + formatters', () => {
   it('formats lat/lng and UTM as readable strings', () => {
     expect(formatLatLng(31.5, -110.2)).toBe('31.50000, -110.20000');
     expect(formatUTM(31.5, -110.2)).toBe('12R 575973E 3485294N');
+  });
+});
+
+describe('timeZoneForCoords', () => {
+  it('resolves the Educational Test collection point to America/Phoenix', () => {
+    expect(timeZoneForCoords(31.5, -110.2)).toBe('America/Phoenix');
+  });
+
+  it('resolves a distinct zone for a different continent/region', () => {
+    expect(timeZoneForCoords(51.5074, -0.1278)).toBe('Europe/London');
   });
 });

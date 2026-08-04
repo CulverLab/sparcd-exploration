@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Connection } from '@sparcd/auth-ui';
+import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
 import { useStore } from './store';
 import { Chrome } from './components/Chrome';
 import { Browse } from './sections/Browse';
@@ -10,6 +10,12 @@ import { Placeholder } from './sections/Placeholder';
 
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
+
+// The remembered non-secret fields (endpoint/access key/region/etc.) from a
+// prior connection, if any — the secret itself is never persisted, so the
+// user always retypes it. Read once; a dev endpoint override wins if set.
+const persistedConnection = loadPersistedConnection();
+const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: devEndpoint } : {}) };
 
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
@@ -24,11 +30,7 @@ export function App() {
 
   if (!s3Config) {
     return (
-      <Connection
-        toolName="Tagger"
-        initialConfig={devEndpoint ? { endpoint: devEndpoint } : undefined}
-        onConnect={connect}
-      />
+      <Connection toolName="Tagger" initialConfig={connectPrefill} onConnect={connect} />
     );
   }
 

@@ -77,13 +77,25 @@ export function captureTimeComplete(files: FileEntry[]): boolean {
   return files.every((f) => f.processState !== 'ready' || !!f.exifNaive || !!f.manualNaive);
 }
 
+// The hard processing-complete gate: every file must have finished processing
+// (ready or error) before an upload can start, so a file still queued/processing
+// is never silently left out of the batch. Consumed at the Assign Continue gate
+// — NOT in the inspect summary, so inspect doesn't force a wait for a large
+// batch to finish before the user can start Assign work (picking a deployment,
+// naming the upload) that doesn't depend on per-file processing results.
+export function processingComplete(files: FileEntry[]): boolean {
+  return (
+    files.length > 0 && files.every((f) => f.processState === 'ready' || f.processState === 'error')
+  );
+}
+
 export type BatchSummary = {
   total: number;
   processed: number;
   pending: number; // queued + processing
   errors: number;
   warnings: number;
-  ready: boolean; // nothing pending and no blocking errors
+  ready: boolean; // no blocking errors — processing may still be running in the background
 };
 
 export function summarize(
@@ -107,6 +119,6 @@ export function summarize(
     pending,
     errors,
     warnings,
-    ready: files.length > 0 && pending === 0 && errors === 0,
+    ready: files.length > 0 && errors === 0,
   };
 }
