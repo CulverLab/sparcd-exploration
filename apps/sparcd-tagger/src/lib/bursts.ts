@@ -29,10 +29,9 @@ export type BurstGrouping = {
   banded: boolean; // false when grouping is off — the Overview renders rows with no burst bands
 };
 
-// Leading `YYYY-MM-DDTHH:mm:ss` fields (naive legacy or full ISO, trailing
-// `.sssZ` ignored) → epoch seconds, parsed as UTC so the value is deterministic
-// regardless of the machine's zone; only the gap matters, and a constant zone
-// offset cancels out. Returns null when the field is unparseable.
+// Naive `YYYY-MM-DDTHH:mm:ss` → epoch seconds. Parsed as UTC so the value is
+// deterministic regardless of the machine's zone; only the gap matters, and a
+// constant zone offset cancels out. Returns null when the field is unparseable.
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
 
 function epoch(iso: string): number | null {
