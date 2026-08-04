@@ -37,10 +37,19 @@
 import type { S3Config } from '@sparcd/types';
 import { PreconditionFailedError } from '@sparcd/s3-safe';
 import { getClient } from './s3';
-import { buildBundle, type BuildInput, type BundlePreview, type UploadItem } from './bundle';
+import {
+  buildBundle,
+  resolveBatchNaming,
+  planItemFor,
+  type BuildInput,
+  type UploadItem,
+} from './bundle';
+import { locationToDeployment } from './locations';
+import type { FileEntry } from '../store';
 import {
   fileRecordId,
-  saveSession,
+  openSession,
+  attachBundle,
   markFileState,
   markBatchComplete,
   type BatchRecord,
@@ -51,7 +60,9 @@ import {
 } from './db';
 
 export type UploadPhase = 'idle' | 'blobs' | 'metadata' | 'partial' | 'done' | 'error';
-export type FileState = 'pending' | 'uploading' | 'verifying' | 'done' | 'skipped' | 'failed';
+// 'inspecting': part of the batch, not yet processed by Inspect — only
+// reachable via a streamed run; a fixed-plan run never has such a file.
+export type FileState = 'inspecting' | 'pending' | 'uploading' | 'verifying' | 'done' | 'skipped' | 'failed';
 
 export type FileProgress = {
   id: string;
@@ -100,7 +111,6 @@ export type ResumeParams = {
 
 export type UploadRun = { cancel: () => void; done: Promise<void> };
 
-const METADATA_RETRY = 1; // re-stamp attempts after the first
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 500;
 // Ten independent blob failures usually means credentials, CORS, or endpoint policy, not bad files.
@@ -184,30 +194,7 @@ const metadataWrites = (b: {
   { name: 'UploadComplete.json', body: b.uploadCompleteJson, contentType: 'application/json' },
 ];
 
-const planFromBundle = (sessionId: string, bundle: BundlePreview): RunPlan => ({
-  sessionId,
-  bucket: bundle.bucket,
-  uploadPath: bundle.uploadPath,
-  totalBytes: bundle.totalBytes,
-  metadataBundleSha256: bundle.metadataBundleSha256,
-  items: bundle.items.map((it: UploadItem) => ({
-    id: it.id,
-    localPath: it.localPath,
-    fileName: it.fileName,
-    objectName: it.objectName,
-    key: it.key,
-    size: it.size,
-    sha256: it.sha256,
-    captureTimestamp: it.captureTimestamp,
-    mediaKind: it.mediaKind,
-    mimeType: it.mimeType,
-    file: it.file,
-    doneAlready: false,
-  })),
-  writes: metadataWrites(bundle),
-});
-
-const fileRecordFor = (sessionId: string, it: PlanItem, state: FileRecord['state']): FileRecord => ({
+const fileRecordFor = (sessionId: string, it: UploadItem, state: FileRecord['state']): FileRecord => ({
   id: fileRecordId(sessionId, it.localPath),
   sessionId,
   localPath: it.localPath,
@@ -223,6 +210,59 @@ const fileRecordFor = (sessionId: string, it: PlanItem, state: FileRecord['state
   remoteKey: it.key,
   attempt: 0,
 });
+
+/** A file record for a scanned-but-not-yet-processed file — everything a
+ * streamed session knows about it before its own Inspect pass finishes. */
+const awaitingFileRecordFor = (sessionId: string, f: { id: string; relPath: string; fileName: string; size: number }): FileRecord => ({
+  id: fileRecordId(sessionId, f.id),
+  sessionId,
+  localPath: f.id,
+  fileName: f.fileName,
+  relPathInBundle: f.relPath,
+  size: f.size,
+  state: 'awaiting-processing',
+  attempt: 0,
+});
+
+/**
+ * Minimal async queue: `push` enqueues, `close` signals no more items will
+ * ever arrive, `next` resolves the next item or `null` once closed and
+ * drained. Lets a bounded set of lanes pull work that arrives over time
+ * (files finishing Inspect one at a time) instead of from a fixed array.
+ */
+function makeAsyncQueue<T>() {
+  const items: T[] = [];
+  let closed = false;
+  // Every concurrency lane can be waiting on `next()` at once — a single
+  // waiter slot would let a later lane's wait overwrite an earlier one's,
+  // permanently orphaning it (its promise never resolves, so `Promise.all`
+  // over the lanes never settles and the run hangs). Wake every waiter on
+  // any push/close; each re-checks the loop condition for itself.
+  const waiters = new Set<() => void>();
+  const wake = () => {
+    for (const w of waiters) w();
+    waiters.clear();
+  };
+  return {
+    push(item: T): void {
+      items.push(item);
+      wake();
+    },
+    close(): void {
+      closed = true;
+      wake();
+    },
+    async next(): Promise<T | null> {
+      for (;;) {
+        if (items.length > 0) return items.shift()!;
+        if (closed) return null;
+        await new Promise<void>((resolve) => {
+          waiters.add(resolve);
+        });
+      }
+    },
+  };
+}
 
 /**
  * The shared executor over a RunPlan. Used by both a fresh run and a resume; the
@@ -460,9 +500,16 @@ function makeRunner(
     // --- Phase 2: metadata, in publish order ---
     snap.phase = 'metadata';
     emit(true);
+    await writeMetadata(plan.writes, plan.uploadPath);
+  };
 
-    for (const w of plan.writes) {
-      const key = `${plan.uploadPath}/${w.name}`;
+  // Shared by a fixed-plan run and a streamed run: writes the CSVs/JSON in
+  // publish order, dry-run logs instead of PUTting, and treats a 412 as
+  // already-written (idempotent) only on resume — a fresh run must not
+  // silently accept a metadata collision.
+  const writeMetadata = async (writes: RunPlan['writes'], uploadPath: string): Promise<void> => {
+    for (const w of writes) {
+      const key = `${uploadPath}/${w.name}`;
       if (dryRun) {
         log('put', `PUT ${snap.bucket}/${key} (${new TextEncoder().encode(w.body).length} B)`);
         continue;
@@ -474,8 +521,6 @@ function makeRunner(
           break;
         } catch (err) {
           if (err instanceof PreconditionFailedError) {
-            // Resume owns the prefix, so a 412 means we already wrote this file
-            // in a prior run — idempotent, skip. A fresh run re-stamps instead.
             if (isResume) {
               log('info', `already present, skip: ${key}`);
               break;
@@ -489,11 +534,117 @@ function makeRunner(
     }
   };
 
+  /**
+   * Stream blobs from a live queue instead of a fixed plan — items arrive as
+   * files individually finish Inspect (see `runStreamingUpload`). Blocks in
+   * the 'blobs' phase until `queue.close()` has been called (every file in
+   * the batch is known and enqueued) and every enqueued item has settled;
+   * only then does it enter the metadata phase, building the bundle via
+   * `buildMetadata` — called exactly once, after the blob queue is fully
+   * drained, so it always sees the complete set.
+   */
+  const runStreaming = async (
+    seed: {
+      sessionId: string;
+      bucket: string;
+      uploadPath: string;
+      totalBytes: number; // the FULL batch's total, known from the scan — not grown incrementally
+      initialFiles: FileProgress[]; // placeholder ('inspecting') or real ('pending') entry per known file
+    },
+    queue: ReturnType<typeof makeAsyncQueue<PlanItem>>,
+    buildMetadata: () => Promise<{ writes: RunPlan['writes']; metadataBundleSha256: string }>,
+  ): Promise<void> => {
+    abort = new AbortController();
+    snap.sessionId = seed.sessionId;
+    snap.bucket = seed.bucket;
+    snap.uploadPath = seed.uploadPath;
+    snap.totalBytes = seed.totalBytes;
+    snap.files = seed.initialFiles;
+    snap.phase = 'blobs';
+    emit(true);
+
+    let fatal: unknown = null;
+    let fileFailures = 0;
+    const lane = async (): Promise<void> => {
+      for (;;) {
+        if (cancelled || fatal) return;
+        const it = await queue.next();
+        if (it === null) return;
+        const fp: FileProgress = { id: it.id, key: it.key, size: it.size, loaded: 0, state: 'pending', attempt: 0 };
+        const idx = snap.files.findIndex((f) => f.id === it.id);
+        if (idx >= 0) snap.files[idx] = fp;
+        else snap.files.push(fp);
+        emit(true);
+        if (dryRun) {
+          fp.state = 'done';
+          fp.loaded = it.size;
+          snap.uploadedBytes += it.size;
+          log('put', `PUT ${snap.bucket}/${it.key} (${it.size} B, sha256 ${it.sha256.slice(0, 12)}…)`);
+          emit(true);
+          continue;
+        }
+        try {
+          await processItem(seed.sessionId, fp, it);
+        } catch (err) {
+          if (cancelled || abort.signal.aborted) return;
+          if (isRunFatalBlobError(err)) {
+            if (!fatal) {
+              fatal = err;
+              abort.abort();
+            }
+            return;
+          }
+          fileFailures++;
+          if (fileFailures >= MAX_FILE_FAILURES && !fatal) {
+            fatal = new Error(
+              `aborted after ${MAX_FILE_FAILURES} file failures — the problem looks systemic, not per-file`,
+            );
+            abort.abort();
+            return;
+          }
+          if (fatal) return;
+          continue;
+        }
+      }
+    };
+
+    const lanes = Math.max(1, concurrency);
+    await Promise.all(Array.from({ length: lanes }, lane));
+    if (fatal) throw fatal;
+    if (cancelled) throw new Error('cancelled');
+
+    // The blob loop only exits normally (no fatal/cancel) once the queue is
+    // closed and drained — the caller only closes it once every file in the
+    // batch is known — so the full set is always available here, whether or
+    // not every blob actually succeeded. Build (and persist) the bundle
+    // unconditionally: on a partial failure this gives a later retry a real,
+    // byte-identical ledger to resume from instead of starting over: it's
+    // just not written to S3 until every blob has actually landed.
+    const { writes, metadataBundleSha256 } = await buildMetadata();
+    snap.metadataBundleSha256 = metadataBundleSha256;
+
+    const failed = snap.files.filter((f) => f.state === 'failed').length;
+    if (failed > 0) {
+      log(
+        'warn',
+        `${failed} files failed — metadata not published; retry the failed files to complete the upload`,
+      );
+      snap.phase = 'partial';
+      emit(true);
+      return;
+    }
+
+    snap.phase = 'metadata';
+    emit(true);
+    await writeMetadata(writes, snap.uploadPath!);
+  };
+
   return {
     snap,
     log,
     emit,
     runOnce,
+    runStreaming,
     cancel: () => {
       cancelled = true;
       abort.abort();
@@ -502,96 +653,177 @@ function makeRunner(
   };
 }
 
-/** Fresh upload (dry or wet). Wet runs persist a resumable session to Dexie. */
-export function runUpload(
+export type StreamingUploadRun = {
+  cancel: () => void;
+  done: Promise<void>;
+  /** Enqueue files the caller has observed finish Inspect successfully. */
+  notifyReady: (files: FileEntry[]) => void;
+  /** Signal that every file in the batch is now known — no more files will
+   * ever be enqueued (the caller's `processingComplete(files)` became true).
+   * `finalFiles` is the complete batch, used to build the metadata bundle
+   * once the blob queue drains. */
+  close: (finalFiles: FileEntry[]) => void;
+};
+
+/**
+ * Upload as files individually finish Inspect, instead of waiting for the
+ * whole batch. Every file's object key is frozen once, immediately, from the
+ * full scanned listing (names/collisions never depend on file content) — so
+ * a blob can upload the moment its own hash is ready, with no risk of ever
+ * needing to rename something already on S3. The metadata/CSV publish step
+ * is unchanged in behavior: it still only fires once, atomically, after
+ * every file is known and every blob has landed — nothing partial is ever
+ * visible to anything reading the bucket.
+ *
+ * Simplification vs. `runUpload`: a metadata-prefix collision (`412`) is
+ * treated as a hard error rather than auto-retried under a new stamp — that
+ * collision only happens on genuinely concurrent identical-second uploads,
+ * a rare edge case not worth the added complexity here yet.
+ */
+export function runStreamingUpload(
   params: UploadParams,
   onUpdate: (snap: UploadSnapshot) => void,
-): UploadRun {
+): StreamingUploadRun {
   const { config, build, dryRun, concurrency } = params;
   const persist = !dryRun;
   const runner = makeRunner(config, concurrency, onUpdate, { persist, isResume: false, dryRun });
+  const sessionId = crypto.randomUUID();
+  runner.snap.sessionId = sessionId;
+
+  const now = new Date();
+  const naming = resolveBatchNaming({
+    collectionUuid: build.collectionUuid,
+    uploaderSlug: build.uploaderSlug,
+    now,
+    files: build.files,
+  });
+
+  const queue = makeAsyncQueue<PlanItem>();
+  const enqueuedIds = new Set<string>();
+  let finalFiles: FileEntry[] | null = null;
+
+  const enqueue = (f: FileEntry): void => {
+    if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return;
+    enqueuedIds.add(f.id);
+    const item = planItemFor(f, naming, build.timeZone);
+    queue.push({ ...item, doneAlready: false });
+    if (persist) void markFileState(fileRecordId(sessionId, item.localPath), fileRecordFor(sessionId, item, 'pending'));
+  };
+
+  if (persist) {
+    const deploymentId = locationToDeployment(build.location, build.collectionUuid).deploymentId;
+    const batch: BatchRecord = {
+      id: sessionId,
+      targetBucket: build.bucket,
+      uploadPrefix: naming.uploadPath,
+      deploymentId,
+      location: build.location,
+      uploaderUser: params.uploaderUser ?? build.uploaderSlug,
+      uploaderSlug: build.uploaderSlug,
+      collectionUuid: build.collectionUuid,
+      description: build.description,
+      startedAt: new Date().toISOString(),
+      totalFiles: build.files.length,
+      totalBytes: build.files.reduce((n, f) => n + f.size, 0),
+      uploadTimeZone: build.timeZone,
+      fileAccessMode: params.fileAccessMode ?? 'reselect-required',
+      dirHandle: params.dirHandle ?? undefined,
+    };
+    const initialRecords = build.files.map((f) =>
+      f.processState === 'ready' && f.sha256
+        ? fileRecordFor(sessionId, planItemFor(f, naming, build.timeZone), 'pending')
+        : awaitingFileRecordFor(sessionId, f),
+    );
+    void openSession(batch, initialRecords);
+  }
+
+  const initialFiles: FileProgress[] = build.files.map((f) => ({
+    id: f.id,
+    key: '',
+    size: f.size,
+    loaded: 0,
+    state: f.processState === 'ready' && f.sha256 ? 'pending' : 'inspecting',
+    attempt: 0,
+  }));
+
+  for (const f of build.files) enqueue(f);
 
   const done = (async () => {
-    const sessionId = crypto.randomUUID();
-    runner.snap.sessionId = sessionId;
-    let now = new Date();
-    for (let stamp = 0; ; stamp++) {
-      const bundle = await buildBundle({ ...build, now });
-      const plan = planFromBundle(sessionId, bundle);
-
-      // Persist (or re-persist after a re-stamp) the session before writing a
-      // byte, so a crash mid-blobs leaves a resumable row.
-      if (persist) {
-        const startedAt = new Date().toISOString();
-        const batch: BatchRecord = {
-          id: sessionId,
-          targetBucket: bundle.bucket,
-          uploadPrefix: bundle.uploadPath,
-          deploymentId: bundle.deploymentId,
-          uploaderUser: params.uploaderUser ?? build.uploaderSlug,
-          uploaderSlug: build.uploaderSlug,
-          collectionUuid: build.collectionUuid,
-          description: build.description,
-          startedAt,
-          totalFiles: plan.items.length,
-          totalBytes: plan.totalBytes,
-          uploadTimeZone: build.timeZone,
-          fileAccessMode: params.fileAccessMode ?? 'reselect-required',
-          dirHandle: params.dirHandle ?? undefined,
-        };
-        const bundleRec: BundleRecord = {
+    try {
+      await runner.runStreaming(
+        {
           sessionId,
-          uploadMetaJson: bundle.uploadMetaJson,
-          deploymentsCsv: bundle.deploymentsCsv,
-          mediaCsv: bundle.mediaCsv,
-          observationsCsv: bundle.observationsCsv,
-          uploadCompleteJson: bundle.uploadCompleteJson,
-          metadataBundleSha256: bundle.metadataBundleSha256,
-        };
-        await saveSession(
-          batch,
-          bundleRec,
-          plan.items.map((it) => fileRecordFor(sessionId, it, 'pending')),
-        );
-      }
-
-      try {
-        await runner.runOnce(plan);
-        if (runner.snap.phase !== 'partial') {
-          runner.snap.phase = 'done';
-          if (persist) await markBatchComplete(sessionId, new Date().toISOString());
-          runner.log('info', dryRun ? 'dry-run complete — nothing written' : `published ${bundle.uploadPath}/`);
-          runner.emit(true);
-        }
-        return;
-      } catch (err) {
-        if (runner.isCancelled()) {
-          runner.snap.phase = 'error';
-          runner.snap.error = 'cancelled';
-          runner.log('warn', 'cancelled');
-          return;
-        }
-        if (err instanceof PreconditionFailedError && stamp < METADATA_RETRY) {
-          runner.log('warn', `prefix ${bundle.uploadPath} taken — re-stamping +1s and retrying`);
-          now = new Date(now.getTime() + 1000);
-          continue;
-        }
-        runner.snap.phase = 'error';
-        runner.snap.error = err instanceof Error ? err.message : String(err);
-        runner.log('error', runner.snap.error);
+          bucket: build.bucket,
+          uploadPath: naming.uploadPath,
+          totalBytes: build.files.reduce((n, f) => n + f.size, 0),
+          initialFiles,
+        },
+        queue,
+        async () => {
+          const files = finalFiles ?? build.files;
+          const bundle = await buildBundle({ ...build, files, now, naming });
+          if (persist) {
+            const bundleRec: BundleRecord = {
+              sessionId,
+              uploadMetaJson: bundle.uploadMetaJson,
+              deploymentsCsv: bundle.deploymentsCsv,
+              mediaCsv: bundle.mediaCsv,
+              observationsCsv: bundle.observationsCsv,
+              uploadCompleteJson: bundle.uploadCompleteJson,
+              metadataBundleSha256: bundle.metadataBundleSha256,
+            };
+            await attachBundle(bundleRec);
+          }
+          return { writes: metadataWrites(bundle), metadataBundleSha256: bundle.metadataBundleSha256 };
+        },
+      );
+      if (runner.snap.phase !== 'partial') {
+        runner.snap.phase = 'done';
+        if (persist) await markBatchComplete(sessionId, new Date().toISOString());
+        runner.log('info', dryRun ? 'dry-run complete — nothing written' : `published ${naming.uploadPath}/`);
         runner.emit(true);
+      }
+    } catch (err) {
+      if (runner.isCancelled()) {
+        runner.snap.phase = 'error';
+        runner.snap.error = 'cancelled';
+        runner.log('warn', 'cancelled');
         return;
       }
+      runner.snap.phase = 'error';
+      runner.snap.error = err instanceof Error ? err.message : String(err);
+      runner.log('error', runner.snap.error);
+      runner.emit(true);
     }
   })();
 
-  return { cancel: runner.cancel, done };
+  return {
+    cancel: runner.cancel,
+    done,
+    notifyReady: (files) => {
+      for (const f of files) enqueue(f);
+    },
+    close: (files) => {
+      finalFiles = files;
+      queue.close();
+    },
+  };
 }
 
 /**
  * Resume a persisted session against reattached source files. The prefix and
  * keys are reused verbatim, so completed blobs skip (after a sanity check) and
  * only the interrupted/pending files re-upload. Always a wet run.
+ *
+ * A streamed run that's interrupted before every file finished Inspect has no
+ * bundle yet — `session.bundle` is null. There's nothing byte-identical to
+ * republish in that case (the CSVs were never built), and re-driving Inspect
+ * standalone outside the live wizard session is out of scope here — this
+ * surfaces a clear, actionable error instead of attempting it. No data is
+ * lost: blobs already uploaded stay on S3 under their (deterministic, keyed
+ * by content) object names, and starting a fresh upload with the same folder
+ * will detect and skip them automatically via the normal verify-before-upload
+ * check.
  */
 export function resumeUpload(
   params: ResumeParams,
@@ -606,23 +838,40 @@ export function resumeUpload(
   });
   runner.snap.sessionId = batch.id;
 
+  if (!bundle) {
+    const done = (async () => {
+      runner.snap.phase = 'error';
+      runner.snap.error =
+        'This upload was interrupted before every file finished being inspected, so there is no publish-ready bundle to resume. Start a fresh upload with the same folder — files already uploaded will be detected and skipped automatically.';
+      runner.log('error', runner.snap.error);
+      runner.emit(true);
+    })();
+    return { cancel: runner.cancel, done };
+  }
+
+  // A bundle exists, so per the streamed-open invariant every record here has
+  // already finished Inspect (never 'awaiting-processing') — filter defensively
+  // rather than trust that blindly, since a corrupted/foreign row shouldn't
+  // crash a resume.
+  const processedFiles = files.filter((r) => r.state !== 'awaiting-processing' && r.sha256 !== undefined);
+
   const plan: RunPlan = {
     sessionId: batch.id,
     bucket: batch.targetBucket,
     uploadPath: batch.uploadPrefix,
-    totalBytes: files.reduce((n, f) => n + f.size, 0),
+    totalBytes: processedFiles.reduce((n, f) => n + f.size, 0),
     metadataBundleSha256: bundle.metadataBundleSha256,
-    items: files.map((r) => ({
+    items: processedFiles.map((r) => ({
       id: r.localPath,
       localPath: r.localPath,
       fileName: r.fileName,
-      objectName: r.sanitizedObjectName,
-      key: r.remoteKey,
+      objectName: r.sanitizedObjectName!,
+      key: r.remoteKey!,
       size: r.size,
-      sha256: r.sha256,
+      sha256: r.sha256!,
       captureTimestamp: r.captureTimestamp,
-      mediaKind: r.mediaKind,
-      mimeType: r.mimeType,
+      mediaKind: r.mediaKind!,
+      mimeType: r.mimeType!,
       file: attached.get(r.localPath) ?? null,
       doneAlready: r.state === 'done',
     })),

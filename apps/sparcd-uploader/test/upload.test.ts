@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreconditionFailedError } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
-import type { BundlePreview } from '../src/lib/bundle';
 import type { BatchRecord, BundleRecord, FileRecord, LoadedSession } from '../src/lib/db';
-import { resumeUpload, runUpload, type UploadSnapshot } from '../src/lib/upload';
+import type { FileEntry } from '../src/store';
+import { resumeUpload, runStreamingUpload, type UploadSnapshot } from '../src/lib/upload';
 
 type FakeClient = {
   statObject: ReturnType<typeof vi.fn>;
@@ -13,10 +13,10 @@ type FakeClient = {
 
 const mocks = vi.hoisted(() => ({
   client: null as FakeClient | null,
-  saveSession: vi.fn(),
+  openSession: vi.fn(),
+  attachBundle: vi.fn(),
   markFileState: vi.fn(),
   markBatchComplete: vi.fn(),
-  buildBundle: vi.fn(),
 }));
 
 vi.mock('../src/lib/s3', () => ({
@@ -25,16 +25,22 @@ vi.mock('../src/lib/s3', () => ({
 
 vi.mock('../src/lib/db', () => ({
   fileRecordId: (sessionId: string, localPath: string) => `${sessionId}::${localPath}`,
-  saveSession: mocks.saveSession,
+  openSession: mocks.openSession,
+  attachBundle: mocks.attachBundle,
   markFileState: mocks.markFileState,
   markBatchComplete: mocks.markBatchComplete,
 }));
 
-vi.mock('../src/lib/bundle', () => ({
-  buildBundle: mocks.buildBundle,
-}));
-
 const CONFIG = {} as S3Config;
+
+const LOCATION = {
+  key: 'deployment',
+  id: 'deployment',
+  name: 'Deployment',
+  latitude: 1,
+  longitude: 2,
+  elevation: 3,
+};
 
 const badRequest = () =>
   Object.assign(new Error('bad request'), {
@@ -90,6 +96,7 @@ function makeBatch(sessionId: string, totalFiles: number): BatchRecord {
     targetBucket: 'bucket',
     uploadPrefix: 'Collections/c/Uploads/u',
     deploymentId: 'deployment',
+    location: LOCATION,
     uploaderUser: 'user',
     uploaderSlug: 'user',
     collectionUuid: 'collection',
@@ -115,6 +122,22 @@ function attachedFor(records: FileRecord[]): Map<string, File> {
   return new Map(records.map((r) => [r.localPath, makeFile(r.localPath, r.size)]));
 }
 
+function makeFileEntry(i: number, size = 12): FileEntry {
+  const relPath = `file-${i}.jpg`;
+  return {
+    id: relPath,
+    file: makeFile(relPath, size),
+    relPath,
+    fileName: relPath,
+    size,
+    mediaKind: 'image',
+    processState: 'ready',
+    sha256: `sha-${i}`,
+    exifNaive: { year: 2026, month: 7, day: 1, hour: 12, minute: 0, second: 0 },
+    mimeType: 'image/jpeg',
+  };
+}
+
 function makeClient(records: FileRecord[], failingKeys = new Set<string>()): FakeClient {
   const byKey = new Map(records.map((r) => [r.remoteKey, r]));
   return {
@@ -125,6 +148,27 @@ function makeClient(records: FileRecord[], failingKeys = new Set<string>()): Fak
     }),
     writeImmutableStream: vi.fn(async (_bucket: string, key: string) => {
       if (failingKeys.has(key)) throw badRequest();
+      return { etag: `etag-${key}` };
+    }),
+    writeImmutable: vi.fn(async () => undefined),
+  };
+}
+
+// Unlike makeClient, doesn't need to know exact keys upfront — a streamed
+// run's keys depend on a real timestamp stamp, not a fixture. Matches a
+// failing file by whether the key ends with its relPath, and derives the
+// post-write stat from what was actually written (opts.sha256, file.size).
+function makeStreamingClient(failingRelPaths = new Set<string>()): FakeClient {
+  const written = new Map<string, { size: number; sha256: string }>();
+  return {
+    statObject: vi.fn(async (_bucket: string, key: string) => {
+      const w = written.get(key);
+      if (!w) throw Object.assign(new Error('missing'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+      return { size: w.size, metadata: { sha256: w.sha256 } };
+    }),
+    writeImmutableStream: vi.fn(async (_bucket: string, key: string, file: File, opts: { sha256: string }) => {
+      if ([...failingRelPaths].some((p) => key.endsWith(p))) throw badRequest();
+      written.set(key, { size: file.size, sha256: opts.sha256 });
       return { etag: `etag-${key}` };
     }),
     writeImmutable: vi.fn(async () => undefined),
@@ -146,7 +190,7 @@ beforeEach(() => {
 describe('upload runs continue past per-file blob failures', () => {
   it('leaves a partial run open and skips metadata when some files fail', async () => {
     const session = makeSession(Array.from({ length: 6 }, () => 'pending'));
-    const failing = new Set([session.files[1].remoteKey, session.files[4].remoteKey]);
+    const failing = new Set([session.files[1].remoteKey!, session.files[4].remoteKey!]);
     mocks.client = makeClient(session.files, failing);
     let last: UploadSnapshot | null = null;
 
@@ -167,7 +211,7 @@ describe('upload runs continue past per-file blob failures', () => {
 
   it('treats the per-file failure threshold as systemic', async () => {
     const session = makeSession(Array.from({ length: 15 }, () => 'pending'));
-    mocks.client = makeClient(session.files, new Set(session.files.map((f) => f.remoteKey)));
+    mocks.client = makeClient(session.files, new Set(session.files.map((f) => f.remoteKey!)));
     let last: UploadSnapshot | null = null;
 
     const run = resumeUpload(
@@ -247,40 +291,18 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.client.writeImmutable).toHaveBeenCalledTimes(5);
   });
 
-  it('fresh runUpload can finish partial without closing the session', async () => {
-    const sessionId = 'unused';
-    const records = [0, 1, 2].map((i) => makeRecord(sessionId, i, 'pending'));
-    const bundle: BundlePreview = {
-      uploadPath: 'Collections/c/Uploads/u',
-      bucket: 'bucket',
-      deploymentId: 'deployment',
-      fileCount: 3,
-      totalBytes: 36,
-      metadataBundleSha256: 'bundle-sha',
-      deploymentsCsv: 'deployments',
-      mediaCsv: 'media',
-      observationsCsv: 'observations',
-      uploadMetaJson: '{"meta":true}',
-      uploadCompleteJson: '{"complete":true}',
-      items: records.map((r) => ({
-        id: r.localPath,
-        localPath: r.localPath,
-        fileName: r.fileName,
-        objectName: r.sanitizedObjectName,
-        key: r.remoteKey,
-        file: makeFile(r.localPath, r.size),
-        size: r.size,
-        sha256: r.sha256,
-        captureTimestamp: r.captureTimestamp,
-        mediaKind: r.mediaKind,
-        mimeType: r.mimeType,
-      })),
-    };
-    mocks.buildBundle.mockResolvedValue(bundle);
-    mocks.client = makeClient(records, new Set([records[1].remoteKey]));
+});
+
+describe('streamed runs upload as files individually become ready', () => {
+  it('publishes once a file that arrives after start() via notifyReady finishes too', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
     let last: UploadSnapshot | null = null;
 
-    const run = runUpload(
+    // Only the first file is known/ready at start() — the second arrives
+    // later, exactly like a file that's still mid-Inspect when Upload starts.
+    const run = runStreamingUpload(
       {
         config: CONFIG,
         dryRun: false,
@@ -288,31 +310,121 @@ describe('upload runs continue past per-file blob failures', () => {
         uploaderUser: 'user',
         fileAccessMode: 'reselect-required',
         build: {
-          location: {
-            key: 'deployment',
-            id: 'deployment',
-            name: 'Deployment',
-            latitude: 1,
-            longitude: 2,
-            elevation: 3,
-          },
+          location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
-          files: [],
+          files: [entries[0], { ...entries[1], processState: 'processing', sha256: undefined }],
         },
       },
       (snap) => {
         last = snap;
       },
     );
+
+    run.notifyReady([entries[1]]);
+    run.close([entries[0], entries[1]]);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a bundle for later retry even on partial failure, once every file is known', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1), makeFileEntry(2)];
+    const client = makeStreamingClient(new Set([entries[1].relPath]));
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
     const snap = await collect(run, () => last);
 
     expect(snap.phase).toBe('partial');
-    expect(snap.sessionId).toMatch(/\S/);
-    expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+    expect(snap.files.filter((f) => f.state === 'failed')).toHaveLength(1);
+    expect(snap.files.filter((f) => f.state === 'done')).toHaveLength(2);
+    // The bundle is built (and persisted) once the full batch is known, even
+    // though this run failed — so a retry has a real ledger to resume from.
+    expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
+    expect(client.writeImmutable).not.toHaveBeenCalled();
     expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('publishes after the queue genuinely empties and every lane is parked waiting', async () => {
+    // Regression test: with concurrency > the number of items enqueued so
+    // far, every lane blocks on the same underlying queue at once. A queue
+    // that only remembers a single waiter silently orphans every lane but
+    // the last, and the run hangs forever instead of ever publishing — this
+    // only surfaces when there's a real gap between "queue empties" and
+    // "more work arrives", which a synchronous enqueue-then-close never
+    // exercises. Real setTimeout delays force that gap here.
+    const entries = [makeFileEntry(0), makeFileEntry(1), makeFileEntry(2)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 4, // more lanes than the single file enqueued at start()
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: [
+            entries[0],
+            { ...entries[1], processState: 'processing', sha256: undefined },
+            { ...entries[2], processState: 'processing', sha256: undefined },
+          ],
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+
+    // Let the first file finish and drain — every lane should now be parked.
+    await new Promise((r) => setTimeout(r, 20));
+    run.notifyReady([entries[1]]);
+    await new Promise((r) => setTimeout(r, 20));
+    run.notifyReady([entries[2]]);
+    await new Promise((r) => setTimeout(r, 20));
+    run.close(entries);
+
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(3);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
   });
 });

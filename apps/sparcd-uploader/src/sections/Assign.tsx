@@ -9,7 +9,7 @@ import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
 import { timeZoneForCoords } from '../lib/coords';
-import { captureTimeComplete, processingComplete } from '../lib/validation';
+import { captureTimeComplete } from '../lib/validation';
 
 // How long to wait after the last keystroke before pushing a fresh value into
 // an already-open preview — keeps it feeling live without rebuilding the whole
@@ -96,34 +96,15 @@ export function Assign() {
     (f) => f.processState === 'ready' && !f.exifNaive,
   );
   const captureComplete = captureTimeComplete(files);
-  // Everything EXCEPT background processing being done — this is what actually
-  // disables the button. Processing-incomplete is handled on click instead (see
-  // handleContinue), so the button stays pressable and can explain why it
-  // hasn't moved on yet, rather than just sitting inertly disabled.
+  // Gate is everything the USER needs to supply — deployment, collection,
+  // identity, and a capture time for whatever's finished Inspect so far.
+  // Background processing finishing is no longer part of this gate: Upload
+  // streams blobs as files individually become ready and only publishes once
+  // processing genuinely completes, so there's nothing to wait for here.
   const baseReady = !!selectedLocationKey && !!slug && !!collection && captureComplete;
-  const processingOk = processingComplete(files);
-  const pendingCount = files.filter(
-    (f) => f.processState === 'queued' || f.processState === 'processing',
-  ).length;
-
-  // Pressing Continue while processing is still running doesn't just show a
-  // message and stop — like the Drop step auto-advancing once scanning
-  // finishes, it queues the move and fires it the moment processing catches
-  // up, so the user never has to click twice.
-  const [waitingToContinue, setWaitingToContinue] = useState(false);
-  useEffect(() => {
-    if (waitingToContinue && baseReady && processingOk) {
-      setWaitingToContinue(false);
-      setStep('upload');
-    }
-  }, [waitingToContinue, baseReady, processingOk, setStep]);
 
   function handleContinue() {
     if (!baseReady) return;
-    if (!processingOk) {
-      setWaitingToContinue(true);
-      return;
-    }
     setStep('upload');
   }
 
@@ -341,13 +322,6 @@ export function Assign() {
         )}
       </section>
 
-      {waitingToContinue && (
-        <p className="font-body text-[15px] text-inkSoft">
-          Still processing {pendingCount} file{pendingCount === 1 ? '' : 's'} in the background —
-          continuing automatically once that finishes.
-        </p>
-      )}
-
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">
         <button
           onClick={() => setStep('inspect')}
@@ -367,9 +341,7 @@ export function Assign() {
                   : !slug
                     ? 'Set an uploader identity first'
                     : 'Set a capture time for every file missing one'
-              : processingOk
-                ? 'Continue to upload'
-                : 'Continue once processing finishes (or wait — it happens automatically)'
+              : 'Continue to upload'
           }
           className={`bg-ink text-paper border border-ink px-3.5 py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
             baseReady ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
