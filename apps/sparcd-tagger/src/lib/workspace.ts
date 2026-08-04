@@ -60,7 +60,7 @@ export function buildTagImages(bundle: CanonicalBundle): TagImage[] {
       baseObservations: (obsByMedia.get(m.mediaId) ?? []).map((o) => ({
         scientificName: o.scientificName,
         commonName: commonNameFromComments(o.tags) ?? '',
-        count: o.count,
+        count: o.count ?? 0, // parseObservations always yields a real number; 0 is the type-safe fallback
         requestedSpecies: requestedSpeciesFromComments(o.tags) ?? '',
         // Base free-tags aren't surfaced today; keep '' to match prior behaviour.
         freeTags: '',
