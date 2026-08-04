@@ -20,7 +20,7 @@ import {
   type UploadCompleteJson,
 } from '@sparcd/camtrap';
 import { locationToDeployment, type Location } from './locations';
-import { sanitizeRelPath, resolveCollisions } from './normalize';
+import { sanitizeRelPath, nameCounts, resolveOneName } from './normalize';
 import { naiveInZoneToUtcIso } from './exifTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
@@ -115,12 +115,12 @@ export function objectKeyFor(
 const mimeFor = (f: FileEntry): string =>
   f.mimeType ?? (f.mediaKind === 'video' ? 'video/mp4' : 'image/jpeg');
 
-// Resolve a naive capture time to the DST-correct UTC naive wall-clock, the
-// exact media.csv col-4 byte shape. EXIF (or video container) metadata wins;
-// a manual Assign entry fills the gap for a file that has none.
+// Resolve a naive capture time to the DST-correct full ISO 8601 UTC
+// timestamp, the media.csv col-4 shape. EXIF (or video container) metadata
+// wins; a manual Assign entry fills the gap for a file that has none.
 const captureFor = (f: FileEntry, timeZone: string): string => {
   const src = f.exifNaive ?? f.manualNaive;
-  return src ? naiveInZoneToUtcNaive(src, timeZone) : '';
+  return src ? naiveInZoneToUtcIso(src, timeZone) : '';
 };
 
 /**
@@ -182,52 +182,32 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
 
   const deployment = locationToDeployment(location, collectionUuid);
 
-  // Resolve each file's capture time in the chosen zone: naive components →
-  // DST-correct full ISO 8601 UTC timestamp, the media.csv col-4 shape. EXIF
-  // (or video container) metadata wins; a manual Assign entry fills the gap for a
-  // file that has none, so a real camera time is never clobbered. Publish is
-  // gated on every file having one, so col 4 is never empty for a published batch.
-  const mimeFor = (f: FileEntry): string =>
-    f.mimeType ?? (f.mediaKind === 'video' ? 'video/mp4' : 'image/jpeg');
-  const captureFor = (f: FileEntry): string => {
-    const src = f.exifNaive ?? f.manualNaive;
-    return src ? naiveInZoneToUtcIso(src, timeZone) : '';
-  };
+  // Resolve each file's key/capture-time/mime-type once (per-file work isn't
+  // free), then project into media rows, observation rows, and upload items.
+  // Publish is gated on every ready file having a capture time, so col 4 is
+  // never empty for a published batch.
+  const uploadItems: UploadItem[] = ready.map((f) => planItemFor(f, naming, timeZone));
 
   const media: Media[] = uploadItems.map((it) => ({
     mediaId: it.key,
     deploymentId: deployment.deploymentId,
-    mediaPath: r.mediaPath,
-    fileName: r.f.fileName,
-    timestamp: r.capture,
-    mimeType: r.mimeType,
+    mediaPath: it.key,
+    fileName: it.fileName,
+    timestamp: it.captureTimestamp ?? '',
+    mimeType: it.mimeType,
   }));
 
   // One placeholder observation row per file, so every uploaded image is
   // present in observations.csv from the start. Species-related columns
   // (scientific_name, count) are left blank — nothing has been identified yet;
   // the tagger fills them in later via `mergeObservations`.
-  const observations: Observation[] = resolved.map((r) => ({
-    observationId: r.f.fileName,
-    mediaId: r.mediaPath,
+  const observations: Observation[] = uploadItems.map((it) => ({
+    observationId: it.fileName,
+    mediaId: it.key,
     deploymentId: deployment.deploymentId,
-    timestamp: r.capture,
+    timestamp: it.captureTimestamp ?? '',
     scientificName: '',
     tags: '',
-  }));
-
-  const uploadItems: UploadItem[] = resolved.map((r) => ({
-    id: r.f.id,
-    localPath: r.f.relPath,
-    fileName: r.f.fileName,
-    objectName: r.objectName,
-    key: r.mediaPath,
-    file: r.f.file,
-    size: r.f.size,
-    sha256: r.f.sha256!,
-    captureTimestamp: r.capture || undefined,
-    mediaKind: r.f.mediaKind,
-    mimeType: r.mimeType,
   }));
 
   const deploymentsCsv = serializeDeployments([deployment]);
