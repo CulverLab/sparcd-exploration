@@ -59,10 +59,15 @@ type UploaderState = {
   uploadTimeZone: string; // IANA zone EXIF naive times are interpreted in; default = browser zone
   dryRun: boolean; // on by default; logs PUTs and writes nothing
   uploadConcurrency: number; // parallel blob lanes, 4–16
+  // True only while the New-Upload wizard's Upload step has a real (non-dry)
+  // run actively in flight — set/cleared by that step alone, not by a
+  // History resume. Drives the navigate-away confirmation in Chrome.
+  uploadRunning: boolean;
 
   connect: (config: S3Config) => void;
   disconnect: () => void;
   setSection: (section: Section) => void;
+  setUploadRunning: (running: boolean) => void;
   toggleTheme: () => void;
   setElevationUnit: (unit: ElevationUnit) => void;
   setStep: (step: WizardStep) => void;
@@ -147,6 +152,7 @@ export const useStore = create<UploaderState>()(
       uploadTimeZone: localTimeZone(),
       dryRun: true,
       uploadConcurrency: 8,
+      uploadRunning: false,
 
       connect: (config) => {
         clearClientCache();
@@ -176,9 +182,11 @@ export const useStore = create<UploaderState>()(
           selectedBucket: null,
           uploaderUser: '',
           uploadTimeZone: localTimeZone(),
+          uploadRunning: false,
         }));
       },
       setSection: (section) => set({ section }),
+      setUploadRunning: (uploadRunning) => set({ uploadRunning }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       setElevationUnit: (elevationUnit) => set({ elevationUnit }),
       setStep: (step) => set({ step }),

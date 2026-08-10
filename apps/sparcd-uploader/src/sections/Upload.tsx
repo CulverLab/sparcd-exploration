@@ -53,9 +53,34 @@ export function Upload() {
   // Guards `close()` firing more than once per run.
   const closedRef = useRef(false);
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
+  // Dry runs write nothing, so leaving mid-run has no real consequence —
+  // only a real run needs the navigate-away guard below.
+  const runningForReal = running && !!snap && !snap.dryRun;
+  const setUploadRunning = useStore((s) => s.setUploadRunning);
 
   // Abandon an in-flight run if the step unmounts.
   useEffect(() => () => runRef.current?.cancel(), []);
+
+  // Mirror into the store so Chrome's nav (outside this component's tree)
+  // can warn before switching to History/Settings and cancelling the run.
+  // Reset on unmount too, so nothing is left reporting "running" once this
+  // step isn't even mounted.
+  useEffect(() => {
+    setUploadRunning(runningForReal);
+    return () => setUploadRunning(false);
+  }, [runningForReal, setUploadRunning]);
+
+  // Warn on an actual tab close/reload too, not just in-app navigation —
+  // browsers ignore any custom message and show their own generic prompt.
+  useEffect(() => {
+    if (!runningForReal) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [runningForReal]);
 
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
   const stillInspecting = files.length - ready.length;
