@@ -18,7 +18,15 @@ import {
   MEDIA_COL,
 } from '@sparcd/camtrap';
 import { fixture } from '../../../packages/camtrap/test/fixtures';
-import { buildBundle, type BuildInput } from '../src/lib/bundle';
+import {
+  buildBundle,
+  resolveBatchNaming,
+  namingForUploadPath,
+  objectKeyFor,
+  buildBundleFromRecords,
+  type BuildInput,
+  type ResolvedFileRecord,
+} from '../src/lib/bundle';
 import type { Location } from '../src/lib/locations';
 import type { FileEntry } from '../src/store';
 
@@ -208,5 +216,70 @@ describe('bundle integrity hash', () => {
     const rows = parseCsvRows(b.mediaCsv);
     const keys = new Set(b.items.map((i) => i.key));
     for (const r of rows) expect(keys.has(r[MEDIA_COL.mediaId])).toBe(true);
+  });
+});
+
+// Resume-before-bundle (a session interrupted before it ever reached publish)
+// reconstructs naming from persisted records instead of live FileEntrys, and
+// reuses the already-persisted upload path instead of stamping a fresh one.
+// Both properties below are load-bearing: get either wrong and a resumed
+// upload's keys diverge from what a from-scratch run of the same batch would
+// have produced.
+describe('resume: naming reconstructed from persisted records', () => {
+  it('produces the same key as the original run, including a name collision', () => {
+    const files = [
+      { id: 'a/IMG.JPG', relPath: 'a/IMG.JPG', fileName: 'IMG.JPG' },
+      { id: 'b/IMG.JPG', relPath: 'b/IMG.JPG', fileName: 'IMG.JPG' }, // same sanitized name — collides
+    ];
+    const original = resolveBatchNaming({
+      collectionUuid: UUID,
+      uploaderSlug: 'jdoe',
+      now: new Date(2024, 0, 15, 10, 0, 0),
+      files,
+    });
+    // The "resume" side only ever sees the fixed, already-persisted upload
+    // path — never a fresh `now`.
+    const reconstructed = namingForUploadPath(original.uploadPath, files);
+
+    for (const f of files) {
+      const seed = `sha-${f.id}`;
+      const originalKey = objectKeyFor(f.id, seed, original);
+      const reconstructedKey = objectKeyFor(f.id, seed, reconstructed);
+      expect(reconstructedKey).toEqual(originalKey);
+    }
+  });
+});
+
+describe('resume: buildBundleFromRecords', () => {
+  const record = (over: Partial<ResolvedFileRecord> = {}): ResolvedFileRecord => ({
+    fileName: 'IMG001.JPG',
+    size: 12,
+    sha256: 'sha-a',
+    remoteKey: `${UUID}-key/IMG001.JPG`,
+    captureTimestamp: '2024-01-10T08:00:00',
+    mimeType: 'image/jpeg',
+    ...over,
+  });
+
+  it('emits a valid, empty-observations bundle from persisted records alone', async () => {
+    const b = await buildBundleFromRecords({
+      location: SAN15,
+      collectionUuid: UUID,
+      bucket: `sparcd-${UUID}`,
+      uploaderSlug: 'jdoe',
+      description: 'Educational Test — resumed upload',
+      uploadPath: `Collections/${UUID}/Uploads/2024.01.15.10.00.00_jdoe`,
+      startedAt: new Date(2024, 0, 15, 10, 0, 0),
+      files: [record()],
+    });
+    expect(b.observationsCsv).toBe('');
+    expect(parseObservations(b.observationsCsv)).toEqual([]);
+    const media = parseMedia(b.mediaCsv);
+    expect(media).toHaveLength(1);
+    expect(media[0].fileName).toBe('IMG001.JPG');
+    expect(media[0].mediaId).toBe(record().remoteKey);
+    expect(b.metadataBundleSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(validateColumnCount(parseCsvRows(b.deploymentsCsv), DEPLOY_COLUMN_COUNT)).toBeNull();
+    expect(validateColumnCount(parseCsvRows(b.mediaCsv), MEDIA_COLUMN_COUNT)).toBeNull();
   });
 });

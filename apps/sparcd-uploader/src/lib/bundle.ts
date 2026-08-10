@@ -90,8 +90,21 @@ export function resolveBatchNaming(input: {
 }): BatchNaming {
   const stamp = uploadStamp(input.now);
   const uploadPath = `Collections/${input.collectionUuid}/Uploads/${stamp}_${input.uploaderSlug}`;
+  return namingForUploadPath(uploadPath, input.files);
+}
+
+/** The same sanitize/collision-count pass `resolveBatchNaming` does, against
+ * an already-known `uploadPath` instead of stamping a fresh one — for resume,
+ * where the prefix is fixed (persisted at the original run's start) and must
+ * be reused verbatim, not regenerated. Pure function of relPath/fileName, so
+ * recomputing it from the full persisted file list is always identical to
+ * what the original run computed, regardless of processing order. */
+export function namingForUploadPath(
+  uploadPath: string,
+  files: { id: string; relPath: string; fileName: string }[],
+): BatchNaming {
   const nameFor = new Map<string, string>();
-  for (const f of input.files) {
+  for (const f of files) {
     const safe = sanitizeRelPath(f.relPath);
     nameFor.set(f.id, safe.ok ? safe.name : f.fileName);
   }
@@ -248,5 +261,104 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
     uploadMetaJson,
     uploadCompleteJson: serializeUploadComplete(complete),
     items: uploadItems,
+  };
+}
+
+/** A fully-resolved persisted file record — every field `buildBundleFromRecords`
+ * needs. Deliberately narrower than `FileRecord` (not importing `./db` here
+ * to avoid coupling this module to the resume store's schema); the caller
+ * (resume.ts) is responsible for only passing records that have every field. */
+export type ResolvedFileRecord = {
+  fileName: string;
+  size: number;
+  sha256: string;
+  remoteKey: string;
+  captureTimestamp?: string;
+  mimeType?: string;
+};
+
+export type ResumeBundle = {
+  metadataBundleSha256: string;
+  deploymentsCsv: string;
+  mediaCsv: string;
+  observationsCsv: string;
+  uploadMetaJson: string;
+  uploadCompleteJson: string;
+};
+
+/**
+ * Build the same five bundle payloads as `buildBundle`, but from already-
+ * resolved persisted records instead of live `FileEntry`s — for resuming a
+ * session that was interrupted before it ever reached publish (no bundle was
+ * ever built). The upload path is the one already persisted at the original
+ * run's start (`BatchRecord.uploadPrefix`), reused verbatim rather than
+ * re-stamped, so this publishes to the same destination the original run was
+ * headed for instead of a new one.
+ */
+export async function buildBundleFromRecords(input: {
+  location: Location;
+  collectionUuid: string;
+  bucket: string;
+  uploaderSlug: string;
+  description: string;
+  uploadPath: string;
+  startedAt: Date;
+  files: ResolvedFileRecord[];
+}): Promise<ResumeBundle> {
+  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt, files } = input;
+  const deployment = locationToDeployment(location, collectionUuid);
+
+  const media: Media[] = files.map((f) => ({
+    mediaId: f.remoteKey,
+    deploymentId: deployment.deploymentId,
+    mediaPath: f.remoteKey,
+    fileName: f.fileName,
+    timestamp: f.captureTimestamp ?? '',
+    mimeType: f.mimeType ?? 'application/octet-stream',
+  }));
+
+  const deploymentsCsv = serializeDeployments([deployment]);
+  const mediaCsv = serializeMedia(media);
+  const observationsCsv = serializeObservations([]); // always empty on initial upload
+
+  const uploadMetaJson = serializeUploadMeta(
+    buildUploadMeta({
+      uploadUser: uploaderSlug,
+      date: startedAt,
+      imageCount: files.length,
+      imagesWithSpecies: 0,
+      bucket,
+      uploadPath,
+      description,
+    }),
+  );
+
+  const metadataBundleSha256 = await sha256Hex([
+    enc.encode(uploadMetaJson),
+    enc.encode(deploymentsCsv),
+    enc.encode(mediaCsv),
+    enc.encode(observationsCsv),
+  ]);
+
+  const complete: UploadCompleteJson = {
+    schemaVersion: 1,
+    uploadPath,
+    fileCount: files.length,
+    metadataBundleSha256,
+    files: media.map((m, i) => ({
+      media_path: m.mediaPath,
+      size: files[i].size,
+      sha256: files[i].sha256,
+    })),
+    completedAt: startedAt.toISOString(),
+  };
+
+  return {
+    metadataBundleSha256,
+    deploymentsCsv,
+    mediaCsv,
+    observationsCsv,
+    uploadMetaJson,
+    uploadCompleteJson: serializeUploadComplete(complete),
   };
 }
