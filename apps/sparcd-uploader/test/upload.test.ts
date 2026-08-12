@@ -272,6 +272,41 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(2);
   });
 
+  it('waits for reconnect instead of spending a retry attempt while offline', async () => {
+    // Node's test environment has no `window`; stub a minimal one so the
+    // offline-wait branch (guarded on `typeof window !== 'undefined'`) is
+    // actually reachable here, matching a real browser.
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('navigator', { onLine: false });
+    try {
+      const session = makeSession(Array.from({ length: 1 }, () => 'pending'));
+      mocks.client = makeClient(session.files);
+      let last: UploadSnapshot | null = null;
+
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: 1 },
+        (snap) => {
+          last = snap;
+        },
+      );
+
+      // Give the lane a moment to reach the offline-wait branch — it should
+      // sit there rather than attempting (or failing) anything.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mocks.client.writeImmutableStream).not.toHaveBeenCalled();
+
+      vi.stubGlobal('navigator', { onLine: true });
+      fakeWindow.dispatchEvent(new Event('online'));
+
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('done');
+      expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('publishes metadata after a clean sweep', async () => {
     const session = makeSession(Array.from({ length: 2 }, () => 'pending'));
     mocks.client = makeClient(session.files);
