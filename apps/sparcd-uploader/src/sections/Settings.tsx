@@ -14,6 +14,8 @@ export function Settings() {
   const setConcurrencyMode = useStore((s) => s.setConcurrencyMode);
   const concurrency = useStore((s) => s.uploadConcurrency);
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
+  const shardEndpoints = useStore((s) => s.shardEndpoints);
+  const setShardEndpoints = useStore((s) => s.setShardEndpoints);
   const slug = sanitizeUploaderUser(uploaderUser);
 
   // Logout clears all local data so the next user gets a clean app. Guard it:
@@ -119,6 +121,20 @@ export function Settings() {
               stays live during a run.
             </span>
           </div>
+          <label className="block">
+            <span className="block font-body text-[13px] text-inkSoft mb-1.5">Endpoint shards</span>
+            <textarea
+              value={shardEndpoints}
+              onChange={(e) => setShardEndpoints(e.target.value)}
+              rows={2}
+              placeholder="https://proxy:8443, https://proxy:8444"
+              className="w-full border border-rule bg-paper px-3 py-2 font-mono text-[13px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+            />
+            <span className="block font-body text-[12px] text-inkMute mt-1.5">
+              Lanes stripe uploads across these additional endpoints — same storage, one browser
+              connection each. Leave empty to use only the main endpoint.
+            </span>
+          </label>
         </div>
       </section>
 

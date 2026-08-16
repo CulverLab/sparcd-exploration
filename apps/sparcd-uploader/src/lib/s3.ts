@@ -37,8 +37,13 @@ const WRITE_SCOPE =
 // reconnect, and it does not put raw secrets into cache keys.
 let cached: { config: S3Config; client: SafeS3Client } | null = null;
 
+// Same posture for the shard clients: keyed by endpoint within one connection
+// object, so SDK clients are reused across runs but never outlive a reconnect.
+let shardCached: { config: S3Config; byEndpoint: Map<string, SafeS3Client> } | null = null;
+
 export function clearClientCache(): void {
   cached = null;
+  shardCached = null;
 }
 
 export function getClient(cfg: S3Config): SafeS3Client {
@@ -46,6 +51,38 @@ export function getClient(cfg: S3Config): SafeS3Client {
   const client = new SafeS3Client(cfg, RUNTIME_BUCKET_SCOPE, WRITE_SCOPE);
   cached = { config: cfg, client };
   return client;
+}
+
+/**
+ * The clients an upload run stripes its blob lanes across: the primary plus one
+ * per configured shard endpoint.
+ *
+ * A browser coalesces all HTTP/2 and h3 traffic to an origin onto a single
+ * connection, so N parallel lanes share one congestion window and one
+ * throughput ceiling. Origins are keyed by host+port, so pointing lanes at the
+ * same storage through additional ports opens one connection per shard and
+ * multiplies the ceiling.
+ */
+export function getShardClients(cfg: S3Config, shardEndpoints: string): SafeS3Client[] {
+  const endpoints = shardEndpoints
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (endpoints.length === 0) return [getClient(cfg)];
+
+  if (shardCached?.config !== cfg) shardCached = { config: cfg, byEndpoint: new Map() };
+  const byEndpoint = shardCached.byEndpoint;
+  return [
+    getClient(cfg),
+    ...endpoints.map((endpoint) => {
+      let client = byEndpoint.get(endpoint);
+      if (!client) {
+        client = new SafeS3Client({ ...cfg, endpoint }, RUNTIME_BUCKET_SCOPE, WRITE_SCOPE);
+        byEndpoint.set(endpoint, client);
+      }
+      return client;
+    }),
+  ];
 }
 
 /**

@@ -73,6 +73,7 @@ describe('store persistence', () => {
     useStore.getState().setConcurrencyMode('manual');
     useStore.getState().setUploadConcurrency(16);
     useStore.getState().setVerifyAfterPut(false);
+    useStore.getState().setShardEndpoints('https://proxy:8443');
     useStore.getState().setFiles([scanned('a.jpg')]);
     useStore.getState().setActiveRunSessionId('session-1');
 
@@ -90,6 +91,7 @@ describe('store persistence', () => {
       concurrencyMode: 'manual',
       uploadConcurrency: 16,
       verifyAfterPut: false,
+      shardEndpoints: 'https://proxy:8443',
     });
   });
 });

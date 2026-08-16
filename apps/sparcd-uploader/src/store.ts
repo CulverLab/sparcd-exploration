@@ -70,6 +70,9 @@ type UploaderState = {
   concurrencyMode: ConcurrencyMode; // adaptive tunes lanes during the run; manual pins them
   uploadConcurrency: number; // manual lane count, 4–32
   verifyAfterPut: boolean; // HEAD-check each blob after PUT; off saves a round-trip per file
+  // Extra endpoints for the same storage, comma/newline separated. Kept raw and
+  // parsed at point of use so the store stays dumb.
+  shardEndpoints: string;
   pendingResume: PendingResume | null; // prepared in History, consumed by the Upload step
   activeRunSessionId: string | null; // session id of a wet run in flight in the Upload step
 
@@ -97,6 +100,7 @@ type UploaderState = {
   setConcurrencyMode: (value: ConcurrencyMode) => void;
   setUploadConcurrency: (value: number) => void;
   setVerifyAfterPut: (value: boolean) => void;
+  setShardEndpoints: (value: string) => void;
   setPendingResume: (value: PendingResume | null) => void;
   setActiveRunSessionId: (value: string | null) => void;
   nextBatch: () => void;
@@ -169,6 +173,7 @@ export const useStore = create<UploaderState>()(
       concurrencyMode: 'adaptive',
       uploadConcurrency: 8,
       verifyAfterPut: true,
+      shardEndpoints: '',
       pendingResume: null,
       activeRunSessionId: null,
 
@@ -324,6 +329,7 @@ export const useStore = create<UploaderState>()(
       setConcurrencyMode: (value) => set({ concurrencyMode: value }),
       setUploadConcurrency: (value) => set({ uploadConcurrency: value }),
       setVerifyAfterPut: (value) => set({ verifyAfterPut: value }),
+      setShardEndpoints: (value) => set({ shardEndpoints: value }),
       setPendingResume: (value) => set({ pendingResume: value }),
       setActiveRunSessionId: (value) => set({ activeRunSessionId: value }),
 
@@ -357,6 +363,7 @@ export const useStore = create<UploaderState>()(
         concurrencyMode: s.concurrencyMode,
         uploadConcurrency: s.uploadConcurrency,
         verifyAfterPut: s.verifyAfterPut,
+        shardEndpoints: s.shardEndpoints,
       }),
     },
   ),

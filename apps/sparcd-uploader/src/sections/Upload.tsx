@@ -83,6 +83,7 @@ export function Upload() {
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
   const verifyAfterPut = useStore((s) => s.verifyAfterPut);
   const setVerifyAfterPut = useStore((s) => s.setVerifyAfterPut);
+  const shardEndpoints = useStore((s) => s.shardEndpoints);
   const nextBatch = useStore((s) => s.nextBatch);
   const fileAccessMode = useStore((s) => s.fileAccessMode);
   const dirHandle = useStore((s) => s.dirHandle);
@@ -97,6 +98,8 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
+  // One browser connection per endpoint — the main one plus each shard.
+  const shardCount = shardEndpoints.split(/[,\n]/).filter((s) => s.trim()).length;
 
   const [snap, setSnap] = useState<UploadSnapshot | null>(null);
   const [resumeProblems, setResumeProblems] = useState<ReconcileProblem[]>([]);
@@ -148,10 +151,11 @@ export function Upload() {
         attached: pending.attached,
         concurrency: concurrencyControl(),
         verifyAfterPut,
+        shardEndpoints,
       },
       setSnap,
     );
-  }, [pendingResume, s3Config, verifyAfterPut]);
+  }, [pendingResume, s3Config, verifyAfterPut, shardEndpoints]);
 
   // Let History know which session is running so it can't be discarded mid-run.
   useEffect(() => {
@@ -189,6 +193,7 @@ export function Upload() {
         dryRun: effectiveDryRun,
         concurrency: concurrencyControl(),
         verifyAfterPut,
+        shardEndpoints,
         uploaderUser,
         fileAccessMode,
         dirHandle,
@@ -253,7 +258,14 @@ export function Upload() {
       // now-finished streaming run's methods from being called again.
       streamingRef.current = null;
       runRef.current = resumeUpload(
-        { config: s3Config, session, attached, concurrency: concurrencyControl(), verifyAfterPut },
+        {
+          config: s3Config,
+          session,
+          attached,
+          concurrency: concurrencyControl(),
+          verifyAfterPut,
+          shardEndpoints,
+        },
         setSnap,
       );
     } catch (e) {
@@ -387,6 +399,15 @@ export function Upload() {
               <p className="font-body text-[12px] text-inkMute">
                 Changes apply immediately, mid-run. Switch to adaptive tuning in Settings.
               </p>
+            )}
+            {shardCount > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="font-body text-[13px] text-inkSoft w-28">Endpoints</span>
+                <span className="font-mono text-[13px] text-ink">
+                  {shardCount + 1} connections (main + {shardCount} shard
+                  {shardCount === 1 ? '' : 's'})
+                </span>
+              </div>
             )}
           </div>
         )}
