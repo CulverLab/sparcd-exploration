@@ -8,7 +8,7 @@
 // `Collections/<uuid>/Uploads/<stamp>_<slug>/<relpath>` — not a separate
 // UploadBlobs key. See plan "Persistence — S3 sync".
 
-import type { Media } from '@sparcd/camtrap';
+import type { Media, Observation } from '@sparcd/camtrap';
 import {
   serializeDeployments,
   serializeMedia,
@@ -317,9 +317,22 @@ export async function buildBundleFromRecords(input: {
     mimeType: f.mimeType ?? 'application/octet-stream',
   }));
 
+  // One placeholder observation row per file, matching `buildBundle` — a
+  // resumed-before-bundle batch's observations.csv must publish the same
+  // shape as a normal upload's, not an empty table.
+  const observations: Observation[] = files.map((f) => ({
+    observationId: f.fileName,
+    mediaId: f.remoteKey,
+    deploymentId: deployment.deploymentId,
+    timestamp: f.captureTimestamp ?? '',
+    scientificName: '',
+    count: 0,
+    tags: '',
+  }));
+
   const deploymentsCsv = serializeDeployments([deployment]);
   const mediaCsv = serializeMedia(media);
-  const observationsCsv = serializeObservations([]); // always empty on initial upload
+  const observationsCsv = serializeObservations(observations);
 
   const uploadMetaJson = serializeUploadMeta(
     buildUploadMeta({

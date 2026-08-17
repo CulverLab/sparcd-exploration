@@ -15,6 +15,7 @@ import {
   validateColumnCount,
   DEPLOY_COLUMN_COUNT,
   MEDIA_COLUMN_COUNT,
+  OBS_COLUMN_COUNT,
   MEDIA_COL,
 } from '@sparcd/camtrap';
 import { fixture } from '../../../packages/camtrap/test/fixtures';
@@ -261,7 +262,7 @@ describe('resume: buildBundleFromRecords', () => {
     ...over,
   });
 
-  it('emits a valid, empty-observations bundle from persisted records alone', async () => {
+  it('emits a valid bundle from persisted records alone, one observation row per file', async () => {
     const b = await buildBundleFromRecords({
       location: SAN15,
       collectionUuid: UUID,
@@ -272,8 +273,11 @@ describe('resume: buildBundleFromRecords', () => {
       startedAt: new Date(2024, 0, 15, 10, 0, 0),
       files: [record()],
     });
-    expect(b.observationsCsv).toBe('');
-    expect(parseObservations(b.observationsCsv)).toEqual([]);
+    const observations = parseObservations(b.observationsCsv);
+    expect(observations).toHaveLength(1);
+    expect(observations[0].observationId).toBe('IMG001.JPG');
+    expect(observations[0].mediaId).toBe(record().remoteKey);
+    expect(observations[0].scientificName).toBe('');
     const media = parseMedia(b.mediaCsv);
     expect(media).toHaveLength(1);
     expect(media[0].fileName).toBe('IMG001.JPG');
@@ -281,5 +285,6 @@ describe('resume: buildBundleFromRecords', () => {
     expect(b.metadataBundleSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(validateColumnCount(parseCsvRows(b.deploymentsCsv), DEPLOY_COLUMN_COUNT)).toBeNull();
     expect(validateColumnCount(parseCsvRows(b.mediaCsv), MEDIA_COLUMN_COUNT)).toBeNull();
+    expect(validateColumnCount(parseCsvRows(b.observationsCsv), OBS_COLUMN_COUNT)).toBeNull();
   });
 });
