@@ -1,0 +1,58 @@
+name: BDD tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/sparcd-uploader/**"
+      - "apps/sparcd-tagger/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/bdd-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/sparcd-uploader/**"
+      - "apps/sparcd-tagger/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/bdd-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  bdd:
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [sparcd-uploader, sparcd-tagger]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # As-built BDD suite: playwright-bdd runs the .feature files under
+      # apps/<app>/features/ against the real app with S3 traffic mocked
+      # (features/steps/**/s3mock.ts) — no bucket credentials needed.
+      - name: Install Playwright chromium
+        working-directory: apps/${{ matrix.app }}
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run BDD suite
+        working-directory: apps/${{ matrix.app }}
+        run: pnpm test:bdd

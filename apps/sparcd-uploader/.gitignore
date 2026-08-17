@@ -4,3 +4,8 @@ dist
 *.local
 .turbo
 corpus/
+test-results
+playwright-report
+blob-report
+scratch
+.features-gen

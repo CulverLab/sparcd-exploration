@@ -74,12 +74,9 @@ export function Settings() {
               ) : (
                 <span className="italic">a key-safe slug</span>
               )}
-              . Assignment (P2) prefills this per batch.
+              .
             </span>
           </label>
-          <p className="font-body text-[13px] text-inkMute">
-            Upload concurrency and the dry-run default join here in P4.
-          </p>
         </div>
       </section>
 

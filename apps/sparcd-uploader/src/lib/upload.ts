@@ -135,6 +135,17 @@ function isTransient(err: unknown): boolean {
   const status = e.$metadata?.httpStatusCode;
   if (status === undefined) return true; // network/CORS/DNS — worth a retry
   if (status >= 500 || status === 429) return true;
+  // A 403 whose specific reason can't even be read — CORS hides the response
+  // body cross-origin for some error responses, so the SDK falls back to a
+  // generic `UnknownError` with no code to check against CLOCK_SKEW_CODES
+  // above — is indistinguishable from that same load-balanced clock-skew
+  // case, just with the identifying detail stripped in transit. A genuinely
+  // *named* denial (AccessDenied, etc.) is still never retried; only the
+  // unreadable case gets the same chance a recognized one already does.
+  // Confirmed live: 7 of 8 concurrent PUTs to the same bucket failed this way
+  // while the 8th succeeded — a real, consistent permission failure would
+  // fail all of them, not most.
+  if (status === 403 && (!e.name || e.name === 'UnknownError')) return true;
   return false;
 }
 

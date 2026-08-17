@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { detectBackendDefaults, type S3Config } from '@sparcd/types';
 import { BrandSwitcher } from './BrandSwitcher';
+import backgroundImage from './assets/sanimalBackground.jpg';
 
 export type ConnectionProps = {
   /** Shown in the chrome, e.g. "Uploader" → "SPARC'd · Uploader". */
@@ -58,7 +59,10 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
   }
 
   return (
-    <div className="min-h-screen bg-paper flex items-center justify-center p-6">
+    <div
+      className="min-h-screen bg-paper bg-cover bg-center flex items-center justify-center p-6"
+      style={{ backgroundImage: `url(${backgroundImage})` }}
+    >
       <form
         onSubmit={submit}
         className="w-full max-w-[440px] bg-panel border border-rule p-8"

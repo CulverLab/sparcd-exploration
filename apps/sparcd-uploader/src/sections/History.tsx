@@ -202,7 +202,7 @@ export function History() {
         <div className="border border-ruleSoft bg-panel px-6 py-12 text-center">
           <p className="font-display text-[18px] text-ink mb-1">No uploads yet</p>
           <p className="font-body text-[14px] text-inkSoft">
-            Wet uploads are tracked here for resume — date, collection, deployment, file count, and
+            Normal uploads are tracked here for resume — date, collection, deployment, file count, and
             status. Dry runs write nothing, so they are not recorded.
           </p>
         </div>
