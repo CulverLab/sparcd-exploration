@@ -307,6 +307,41 @@ describe('upload runs continue past per-file blob failures', () => {
     }
   });
 
+  it('waits for reconnect before the resume verify pass too, not just the upload retry loop', async () => {
+    // A `doneAlready` file's first network call is `statObject` (verify),
+    // not `writeImmutableStream` — the offline wait has to guard that call
+    // too, or a resume started offline burns a lane failure on it before
+    // ever reaching the retry loop's own check.
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('navigator', { onLine: false });
+    try {
+      const session = makeSession(['done']);
+      mocks.client = makeClient(session.files);
+      let last: UploadSnapshot | null = null;
+
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: 1 },
+        (snap) => {
+          last = snap;
+        },
+      );
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(mocks.client.statObject).not.toHaveBeenCalled();
+
+      vi.stubGlobal('navigator', { onLine: true });
+      fakeWindow.dispatchEvent(new Event('online'));
+
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('done');
+      expect(mocks.client.statObject).toHaveBeenCalledTimes(1);
+      expect(mocks.client.writeImmutableStream).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('publishes metadata after a clean sweep', async () => {
     const session = makeSession(Array.from({ length: 2 }, () => 'pending'));
     mocks.client = makeClient(session.files);

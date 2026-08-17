@@ -164,6 +164,12 @@ const backoff = (attempt: number) => Math.random() * (BASE_BACKOFF_MS * 2 ** att
 // failures — without pausing here instead of spending a retry attempt, that
 // single blip alone can exhaust MAX_FILE_FAILURES and abort the run as
 // "systemic" well before the network has any chance to come back.
+// How often to re-check `navigator.onLine` even without an `online` event —
+// the event isn't guaranteed to fire (VPNs and some adapters can leave it
+// permanently wrong), so this is the escape hatch that keeps a stuck reading
+// from hanging the run forever instead of just delaying it.
+const ONLINE_POLL_MS = 30_000;
+
 function waitForOnline(signal: AbortSignal): Promise<void> {
   // Strictly `false`, not falsy: `navigator.onLine` is `undefined` in plain
   // Node (no `window` either, e.g. the test environment) — treat "unknown"
@@ -172,10 +178,17 @@ function waitForOnline(signal: AbortSignal): Promise<void> {
   if (typeof window === 'undefined' || navigator.onLine !== false) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const cleanup = () => {
-      window.removeEventListener('online', onOnline);
+      window.removeEventListener('online', onDone);
+      window.removeEventListener('focus', onDone);
+      clearInterval(poll);
       signal.removeEventListener('abort', onAbort);
     };
-    const onOnline = () => {
+    // Resolving here doesn't assert the network is actually back — the
+    // caller re-checks `navigator.onLine` itself and calls back in if it's
+    // still reporting offline. This just guarantees that recheck happens
+    // periodically and whenever the tab regains focus, so a stuck or
+    // never-fired `online` event can't wait forever.
+    const onDone = () => {
       cleanup();
       resolve();
     };
@@ -183,7 +196,9 @@ function waitForOnline(signal: AbortSignal): Promise<void> {
       cleanup();
       reject(new Error('cancelled'));
     };
-    window.addEventListener('online', onOnline);
+    window.addEventListener('online', onDone);
+    window.addEventListener('focus', onDone);
+    const poll = setInterval(onDone, ONLINE_POLL_MS);
     signal.addEventListener('abort', onAbort);
   });
 }
@@ -354,6 +369,20 @@ function makeRunner(
   // Upload (or skip) one blob. Returns once the object is present and verified,
   // or throws on a non-recoverable failure.
   const processItem = async (sessionId: string, fp: FileProgress, it: PlanItem): Promise<void> => {
+    // Shared by the pre-verify check below and the upload retry loop — a
+    // whole-connection drop hits `statObject` (verify) exactly as it hits
+    // `writeImmutableStream` (upload), so a resume started offline needs the
+    // same wait-don't-fail treatment before it ever reaches the network,
+    // not just once the retry loop is already running.
+    const ensureOnline = async (): Promise<void> => {
+      while (typeof window !== 'undefined' && navigator.onLine === false) {
+        if (cancelled) throw new Error('cancelled');
+        log('warn', `waiting for network to retry ${it.key}`);
+        await waitForOnline(abort.signal);
+      }
+      if (cancelled) throw new Error('cancelled');
+    };
+
     // A completed blob from a prior run: sanity-check the remote copy before
     // skipping it. Size + recorded SHA-256 metadata is the portable contract.
     const verifyExisting = async (): Promise<boolean> => {
@@ -376,6 +405,7 @@ function makeRunner(
     };
 
     if (it.doneAlready) {
+      await ensureOnline();
       if (await verifyExisting()) return;
     }
 
@@ -389,13 +419,7 @@ function makeRunner(
 
     let attempt = 0;
     for (;;) {
-      if (cancelled) throw new Error('cancelled');
-      if (typeof window !== 'undefined' && navigator.onLine === false) {
-        log('warn', `waiting for network to retry ${it.key}`);
-        await waitForOnline(abort.signal);
-        if (cancelled) throw new Error('cancelled');
-        continue; // waiting for reconnect isn't a spent attempt
-      }
+      await ensureOnline();
       fp.attempt = attempt + 1;
       fp.state = 'uploading';
       snap.uploadedBytes -= fp.loaded; // reset this file's contribution on retry
