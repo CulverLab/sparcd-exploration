@@ -695,6 +695,13 @@ export class App {
     timeout = 60_000,
   ): Promise<void> {
     await expect(this.runPhase()).toHaveText(phase, { timeout });
+    // A real (non-dry-run) run reaching 'done' pops a confirmation dialog
+    // whose backdrop covers the page — dismiss it so later steps can click
+    // through, same as a user would.
+    if (phase === 'done') {
+      const ok = this.page.getByRole('dialog', { name: 'Upload complete' }).getByRole('button', { name: 'OK' });
+      if (await ok.isVisible().catch(() => false)) await ok.click();
+    }
   }
 
   /** The collection picker on the History screen (a plain <select>). */
