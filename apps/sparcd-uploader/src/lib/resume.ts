@@ -204,7 +204,10 @@ export type EnsureBundleResult = { ok: true } | { ok: false; problems: Reconcile
  * A record whose fresh hash failed, or whose only capture-time source was a
  * manual Assign entry (not persisted for a file that never finished Inspect,
  * so unrecoverable here), surfaces as a blocking problem instead of silently
- * publishing incomplete metadata.
+ * publishing incomplete metadata. A record that already finished Inspect gets
+ * the same capture-time check against its already-persisted value — it has
+ * nothing left to resolve, but an empty timestamp is exactly as fatal to a
+ * published batch regardless of which state left it that way.
  */
 export async function ensureBundle(
   batch: BatchRecord,
@@ -222,7 +225,19 @@ export async function ensureBundle(
   const updated: FileRecord[] = [];
 
   for (const rec of session.files) {
-    if (rec.state !== 'awaiting-processing') continue;
+    if (rec.state !== 'awaiting-processing') {
+      // Already finished Inspect in the original run — nothing to resolve,
+      // but its persisted capture time still has to be non-empty, or a
+      // published batch would carry a blank timestamp column for it.
+      if (!rec.captureTimestamp) {
+        problems.push({
+          localPath: rec.localPath,
+          fileName: rec.fileName,
+          reason: 'no capture time — a manual entry made before the interruption cannot be recovered here',
+        });
+      }
+      continue;
+    }
     const r = resolved.get(rec.localPath);
     if (!r || !r.sha256) {
       problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be inspected' });
