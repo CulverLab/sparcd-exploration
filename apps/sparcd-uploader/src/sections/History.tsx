@@ -139,6 +139,8 @@ export function History() {
     ) => {
       const result = await ensureBundle(batch, session, resolved);
       if (!result.ok) {
+        setVerifyingBatchId(null);
+        setVerifyProgress(null);
         setProblems([...probs, ...result.problems]);
         setMessage(
           `${result.problems.length} file${result.problems.length === 1 ? '' : 's'} couldn't be resolved to resume this upload.`,
@@ -147,6 +149,8 @@ export function History() {
       }
       const finalSession = session.bundle ? session : await loadSession(batch.id);
       if (!finalSession) {
+        setVerifyingBatchId(null);
+        setVerifyProgress(null);
         setMessage('Session record is missing.');
         return;
       }
@@ -162,6 +166,7 @@ export function History() {
       setVerifyingBatchId(batch.id);
       setVerifyProgress(null);
       if (!s3Config) {
+        setVerifyingBatchId(null);
         setMessage('Connect to a storage endpoint before resuming.');
         return;
       }
@@ -186,6 +191,8 @@ export function History() {
         );
         const session = await sessionPromise;
         if (!session) {
+          setVerifyingBatchId(null);
+          setVerifyProgress(null);
           setMessage('Session record is missing.');
           return;
         }
@@ -200,9 +207,15 @@ export function History() {
       // Reselect path.
       if (supportsDirectoryHandle) {
         const picked = await reselectFolder();
-        if (!picked) return; // user dismissed
+        if (!picked) {
+          setVerifyingBatchId(null);
+          setVerifyProgress(null);
+          return; // user dismissed
+        }
         const session = await sessionPromise;
         if (!session) {
+          setVerifyingBatchId(null);
+          setVerifyProgress(null);
           setMessage('Session record is missing.');
           return;
         }
@@ -227,9 +240,15 @@ export function History() {
     async (list: FileList | null) => {
       const batch = pendingReselect.current;
       pendingReselect.current = null;
-      if (!batch || !list || list.length === 0) return;
+      if (!batch || !list || list.length === 0) {
+        setVerifyingBatchId(null);
+        setVerifyProgress(null);
+        return;
+      }
       const session = await loadSession(batch.id);
       if (!session) {
+        setVerifyingBatchId(null);
+        setVerifyProgress(null);
         setMessage('Session record is missing.');
         return;
       }
