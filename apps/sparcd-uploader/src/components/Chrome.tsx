@@ -13,21 +13,22 @@ const SECTIONS: { id: Section; label: string }[] = [
 export function Chrome({ uploadState, children }: { uploadState: UploadState; children: ReactNode }) {
   const section = useStore((s) => s.section);
   const setSection = useStore((s) => s.setSection);
-  const uploadRunning = useStore((s) => s.uploadRunning);
+  const activeSnap = useStore((s) => s.activeSnap);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const disconnect = useStore((s) => s.disconnect);
 
-  // History/Settings unmount the New-Upload wizard, which cancels a running
-  // upload — confirm first instead of losing it silently. 'new' is never
-  // guarded: it's where the running upload already lives.
-  const [pendingSection, setPendingSection] = useState<Section | null>(null);
-  const requestSection = (target: Section) => {
-    if (uploadRunning && (target === 'history' || target === 'settings')) {
-      setPendingSection(target);
+  // A real (non-dry) run in progress — disconnect would cancel it, so confirm first.
+  const runningForReal =
+    (activeSnap?.phase === 'blobs' || activeSnap?.phase === 'metadata') && !activeSnap?.dryRun;
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  const handleDisconnect = () => {
+    if (runningForReal) {
+      setConfirmDisconnect(true);
     } else {
-      setSection(target);
+      disconnect();
     }
   };
 
@@ -41,7 +42,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
         <select
           aria-label="Section"
           value={section}
-          onChange={(e) => requestSection(e.target.value as Section)}
+          onChange={(e) => setSection(e.target.value as Section)}
           className="md:hidden min-h-11 bg-panel text-ink text-[14px] font-body border border-rule px-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           {SECTIONS.map((s) => (
@@ -57,7 +58,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
             return (
               <button
                 key={s.id}
-                onClick={() => requestSection(s.id)}
+                onClick={() => setSection(s.id)}
                 aria-current={active ? 'page' : undefined}
                 className={`relative px-4 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2 ${
                   active ? 'text-ink font-[600]' : 'text-inkSoft hover:text-ink'
@@ -72,7 +73,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
           <StatePill state={uploadState} />
-          <ConnectionChip identity={uploaderUser || undefined} onDisconnect={disconnect} />
+          <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 sm:w-8 sm:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
@@ -86,13 +87,13 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
 
       <main className="flex-1 min-h-0">{children}</main>
 
-      {pendingSection && (
+      {confirmDisconnect && (
         <ConfirmNavigateAwayDialog
           onContinue={() => {
-            setSection(pendingSection);
-            setPendingSection(null);
+            disconnect();
+            setConfirmDisconnect(false);
           }}
-          onCancel={() => setPendingSection(null)}
+          onCancel={() => setConfirmDisconnect(false)}
         />
       )}
     </div>
