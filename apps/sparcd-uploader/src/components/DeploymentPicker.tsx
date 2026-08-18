@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Location } from '../lib/locations';
-import {
-  formatLatLng,
-  formatUTM,
-  metersToFeet,
-  type ElevationUnit,
-} from '../lib/coords';
+import { metersToFeet, type ElevationUnit } from '../lib/coords';
 
 type Props = {
   locations: Location[];
@@ -13,10 +8,6 @@ type Props = {
   onChange: (key: string) => void;
   elevationUnit?: ElevationUnit;
 };
-
-function coords(loc: Location): string {
-  return `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
-}
 
 /**
  * Searchable combobox over the camera-location registry. Filters by name or
@@ -86,18 +77,11 @@ export function DeploymentPicker({ locations, value, onChange, elevationUnit = '
     }
   }
 
-  // Coordinates (DD + UTM) and dual-unit elevation, preferred unit emphasized.
+  // Dual-unit elevation, preferred unit emphasized. No coordinates — camera
+  // locations aren't shown here to keep exact positions out of the UI.
   function LocationDetail({ loc }: { loc: Location }) {
     return (
       <dl className="mt-1 space-y-0.5 font-mono text-[11px] text-inkMute">
-        <div className="flex gap-2">
-          <dt className="w-10 shrink-0 text-inkSoft">DD</dt>
-          <dd className="truncate">{formatLatLng(loc.latitude, loc.longitude)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-10 shrink-0 text-inkSoft">UTM</dt>
-          <dd className="truncate">{formatUTM(loc.latitude, loc.longitude)}</dd>
-        </div>
         <div className="flex gap-2">
           <dt className="w-10 shrink-0 text-inkSoft">Elev</dt>
           <dd className="truncate">
@@ -127,9 +111,7 @@ export function DeploymentPicker({ locations, value, onChange, elevationUnit = '
         {selected ? (
           <span className="min-w-0">
             <span className="block truncate font-body text-[14px] text-ink">{selected.name}</span>
-            <span className="block truncate font-mono text-[12px] text-inkMute">
-              {selected.id} · {coords(selected)}
-            </span>
+            <span className="block truncate font-mono text-[12px] text-inkMute">{selected.id}</span>
           </span>
         ) : (
           <span className="font-body text-[14px] text-inkMute">Select a deployment location…</span>
@@ -186,7 +168,7 @@ export function DeploymentPicker({ locations, value, onChange, elevationUnit = '
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-body text-[14px] text-ink">{loc.name}</span>
                     <span className="block truncate font-mono text-[12px] text-inkMute">
-                      {loc.id} · {coords(loc)} · {loc.elevation} m
+                      {loc.id} · {loc.elevation} m
                     </span>
                   </span>
                   <button

@@ -5,6 +5,7 @@
 // rest. Discard drops the local session row only; it never touches remote state.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import {
@@ -83,6 +84,7 @@ export function History() {
   useEffect(() => () => runRef.current?.cancel(), []);
 
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
+  const online = useOnline();
 
   const launch = useCallback(
     async (
@@ -243,7 +245,7 @@ export function History() {
   );
 
   const onReselectInput = useCallback(
-    async (list: FileList | null) => {
+    async (list: File[] | null) => {
       const batch = pendingReselect.current;
       pendingReselect.current = null;
       if (!batch || !list || list.length === 0) return;
@@ -291,7 +293,7 @@ export function History() {
         <div className="border border-ruleSoft bg-panel px-6 py-12 text-center">
           <p className="font-display text-[18px] text-ink mb-1">No uploads yet</p>
           <p className="font-body text-[14px] text-inkSoft">
-            Wet uploads are tracked here for resume — date, collection, deployment, file count, and
+            Normal uploads are tracked here for resume — date, collection, deployment, file count, and
             status. Dry runs write nothing, so they are not recorded.
           </p>
         </div>
@@ -302,6 +304,7 @@ export function History() {
 
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto space-y-5">
+      <OfflineBanner message="You're offline — Resume won't work until your connection is back." />
       <input
         ref={reselectRef}
         type="file"
@@ -311,7 +314,12 @@ export function History() {
         multiple
         hidden
         onChange={(e) => {
-          void onReselectInput(e.target.files);
+          // Snapshot before clearing: FileList is live, and `onReselectInput`
+          // is async — its first `await` (loadSession) yields back here
+          // before it touches the list, so clearing `.value` synchronously
+          // right after would empty the same FileList out from under it,
+          // making every file look missing. Array.from freezes it first.
+          void onReselectInput(e.target.files ? Array.from(e.target.files) : null);
           e.target.value = '';
         }}
       />
@@ -405,6 +413,7 @@ export function History() {
                 {!batch.completedAt && (
                   <button
                     disabled={running || verifyingBatchId !== null}
+                    title={!online ? "You're offline" : undefined}
                     onClick={() => void beginResume(batch)}
                     className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
                       running || verifyingBatchId !== null ? 'opacity-40 cursor-not-allowed' : ''

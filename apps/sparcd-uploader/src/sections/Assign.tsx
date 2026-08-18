@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { useLocations } from '../lib/useLocations';
 import { useCollections, useCollectionDeployments } from '../lib/useCollections';
@@ -48,7 +49,7 @@ export function Assign() {
   const elevationUnit = useStore((s) => s.elevationUnit);
   const files = useStore((s) => s.files);
 
-  const { data, isLoading, isError, error } = useLocations(s3Config, connectionId);
+  const { data, isLoading, isError, error, refetch: refetchLocations } = useLocations(s3Config, connectionId);
   const collections = useCollections(s3Config, connectionId);
   const slug = sanitizeUploaderUser(uploaderUser);
 
@@ -68,6 +69,25 @@ export function Assign() {
   // deployed — but the ones it has already deployed (derived from its uploads'
   // deployments.csv) are listed first, since they're the likely picks.
   const deployments = useCollectionDeployments(s3Config, connectionId, collection);
+
+  // react-query pauses a query's in-flight fetch while offline and resumes it
+  // automatically on reconnect (default `networkMode: 'online'`) — but a
+  // query that already exhausted its retry and settled into an error state
+  // before this step was even reached (e.g. offline from the start, or the
+  // failure happened before this transition was ever observed) needs an
+  // explicit nudge rather than relying on that pause ever having happened.
+  const online = useOnline();
+  const wasOffline = useRef(!online);
+  useEffect(() => {
+    if (online && wasOffline.current) {
+      void refetchLocations();
+      void collections.refetch();
+      if (collection) void deployments.refetch();
+    }
+    wasOffline.current = !online;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online]);
+
   const usedLocationCount = useMemo(
     () => new Set(deployments.data ?? []).size,
     [deployments.data],
@@ -144,6 +164,7 @@ export function Assign() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
+      <OfflineBanner message="You're offline — locations and collections won't load until your connection is back." />
       <section>
         <h2 className={sectionLabel}>Target collection</h2>
         {collections.isLoading && <LocationsState tone="mute" message="Discovering collections…" />}

@@ -321,9 +321,7 @@ export function PublishedUploads() {
       <div className="space-y-1">
         <p className="font-display text-[16px] text-ink">Published uploads</p>
         <p className="font-body text-[12px] text-inkSoft">
-          Correct a description or a misassigned deployment after publish. Every edit is guarded by
-          IfMatch and writes an immutable snapshot first; a stale ETag is a conflict, never an
-          overwrite. Dry run writes nothing.
+          Correct a description or a misassigned deployment after publish.
         </p>
       </div>
 

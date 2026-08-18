@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
+import { useStore, type FileEntry } from '../store';
 import { useLocations } from '../lib/useLocations';
 import { useCollections } from '../lib/useCollections';
 import { sanitizeUploaderUser } from '../lib/normalize';
@@ -15,6 +16,7 @@ import {
 import { onFilesReady } from '../lib/processing';
 import { captureTimeComplete, processingComplete } from '../lib/validation';
 import { Note, RunMonitor } from '../components/RunMonitor';
+import { UploadCompleteDialog } from '../components/UploadCompleteDialog';
 
 const sectionLabel = 'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
 
@@ -44,6 +46,9 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
+  // A dry run never touches the network (nothing is written), so it's still
+  // usable offline — only a real upload/retry needs to be gated.
+  const online = useOnline();
 
   const [snap, setSnap] = useState<UploadSnapshot | null>(null);
   const runRef = useRef<UploadRun | StreamingUploadRun | null>(null);
@@ -53,6 +58,9 @@ export function Upload() {
   // Guards `close()` firing more than once per run.
   const closedRef = useRef(false);
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
+  // Dismisses the "upload complete" popup — reset whenever a new run (fresh
+  // start or resume) begins, so a later run's completion pops it again.
+  const [completeDismissed, setCompleteDismissed] = useState(false);
 
   // Abandon an in-flight run if the step unmounts.
   useEffect(() => () => runRef.current?.cancel(), []);
@@ -60,9 +68,25 @@ export function Upload() {
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
   const stillInspecting = files.length - ready.length;
 
+  // Shared by the reactive effect below and by `start()` itself — a batch
+  // that finishes Inspect before Start is even clicked (easy for a small or
+  // fast batch) would otherwise never trigger this: `streamingRef.current`
+  // is set via a plain ref mutation, which doesn't cause the `[files]`
+  // effect to re-run, and `files` never changes again once nothing's left
+  // to process. Checking again right after the run is created closes that
+  // gap without waiting on a store change that may never come.
+  const maybeCloseQueue = (currentFiles: FileEntry[]) => {
+    if (!streamingRef.current || closedRef.current) return;
+    if (processingComplete(currentFiles) && captureTimeComplete(currentFiles)) {
+      closedRef.current = true;
+      streamingRef.current.close(currentFiles);
+    }
+  };
+
   const start = () => {
     if (!s3Config || !location || !collection || !slug) return;
     closedRef.current = false;
+    setCompleteDismissed(false);
     const run = runStreamingUpload(
       {
         config: s3Config,
@@ -85,6 +109,7 @@ export function Upload() {
     );
     runRef.current = run;
     streamingRef.current = run;
+    maybeCloseQueue(files);
   };
 
   // Feed newly-inspected files into the live streaming run as Inspect finds
@@ -108,11 +133,7 @@ export function Upload() {
   // below already redirects the user back to Assign to fix it, and this
   // effect re-fires (closedRef is per-run, not per-render) once they do.
   useEffect(() => {
-    if (!streamingRef.current || closedRef.current) return;
-    if (processingComplete(files) && captureTimeComplete(files)) {
-      closedRef.current = true;
-      streamingRef.current.close(files);
-    }
+    maybeCloseQueue(files);
   }, [files]);
 
   const retryPending = useRef(false);
@@ -123,6 +144,7 @@ export function Upload() {
     if (!snap || !s3Config || retryPending.current) return;
     retryPending.current = true;
     setRetryError(null);
+    setCompleteDismissed(false);
     try {
       // Partial wet runs persist before uploading, so the ledger should be
       // present — but the load can still fail (cleared site data, IDB error),
@@ -169,6 +191,7 @@ export function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
+      <OfflineBanner message="You're offline — the dry run still works, but a real upload won't until your connection is back." />
       {/* Run configuration */}
       <section className="space-y-3">
         <h2 className={sectionLabel}>Upload</h2>
@@ -266,6 +289,7 @@ export function Upload() {
           ) : snap?.phase === 'partial' && !snap.dryRun ? (
             <button
               onClick={retryFailed}
+              title={!online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
               Retry failed files
@@ -273,6 +297,7 @@ export function Upload() {
           ) : (
             <button
               onClick={start}
+              title={!effectiveDryRun && !online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
               {effectiveDryRun ? 'Start dry run' : 'Start upload'}
@@ -280,6 +305,13 @@ export function Upload() {
           )}
         </div>
       </div>
+
+      {snap?.phase === 'done' && !snap.dryRun && !completeDismissed && (
+        <UploadCompleteDialog
+          count={snap.files.length}
+          onClose={() => setCompleteDismissed(true)}
+        />
+      )}
     </div>
   );
 }

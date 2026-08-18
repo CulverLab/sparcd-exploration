@@ -54,6 +54,15 @@ const forbidden = () =>
     $metadata: { httpStatusCode: 403 },
   });
 
+// A 403 whose specific reason couldn't be read (CORS hides the body cross-
+// origin for some error responses) — the AWS SDK falls back to this generic
+// name when it can't parse a code to check against known clock-skew errors.
+const unknownError403 = () =>
+  Object.assign(new Error('unknown'), {
+    name: 'UnknownError',
+    $metadata: { httpStatusCode: 403 },
+  });
+
 function makeFile(localPath: string, size = 12): File {
   return new File([new Uint8Array(size)], localPath.split('/').pop() ?? localPath, { type: 'image/jpeg' });
 }
@@ -243,6 +252,24 @@ describe('upload runs continue past per-file blob failures', () => {
 
     expect(snap.phase).toBe('error');
     expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('retries a 403 with no readable reason instead of aborting immediately', async () => {
+    const session = makeSession(Array.from({ length: 1 }, () => 'pending'));
+    mocks.client = makeClient(session.files);
+    mocks.client.writeImmutableStream.mockRejectedValueOnce(unknownError403());
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: 1 },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(2);
   });
 
   it('publishes metadata after a clean sweep', async () => {
