@@ -229,6 +229,12 @@ export function History() {
         // No durable picker — fall back to a transient <input webkitdirectory>,
         // fired synchronously here for the same reason. `onReselectInput`
         // loads its own session once files actually arrive.
+        // Release the lock here: Firefox/Safari don't fire onChange on picker
+        // cancel, so there's no reliable signal to clear verifyingBatchId if
+        // we hold it across the click. onReselectInput re-acquires it once
+        // files actually arrive.
+        setVerifyingBatchId(null);
+        setVerifyProgress(null);
         pendingReselect.current = batch;
         reselectRef.current?.click();
       }
@@ -240,11 +246,9 @@ export function History() {
     async (list: FileList | null) => {
       const batch = pendingReselect.current;
       pendingReselect.current = null;
-      if (!batch || !list || list.length === 0) {
-        setVerifyingBatchId(null);
-        setVerifyProgress(null);
-        return;
-      }
+      if (!batch || !list || list.length === 0) return;
+      setVerifyingBatchId(batch.id);
+      setVerifyProgress(null);
       const session = await loadSession(batch.id);
       if (!session) {
         setVerifyingBatchId(null);
