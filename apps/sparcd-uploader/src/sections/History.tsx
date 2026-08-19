@@ -64,6 +64,9 @@ export function History() {
   // run), so track which batch verification is for separately.
   const [verifyingBatchId, setVerifyingBatchId] = useState<string | null>(null);
   const [verifyProgress, setVerifyProgress] = useState<{ done: number; total: number } | null>(null);
+  // True while the fallback <input> picker is open. Separate from verifyingBatchId
+  // so Resume is disabled without showing "Verifying…" on every row.
+  const [pickerOpen, setPickerOpen] = useState(false);
   const runRef = useRef<UploadRun | null>(null);
   const reselectRef = useRef<HTMLInputElement>(null);
   const pendingReselect = useRef<BatchRecord | null>(null);
@@ -82,6 +85,17 @@ export function History() {
 
   // Abandon an in-flight resume if the section unmounts.
   useEffect(() => () => runRef.current?.cancel(), []);
+
+  // Clear pickerOpen when the native picker is cancelled. The `cancel` event on
+  // <input type="file"> is supported in Chrome 113+, Firefox 91+, Safari 17+.
+  // Browsers that don't support it leave pickerOpen true until onChange fires.
+  useEffect(() => {
+    if (!pickerOpen || !reselectRef.current) return;
+    const input = reselectRef.current;
+    const onCancel = () => setPickerOpen(false);
+    input.addEventListener('cancel', onCancel);
+    return () => input.removeEventListener('cancel', onCancel);
+  }, [pickerOpen]);
 
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
   const online = useOnline();
@@ -237,6 +251,7 @@ export function History() {
         // files actually arrive.
         setVerifyingBatchId(null);
         setVerifyProgress(null);
+        setPickerOpen(true);
         pendingReselect.current = batch;
         reselectRef.current?.click();
       }
@@ -246,6 +261,7 @@ export function History() {
 
   const onReselectInput = useCallback(
     async (list: File[] | null) => {
+      setPickerOpen(false);
       const batch = pendingReselect.current;
       pendingReselect.current = null;
       if (!batch || !list || list.length === 0) return;
@@ -412,11 +428,11 @@ export function History() {
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
                 {!batch.completedAt && (
                   <button
-                    disabled={running || verifyingBatchId !== null}
+                    disabled={running || verifyingBatchId !== null || pickerOpen}
                     title={!online ? "You're offline" : undefined}
                     onClick={() => void beginResume(batch)}
                     className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
-                      running || verifyingBatchId !== null ? 'opacity-40 cursor-not-allowed' : ''
+                      running || verifyingBatchId !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
                     }`}
                   >
                     {verifyingBatchId === batch.id ? 'Verifying…' : isActive ? 'Resuming…' : 'Resume'}
