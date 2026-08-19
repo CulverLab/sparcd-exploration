@@ -776,16 +776,33 @@ export function runStreamingUpload(
   const enqueuedIds = new Set<string>();
   let finalFiles: FileEntry[] | null = null;
 
-  const enqueue = (f: FileEntry): void => {
-    if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return;
+  // Returns whether this call flipped a display row from 'inspecting' to
+  // 'pending' — callers that enqueue a whole batch at once use that to emit
+  // a single update instead of one per file.
+  const enqueue = (f: FileEntry, opts: { silent?: boolean } = {}): boolean => {
+    if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return false;
     enqueuedIds.add(f.id);
     const item = planItemFor(f, naming, build.timeZone);
     queue.push({ ...item, doneAlready: false });
+    // Flip the display row the moment a file is actually queued, not when a
+    // lane eventually dequeues it — the queue is FIFO and only `concurrency`
+    // lanes drain it, so a file queued behind a large head-of-line batch
+    // would otherwise look stuck on "inspecting" long after Inspect finished
+    // it. (No-op before `runStreaming` seeds `snap.files` — the initial
+    // per-file state already accounts for files ready at that point.)
+    let flipped = false;
+    const idx = runner.snap.files.findIndex((fp) => fp.id === item.id);
+    if (idx >= 0 && runner.snap.files[idx].state === 'inspecting') {
+      runner.snap.files[idx] = { ...runner.snap.files[idx], key: item.key, state: 'pending' };
+      flipped = true;
+      if (!opts.silent) runner.emit(true);
+    }
     if (persist) {
       void runner.afterLedger(() =>
         markFileState(fileRecordId(sessionId, item.localPath), fileRecordFor(sessionId, item, 'pending')),
       );
     }
+    return flipped;
   };
 
   if (persist) {
@@ -881,7 +898,11 @@ export function runStreamingUpload(
     cancel: runner.cancel,
     done,
     notifyReady: (files) => {
-      for (const f of files) enqueue(f);
+      let anyFlipped = false;
+      for (const f of files) {
+        if (enqueue(f, { silent: true })) anyFlipped = true;
+      }
+      if (anyFlipped) runner.emit(true);
     },
     close: (files) => {
       finalFiles = files;

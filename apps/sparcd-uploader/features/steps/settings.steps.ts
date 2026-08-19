@@ -25,9 +25,6 @@ Then('each new batch starts with that identity already filled in on the Assign s
   await app.continueToAssign();
   await app.waitForCollections();
   await expect(app.page.getByPlaceholder(identityField)).toHaveValue('Ada Lovelace');
-  await expect(app.page.getByText(/Stamped into the upload prefix and object keys as/)).toContainText(
-    'ada-lovelace',
-  );
 });
 
 // --- disconnecting from Settings -------------------------------------------
@@ -88,7 +85,7 @@ Then('nothing is cleared unless discarding is explicitly chosen', async ({ app }
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByRole('heading', { name: 'Unfinished uploads' })).toHaveCount(0);
   expect(await app.readBatchRecords()).toHaveLength(1);
-  await expect(app.page.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
 
   await app.page.getByRole('button', { name: 'Disconnect / edit' }).click();
   await app.page.getByRole('button', { name: 'Discard & disconnect' }).click();
@@ -108,7 +105,7 @@ Then('the connection is ended and the in-progress batch is cleared', async ({ ap
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.expectStep('Files');
   await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
 });

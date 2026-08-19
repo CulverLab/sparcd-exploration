@@ -142,11 +142,11 @@ export class App {
     await expect(this.connectForm()).toBeVisible();
     await this.fillConnection(fields);
     await this.page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(this.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await expect(this.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   }
 
   async disconnectFromHeader(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Disconnect' }).click();
+    await this.page.getByRole('button', { name: 'Logout' }).click();
   }
 
   // --- navigation ----------------------------------------------------------
@@ -320,7 +320,7 @@ export class App {
     if (await this.connectForm().isVisible()) {
       await this.fillConnection();
       await this.page.getByRole('button', { name: 'Connect', exact: true }).click();
-      await expect(this.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+      await expect(this.page.getByRole('button', { name: 'Logout' })).toBeVisible();
     }
   }
 
@@ -695,6 +695,13 @@ export class App {
     timeout = 60_000,
   ): Promise<void> {
     await expect(this.runPhase()).toHaveText(phase, { timeout });
+    // A real (non-dry-run) run reaching 'done' pops a confirmation dialog
+    // whose backdrop covers the page — dismiss it so later steps can click
+    // through, same as a user would.
+    if (phase === 'done') {
+      const ok = this.page.getByRole('dialog', { name: 'Upload complete' }).getByRole('button', { name: 'OK' });
+      if (await ok.isVisible().catch(() => false)) await ok.click();
+    }
   }
 
   /** The collection picker on the History screen (a plain <select>). */

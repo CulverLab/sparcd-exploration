@@ -20,7 +20,7 @@ export async function reconnectAndReturnToAssign(
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.dropFolder(specs);
   await app.waitForInspected();
   await app.continueToAssign();

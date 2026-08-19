@@ -181,6 +181,7 @@ Then('it is not offered for manual entry', async ({ app }) => {
 
 Then("the camera's time is what gets stored", async ({ app }) => {
   await app.page.locator('input[type="datetime-local"]').nth(1).fill('2026-05-05T05:05:05');
+  await app.continueToUpload();
   await app.page.getByRole('button', { name: /Click to preview the generated bundle files/ }).click();
   await app.page.getByRole('button', { name: 'media.csv' }).click();
   const csv = await app.page.locator('pre').innerText();

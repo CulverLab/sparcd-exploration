@@ -5,6 +5,7 @@
 // rest. Discard drops the local session row only; it never touches remote state.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import {
@@ -74,6 +75,7 @@ export function History() {
   useEffect(() => () => runRef.current?.cancel(), []);
 
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
+  const online = useOnline();
 
   const launch = useCallback(
     async (
@@ -122,16 +124,28 @@ export function History() {
         setMessage('Connect to a storage endpoint before resuming.');
         return;
       }
-      const session = await loadSession(batch.id);
-      if (!session) {
-        setMessage('Session record is missing.');
-        return;
-      }
+      // The first await below must be the actual gated call — permission
+      // request, directory picker, or the hidden <input>'s `.click()` —
+      // not this session load. Firefox/Safari require those to fire within
+      // the click's transient user-activation window; an unrelated await
+      // ahead of them (even a fast IndexedDB read) silently breaks it: no
+      // prompt, no error, nothing happens. Kick the load off in parallel
+      // instead and only consume it once the gated step has resolved.
+      const sessionPromise = loadSession(batch.id);
+
       // Durable handle: revalidate permission inside this click gesture, then
       // re-hash against the recorded files — a same-size in-place edit between
       // sessions would otherwise slip through, so mismatches surface as problems.
       if (batch.fileAccessMode === 'persistent-handle' && batch.dirHandle) {
-        const restore = await restoreFromHandle(batch, session.files);
+        const restore = await restoreFromHandle(
+          batch,
+          sessionPromise.then((s) => s?.files ?? []),
+        );
+        const session = await sessionPromise;
+        if (!session) {
+          setMessage('Session record is missing.');
+          return;
+        }
         if (restore.ok) {
           await launch(batch, session, restore.attached, restore.problems);
           return;
@@ -144,6 +158,11 @@ export function History() {
       if (supportsDirectoryHandle) {
         const picked = await reselectFolder();
         if (!picked) return; // user dismissed
+        const session = await sessionPromise;
+        if (!session) {
+          setMessage('Session record is missing.');
+          return;
+        }
         const { attached, problems: probs } = await reconcileReselect(session.files, picked.scanned);
         // Opportunistically upgrade the session to a durable handle for next time.
         if (picked.handle) {
@@ -151,7 +170,9 @@ export function History() {
         }
         await launch(batch, session, attached, probs);
       } else {
-        // No durable picker — fall back to a transient <input webkitdirectory>.
+        // No durable picker — fall back to a transient <input webkitdirectory>,
+        // fired synchronously here for the same reason. `onReselectInput`
+        // loads its own session once files actually arrive.
         pendingReselect.current = batch;
         reselectRef.current?.click();
       }
@@ -160,7 +181,7 @@ export function History() {
   );
 
   const onReselectInput = useCallback(
-    async (list: FileList | null) => {
+    async (list: File[] | null) => {
       const batch = pendingReselect.current;
       pendingReselect.current = null;
       if (!batch || !list || list.length === 0) return;
@@ -213,6 +234,7 @@ export function History() {
 
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto space-y-5">
+      <OfflineBanner message="You're offline — Resume won't work until your connection is back." />
       <input
         ref={reselectRef}
         type="file"
@@ -222,7 +244,12 @@ export function History() {
         multiple
         hidden
         onChange={(e) => {
-          void onReselectInput(e.target.files);
+          // Snapshot before clearing: FileList is live, and `onReselectInput`
+          // is async — its first `await` (loadSession) yields back here
+          // before it touches the list, so clearing `.value` synchronously
+          // right after would empty the same FileList out from under it,
+          // making every file look missing. Array.from freezes it first.
+          void onReselectInput(e.target.files ? Array.from(e.target.files) : null);
           e.target.value = '';
         }}
       />
@@ -307,6 +334,7 @@ export function History() {
                 {!batch.completedAt && (
                   <button
                     disabled={running}
+                    title={!online ? "You're offline" : undefined}
                     onClick={() => void beginResume(batch)}
                     className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
                       running ? 'opacity-40 cursor-not-allowed' : ''

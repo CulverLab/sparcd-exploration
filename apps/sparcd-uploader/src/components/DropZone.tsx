@@ -126,7 +126,7 @@ export function DropZone() {
           <>
             <p className="font-display text-[20px] text-ink mb-1">Drop a folder of media</p>
             <p className="font-body text-[14px] text-inkSoft mb-5">
-              JPEG and MP4. Subfolders are scanned recursively.
+              JPEG and MP4 files. All files in this folder, and its sub-folders, are scanned.
             </p>
             <span className="inline-block min-h-11 md:min-h-0 bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600]">
               {supportsFolderPick ? 'Choose folder' : 'Choose photos or videos'}
