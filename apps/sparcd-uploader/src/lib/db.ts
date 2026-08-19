@@ -238,6 +238,13 @@ export async function markFileState(id: string, patch: Partial<FileRecord>): Pro
   await db.files.update(id, patch);
 }
 
+/** Replace many file records at once (by primary key) — resolving a batch of
+ * records that finished Inspect out-of-band (resume-before-bundle) in one
+ * write instead of one `markFileState` transaction per file. */
+export async function updateFileRecords(records: FileRecord[]): Promise<void> {
+  await db.files.bulkPut(records);
+}
+
 export async function markBatchComplete(sessionId: string, completedAt: string): Promise<void> {
   await db.batches.update(sessionId, { completedAt });
 }

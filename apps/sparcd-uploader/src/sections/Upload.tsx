@@ -14,6 +14,8 @@ import {
   type UploadSnapshot,
 } from '../lib/upload';
 import { onFilesReady } from '../lib/processing';
+import type { ProcessResponse } from '../lib/processPool';
+import { ensureBundle } from '../lib/resume';
 import { captureTimeComplete, processingComplete } from '../lib/validation';
 import { Note, RunMonitor } from '../components/RunMonitor';
 import { UploadCompleteDialog } from '../components/UploadCompleteDialog';
@@ -204,13 +206,48 @@ export function Upload() {
       const session = await loadSession(snap.sessionId);
       if (!session) throw new Error('no saved record for this session');
       const attached = new Map(files.map((f) => [f.relPath, f.file]));
+
+      // A run that hit the systemic-failure abort (e.g. many concurrent
+      // blobs failing at once when the network drops) never reaches the
+      // publish step, so it has no bundle — same gap History's Resume
+      // fixes, resolved here from the files already in memory instead of a
+      // disk re-hash pass, since they never left the page.
+      if (!session.bundle) {
+        const resolved = new Map<string, ProcessResponse>(
+          files
+            .filter((f) => f.processState === 'ready' && f.sha256)
+            .map((f) => [
+              f.relPath,
+              {
+                id: f.relPath,
+                sha256: f.sha256,
+                exifNaive: f.exifNaive,
+                exifCamera: f.exifCamera,
+                gps: f.gps,
+                width: f.width,
+                height: f.height,
+                mediaKind: f.mediaKind,
+                mimeType: f.mimeType,
+              },
+            ]),
+        );
+        const result = await ensureBundle(session.batch, session, resolved);
+        if (!result.ok) {
+          const reasons = result.problems.map((p) => `${p.fileName}: ${p.reason}`).slice(0, 3).join('; ');
+          throw new Error(`${result.problems.length} file(s) couldn't be resolved (${reasons})`);
+        }
+      }
+
+      const finalSession = session.bundle ? session : await loadSession(snap.sessionId);
+      if (!finalSession) throw new Error('session record disappeared while resolving it');
+
       // A resumed run is a plain UploadRun (no notifyReady/close) — stop the
       // now-finished streaming run's methods from being called again.
       streamingRef.current = null;
-      runRef.current = resumeUpload({ config: s3Config, session, attached, concurrency }, setSnap);
+      runRef.current = resumeUpload({ config: s3Config, session: finalSession, attached, concurrency }, setSnap);
     } catch (e) {
       setRetryError(
-        `Couldn't load the saved upload record for this batch (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
+        `Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
       );
     } finally {
       retryPending.current = false;
@@ -403,13 +440,13 @@ export function Upload() {
             >
               Next batch
             </button>
-          ) : snap?.phase === 'partial' && !snap.dryRun ? (
+          ) : (snap?.phase === 'partial' || snap?.phase === 'error') && !snap.dryRun ? (
             <button
               onClick={retryFailed}
               title={!online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
-              Retry failed files
+              {snap.phase === 'error' ? 'Retry' : 'Retry failed files'}
             </button>
           ) : (
             <button
