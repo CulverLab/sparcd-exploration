@@ -25,7 +25,7 @@ import {
   type ReconcileProblem,
 } from '../lib/resume';
 import { scanFileList, supportsDirectoryHandle } from '../lib/scanFiles';
-import { resumeUpload, type UploadRun, type UploadSnapshot } from '../lib/upload';
+import { resumeUpload } from '../lib/upload';
 import { Note, RunMonitor } from '../components/RunMonitor';
 import { PublishedUploads } from '../components/PublishedUploads';
 
@@ -50,12 +50,17 @@ export function History() {
   const s3Config = useStore((s) => s.s3Config);
   const concurrency = useStore((s) => s.uploadConcurrency);
 
+  // Run and snapshot live in the store so they survive section navigation.
+  // Filter activeSnap by source so New-Upload snapshots don't appear here.
+  const snap = useStore((s) => s.activeRunSource === 'history' ? s.activeSnap : null);
+  const setActiveRun = useStore((s) => s.setActiveRun);
+  const setActiveSnap = useStore((s) => s.setActiveSnap);
+  const clearActiveRun = useStore((s) => s.clearActiveRun);
+
   const [rows, setRows] = useState<Row[] | null>(null);
   const [active, setActive] = useState<string | null>(null); // sessionId being resumed
-  const [snap, setSnap] = useState<UploadSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReconcileProblem[]>([]);
-  const runRef = useRef<UploadRun | null>(null);
   const reselectRef = useRef<HTMLInputElement>(null);
   const pendingReselect = useRef<BatchRecord | null>(null);
 
@@ -70,9 +75,6 @@ export function History() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  // Abandon an in-flight resume if the section unmounts.
-  useEffect(() => () => runRef.current?.cancel(), []);
 
   const running = snap?.phase === 'blobs' || snap?.phase === 'metadata';
   const online = useOnline();
@@ -107,11 +109,11 @@ export function History() {
       const run = resumeUpload(
         { config: s3Config!, session, attached, concurrency },
         (s) => {
-          setSnap(s);
+          setActiveSnap(s);
           if (s.phase === 'done' || s.phase === 'error') void refresh();
         },
       );
-      runRef.current = run;
+      setActiveRun(run, 'history');
     },
     [s3Config, concurrency, refresh],
   );
@@ -119,7 +121,7 @@ export function History() {
   const beginResume = useCallback(
     async (batch: BatchRecord) => {
       setProblems([]);
-      setSnap(null);
+      setActiveSnap(null);
       if (!s3Config) {
         setMessage('Connect to a storage endpoint before resuming.');
         return;
@@ -198,15 +200,15 @@ export function History() {
 
   const discard = useCallback(
     async (sessionId: string) => {
-      if (runRef.current && active === sessionId) runRef.current.cancel();
-      await discardSession(sessionId);
       if (active === sessionId) {
+        useStore.getState().activeRun?.cancel();
         setActive(null);
-        setSnap(null);
+        clearActiveRun();
       }
+      await discardSession(sessionId);
       await refresh();
     },
-    [active, refresh],
+    [active, clearActiveRun, refresh],
   );
 
   if (rows === null) {
@@ -279,7 +281,7 @@ export function History() {
             </p>
             {running ? (
               <button
-                onClick={() => runRef.current?.cancel()}
+                onClick={() => useStore.getState().activeRun?.cancel()}
                 className="border border-warn text-warn px-3 py-1 text-[13px] font-body hover:bg-paperHover"
               >
                 Cancel
@@ -288,7 +290,7 @@ export function History() {
               <button
                 onClick={() => {
                   setActive(null);
-                  setSnap(null);
+                  clearActiveRun();
                 }}
                 className="border border-ink text-ink px-3 py-1 text-[13px] font-body hover:bg-paperHover"
               >
