@@ -847,15 +847,14 @@ export function runStreamingUpload(
  * keys are reused verbatim, so completed blobs skip (after a sanity check) and
  * only the interrupted/pending files re-upload. Always a wet run.
  *
- * A streamed run that's interrupted before every file finished Inspect has no
- * bundle yet — `session.bundle` is null. There's nothing byte-identical to
- * republish in that case (the CSVs were never built), and re-driving Inspect
- * standalone outside the live wizard session is out of scope here — this
- * surfaces a clear, actionable error instead of attempting it. No data is
- * lost: blobs already uploaded stay on S3 under their (deterministic, keyed
- * by content) object names, and starting a fresh upload with the same folder
- * will detect and skip them automatically via the normal verify-before-upload
- * check.
+ * Requires `session.bundle` to already be attached. A streamed run interrupted
+ * before it ever reached publish has no bundle yet — callers going through
+ * `History.tsx`'s `beginResume` resolve that first via `resume.ts`'s
+ * `ensureBundle` (re-hashes whatever hadn't finished Inspect and builds/attaches
+ * the bundle from persisted records) before ever calling this. This fallback
+ * error path only remains for a caller that skips that step: no data is lost
+ * either way — blobs already uploaded stay on S3 under their (deterministic,
+ * keyed by content) object names.
  */
 export function resumeUpload(
   params: ResumeParams,
@@ -874,7 +873,7 @@ export function resumeUpload(
     const done = (async () => {
       runner.snap.phase = 'error';
       runner.snap.error =
-        'This upload was interrupted before every file finished being inspected, so there is no publish-ready bundle to resume. Start a fresh upload with the same folder — files already uploaded will be detected and skipped automatically.';
+        'This session has no publish-ready bundle yet and could not be resolved automatically. Go back to History and try Resume again.';
       runner.log('error', runner.snap.error);
       runner.emit(true);
     })();
