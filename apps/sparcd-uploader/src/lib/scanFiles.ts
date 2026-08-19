@@ -136,7 +136,7 @@ export async function scanDirectoryHandle(dir: FileSystemDirectoryHandle): Promi
 }
 
 /** Scan a <input webkitdirectory> FileList. */
-export function scanFileList(list: FileList): ScannedFile[] {
+export function scanFileList(list: ArrayLike<File>): ScannedFile[] {
   const acc: ScannedFile[] = [];
   for (let i = 0; i < list.length; i++) {
     const file = list[i];

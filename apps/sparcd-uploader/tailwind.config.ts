@@ -35,6 +35,15 @@ export default {
         body: ['"Inter Tight"', 'Inter', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
+      keyframes: {
+        throb: {
+          '0%, 100%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.05)' },
+        },
+      },
+      animation: {
+        throb: 'throb 1.6s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

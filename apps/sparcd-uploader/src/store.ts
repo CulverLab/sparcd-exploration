@@ -344,7 +344,22 @@ export const useStore = create<UploaderState>()(
     {
       name: 'sparcd-uploader-session',
       storage: createJSONStorage(() => sessionStorage),
-      partialize: (s) => ({ theme: s.theme, elevationUnit: s.elevationUnit }),
+      // Assign's controls (deployment, collection, uploader identity,
+      // timezone, description) are plain strings — safe to persist, unlike
+      // files/handles — and nextBatch() already keeps them in memory across
+      // batches with exactly this in mind; this just makes that survive a
+      // reload too. A stale selectedLocationKey/selectedBucket from a
+      // different connection is harmless: Assign already clears/reselects
+      // either one when it doesn't match the connected backend's data.
+      partialize: (s) => ({
+        theme: s.theme,
+        elevationUnit: s.elevationUnit,
+        uploaderUser: s.uploaderUser,
+        selectedLocationKey: s.selectedLocationKey,
+        selectedBucket: s.selectedBucket,
+        uploadDescription: s.uploadDescription,
+        uploadTimeZone: s.uploadTimeZone,
+      }),
     },
   ),
 );

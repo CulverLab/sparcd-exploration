@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { detectBackendDefaults, type S3Config } from '@sparcd/types';
 import { BrandSwitcher } from './BrandSwitcher';
+import { OfflineBanner } from './OfflineBanner';
+import { useOnline } from './useOnline';
 import backgroundImage from './assets/sanimalBackground.jpg';
 
 export type ConnectionProps = {
@@ -43,6 +45,11 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
   const forcePathStyle = pathStyleOverride ?? inferred.forcePathStyle;
   const secure = secureOverride ?? inferred.secure;
 
+  // navigator.onLine has real false-offline cases (VPNs, unusual adapters,
+  // captive portals) — hard-disabling on it would lock out a user with a
+  // perfectly working connection, no override. Only used for the advisory
+  // banner/tooltip below; a real attempt failing is a better failure mode.
+  const online = useOnline();
   const canConnect = endpoint.trim() && accessKey.trim() && secretKey.trim();
 
   function submit(e: React.FormEvent) {
@@ -74,6 +81,10 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
         <p className="font-body text-[14px] text-inkSoft mb-6">
           Connect to an S3-compatible endpoint to begin.
         </p>
+
+        <div className="mb-4">
+          <OfflineBanner message="You're offline — connecting needs a network connection." />
+        </div>
 
         <div className="space-y-4">
           <div>
@@ -171,6 +182,7 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
         <button
           type="submit"
           disabled={!canConnect}
+          title={!online ? "You're offline" : undefined}
           className="mt-7 w-full bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
           Connect

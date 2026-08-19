@@ -44,10 +44,16 @@ export type ReconcileProblem = { localPath: string; fileName: string; reason: st
  * in-place edit between sessions would otherwise upload the wrong bytes past the
  * app's own recorded-hash verification, so we compare content just like the
  * reselect path and exclude any mismatch from the attach map.
+ *
+ * `requestPermission` needs a live user gesture (the Resume click) — Firefox
+ * and Safari silently no-op it (no prompt, no error) if anything gets
+ * awaited first, even a fast IndexedDB read. `recordsPromise` lets the
+ * caller kick that load off in parallel instead of awaiting it up front;
+ * it's only consumed here after the gated permission call resolves.
  */
 export async function restoreFromHandle(
   batch: BatchRecord,
-  records: FileRecord[],
+  recordsPromise: Promise<FileRecord[]>,
 ): Promise<RestoreResult> {
   const handle = batch.dirHandle;
   if (!handle) return { ok: false, reason: 'No durable folder handle is stored for this session.' };
@@ -60,6 +66,7 @@ export async function restoreFromHandle(
     return { ok: false, reason: 'Read permission to the folder was not granted — reselect it instead.' };
   }
 
+  const records = await recordsPromise;
   const scanned = await scanDirectoryHandle(handle);
   const { attached, problems } = await reconcileReselect(records, scanned);
   return { ok: true, attached, problems };

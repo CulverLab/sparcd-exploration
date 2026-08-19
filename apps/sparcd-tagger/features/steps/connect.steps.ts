@@ -150,7 +150,7 @@ Given('two tabs are connected to the same store', async ({ page, context, s3, sc
 });
 
 When('one of them disconnects', async ({ page }) => {
-  await page.locator('header').getByRole('button', { name: 'Disconnect' }).click();
+  await page.locator('header').getByRole('button', { name: 'Logout' }).click();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 

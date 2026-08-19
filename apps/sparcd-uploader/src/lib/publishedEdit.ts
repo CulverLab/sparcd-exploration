@@ -15,8 +15,8 @@
 //      injected `EditIO`, so the conflict / snapshot-collision behaviour is
 //      testable with fakes and never touches a real bucket.
 //
-// Dry-run is the default (the store's `dryRun` flag): a dry-run returns the
-// planned writes and touches nothing — not even a snapshot.
+// Driven by the store's `dryRun` flag: a dry-run returns the planned writes
+// and touches nothing — not even a snapshot.
 //
 // Unlike the tagger's sync there is no Dexie journal: an edit is at most four
 // small files, so a mid-write conflict is resolved by reload + retry, and the
