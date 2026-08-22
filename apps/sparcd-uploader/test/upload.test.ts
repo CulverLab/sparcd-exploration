@@ -318,6 +318,51 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.client.writeImmutable).toHaveBeenCalledTimes(5);
   });
 
+
+  it('refuses to publish on Retry after a file failed inspection, instead of resuming a short bundle', async () => {
+    // The fresh run already refused to publish this batch. Retry hands the
+    // persisted session to resumeUpload, whose bundle covers only the files
+    // that were ready — so dropping the hashless row and publishing would make
+    // exactly the short publish the fresh run refused, one click later.
+    const sessionId = 'session-1';
+    const ready = [makeRecord(sessionId, 0, 'pending'), makeRecord(sessionId, 1, 'pending')];
+    // Shaped the way `close` leaves a file that failed Inspect after Start:
+    // opened as awaiting-processing, patched to failed, still no hash or key.
+    const failedInspect: FileRecord = {
+      id: `${sessionId}::file-2.jpg`,
+      sessionId,
+      localPath: 'file-2.jpg',
+      fileName: 'file-2.jpg',
+      relPathInBundle: 'file-2.jpg',
+      size: 12,
+      state: 'failed',
+      lastError: 'unreadable EXIF',
+      attempt: 0,
+    };
+    const session: LoadedSession = {
+      batch: makeBatch(sessionId, 3),
+      bundle: makeBundleRecord(sessionId),
+      files: [...ready, failedInspect],
+    };
+    mocks.client = makeClient(ready);
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(ready), concurrency: 2 },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toContain('failed inspection');
+    expect(snap.files.filter((f) => f.state === 'failed')).toHaveLength(1);
+    // Nothing uploaded, nothing published, batch never marked complete.
+    expect(mocks.client.writeImmutableStream).not.toHaveBeenCalled();
+    expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
 });
 
 describe('streamed runs upload as files individually become ready', () => {
@@ -399,6 +444,323 @@ describe('streamed runs upload as files individually become ready', () => {
     expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
     expect(client.writeImmutable).not.toHaveBeenCalled();
     expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('cancelling settles a run whose lanes are all parked on the queue', async () => {
+    // Lanes wait in the queue between files, holding no request. `cancel()`
+    // aborts the request controller, which says nothing to a lane that has no
+    // request — so nothing woke them, the lane set never settled, and `done`
+    // never resolved. The Cancel button left the run spinning forever.
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 4,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: [entries[0], { ...entries[1], processState: 'processing', sha256: undefined }],
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+
+    // Let the one ready file land. Every lane is now parked and the queue is
+    // still open — exactly the state a user cancels from mid-batch.
+    await new Promise((r) => setTimeout(r, 20));
+    run.cancel();
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toBe('cancelled');
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('a run-fatal blob error settles a run whose remaining lanes are parked', async () => {
+    // The same hang reached from the other side: one lane hits a 403 while its
+    // siblings wait on the queue for files Inspect will never deliver.
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    client.writeImmutableStream.mockImplementation(async () => {
+      throw forbidden();
+    });
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 4,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: [entries[0], { ...entries[1], processState: 'processing', sha256: undefined }],
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+
+    // The queue is never closed, so the surviving lanes are parked on it when
+    // the fatal error lands.
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toContain('forbidden');
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('fails the run when a file errors in Inspect after start, instead of publishing a short batch', async () => {
+    // The file is still processing at start(), so it is never enqueued, and it
+    // then fails Inspect. `buildBundle` drops it from the CSVs, so a run that
+    // ignored it would publish a smaller batch and call it done.
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: [entries[0], { ...entries[1], processState: 'processing', sha256: undefined }],
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+
+    run.close([
+      entries[0],
+      { ...entries[1], processState: 'error', sha256: undefined, processError: 'unreadable EXIF' },
+    ]);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('partial');
+    const failed = snap.files.filter((f) => f.state === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error).toContain('unreadable EXIF');
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(1);
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('picks up a ready file whose notifyReady never arrived, rather than dropping it', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: [entries[0], { ...entries[1], processState: 'processing', sha256: undefined }],
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+
+    // No notifyReady for the second file — close() carries the only word that
+    // it ever became ready, and both files must still land.
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('never writes a file row before the session row it belongs to', async () => {
+    // `openSession` deletes and re-writes every row for the session, so a
+    // `markFileState` that lands first is dropped (Dexie ignores an update to
+    // a row that is not there yet) and then overwritten by the bulk put: the
+    // blob really uploaded, but History would show it pending forever.
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let openSessionDone!: () => void;
+    mocks.openSession.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          openSessionDone = () => resolve();
+        }),
+    );
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+
+    // Transfers do not wait on the ledger — only the ledger writes do.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mocks.openSession).toHaveBeenCalledTimes(1);
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(mocks.markFileState).not.toHaveBeenCalled();
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+
+    openSessionDone();
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(mocks.markFileState).toHaveBeenCalled();
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes ledger writes so two updates to one file cannot reorder', async () => {
+    // Both updates for a file (pending, then done) used to hang off the same
+    // resolved promise, so they raced into IndexedDB and the row could settle
+    // on whichever landed last rather than whichever was written last.
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    const events: string[] = [];
+    let seq = 0;
+    mocks.markFileState.mockImplementation(async () => {
+      const n = seq++;
+      events.push(`start:${n}`);
+      // Alternating delays: fanned-out writes would finish out of order.
+      await new Promise((r) => setTimeout(r, n % 2 === 0 ? 6 : 1));
+      events.push(`end:${n}`);
+    });
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+    mocks.markFileState.mockReset();
+
+    expect(snap.phase).toBe('done');
+    expect(events.length).toBeGreaterThanOrEqual(4);
+    // Never two starts without the intervening end: a strict serial queue.
+    const expected = events
+      .filter((e) => e.startsWith('start:'))
+      .flatMap((e) => [e, `end:${e.slice('start:'.length)}`]);
+    expect(events).toEqual(expected);
+    // And the completion stamp lands after every per-file write.
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a resume ledger that could not be opened, without failing the upload', async () => {
+    const entries = [makeFileEntry(0)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    mocks.openSession.mockImplementationOnce(() => Promise.reject(new Error('QuotaExceededError')));
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: 2,
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    // The remote upload is still valid, so the run completes...
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutable).toHaveBeenCalledTimes(5);
+    // ...but the run log says the batch will not be in History or resumable.
+    const warned = snap.log.find((l) => l.text.includes('could not open the resume ledger'));
+    expect(warned).toBeDefined();
+    expect(warned!.text).toContain('QuotaExceededError');
   });
 
   it('publishes after the queue genuinely empties and every lane is parked waiting', async () => {

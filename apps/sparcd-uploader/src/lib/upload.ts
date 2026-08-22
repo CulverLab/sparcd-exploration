@@ -244,6 +244,7 @@ const awaitingFileRecordFor = (sessionId: string, f: { id: string; relPath: stri
 function makeAsyncQueue<T>() {
   const items: T[] = [];
   let closed = false;
+  let aborted = false;
   // Every concurrency lane can be waiting on `next()` at once — a single
   // waiter slot would let a later lane's wait overwrite an earlier one's,
   // permanently orphaning it (its promise never resolves, so `Promise.all`
@@ -256,6 +257,7 @@ function makeAsyncQueue<T>() {
   };
   return {
     push(item: T): void {
+      if (aborted) return;
       items.push(item);
       wake();
     },
@@ -263,8 +265,19 @@ function makeAsyncQueue<T>() {
       closed = true;
       wake();
     },
+    /** Cancel, or a failure that kills the whole run: drop whatever is still
+     *  queued and release every parked lane at once. Aborting the request
+     *  controller is not enough — a lane waiting here holds no request, just a
+     *  promise that only a push or a close would ever resolve, so the lane set
+     *  would never settle. `next()` returns null from here on. */
+    abort(): void {
+      aborted = true;
+      items.length = 0;
+      wake();
+    },
     async next(): Promise<T | null> {
       for (;;) {
+        if (aborted) return null;
         if (items.length > 0) return items.shift()!;
         if (closed) return null;
         await new Promise<void>((resolve) => {
@@ -291,6 +304,28 @@ function makeRunner(
   const client = getClient(config);
   let cancelled = false;
   let abort = new AbortController();
+  // Set for the life of a streamed run so `cancel()` can also release lanes
+  // parked on the queue; a fixed-plan run leaves it null and needs nothing.
+  let activeQueue: { abort: () => void } | null = null;
+
+  // Per-file ledger writes must never overtake the session row they belong to.
+  // `openSession` replaces every row for its session, so an update that lands
+  // first is dropped outright (Dexie's `update` is a no-op on a row that does
+  // not exist yet) and then overwritten by the bulk put. A streamed run points
+  // this at its `openSession` promise; every other path leaves it resolved.
+  // Chained, not fanned out from one promise: two updates to the same file
+  // (pending, then done) would otherwise both hang off the same resolved
+  // promise and race each other into IndexedDB, so the row could settle on
+  // whichever landed last rather than whichever was written last. Appending
+  // each write to the tail makes the ledger a serial queue, and puts the
+  // batch-completion stamp behind every per-file write by construction.
+  // `.then(write, write)` on both arms on purpose: one rejected write — or a
+  // ledger that never opened — must not poison the rest of the queue.
+  let ledgerReady: Promise<unknown> = Promise.resolve();
+  const afterLedger = (write: () => Promise<unknown>): Promise<unknown> => {
+    ledgerReady = ledgerReady.then(write, write);
+    return ledgerReady;
+  };
 
   const snap: UploadSnapshot = {
     version: 0,
@@ -318,7 +353,7 @@ function makeRunner(
   };
 
   const persistFile = (sessionId: string, localPath: string, patch: Partial<FileRecord>) => {
-    if (persist) void markFileState(fileRecordId(sessionId, localPath), patch);
+    if (persist) void afterLedger(() => markFileState(fileRecordId(sessionId, localPath), patch));
   };
 
   // Upload (or skip) one blob. Returns once the object is present and verified,
@@ -566,6 +601,7 @@ function makeRunner(
     buildMetadata: () => Promise<{ writes: RunPlan['writes']; metadataBundleSha256: string }>,
   ): Promise<void> => {
     abort = new AbortController();
+    activeQueue = queue;
     snap.sessionId = seed.sessionId;
     snap.bucket = seed.bucket;
     snap.uploadPath = seed.uploadPath;
@@ -576,11 +612,24 @@ function makeRunner(
 
     let fatal: unknown = null;
     let fileFailures = 0;
+    // A failure that kills the run has to stop both kinds of waiting: sibling
+    // lanes with a request in flight, and sibling lanes parked on the queue
+    // waiting for Inspect to hand them a file. Aborting only the first leaves
+    // the parked ones waiting forever and the run never settles.
+    const fail = (err: unknown): void => {
+      if (fatal) return;
+      fatal = err;
+      abort.abort();
+      queue.abort();
+    };
     const lane = async (): Promise<void> => {
       for (;;) {
         if (cancelled || fatal) return;
         const it = await queue.next();
         if (it === null) return;
+        // Woken by a cancel or a sibling's fatal failure rather than by real
+        // work: drop the item and let the run unwind.
+        if (cancelled || fatal) return;
         const fp: FileProgress = { id: it.id, key: it.key, size: it.size, loaded: 0, state: 'pending', attempt: 0 };
         const idx = snap.files.findIndex((f) => f.id === it.id);
         if (idx >= 0) snap.files[idx] = fp;
@@ -599,18 +648,16 @@ function makeRunner(
         } catch (err) {
           if (cancelled || abort.signal.aborted) return;
           if (isRunFatalBlobError(err)) {
-            if (!fatal) {
-              fatal = err;
-              abort.abort();
-            }
+            fail(err);
             return;
           }
           fileFailures++;
-          if (fileFailures >= MAX_FILE_FAILURES && !fatal) {
-            fatal = new Error(
-              `aborted after ${MAX_FILE_FAILURES} file failures — the problem looks systemic, not per-file`,
+          if (fileFailures >= MAX_FILE_FAILURES) {
+            fail(
+              new Error(
+                `aborted after ${MAX_FILE_FAILURES} file failures — the problem looks systemic, not per-file`,
+              ),
             );
-            abort.abort();
             return;
           }
           if (fatal) return;
@@ -656,9 +703,25 @@ function makeRunner(
     emit,
     runOnce,
     runStreaming,
+    /** Sequence every ledger write behind the session row being written. */
+    openLedger: (p: Promise<unknown>) => {
+      // A ledger that never opened does not invalidate the upload — the blobs
+      // and the publish are still correct — but it does mean this batch will
+      // not appear in History and cannot be resumed, which the user should be
+      // told rather than left to discover. Log it once and carry on.
+      ledgerReady = Promise.resolve(p).catch((err: unknown) => {
+        log(
+          'warn',
+          `could not open the resume ledger (${err instanceof Error ? err.message : String(err)}) — ` +
+            'the upload will still complete, but it will not appear in History and cannot be resumed',
+        );
+      });
+    },
+    afterLedger,
     cancel: () => {
       cancelled = true;
-      abort.abort();
+      abort.abort(); // requests in flight
+      activeQueue?.abort(); // lanes parked waiting for the next file
     },
     isCancelled: () => cancelled,
   };
@@ -734,7 +797,11 @@ export function runStreamingUpload(
       flipped = true;
       if (!opts.silent) runner.emit(true);
     }
-    if (persist) void markFileState(fileRecordId(sessionId, item.localPath), fileRecordFor(sessionId, item, 'pending'));
+    if (persist) {
+      void runner.afterLedger(() =>
+        markFileState(fileRecordId(sessionId, item.localPath), fileRecordFor(sessionId, item, 'pending')),
+      );
+    }
     return flipped;
   };
 
@@ -762,7 +829,7 @@ export function runStreamingUpload(
         ? fileRecordFor(sessionId, planItemFor(f, naming, build.timeZone), 'pending')
         : awaitingFileRecordFor(sessionId, f),
     );
-    void openSession(batch, initialRecords);
+    runner.openLedger(openSession(batch, initialRecords));
   }
 
   const initialFiles: FileProgress[] = build.files.map((f) => ({
@@ -807,7 +874,9 @@ export function runStreamingUpload(
       );
       if (runner.snap.phase !== 'partial') {
         runner.snap.phase = 'done';
-        if (persist) await markBatchComplete(sessionId, new Date().toISOString());
+        // Behind the ledger too: `openSession` re-puts the batch row, so a
+        // completion stamp that lands first is wiped by it.
+        if (persist) await runner.afterLedger(() => markBatchComplete(sessionId, new Date().toISOString()));
         runner.log('info', dryRun ? 'dry-run complete — nothing written' : `published ${naming.uploadPath}/`);
         runner.emit(true);
       }
@@ -837,6 +906,47 @@ export function runStreamingUpload(
     },
     close: (files) => {
       finalFiles = files;
+      // Last sweep for a ready file whose `notifyReady` never arrived — the
+      // bridge from Inspect is an event subscription, and a file it missed
+      // would be left out of the transfer while still appearing in the CSVs.
+      // `enqueue` ignores anything already queued, so this costs nothing when
+      // nothing was missed.
+      for (const f of files) enqueue(f);
+      // Whatever is still not enqueued can never be uploaded: it finished
+      // Inspect as an error after Start, so it has no hash and no object key.
+      // `buildBundle` filters such a file out of the CSVs, so without this the
+      // run published a strictly smaller batch and still reported `done` — the
+      // upload looked complete to anything reading the bucket while a file was
+      // quietly missing from it. Before Start, a file that cannot be examined
+      // blocks the batch at Assign's Continue gate; after Start the equivalent
+      // is a failed item, so the run ends `partial`, publishes nothing, and
+      // sends the user to Retry. Refusing to close the queue instead would
+      // match the gate more literally but hang the run with no way out.
+      for (const f of files) {
+        if (enqueuedIds.has(f.id)) continue;
+        const reason = f.processError ?? 'could not be inspected';
+        const fp = runner.snap.files.find((p) => p.id === f.id);
+        if (fp) {
+          fp.state = 'failed';
+          fp.error = reason;
+        } else {
+          runner.snap.files.push({
+            id: f.id,
+            key: '',
+            size: f.size,
+            loaded: 0,
+            state: 'failed',
+            attempt: 0,
+            error: reason,
+          });
+        }
+        if (persist) {
+          void runner.afterLedger(() =>
+            markFileState(fileRecordId(sessionId, f.id), { state: 'failed', lastError: reason }),
+          );
+        }
+        runner.log('error', `${f.relPath}: ${reason}`);
+      }
       queue.close();
     },
   };
@@ -881,11 +991,43 @@ export function resumeUpload(
     return { cancel: runner.cancel, done };
   }
 
-  // A bundle exists, so per the streamed-open invariant every record here has
-  // already finished Inspect (never 'awaiting-processing') — filter defensively
-  // rather than trust that blindly, since a corrupted/foreign row shouldn't
-  // crash a resume.
-  const processedFiles = files.filter((r) => r.state !== 'awaiting-processing' && r.sha256 !== undefined);
+  // A row with no hash can never be uploaded: no content digest, no object
+  // key, nothing for the CSVs to describe. That is a file which failed Inspect
+  // after Start (`close` records it `failed`), or one the session never got to
+  // inspect at all. The persisted bundle was built from the ready files only,
+  // so publishing it here would omit those files silently — exactly the short
+  // publish the fresh run refuses to make, just one Retry click later. Refuse
+  // it too: there is no resume that can complete this batch, and re-inspecting
+  // outside the live wizard is out of scope, so the only way forward is a
+  // fresh upload of a batch the user has fixed.
+  const unresolvable = files.filter((r) => r.sha256 === undefined);
+  if (unresolvable.length > 0) {
+    const done = (async () => {
+      runner.snap.files = unresolvable.map((r) => ({
+        id: r.localPath,
+        key: '',
+        size: r.size,
+        loaded: 0,
+        state: 'failed' as FileState,
+        attempt: 0,
+        error: r.lastError ?? 'failed inspection',
+      }));
+      runner.snap.phase = 'error';
+      runner.snap.error =
+        `${unresolvable.length} file${unresolvable.length === 1 ? '' : 's'} failed inspection and cannot be uploaded, ` +
+        'so this batch can never be published as it stands. Fix or remove them and start the upload over — ' +
+        'files already uploaded will be detected and skipped automatically.';
+      for (const r of unresolvable.slice(0, 10)) {
+        runner.log('error', `${r.fileName}: ${r.lastError ?? 'failed inspection'}`);
+      }
+      if (unresolvable.length > 10) runner.log('error', `…and ${unresolvable.length - 10} more`);
+      runner.log('error', runner.snap.error);
+      runner.emit(true);
+    })();
+    return { cancel: runner.cancel, done };
+  }
+
+  const processedFiles = files.filter((r) => r.state !== 'awaiting-processing');
 
   const plan: RunPlan = {
     sessionId: batch.id,

@@ -125,16 +125,21 @@ the only reselect path on browsers without `showDirectoryPicker` (Firefox,
 Safari), so resume is broken there. Found while automating
 `resume-and-retry.feature`; the scenarios now drive the picker path instead.
 
-### The session ledger can clobber per-file state it just recorded
+### The session ledger can clobber per-file state it just recorded (fixed)
 
-`runStreamingUpload` fires `openSession(batch, initialRecords)` without awaiting
-it, then immediately starts transferring. `openSession` deletes and re-writes
-every file row for the session, so a file that finishes (or fails) before that
-transaction lands has its `done`/`failed` state overwritten with `pending`.
-History then under-reports how much of an interrupted upload actually completed,
-and a later resume re-uploads objects it could have skipped (it recovers, via the
-412-then-verify path, but does the transfer again). The steps here give storage a
-150 ms write delay so the ledger settles first and the counts are deterministic.
+`runStreamingUpload` fired `openSession(batch, initialRecords)` without awaiting
+it, then immediately started transferring. `openSession` deletes and re-writes
+every file row for the session, so a file that finished (or failed) before that
+transaction landed had its `done`/`failed` state overwritten with `pending`.
+History then under-reported how much of an interrupted upload actually
+completed, and a later resume re-uploaded objects it could have skipped (it
+recovered, via the 412-then-verify path, but did the transfer again).
+
+Fixed: every ledger write is now sequenced behind the `openSession` promise, so
+a per-file update can no longer overtake the session row it belongs to.
+Transfers still do not wait on the ledger. The steps here keep the 150 ms
+storage write delay — it no longer has to hide this race, but it still keeps the
+progress counts observable.
 
 ### The Settings disconnect also forgets the connection itself
 
