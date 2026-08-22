@@ -237,6 +237,19 @@ export class SafeS3Client {
       requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',
     });
+    // The SDK appends an `x-id=<Operation>` telemetry query param to every
+    // request. Ceph RGW treats unknown query params as unimplemented
+    // sub-resources and answers 501 NotImplemented (MinIO/AWS ignore it).
+    // Strip it during build — before signing — so the canonical query the
+    // client signs matches what any backend sees.
+    this.client.middlewareStack.add(
+      (next) => (args) => {
+        const query = (args.request as { query?: Record<string, unknown> }).query;
+        if (query && 'x-id' in query) delete query['x-id'];
+        return next(args);
+      },
+      { step: 'build', name: 'stripXIdQueryParam' },
+    );
   }
 
   private assertAllowed(bucket: string): void {

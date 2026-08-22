@@ -21,6 +21,17 @@ import type { EditCanonical, EditIO, EditRole } from './publishedEdit';
 // user's IAM policy and bucket CORS decide what the app can actually touch.
 const RUNTIME_BUCKET_SCOPE = ['*'];
 
+// Optional accident guard for dev/testing: when set (comma-separated bucket
+// names), every write outside the list throws client-side before a byte moves.
+// Useful when the connected credential is broader than the buckets the session
+// should touch — e.g. testing against a shared object store with a
+// project-wide key. Reads stay unrestricted so discovery keeps working.
+const WRITE_SCOPE =
+  (import.meta.env.VITE_SPARCD_S3_WRITE_SCOPE as string | undefined)
+    ?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean) ?? RUNTIME_BUCKET_SCOPE;
+
 // Cache the client for the active connection object only. This preserves the
 // UX benefit of SDK client reuse while avoiding stale credential reuse after a
 // reconnect, and it does not put raw secrets into cache keys.
@@ -32,7 +43,7 @@ export function clearClientCache(): void {
 
 export function getClient(cfg: S3Config): SafeS3Client {
   if (cached?.config === cfg) return cached.client;
-  const client = new SafeS3Client(cfg, RUNTIME_BUCKET_SCOPE, RUNTIME_BUCKET_SCOPE);
+  const client = new SafeS3Client(cfg, RUNTIME_BUCKET_SCOPE, WRITE_SCOPE);
   cached = { config: cfg, client };
   return client;
 }
