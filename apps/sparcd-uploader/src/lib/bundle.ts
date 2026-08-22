@@ -8,7 +8,7 @@
 // `Collections/<uuid>/Uploads/<stamp>_<slug>/<relpath>` — not a separate
 // UploadBlobs key. See plan "Persistence — S3 sync".
 
-import type { Media } from '@sparcd/camtrap';
+import type { Media, Observation } from '@sparcd/camtrap';
 import {
   serializeDeployments,
   serializeMedia,
@@ -24,6 +24,7 @@ import { sanitizeRelPath, nameCounts, resolveOneName } from './normalize';
 import { naiveInZoneToUtcNaive } from './exifTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
+import type { DraftObservation } from './preTags';
 
 /** One blob to stream: the full object key (= media_path) plus its source. */
 export type UploadItem = {
@@ -158,6 +159,8 @@ export type BuildInput = {
   /** Reuse an already-frozen naming resolution (a streamed run) instead of
    * resolving fresh from the currently-ready subset (the Assign preview). */
   naming?: BatchNaming;
+  /** Species tagged in the Tag step, keyed by FileEntry.id. Absent = no tags. */
+  preTags?: Record<string, DraftObservation[]>;
 };
 
 /**
@@ -199,14 +202,35 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
 
   const deploymentsCsv = serializeDeployments([deployment]);
   const mediaCsv = serializeMedia(media);
-  const observationsCsv = serializeObservations([]); // always empty on initial upload
+
+  const observations: Observation[] = input.preTags
+    ? uploadItems.flatMap((item) => {
+        const tags = input.preTags![item.id] ?? [];
+        return tags.map((obs) => ({
+          observationId: crypto.randomUUID(),
+          deploymentId: deployment.deploymentId,
+          mediaId: item.key,
+          timestamp: item.captureTimestamp ?? '',
+          scientificName: obs.scientificName,
+          count: obs.count,
+          tags: obs.commonName ? `[COMMONNAME:${obs.commonName}]` : '',
+        }));
+      })
+    : [];
+
+  const observationsCsv = serializeObservations(observations);
+  const imagesWithSpecies = input.preTags
+    ? uploadItems.filter((item) =>
+        (input.preTags![item.id] ?? []).some((o) => o.count > 0),
+      ).length
+    : 0;
 
   const uploadMetaJson = serializeUploadMeta(
     buildUploadMeta({
       uploadUser: uploaderSlug,
       date: now,
       imageCount: ready.length,
-      imagesWithSpecies: 0,
+      imagesWithSpecies,
       bucket,
       uploadPath,
       description,

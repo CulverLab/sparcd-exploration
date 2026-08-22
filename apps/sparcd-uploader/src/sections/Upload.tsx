@@ -26,6 +26,7 @@ export function Upload() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const setStep = useStore((s) => s.setStep);
+  const preTags = useStore((s) => s.preTags);
   const files = useStore((s) => s.files);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const description = useStore((s) => s.uploadDescription);
@@ -163,6 +164,7 @@ export function Upload() {
           description,
           timeZone: uploadTimeZone,
           files,
+          preTags,
         },
       },
       setSnap,
@@ -337,6 +339,7 @@ export function Upload() {
                 description={description}
                 timeZone={uploadTimeZone}
                 files={files}
+                preTags={preTags}
               />
             </div>
           ) : (

@@ -30,6 +30,7 @@ export function Assign() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const setStep = useStore((s) => s.setStep);
+  const goBack = useStore((s) => s.goBack);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
   const description = useStore((s) => s.uploadDescription);
@@ -282,7 +283,7 @@ export function Assign() {
 
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">
         <button
-          onClick={() => setStep('inspect')}
+          onClick={goBack}
           className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
           Back

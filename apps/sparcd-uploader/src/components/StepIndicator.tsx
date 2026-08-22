@@ -1,8 +1,9 @@
 import type { WizardStep } from '../store';
 
-const STEPS: { id: WizardStep; label: string }[] = [
+const STEPS: { id: WizardStep; label: string; optional?: boolean }[] = [
   { id: 'drop', label: 'Files' },
-  { id: 'inspect', label: 'Inspect' },
+  { id: 'inspect', label: 'Inspect', optional: true },
+  { id: 'tag', label: 'Tag', optional: true },
   { id: 'assign', label: 'Assign' },
   { id: 'upload', label: 'Upload' },
 ];
@@ -26,7 +27,12 @@ export function StepIndicator({ current }: { current: WizardStep }) {
               }`}
             >
               <span className="font-mono text-[12px]">{done ? '✓' : i + 1}</span>
-              {s.label}
+              <span className="flex flex-col items-start leading-none gap-0.5">
+                <span>{s.label}</span>
+                {s.optional && (
+                  <span className="text-[10px] opacity-60 font-[400]">optional</span>
+                )}
+              </span>
             </span>
             {i < STEPS.length - 1 && <span className="w-3 sm:w-6 h-px bg-rule" aria-hidden />}
           </li>

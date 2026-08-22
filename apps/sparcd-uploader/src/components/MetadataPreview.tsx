@@ -3,6 +3,7 @@ import { buildBundle, type BundlePreview } from '../lib/bundle';
 import { formatBytes } from '../lib/scanFiles';
 import type { Location } from '../lib/locations';
 import type { FileEntry } from '../store';
+import type { DraftObservation } from '../lib/preTags';
 
 type Tab = { key: keyof Pick<
   BundlePreview,
@@ -25,6 +26,7 @@ export function MetadataPreview({
   description,
   timeZone,
   files,
+  preTags,
 }: {
   location: Location;
   collectionUuid: string;
@@ -33,6 +35,7 @@ export function MetadataPreview({
   description: string;
   timeZone: string;
   files: FileEntry[];
+  preTags?: Record<string, DraftObservation[]>;
 }) {
   const [bundle, setBundle] = useState<BundlePreview | null>(null);
   const [active, setActive] = useState<Tab['key']>('uploadMetaJson');
@@ -64,6 +67,7 @@ export function MetadataPreview({
       timeZone,
       files,
       now: new Date(),
+      preTags,
     }).then((b) => {
       if (!stale) setBundle(b);
     });

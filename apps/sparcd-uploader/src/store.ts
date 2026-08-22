@@ -12,12 +12,20 @@ import type { ProcessResponse } from './lib/processPool';
 import type { FileAccessMode } from './lib/db';
 import { validateBatch, validateFile, type FileValidation } from './lib/validation';
 import { clearClientCache } from './lib/s3';
+import {
+  addObservation,
+  removeObservation,
+  setObservationCount,
+  type DraftObservation,
+  type AppliedTag,
+} from './lib/preTags';
 import { localTimeZone, type NaiveDateTime } from './lib/exifTime';
 import type { ElevationUnit } from './lib/coords';
 
 export type { ElevationUnit };
 export type Section = 'new' | 'history' | 'settings';
-export type WizardStep = 'drop' | 'inspect' | 'assign' | 'upload';
+export type WizardStep = 'drop' | 'inspect' | 'tag' | 'assign' | 'upload';
+export type { DraftObservation, AppliedTag };
 export type Theme = 'light' | 'dark';
 export type ProcessState = 'queued' | 'processing' | 'ready' | 'error';
 
@@ -43,6 +51,7 @@ type UploaderState = {
   theme: Theme;
   elevationUnit: ElevationUnit; // display pref for location elevation (persisted)
   step: WizardStep;
+  stepHistory: WizardStep[];
   files: FileEntry[];
   validations: Record<string, FileValidation>;
   scanning: boolean;
@@ -59,6 +68,7 @@ type UploaderState = {
   uploadTimeZone: string; // IANA zone EXIF naive times are interpreted in; default = browser zone
   dryRun: boolean; // on by default; logs PUTs and writes nothing
   uploadConcurrency: number; // parallel blob lanes, 4–16
+  preTags: Record<string, DraftObservation[]>; // fileId → species observations for the Tag step
 
   connect: (config: S3Config) => void;
   disconnect: () => void;
@@ -66,6 +76,7 @@ type UploaderState = {
   toggleTheme: () => void;
   setElevationUnit: (unit: ElevationUnit) => void;
   setStep: (step: WizardStep) => void;
+  goBack: () => void;
   setScanning: (scanning: boolean) => void;
   setProcessing: (processing: boolean) => void;
   setFiles: (files: ScannedFile[], dirHandle?: FileSystemDirectoryHandle | null) => void;
@@ -82,6 +93,10 @@ type UploaderState = {
   setUploadTimeZone: (value: string) => void;
   setDryRun: (value: boolean) => void;
   setUploadConcurrency: (value: number) => void;
+  addPreTag: (fileId: string, tag: AppliedTag) => void;
+  removePreTag: (fileId: string, scientificName: string) => void;
+  setPreTagCount: (fileId: string, scientificName: string, count: number) => void;
+  clearFileTags: (fileId: string) => void;
   nextBatch: () => void;
 };
 
@@ -130,6 +145,7 @@ export const useStore = create<UploaderState>()(
       theme: 'light',
       elevationUnit: 'meters',
       step: 'drop',
+      stepHistory: [],
       files: [],
       validations: {},
       scanning: false,
@@ -147,6 +163,7 @@ export const useStore = create<UploaderState>()(
       uploadTimeZone: localTimeZone(),
       dryRun: true,
       uploadConcurrency: 8,
+      preTags: {},
 
       connect: (config) => {
         clearClientCache();
@@ -181,7 +198,12 @@ export const useStore = create<UploaderState>()(
       setSection: (section) => set({ section }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       setElevationUnit: (elevationUnit) => set({ elevationUnit }),
-      setStep: (step) => set({ step }),
+      setStep: (step) => set((s) => ({ step, stepHistory: [...s.stepHistory, s.step] })),
+      goBack: () => set((s) => {
+        if (!s.stepHistory.length) return s;
+        const prev = s.stepHistory[s.stepHistory.length - 1];
+        return { step: prev, stepHistory: s.stepHistory.slice(0, -1) };
+      }),
       setScanning: (scanning) => set({ scanning }),
       setProcessing: (processing) => set({ processing }),
 
@@ -284,9 +306,11 @@ export const useStore = create<UploaderState>()(
           files: [],
           validations: {},
           step: 'drop',
+          stepHistory: [],
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
+          preTags: {},
         }));
       },
 
@@ -299,6 +323,37 @@ export const useStore = create<UploaderState>()(
       setDryRun: (value) => set({ dryRun: value }),
       setUploadConcurrency: (value) => set({ uploadConcurrency: value }),
 
+      addPreTag: (fileId, tag) =>
+        set((s) => ({
+          preTags: {
+            ...s.preTags,
+            [fileId]: addObservation(s.preTags[fileId] ?? [], tag),
+          },
+        })),
+
+      removePreTag: (fileId, scientificName) =>
+        set((s) => ({
+          preTags: {
+            ...s.preTags,
+            [fileId]: removeObservation(s.preTags[fileId] ?? [], scientificName),
+          },
+        })),
+
+      setPreTagCount: (fileId, scientificName, count) =>
+        set((s) => ({
+          preTags: {
+            ...s.preTags,
+            [fileId]: setObservationCount(s.preTags[fileId] ?? [], scientificName, count),
+          },
+        })),
+
+      clearFileTags: (fileId) =>
+        set((s) => {
+          const next = { ...s.preTags };
+          delete next[fileId];
+          return { preTags: next };
+        }),
+
       // Start a fresh batch after a completed upload, keeping the deployment,
       // uploader, target collection, and description so a researcher can chain
       // batches for the same site without re-entering everything.
@@ -308,9 +363,11 @@ export const useStore = create<UploaderState>()(
           files: [],
           validations: {},
           step: 'drop',
+          stepHistory: [],
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
+          preTags: {},
         }));
       },
     }),
