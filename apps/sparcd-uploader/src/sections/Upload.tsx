@@ -301,13 +301,13 @@ export function Upload() {
             onChange={(e) => setDryRun(e.target.checked)}
             className="accent-accent"
           />
-          Dry run — log every PUT, write nothing
+          Test the upload, nothing is written
         </label>
 
         {!effectiveDryRun && (
           <Note
             tone="warn"
-            message={`Wet upload uses the connected credentials directly. The bucket must allow this web origin with CORS, and the credentials must permit append-only PUT/HEAD/LIST for ${collection.bucket}.`}
+            message={`If not testing the upload and it fails right away, that's usually a setup issue on the storage side, not something you did wrong. Contact your administrator and give them this collection ID: ${collection.uuid}.`}
           />
         )}
 

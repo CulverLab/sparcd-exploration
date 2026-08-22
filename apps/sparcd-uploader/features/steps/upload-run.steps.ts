@@ -38,9 +38,13 @@ Given('the upload has not been started', async ({ app }) => {
   expect(app.s3.puts).toHaveLength(0);
 });
 
-Then('dry run is switched on by default', async ({ app }) => {
-  await expect(app.dryRunCheckbox()).toBeChecked();
-  await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeVisible();
+Then('dry run is switched off by default', async ({ app }) => {
+  await expect(app.dryRunCheckbox()).not.toBeChecked();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
+});
+
+When('the operator opts into a dry run', async ({ app }) => {
+  await app.dryRunCheckbox().check();
 });
 
 Then(
@@ -67,22 +71,18 @@ Then('the run is not recorded in History', async ({ app }) => {
   await expect(app.page.getByText('No uploads yet')).toBeVisible();
 });
 
-When('dry run is switched off', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
-});
-
 Then(
-  "the tool states that the credentials must permit append-only writes, reads and listing for the target collection's bucket",
+  "the tool states that a setup issue on the storage side is not the user's fault",
   async ({ app }) => {
-    await expect(app.page.getByText(/Wet upload uses the connected credentials directly/)).toContainText(
-      `append-only PUT/HEAD/LIST for ${BUCKET_A}`,
+    await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
+      "not something you did wrong",
     );
   },
 );
 
-Then('that the bucket must allow this web origin', async ({ app }) => {
-  await expect(app.page.getByText(/Wet upload uses the connected credentials directly/)).toContainText(
-    'must allow this web origin with CORS',
+Then('that the collection ID is given to contact an administrator with', async ({ app }) => {
+  await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
+    `this collection ID: ${UUID_A}`,
   );
 });
 

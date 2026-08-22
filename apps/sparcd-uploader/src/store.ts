@@ -57,7 +57,7 @@ type UploaderState = {
   selectedBucket: string | null; // selected collection key `${bucket}::${uuid}` (Assign)
   uploadDescription: string; // free-text description for UploadMeta
   uploadTimeZone: string; // IANA zone EXIF naive times are interpreted in; default = browser zone
-  dryRun: boolean; // on by default; logs PUTs and writes nothing
+  dryRun: boolean; // off by default; when on, logs PUTs and writes nothing
   uploadConcurrency: number; // parallel blob lanes, 4–16
 
   connect: (config: S3Config) => void;
@@ -145,7 +145,7 @@ export const useStore = create<UploaderState>()(
       selectedBucket: null,
       uploadDescription: '',
       uploadTimeZone: localTimeZone(),
-      dryRun: true,
+      dryRun: false,
       uploadConcurrency: 8,
 
       connect: (config) => {
