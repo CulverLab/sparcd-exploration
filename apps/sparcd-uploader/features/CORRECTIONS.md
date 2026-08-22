@@ -9,28 +9,30 @@ disagreed, the file was corrected.
 
 ## Gherkin corrections
 
-### 1. Publishing is unreachable for a batch that finished being examined first
+### 1. Publishing now works after Inspect has already finished
 
-*File:* `upload-run.feature` (Background comment), and the reason every
-publish-reaching scenario in `upload-run.feature`, `capture-time-and-timezone.feature`
-and `resume-and-retry.feature` starts its run with one deliberately slow file.
+*File:* `upload-run.feature` (Background comment) and the shared batch helpers
+used by publish-reaching scenarios.
 
-**Claimed:** a real upload transfers every file and then writes the metadata.
+**Previously:** a real upload transferred every file, but a batch that finished
+Inspect *before* Start was pressed could sit in "uploading" forever and never
+write metadata. The suite worked around that by adding one deliberately slow
+160 MiB MP4 to every publish-reaching batch, then starting the run while that
+file was still being examined.
 
-**Actually:** `Upload.tsx` closes the streaming run's blob queue from
-`useEffect(..., [files])`. That effect only re-runs when the store's `files`
-array changes identity, and pressing Start does not change it. So if the whole
-batch finished Inspect *before* Start is pressed — which is the normal path
-through the wizard — `close()` is never called, the transfer lanes block on an
-never-closed queue forever, and the run sits in the "uploading" phase
-permanently. Every object is stored and verified; no metadata is ever written;
-the run never reports done, partial, or error.
+**Now:** PR #26 fixed the app bug in `Upload.tsx` by closing the upload queue
+when a fully inspected batch starts. A normal publish-reaching scenario uses
+`publishableBatch()`: three small JPEGs plus one small MP4 with real metadata.
+The 160 MiB `slowVideo()` fixture is reserved for scenarios whose claim is
+specifically about background examination continuing while the user works or
+while upload starts.
 
-The publish phase is reachable only when at least one file finishes being
-examined *after* the run has started, which re-renders `Upload` with a new
-`files` array and lets the effect fire. Every scenario here that needs a
-published upload therefore starts its run while one 140 MB file is still being
-hashed. Reproduced directly; not a test artefact.
+Scenarios that need to observe or interrupt an in-flight upload no longer rely
+on the slow Inspect race. They use the in-process S3 mock instead: either
+`putDelayMs` for short visible latency, or a mock hold that records one media
+PUT and withholds the S3 response until the scenario has cancelled/asserted the
+running state. That keeps the run partial or observable for a deterministic
+reason and keeps the ordinary publish path small enough for CI.
 
 ### 2. "Select a target collection first" is unreachable
 

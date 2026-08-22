@@ -6,6 +6,9 @@ on:
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
       - "packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/bdd-tests.yml"
   push:
@@ -14,12 +17,16 @@ on:
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
       - "packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/bdd-tests.yml"
   workflow_dispatch:
 
 jobs:
   bdd:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

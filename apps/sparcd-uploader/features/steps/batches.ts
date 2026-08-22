@@ -43,10 +43,17 @@ export const batchWithMissingTimes = (): FileSpec[] => [
   jpegNoTime('IMG_0003.JPG'),
 ];
 
+/** A small MP4 fixture for normal four-object publish flows. */
+export const clipVideo = (name = 'BIG_CLIP.MP4'): FileSpec => ({
+  path: `${FOLDER}/${name}`,
+  mime: 'video/mp4',
+  bytes: mp4WithCreationTime(new Date(Date.UTC(2026, 6, 1, 12, 30, 0)), name),
+});
+
 /**
  * A file big enough that its Inspect pass is still running by the time the
- * wizard reaches the Upload step. Required for any scenario that has to reach
- * the publish phase — see features/CORRECTIONS.md.
+ * wizard reaches the Upload step. Use only for scenarios whose behavior is
+ * specifically about background examination continuing during upload.
  */
 export const SLOW_PAD_BYTES = 160 * 1024 * 1024;
 
@@ -57,8 +64,11 @@ export const slowVideo = (name = 'BIG_CLIP.MP4'): FileSpec => ({
   padBytes: SLOW_PAD_BYTES,
 });
 
-/** The default batch plus the slow file, so the run can reach publish. */
-export const publishableBatch = (): FileSpec[] => [...standardBatch(), slowVideo()];
+/** The default batch plus one video, for normal publish flows. */
+export const publishableBatch = (): FileSpec[] => [...standardBatch(), clipVideo()];
+
+/** A four-object batch whose final video keeps Inspect busy. */
+export const slowPublishableBatch = (): FileSpec[] => [...standardBatch(), slowVideo()];
 
 export const manyJpegs = (count: number, prefix = 'IMG'): FileSpec[] =>
   Array.from({ length: count }, (_, i) =>

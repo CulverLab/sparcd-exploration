@@ -13,12 +13,9 @@ Feature: Upload and publish a batch
   Background:
     Given a batch has a collection, a deployment, an uploader identity and capture times
     And the New upload section is showing the Upload step
-    # As-built constraint that colours every scenario below: a run only ever
-    # leaves the transfer phase if at least one file finishes being examined
-    # after the run is started. A batch that was fully examined before Start is
-    # pressed transfers every object and then hangs, never publishing. Every
-    # scenario here that reaches the publish phase starts its run while one
-    # deliberately slow file is still being examined. See CORRECTIONS.md.
+    # PR #26 fixed the old publish hang for fully examined batches. Scenarios
+    # now use ordinary small media, except where the behavior under test is
+    # explicitly about background examination or cancelling an in-flight write.
 
   @unmapped
   Scenario: A dry run is offered first and writes nothing

@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
-import { FOLDER, jpegAt, publishableBatch } from './batches';
+import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batches';
 import { BUCKET_A, UUID_A } from './fixtures-data';
 import { FAILING_FILE, producePartialRun as basePartialRun } from './helpers';
 
@@ -11,6 +11,15 @@ const metadataPuts = (app: App) =>
   app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n)));
 const mediaPuts = (app: App) =>
   app.s3.puts.filter((p) => !METADATA_NAMES.some((n) => p.key.endsWith(n)));
+
+function holdFirstMediaPut(app: App): void {
+  let held = false;
+  app.s3.holdPut = (_bucket, key) => {
+    if (held || METADATA_NAMES.some((n) => key.endsWith(n))) return false;
+    held = true;
+    return true;
+  };
+}
 
 /** The upload folders that exist in collection A's storage right now. */
 function uploadFolders(app: App): string[] {
@@ -41,7 +50,7 @@ When('a real upload starts', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -74,7 +83,7 @@ Then("each file's state is updated as it lands", async ({ app }) => {
 When('a dry run is started', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace' });
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -106,8 +115,13 @@ Then('it shows how many of its files are done and how many failed', async ({ app
 
 Then('only uploads whose metadata was published are marked complete', async ({ app }) => {
   // A second, unobstructed run of the same folder does publish, and it is the
-  // one that shows as complete.
+  // one that shows as complete. Upload paths are stamped to the second, so
+  // give this run a fresh stamp: started inside the same second as the
+  // partial run, both would target one folder and the second run's
+  // immutable writes would be refused as "Object already exists".
   app.s3.putHooks.length = 0;
+  app.s3.putDelayMs = 0;
+  await app.page.waitForTimeout(1_100);
   await app.gotoSection('New upload');
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.page.getByRole('button', { name: 'Back' }).click();
@@ -115,7 +129,7 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await app.page.getByRole('button', { name: 'Continue' }).click();
   await app.continueToUpload();
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
   await app.gotoSection('History');
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
@@ -346,11 +360,12 @@ Then(
 // --- interrupted before examination finished -------------------------------
 
 Given('an upload was interrupted before every file had been examined', async ({ app }) => {
-  app.notes.sourceSpecs = publishableBatch();
+  app.notes.sourceSpecs = slowPublishableBatch();
   await app.dropFolder(app.notes.sourceSpecs as FileSpec[]);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByText('cancelled').first()).toBeVisible();
@@ -410,7 +425,7 @@ Then('nothing stored in the collection is touched', async ({ app }) => {
 Given('a resume is running', async ({ app }) => {
   await producePartialRun(app);
   app.s3.putHooks.length = 0;
-  app.s3.putDelayMs = 400;
+  holdFirstMediaPut(app);
   await resumeFromHistory(app);
   await expect(app.page.getByText(/^Resuming \d/)).toBeVisible({ timeout: 60_000 });
 });

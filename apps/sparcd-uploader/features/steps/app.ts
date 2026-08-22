@@ -600,25 +600,6 @@ export class App {
     await this.continueToUpload();
   }
 
-  /**
-   * Start the run while at least one file is still being examined. As-built
-   * that is the only way the run's blob queue ever closes, so it is the only
-   * way a run reaches the publish phase — see features/CORRECTIONS.md.
-   *
-   * On a fast machine the slow file can finish before the wizard gets here; in
-   * that case re-scan the same folder and try again rather than start a run
-   * that could never publish.
-   */
-  async startRunWhileInspecting(): Promise<void> {
-    const note = this.page.getByText(/still being inspected/);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (await note.isVisible().catch(() => false)) break;
-      await this.rescanFromUploadStep();
-    }
-    await expect(note).toBeVisible();
-    await this.startRun();
-  }
-
   // --- Assign --------------------------------------------------------------
 
   async waitForCollections(): Promise<void> {
@@ -699,8 +680,12 @@ export class App {
     // whose backdrop covers the page — dismiss it so later steps can click
     // through, same as a user would.
     if (phase === 'done') {
-      const ok = this.page.getByRole('dialog', { name: 'Upload complete' }).getByRole('button', { name: 'OK' });
-      if (await ok.isVisible().catch(() => false)) await ok.click();
+      const dialog = this.page.getByRole('dialog', { name: 'Upload complete' });
+      const ok = dialog.getByRole('button', { name: 'OK' });
+      if (await ok.isVisible().catch(() => false)) {
+        await ok.click();
+        await expect(dialog).toBeHidden();
+      }
     }
   }
 

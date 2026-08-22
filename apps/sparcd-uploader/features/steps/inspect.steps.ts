@@ -5,7 +5,7 @@ import {
   jpegNoTime,
   manyJpegs,
   mp4At,
-  publishableBatch,
+  slowPublishableBatch,
   slowVideo,
   standardBatch,
 } from './batches';
@@ -241,7 +241,7 @@ Then('it explains that files needing attention must be resolved first', async ({
 // --- working while examination continues -----------------------------------
 
 Given('a large batch is still being examined', async ({ app }) => {
-  await app.rescan(publishableBatch());
+  await app.rescan(slowPublishableBatch());
   await expect(app.fileListPane()).toBeVisible();
   await expect.poll(() => app.batchSummary()).toMatch(/\d+ processing/);
 });

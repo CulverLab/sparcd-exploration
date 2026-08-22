@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
-import { manyJpegs, publishableBatch, slowVideo, standardBatch } from './batches';
+import { manyJpegs, publishableBatch, slowPublishableBatch, standardBatch } from './batches';
 import { rescanFromUpload, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
@@ -16,12 +16,19 @@ const METADATA_NAMES = [
 const mediaPuts = (app: App) =>
   app.s3.puts.filter((p) => !METADATA_NAMES.some((n) => p.key.endsWith(n)));
 
+function holdFirstMediaPut(app: App): void {
+  let held = false;
+  app.s3.holdPut = (_bucket, key) => {
+    if (held || METADATA_NAMES.some((n) => key.endsWith(n))) return false;
+    held = true;
+    return true;
+  };
+}
+
 Given(
   'a batch has a collection, a deployment, an uploader identity and capture times',
   async ({ app }) => {
     await app.connect();
-    // The batch carries one deliberately slow file: as-built the publish phase
-    // is only reachable while examination is still running (CORRECTIONS.md).
     await app.dropFolder(publishableBatch());
     await expect(app.fileListPane()).toBeVisible();
   },
@@ -46,7 +53,7 @@ Then('dry run is switched on by default', async ({ app }) => {
 Then(
   'starting it lists every object that would be written, with its size and fingerprint',
   async ({ app }) => {
-    await app.startRunWhileInspecting();
+    await app.startRun();
     await app.waitForRunPhase('done');
     const log = await app.logText();
     for (const name of ['IMG_0001.JPG', 'IMG_0002.JPG', 'IMG_0003.JPG', 'BIG_CLIP.MP4']) {
@@ -90,7 +97,7 @@ Then('that the bucket must allow this web origin', async ({ app }) => {
 
 When('a real upload is started and completes', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -124,7 +131,7 @@ Then("each stored object's path is the one recorded for it in the media table", 
 
 When('a file has been uploaded', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -157,13 +164,14 @@ Then('a mismatch is treated as a failure of that file, not as a success', async 
 // --- streaming past Inspect ------------------------------------------------
 
 Given('some files are still being examined', async ({ app }) => {
+  await rescanFromUpload(app, slowPublishableBatch());
   await expect(app.page.getByText(/still being inspected/)).toBeVisible();
 });
 
 When('the upload is started', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
   app.notes.putsAtStart = app.s3.puts.length;
-  await app.startRunWhileInspecting();
+  await app.startRun();
 });
 
 Then('files that have already been examined start uploading immediately', async ({ app }) => {
@@ -186,7 +194,7 @@ Then('the tool reports how many files are still being examined', async ({ app })
 
 Given('a real upload is running', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
 });
 
 Then(
@@ -215,7 +223,7 @@ Given('a real upload in which some files failed after their retries', async ({ a
     key.endsWith('IMG_0002.JPG') ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 });
 
@@ -241,9 +249,9 @@ Then(
 // --- abandoned runs --------------------------------------------------------
 
 Given('a real upload that was cancelled or ended in failure', async ({ app }) => {
-  app.s3.putDelayMs = 150;
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByText('cancelled').first()).toBeVisible();
@@ -265,7 +273,7 @@ Then('nothing reading the collection sees a new upload there', async ({ app }) =
 
 When('a batch is published', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -285,9 +293,9 @@ Then('the upload metadata records that none of its images carry a species', asyn
 // --- progress reporting ----------------------------------------------------
 
 Given('a run is in progress', async ({ app }) => {
-  app.s3.putDelayMs = 200;
+  app.s3.putDelayMs = 1000;
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
 });
 
@@ -339,10 +347,13 @@ Then('it defaults to 8', async ({ app }) => {
 });
 
 Then('it cannot be changed while a run is in progress', async ({ app }) => {
+  app.s3.putDelayMs = 1000;
+  await app.dryRunCheckbox().uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
   await expect(app.page.locator('input[type="range"]')).toBeDisabled();
   await expect(app.dryRunCheckbox()).toBeDisabled();
+  await app.waitForRunPhase('done', 120_000);
 });
 
 // --- retries and hard failures ---------------------------------------------
@@ -356,7 +367,7 @@ Given(
         : undefined,
     );
     await app.dryRunCheckbox().uncheck();
-    await app.startRunWhileInspecting();
+    await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
   },
 );
@@ -378,14 +389,14 @@ Then('the retry is recorded in the activity log', async ({ app }) => {
 });
 
 Given("a file's upload is refused for lack of permission", async ({ app }) => {
-  await rescanFromUpload(app, [...manyJpegs(24), slowVideo()]);
+  await rescanFromUpload(app, manyJpegs(24));
   await app.page.locator('input[type="range"]').fill('4');
   app.s3.putDelayMs = 40;
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0000.JPG') ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -400,12 +411,12 @@ Then('the failure is reported', async ({ app }) => {
 });
 
 Given('ten files have failed independently in one run', async ({ app }) => {
-  await rescanFromUpload(app, [...manyJpegs(14), slowVideo()]);
+  await rescanFromUpload(app, manyJpegs(14));
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('.JPG') ? { status: 400, code: 'InvalidRequest', message: 'nope' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -432,7 +443,7 @@ Given('an object already exists at a path the run intends to write', async ({ ap
 
 When('a fresh upload attempts that write', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -450,9 +461,9 @@ Then('the run reports the failure', async ({ app }) => {
 // --- cancelling ------------------------------------------------------------
 
 When('a run is cancelled', async ({ app }) => {
-  app.s3.putDelayMs = 200;
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   app.notes.storedAtCancel = app.s3.writtenKeys();
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -486,7 +497,7 @@ Then('the Back button is disabled', async ({ app }) => {
 
 Given('a real upload has completed', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 

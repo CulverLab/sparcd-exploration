@@ -1,5 +1,5 @@
 import { Given, When, Then, expect } from './fixtures';
-import { jpegAt, jpegNoTime, slowVideo, standardBatch } from './batches';
+import { clipVideo, jpegAt, jpegNoTime, standardBatch } from './batches';
 import { rescanFromAssign, writtenCsvRows } from './helpers';
 import { LEGACY_ZONE } from './fixtures-data';
 
@@ -79,7 +79,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
   await rescanFromAssign(app, [
     jpegAt('SUMMER.JPG', '2026:07:01 12:00:00'),
     jpegAt('WINTER.JPG', '2026:01:15 12:00:00'),
-    slowVideo(),
+    clipVideo(),
   ]);
   await app.chooseDeployment('Bear Canyon');
   // Berlin so both a DST and a non-DST date are exercised, and so the result
@@ -90,7 +90,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
 When('the batch is published', async ({ app }) => {
   await app.continueToUpload();
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -227,7 +227,7 @@ Then('it is not accepted as a capture time', async ({ app }) => {
 // --- publishing ------------------------------------------------------------
 
 Given('every examined file has either a camera time or a manual one', async ({ app }) => {
-  await rescanFromAssign(app, [jpegAt('IMG_TIMED.JPG', '2026:07:01 12:00:00'), jpegNoTime('IMG_A.JPG'), slowVideo()]);
+  await rescanFromAssign(app, [jpegAt('IMG_TIMED.JPG', '2026:07:01 12:00:00'), jpegNoTime('IMG_A.JPG'), clipVideo()]);
   await app.chooseDeployment('Bear Canyon');
   await app.page.locator('input[type="datetime-local"]').nth(1).fill('2026-05-05T05:05:05');
   await expect(app.continueButton()).toBeEnabled();
