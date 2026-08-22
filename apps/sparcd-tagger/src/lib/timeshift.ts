@@ -1,8 +1,8 @@
 // Pure helpers for the time-correction UI. The actual date math lives in
 // `@sparcd/camtrap` (`shiftTimestamp` / `correctedTimestamp`), which mirrors the
-// Java desktop app's `TimeShiftController` clamping — see that package's
-// `contracts.test.ts`. These are just the display/format glue the UI needs, kept
-// pure so they can be unit-tested without React or Dexie.
+// original desktop tooling's `LocalDateTime`-style clamping — see that
+// package's `contracts.test.ts`. These are just the display/format glue the UI
+// needs, kept pure so they can be unit-tested without React or Dexie.
 
 import type { TimeOffsetRecord } from './db';
 
@@ -53,12 +53,17 @@ export function formatOffsetDelta(o: TimeOffsetRecord | null | undefined): strin
   return parts.length ? parts.join(' ') : 'no shift';
 }
 
-const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/;
+// Accepts a space or `T` separator, an optional seconds field, and an optional
+// trailing `.sss` + `Z`/offset — the shape `PerImageTime` seeds its edit box
+// with `corrected`, which is now a full ISO 8601 UTC string, so a user who
+// commits without touching the text must still round-trip cleanly.
+const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
-/** Normalize a user-typed corrected timestamp to the canonical naive
- *  `YYYY-MM-DDTHH:mm:ss` shape (the form `media.csv` col 4 stores). Accepts a
- *  space or `T` separator and an optional seconds field. Returns null on a shape
- *  or range violation so the caller can reject the edit instead of writing junk. */
+/** Normalize a user-typed corrected timestamp to a full ISO 8601 UTC string
+ *  (the form `media.csv` / `observations.csv` col 4 now stores). Returns null on
+ *  a shape or range violation so the caller can reject the edit instead of
+ *  writing junk. A bare `YYYY-MM-DDTHH:mm:ss` with no offset is treated as
+ *  already UTC (matching what `corrected` displays), not the browser's zone. */
 export function normalizeTimestampInput(raw: string): string | null {
   const m = INPUT_RE.exec(raw.trim());
   if (!m) return null;
@@ -76,5 +81,5 @@ export function normalizeTimestampInput(raw: string): string | null {
   // date into the following month.
   const probe = new Date(Date.UTC(Number(y), month - 1, day));
   if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
-  return `${y}-${mo}-${d}T${h}:${mi}:${String(sec).padStart(2, '0')}`;
+  return new Date(Date.UTC(Number(y), month - 1, day, hour, min, sec)).toISOString();
 }

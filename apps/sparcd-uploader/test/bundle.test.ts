@@ -1,8 +1,9 @@
 // The uploader contract: `buildBundle` must emit valid v016 Camtrap data that
-// the shared `@sparcd/camtrap` readers parse, and an *empty* canonical
-// observations base — the same golden the tagger tests rely on. This test
-// reuses the shared fixtures and readers from `packages/camtrap/test`, so the
-// uploader and tagger prove the same data contract against the same bytes.
+// the shared `@sparcd/camtrap` readers parse, with one observations.csv row per
+// file and species columns left blank — the same golden the tagger tests rely
+// on. This test reuses the shared fixtures and readers from
+// `packages/camtrap/test`, so the uploader and tagger prove the same data
+// contract against the same bytes.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -17,7 +18,6 @@ import {
   MEDIA_COLUMN_COUNT,
   MEDIA_COL,
 } from '@sparcd/camtrap';
-import { fixture } from '../../../packages/camtrap/test/fixtures';
 import { buildBundle, type BuildInput } from '../src/lib/bundle';
 import type { Location } from '../src/lib/locations';
 import type { FileEntry } from '../src/store';
@@ -92,29 +92,35 @@ function build(
 }
 
 describe('uploader bundle is valid v016 Camtrap data', () => {
-  it('writes an empty observations.csv base — the tagger golden', async () => {
-    const b = await build([ready('a/IMG001.JPG', { exifNaive: naive() })]);
-    expect(b.observationsCsv).toBe('');
-    expect(b.observationsCsv).toBe(fixture('uploader-empty-v016', 'observations.csv'));
-    expect(parseObservations(b.observationsCsv)).toEqual([]);
+  it('writes one observations.csv row per file, species columns blank', async () => {
+    const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].observationId).toBe('IMG001.JPG');
+    expect(rows[0].scientificName).toBe('');
+    expect(rows[0].tags).toBe('');
+    expect(rows[0].count).toBe(0); // blank column reads back as 0
+    // Observation timestamp matches the media row's EXIF-derived capture time.
+    expect(rows[0].timestamp).toBe(parseMedia(b.mediaCsv)[0].timestamp);
   });
 
-  it('media.csv carries the DST-corrected naive capture time in col 4', async () => {
+  it('media.csv carries the DST-corrected full ISO capture time in col 4', async () => {
     // The uploader is the writer-of-record for capture time: the naive EXIF
     // wall-clock 08:00 interpreted in America/Phoenix (UTC-7, no DST) is 15:00Z,
-    // written as a naive-UTC string (no `Z`) — the exact byte shape readers want.
+    // written as a full ISO 8601 UTC string — matching how sparcd-web itself
+    // stamps timestamps.
     const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const rows = parseMedia(b.mediaCsv);
     expect(rows).toHaveLength(1);
-    expect(rows[0].timestamp).toBe('2024-01-10T15:00:00');
+    expect(rows[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
   });
 
   it('capture time is independent of the chosen zone going in (proves tz applied)', async () => {
     // Same naive wall-clock, two different zones → two different UTC instants.
     const phx = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const utc = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'UTC');
-    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00');
-    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00');
+    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000Z');
   });
 
   it('a video media row carries the video media type', async () => {
@@ -133,7 +139,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: undefined, manualNaive: naive({ hour: 8 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
   });
 
   it('prefers EXIF over a stray manual time so a real camera time is never clobbered', async () => {
@@ -141,7 +147,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }), manualNaive: naive({ hour: 20 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
   });
 
   it('media rows carry the full object key as media_id and round-trip', async () => {

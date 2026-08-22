@@ -8,7 +8,7 @@
 // `Collections/<uuid>/Uploads/<stamp>_<slug>/<relpath>` — not a separate
 // UploadBlobs key. See plan "Persistence — S3 sync".
 
-import type { Media } from '@sparcd/camtrap';
+import type { Media, Observation } from '@sparcd/camtrap';
 import {
   serializeDeployments,
   serializeMedia,
@@ -21,7 +21,7 @@ import {
 } from '@sparcd/camtrap';
 import { locationToDeployment, type Location } from './locations';
 import { sanitizeRelPath, nameCounts, resolveOneName } from './normalize';
-import { naiveInZoneToUtcNaive } from './exifTime';
+import { naiveInZoneToUtcIso } from './exifTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
 
@@ -35,7 +35,7 @@ export type UploadItem = {
   file: File;
   size: number;
   sha256: string;
-  captureTimestamp?: string; // resolved naive-UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
   mediaKind: MediaKind;
   mimeType: string;
 };
@@ -120,7 +120,7 @@ const mimeFor = (f: FileEntry): string =>
 // a manual Assign entry fills the gap for a file that has none.
 const captureFor = (f: FileEntry, timeZone: string): string => {
   const src = f.exifNaive ?? f.manualNaive;
-  return src ? naiveInZoneToUtcNaive(src, timeZone) : '';
+  return src ? naiveInZoneToUtcIso(src, timeZone) : '';
 };
 
 /**
@@ -183,9 +183,9 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
   const deployment = locationToDeployment(location, collectionUuid);
 
   // Resolve each file's key/capture-time/mime-type once (per-file work isn't
-  // free), then project into both media rows and upload items. Publish is
-  // gated on every ready file having a capture time, so col 4 is never empty
-  // for a published batch.
+  // free), then project into media rows, observation rows, and upload items.
+  // Publish is gated on every ready file having a capture time, so col 4 is
+  // never empty for a published batch.
   const uploadItems: UploadItem[] = ready.map((f) => planItemFor(f, naming, timeZone));
 
   const media: Media[] = uploadItems.map((it) => ({
@@ -197,9 +197,22 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
     mimeType: it.mimeType,
   }));
 
+  // One placeholder observation row per file, so every uploaded image is
+  // present in observations.csv from the start. Species-related columns
+  // (scientific_name, count) are left blank — nothing has been identified yet;
+  // the tagger fills them in later via `mergeObservations`.
+  const observations: Observation[] = uploadItems.map((it) => ({
+    observationId: it.fileName,
+    mediaId: it.key,
+    deploymentId: deployment.deploymentId,
+    timestamp: it.captureTimestamp ?? '',
+    scientificName: '',
+    tags: '',
+  }));
+
   const deploymentsCsv = serializeDeployments([deployment]);
   const mediaCsv = serializeMedia(media);
-  const observationsCsv = serializeObservations([]); // always empty on initial upload
+  const observationsCsv = serializeObservations(observations);
 
   const uploadMetaJson = serializeUploadMeta(
     buildUploadMeta({
