@@ -7,10 +7,5 @@
 
 import raw from '../assets/defaultSpecies.json?raw';
 import { parseSpecies, type Species } from './species';
-import { GHOST } from './drafts';
 
-/** Ghost is a built-in row in the species panel, so drop the registry's own
- *  entry for it rather than showing the label twice. */
-export const DEFAULT_SPECIES: Species[] = parseSpecies(raw).species.filter(
-  (s) => s.scientificName !== GHOST.label,
-);
+export const DEFAULT_SPECIES: Species[] = parseSpecies(raw).species;
