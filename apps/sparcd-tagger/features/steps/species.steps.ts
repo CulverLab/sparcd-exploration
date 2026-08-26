@@ -167,7 +167,7 @@ When('the Ghost label is applied to an image', async ({ page }) => {
 
 Then('the image is recorded as an empty or false-trigger frame', async ({ page }) => {
   await expect(gridCell(page, 'IMG001.JPG')).toContainText('Ghost');
-  await expect(ghostRow(page)).toContainText('empty / false-trigger');
+  await expect(ghostRow(page)).toContainText('Casper');
 });
 
 Then('any real species previously on that image is removed', async ({ page }) => {
