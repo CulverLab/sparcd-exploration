@@ -820,9 +820,9 @@ function FocusPane({
   onToggleQuestionable: () => void;
 }) {
   // View-only display adjustments live here so they reset to neutral when the
-  // user leaves Focus (this component unmounts) and stay sticky while paging
-  // through images within a Focus session — the night-frame burst workflow.
+  // user leaves Focus (this component unmounts) or navigates to a different image.
   const [adjustments, setAdjustments] = useState<Adjustments>(NEUTRAL);
+  useEffect(() => { setAdjustments(NEUTRAL); }, [current?.key]);
   const filter = useMemo(() => cssFilter(adjustments), [adjustments]);
   const isVideo = !!current && isVideoImage(current);
   const showAdjust = !!current && !isVideo;
