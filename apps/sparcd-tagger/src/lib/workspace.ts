@@ -26,6 +26,9 @@ export type TagImage = {
   deploymentId: string;
   baseTimestamp: string; // media col 4, ISO
   baseObservations: DraftObservation[]; // ALL canonical observation rows, in CSV order
+  /** Known for a local batch, where the uploader's worker sniffed the bytes.
+   *  Absent for a canonical record, whose `media.csv` gives us only the key. */
+  mediaKind?: 'image' | 'video';
 };
 
 // `.jpg`/`.mp4` only — same definition of "taggable image" the readers use, so
@@ -40,6 +43,12 @@ const IMAGE_EXT = /\.(jpe?g|mp4)$/i;
 // <img>. Detection is by key/filename extension only — no probing.
 export function isVideoKey(key: string): boolean {
   return /\.(mp4|avi|mov|m4v)$/i.test(key);
+}
+
+/** Whether an image renders as video: the batch's own answer where there is
+ *  one, else the extension — the only signal a canonical record carries. */
+export function isVideoImage(image: TagImage): boolean {
+  return image.mediaKind ? image.mediaKind === 'video' : isVideoKey(image.key);
 }
 
 export function buildTagImages(bundle: CanonicalBundle): TagImage[] {
@@ -60,7 +69,7 @@ export function buildTagImages(bundle: CanonicalBundle): TagImage[] {
       baseObservations: (obsByMedia.get(m.mediaId) ?? []).map((o) => ({
         scientificName: o.scientificName,
         commonName: commonNameFromComments(o.tags) ?? '',
-        count: o.count,
+        count: o.count ?? 0, // parseObservations always yields a real number; 0 is the type-safe fallback
         requestedSpecies: requestedSpeciesFromComments(o.tags) ?? '',
         // Base free-tags aren't surfaced today; keep '' to match prior behaviour.
         freeTags: '',

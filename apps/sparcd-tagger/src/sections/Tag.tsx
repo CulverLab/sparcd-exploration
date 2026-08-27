@@ -34,8 +34,11 @@ import {
   type UploadCtx,
 } from '../lib/drafts';
 import { useKeyBindings, effectiveKey, normalizeJavaKeyCode } from '../lib/keys';
+import { useLocalBatch, saveLocalTags } from '../lib/localBatch';
+import { localTagImages } from '../lib/localWorkspace';
+import { DEFAULT_SPECIES } from '../lib/defaultSpecies';
 import type { Species } from '../lib/species';
-import { isVideoKey, type TagImage } from '../lib/workspace';
+import { isVideoImage, type TagImage } from '../lib/workspace';
 import type { DraftRecord } from '../lib/db';
 
 const GHOST_KEY = 'g';
@@ -54,11 +57,31 @@ export function Tag() {
   const pendingSnapshots = useStore((s) => s.pendingSnapshots);
   const clearPendingSnapshots = useStore((s) => s.clearPendingSnapshots);
 
+  // A local batch bypasses the connection entirely, so both S3 queries below
+  // are disabled (`cfg` is null) and their data comes from the record instead.
+  const localRecord = useLocalBatch((s) => (s.status === 'ready' ? s.record : null));
+  const needsGesture = useLocalBatch((s) => s.needsGesture);
+  const attachOriginals = useLocalBatch((s) => s.attachOriginals);
+
   const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
   const species = useSpecies(cfg, connectionId);
 
+  const localImages = useMemo(
+    () => (localRecord ? localTagImages(localRecord) : EMPTY),
+    [localRecord],
+  );
+
   const { bucket } = collectionKey ? parseCollectionKey(collectionKey) : { bucket: '' };
-  const ctx = useMemo<UploadCtx>(() => ({ bucket, uploadPrefix: uploadPrefix ?? '' }), [bucket, uploadPrefix]);
+  // Drafts are scoped by bucket + upload, and a local batch has neither — its
+  // own id stands in, so re-entering the same hand-off resumes where it left off
+  // and two batches never share draft rows.
+  const ctx = useMemo<UploadCtx>(
+    () =>
+      localRecord
+        ? { bucket: 'local', uploadPrefix: localRecord.id }
+        : { bucket, uploadPrefix: uploadPrefix ?? '' },
+    [localRecord, bucket, uploadPrefix],
+  );
 
   const drafts = useDraftStore((s) => s.drafts);
   const timeOffset = useDraftStore((s) => s.timeOffset);
@@ -76,8 +99,8 @@ export function Tag() {
 
   // Hydrate drafts for this upload from Dexie when it changes.
   useEffect(() => {
-    if (bucket && uploadPrefix) void loadUpload({ bucket, uploadPrefix });
-  }, [bucket, uploadPrefix, loadUpload]);
+    if (ctx.bucket && ctx.uploadPrefix) void loadUpload(ctx);
+  }, [ctx, loadUpload]);
 
   const [view, setView] = useState<View>('overview');
   const [overviewKind, setOverviewKind] = useState<ViewKind>('grid');
@@ -131,7 +154,7 @@ export function Tag() {
   // downstream consumer (bursts, selection, keyboard nav) re-derives from `list`,
   // so ordering lives entirely here. Species count is draft-aware (effective), so
   // re-sorting by species stays live as tags change.
-  const base = images.data ?? EMPTY;
+  const base = localRecord ? localImages : images.data ?? EMPTY;
   const speciesCountOf = (img: TagImage) => effectiveOf(img, drafts[img.key]).observations.length;
   const order = useMemo(
     () => sortIndices(base, speciesCountOf, sortField, sortDir),
@@ -242,7 +265,7 @@ export function Tag() {
   }, [pendingSnapshots, clearPendingSnapshots]);
 
   const { overrides, assignKey, clearKey } = useKeyBindings();
-  const speciesList = species.data?.species ?? [];
+  const speciesList = localRecord ? DEFAULT_SPECIES : species.data?.species ?? [];
 
   const bindingFor = (sci: string): string | null => {
     const k = effectiveKey(sci, speciesJsonKey(speciesList, sci), overrides);
@@ -396,6 +419,15 @@ export function Tag() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Mirror the drafts into the shared record so the uploader reads the tags
+  // back without knowing anything about the tagger's own database. Debounced on
+  // top of the drafts' own debounce — this is a whole-record write, not a hot path.
+  useEffect(() => {
+    if (!localRecord) return;
+    const timer = setTimeout(() => void saveLocalTags(localRecord.id, drafts), 400);
+    return () => clearTimeout(timer);
+  }, [localRecord, drafts]);
+
   // Transient "Saved" confirmation after Cmd/Ctrl+S.
   useEffect(() => {
     if (!savedAt) return;
@@ -403,10 +435,12 @@ export function Tag() {
     return () => clearTimeout(t);
   }, [savedAt]);
 
-  if (!current && images.isLoading)
-    return <Centered>Loading the upload’s canonical media…</Centered>;
-  if (images.isError)
-    return <Centered tone="warn">{(images.error as Error).message}</Centered>;
+  if (!localRecord) {
+    if (!current && images.isLoading)
+      return <Centered>Loading the upload’s canonical media…</Centered>;
+    if (images.isError)
+      return <Centered tone="warn">{(images.error as Error).message}</Centered>;
+  }
   if (!list.length) return <Centered>This upload has no taggable images.</Centered>;
 
   const draft = current ? drafts[current.key] : undefined;
@@ -589,22 +623,41 @@ export function Tag() {
               {nDirty} unsaved · discard
             </button>
           )}
-          <button
-            onClick={() => setShowSnapshots(true)}
-            className="text-[12px] font-mono border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            title="Browse and restore prior canonical snapshots of this upload"
-          >
-            Snapshots…
-          </button>
-          <button
-            onClick={() => setShowSync(true)}
-            className="text-[12px] font-mono border border-ink px-2.5 py-1 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            title="Review and sync local edits to the canonical S3 files"
-          >
-            Sync…
-          </button>
+          {!localRecord && (
+            <>
+              <button
+                onClick={() => setShowSnapshots(true)}
+                className="text-[12px] font-mono border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                title="Browse and restore prior canonical snapshots of this upload"
+              >
+                Snapshots…
+              </button>
+              <button
+                onClick={() => setShowSync(true)}
+                className="text-[12px] font-mono border border-ink px-2.5 py-1 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                title="Review and sync local edits to the canonical S3 files"
+              >
+                Sync…
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {needsGesture && (
+        <div className="shrink-0 border-b border-rule bg-mark px-3 py-2 flex items-center gap-3 flex-wrap">
+          <span className="text-[12.5px] font-body text-ink">
+            Showing thumbnails. The browser wants a click before it will read the folder’s
+            full-resolution images.
+          </span>
+          <button
+            onClick={() => void attachOriginals()}
+            className="text-[12px] font-mono border border-ink px-2.5 py-1 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Open folder
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0">
         {view === 'overview' ? (
@@ -771,12 +824,20 @@ function FocusPane({
   // through images within a Focus session — the night-frame burst workflow.
   const [adjustments, setAdjustments] = useState<Adjustments>(NEUTRAL);
   const filter = useMemo(() => cssFilter(adjustments), [adjustments]);
-  const showAdjust = !!current && !isVideoKey(current.key);
+  const isVideo = !!current && isVideoImage(current);
+  const showAdjust = !!current && !isVideo;
 
   return (
     <div className="flex flex-col min-h-[55svh] lg:min-h-0 bg-paper">
       <div className="relative flex-1 min-h-0 grid place-items-center p-4 overflow-hidden">
-        {current && <FocusImage objectKey={current.key} alt={current.fileName} filter={filter} />}
+        {current && (
+          <FocusImage
+            objectKey={current.key}
+            alt={current.fileName}
+            isVideo={isVideo}
+            filter={filter}
+          />
+        )}
         {showAdjust && (
           // On phones the zoom controls own bottom-right, so park adjustments at
           // top-left to keep both off the squeezed image; restore bottom-left ≥lg.
@@ -931,17 +992,19 @@ function Segmented({
 function FocusImage({
   objectKey,
   alt,
+  isVideo,
   filter,
 }: {
   objectKey: string;
   alt: string;
+  isVideo: boolean;
   filter?: string;
 }) {
   const { url, isError } = useMediaUrl(objectKey);
   if (isError)
     return <div className="text-[13px] font-mono text-warn">Could not load this image.</div>;
   if (!url) return <div className="text-[13px] font-mono text-inkMute">…</div>;
-  if (isVideoKey(objectKey)) return <FocusVideo src={url} alt={alt} resetKey={objectKey} />;
+  if (isVideo) return <FocusVideo src={url} alt={alt} resetKey={objectKey} />;
   return <ZoomableImage src={url} alt={alt} resetKey={objectKey} filter={filter} />;
 }
 

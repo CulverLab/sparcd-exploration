@@ -21,6 +21,7 @@
       "@sparcd/s3-safe": ["../../packages/s3-safe/src/index.ts"],
       "@sparcd/auth-ui": ["../../packages/auth-ui/src/index.ts"],
       "@sparcd/camtrap": ["../../packages/camtrap/src/index.ts"],
+      "@sparcd/flip": ["../../packages/flip/src/index.ts"],
       "@/*": ["./src/*"]
     }
   },

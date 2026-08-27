@@ -27,7 +27,7 @@ import {
 } from './scanFiles';
 import { processBatch, type ProcessResponse } from './processPool';
 import { namingForUploadPath, objectKeyFor, buildBundleFromRecords, type ResolvedFileRecord } from './bundle';
-import { naiveInZoneToUtcNaive } from './exifTime';
+import { naiveInZoneToUtcIso } from './exifTime';
 
 export type RestoreOk = {
   ok: true;
@@ -124,10 +124,14 @@ export async function restoreFromHandle(
  * IndexedDB read. `recordsPromise` lets the caller kick that load off in
  * parallel instead of awaiting it up front; it's only consumed here after the
  * gated permission call resolves.
+ *
+ * The parameters are the fields this actually reads, not the whole persisted
+ * shapes — the uploader→tagger hand-off restores from its own record and has no
+ * resume session to hand over.
  */
 export async function restoreFromHandleTrusted(
-  batch: BatchRecord,
-  recordsPromise: Promise<FileRecord[]>,
+  batch: Pick<BatchRecord, 'dirHandle'>,
+  recordsPromise: Promise<Pick<FileRecord, 'localPath' | 'fileName' | 'size'>[]>,
 ): Promise<TrustedRestoreResult> {
   const handle = batch.dirHandle;
   if (!handle) return { ok: false, reason: 'No durable folder handle is stored for this session.' };
@@ -327,7 +331,7 @@ export async function ensureBundle(
       problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be inspected' });
       continue;
     }
-    const captureTimestamp = r.exifNaive ? naiveInZoneToUtcNaive(r.exifNaive, batch.uploadTimeZone) : '';
+    const captureTimestamp = r.exifNaive ? naiveInZoneToUtcIso(r.exifNaive, batch.uploadTimeZone) : '';
     if (!captureTimestamp) {
       problems.push({
         localPath: rec.localPath,
@@ -364,6 +368,7 @@ export async function ensureBundle(
       remoteKey: r.remoteKey!,
       captureTimestamp: r.captureTimestamp,
       mimeType: r.mimeType,
+      preTags: r.preTags,
     };
   });
 

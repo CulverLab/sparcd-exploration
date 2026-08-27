@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import type { FlipObservation } from '@sparcd/flip';
 import { useStore, type FileEntry } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import { formatNaive, type NaiveDateTime } from '../lib/exifTime';
 import type { FileValidation, Severity } from '../lib/validation';
 
 const ROW = 52;
+// A batch back from the tagger carries a species line under each filename.
+const ROW_TAGGED = 68;
+
+/** The tagger's non-animal label — an empty frame the tagger confirmed. */
+const GHOST_SCIENTIFIC_NAME = 'Casper';
 // Phones get a 3-track layout (thumb, name, trailing); the full 6-column
 // template only kicks in at sm, keeping the desktop grid identical.
 const COLS = 'grid-cols-[44px_1fr_auto] sm:grid-cols-[44px_1fr_150px_92px_84px_128px]';
@@ -66,15 +72,48 @@ function StatusCell({ entry, validation }: { entry: FileEntry; validation?: File
   );
 }
 
+// Read-only: what the tagger identified, before any of it is uploaded. Editing
+// happens back in the tagger, never here.
+function SpeciesChips({ observations }: { observations: FlipObservation[] }) {
+  if (observations.length === 0) {
+    return (
+      <span className="inline-flex items-center border border-dashed border-ruleSoft px-1.5 text-[11px] font-mono text-inkMute">
+        untagged
+      </span>
+    );
+  }
+  return (
+    <>
+      {observations.map((o) => {
+        const ghost = o.scientificName === GHOST_SCIENTIFIC_NAME;
+        return (
+          <span
+            key={o.scientificName}
+            title={o.scientificName}
+            className={`inline-flex items-center gap-1 border px-1.5 text-[11px] font-mono ${
+              ghost ? 'border-inkMute text-inkMute' : 'border-ink bg-mark text-ink'
+            }`}
+          >
+            {o.commonName || o.scientificName}
+            {!ghost && <span className="text-inkSoft">×{o.count}</span>}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function Row({
   entry,
   validation,
+  showTags,
   active,
   onSelect,
   onRemove,
 }: {
   entry: FileEntry;
   validation?: FileValidation;
+  showTags: boolean;
   active: boolean;
   onSelect: () => void;
   onRemove: () => void;
@@ -103,6 +142,14 @@ function Row({
         <span className="sm:hidden block truncate font-mono text-[11px] text-inkMute">
           {shortTime(entry.exifNaive)} · {dims} · {formatBytes(entry.size)}
         </span>
+        {showTags && (
+          <span
+            className="flex items-center gap-1 overflow-hidden mt-0.5"
+            aria-label={`Species on ${entry.fileName}`}
+          >
+            <SpeciesChips observations={entry.preTags ?? []} />
+          </span>
+        )}
       </span>
       <span className="hidden sm:block font-mono text-[12px] text-inkSoft truncate" title={entry.exifNaive ? formatNaive(entry.exifNaive) : undefined}>
         {shortTime(entry.exifNaive)}
@@ -131,6 +178,7 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
   const allFiles = useStore((s) => s.files);
   const validations = useStore((s) => s.validations);
   const removeFile = useStore((s) => s.removeFile);
+  const showTags = useStore((s) => s.flipId !== null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
 
@@ -142,10 +190,11 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
     [allFiles, validations, severityFilter],
   );
 
+  const row = showTags ? ROW_TAGGED : ROW;
   const virtualizer = useVirtualizer({
     count: files.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW,
+    estimateSize: () => row,
     overscan: 12,
   });
 
@@ -203,11 +252,12 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
                 <div
                   key={f.id}
                   className="absolute left-0 right-0"
-                  style={{ height: ROW, transform: `translateY(${vi.start}px)` }}
+                  style={{ height: row, transform: `translateY(${vi.start}px)` }}
                 >
                   <Row
                     entry={f}
                     validation={validations[f.id]}
+                    showTags={showTags}
                     active={vi.index === active}
                     onSelect={() => setActive(vi.index)}
                     onRemove={() => removeFile(f.id)}

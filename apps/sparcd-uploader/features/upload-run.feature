@@ -88,7 +88,7 @@ Feature: Upload and publish a batch
   @A1
   Scenario: A batch with no species identifications is accepted and recorded as untagged
     When a batch is published
-    Then an empty observations table is written alongside the media table
+    Then a placeholder observations table is written alongside the media table
     And the upload metadata records that none of its images carry a species
     # The uploader has no tagging surface at all; every upload it makes is
     # untagged by construction.

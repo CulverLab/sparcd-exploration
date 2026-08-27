@@ -291,6 +291,7 @@ const fileRecordFor = (sessionId: string, it: UploadItem, state: FileRecord['sta
   state,
   remoteKey: it.key,
   attempt: 0,
+  preTags: it.preTags,
 });
 
 /** A file record for a scanned-but-not-yet-processed file — everything a

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import {
+  canPickFolder,
   scanDataTransfer,
   scanDirectoryHandle,
   scanFileList,
@@ -8,14 +9,6 @@ import {
   supportsDirectoryHandle,
   type ScannedFile,
 } from '../lib/scanFiles';
-
-// iOS Safari supports neither showDirectoryPicker nor a working
-// <input webkitdirectory>, so whole-folder selection is impossible there.
-// A coarse-only pointer without File System Access is our proxy for a touch
-// device that can't pick a folder; it falls back to a plain file picker.
-function detectFolderPick() {
-  return supportsDirectoryHandle || !window.matchMedia?.('(pointer: coarse)').matches;
-}
 
 export function DropZone() {
   const setFiles = useStore((s) => s.setFiles);
@@ -28,11 +21,11 @@ export function DropZone() {
   // supportsDirectoryHandle is a static browser capability; only the
   // coarse-pointer proxy can flip mid-session (e.g. docking to/from tablet
   // mode), so track that media query instead of snapshotting it once.
-  const [supportsFolderPick, setSupportsFolderPick] = useState(detectFolderPick);
+  const [supportsFolderPick, setSupportsFolderPick] = useState(canPickFolder);
   useEffect(() => {
     if (supportsDirectoryHandle) return;
     const mq = window.matchMedia('(pointer: coarse)');
-    const update = () => setSupportsFolderPick(detectFolderPick());
+    const update = () => setSupportsFolderPick(canPickFolder());
     mq.addEventListener('change', update);
     return () => mq.removeEventListener('change', update);
   }, []);

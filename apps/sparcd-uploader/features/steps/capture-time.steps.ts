@@ -97,13 +97,13 @@ When('the batch is published', async ({ app }) => {
 Then('the stored capture time is that wall-clock read in the upload timezone', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   const summer = rows.find((r) => r[6] === 'SUMMER.JPG')!;
-  expect(summer[4]).toBe('2026-07-01T10:00:00'); // 12:00 CEST = 10:00Z
+  expect(summer[4]).toBe('2026-07-01T10:00:00.000Z'); // 12:00 CEST = 10:00Z
 });
 
 Then('daylight-saving time in force on that date is accounted for', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   const winter = rows.find((r) => r[6] === 'WINTER.JPG')!;
-  expect(winter[4]).toBe('2026-01-15T11:00:00'); // 12:00 CET = 11:00Z
+  expect(winter[4]).toBe('2026-01-15T11:00:00.000Z'); // 12:00 CET = 11:00Z
 });
 
 Then('the stored time does not depend on the timezone of the machine uploading', async ({ app }) => {
@@ -111,7 +111,7 @@ Then('the stored time does not depend on the timezone of the machine uploading',
   const summer = rows.find((r) => r[6] === 'SUMMER.JPG')!;
   // In the machine's own zone (America/New_York, UTC-4 in July) the same
   // wall-clock would have become 16:00Z.
-  expect(summer[4]).not.toBe('2026-07-01T16:00:00');
+  expect(summer[4]).not.toBe('2026-07-01T16:00:00.000Z');
 });
 
 // --- manual entry ----------------------------------------------------------
@@ -236,6 +236,6 @@ Given('every examined file has either a camera time or a manual one', async ({ a
 Then('every media row carries a capture time', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   expect(rows.length).toBe(3);
-  for (const row of rows) expect(row[4]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
-  expect(rows.find((r) => r[6] === 'IMG_A.JPG')![4]).toBe('2026-05-05T12:05:05');
+  for (const row of rows) expect(row[4]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+Z)?$/);
+  expect(rows.find((r) => r[6] === 'IMG_A.JPG')![4]).toBe('2026-05-05T12:05:05.000Z');
 });

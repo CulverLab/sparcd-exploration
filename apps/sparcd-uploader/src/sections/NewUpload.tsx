@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { Severity } from '../lib/validation';
 import { StepIndicator } from '../components/StepIndicator';
@@ -6,10 +6,22 @@ import { DropZone } from '../components/DropZone';
 import { FileList } from '../components/FileList';
 import { Assign } from './Assign';
 import { Upload } from './Upload';
-import { formatBytes } from '../lib/scanFiles';
+import { canPickFolder, formatBytes, supportsDirectoryHandle } from '../lib/scanFiles';
 import { summarize } from '../lib/validation';
 import { ensureProcessing } from '../lib/processing';
 import { listResumable, fileStateCounts } from '../lib/db';
+import { reselectFolder } from '../lib/resume';
+import type { FlipRecord } from '@sparcd/flip';
+import {
+  adoptRecord,
+  adoptReselected,
+  handOffToTagger,
+  reopenTagger,
+  resumeFromFlip,
+  returningFlipId,
+  type FlipReturn,
+} from '../lib/flip';
+
 
 type OpenSession = { stamp: string; done: number; total: number; others: number };
 
@@ -61,6 +73,7 @@ export function NewUpload() {
   const files = useStore((s) => s.files);
   const validations = useStore((s) => s.validations);
   const batchToken = useStore((s) => s.batchToken);
+  const flipId = useStore((s) => s.flipId);
   const resetBatch = useStore((s) => s.resetBatch);
   const setStep = useStore((s) => s.setStep);
 
@@ -70,8 +83,11 @@ export function NewUpload() {
     if (step === 'inspect' && files.length > 0) ensureProcessing();
   }, [step, batchToken, files.length]);
 
+  const flip = useFlipReturn();
+
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
   const summary = useMemo(() => summarize(files, validations), [files, validations]);
+  const tagged = useMemo(() => files.filter((f) => f.preTags?.length).length, [files]);
 
   // Clicking a severity counter filters the list to just those files —
   // scrolling a 5000-row list for the one flagged file is not an option.
@@ -106,12 +122,15 @@ export function NewUpload() {
         <StepIndicator current={step} />
       </div>
 
-      {step === 'drop' && (
-        <>
-          <ResumeNotice />
-          <DropZone />
-        </>
-      )}
+      {step === 'drop' &&
+        (flip ? (
+          <FlipReturnPanel state={flip} />
+        ) : (
+          <>
+            <ResumeNotice />
+            <DropZone />
+          </>
+        ))}
 
       {step === 'inspect' && (
         <div className="space-y-4">
@@ -119,6 +138,12 @@ export function NewUpload() {
             <p className="font-body text-[14px] text-inkSoft">
               <span className="font-mono text-ink">{files.length}</span> files ·{' '}
               <span className="font-mono text-ink">{formatBytes(totalBytes)}</span>
+              {flipId && (
+                <>
+                  {' · '}
+                  <span className="font-mono text-ink">{tagged}</span> tagged
+                </>
+              )}
               {summary.pending > 0 && (
                 <>
                   {' · '}
@@ -175,6 +200,22 @@ export function NewUpload() {
               </button>
               <button
                 disabled={!summary.ready}
+                onClick={() => (flipId ? reopenTagger(flipId) : void handOffToTagger())}
+                title={
+                  flipId
+                    ? 'Go back to the tagger and pick up where you left off'
+                    : summary.ready
+                      ? 'Identify species in the Tagger before uploading'
+                      : 'Resolve files that need attention first'
+                }
+                className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+                  summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
+                }`}
+              >
+                {flipId ? 'Edit tags' : 'Tag species first'}
+              </button>
+              <button
+                disabled={!summary.ready}
                 onClick={() => setStep('assign')}
                 title={summary.ready ? 'Continue to assignment' : 'Resolve files that need attention first'}
                 className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
@@ -199,5 +240,163 @@ export function NewUpload() {
 
       {step === 'upload' && <Upload />}
     </div>
+  );
+}
+
+/**
+ * Pick the batch back up when the tagger sends the user here with `?flip=<id>`.
+ * A page load is not a user gesture, so the restore can legitimately stop and
+ * ask for a click — see `resumeFromFlip`. Returns null once the batch is in the
+ * store (or when this was an ordinary visit), so the drop zone shows as usual.
+ */
+function useFlipReturn(): FlipPending | null {
+  const [state, setState] = useState<FlipPending | null>(null);
+
+  useEffect(() => {
+    const id = returningFlipId();
+    if (!id) return;
+    void resumeFromFlip(id).then((r) => setState(r.kind === 'restored' ? null : r));
+  }, []);
+
+  return state;
+}
+
+/** Everything that still needs the user before the batch is back on screen. */
+type FlipPending = Exclude<FlipReturn, { kind: 'restored' }>;
+
+function FlipReturnPanel({ state }: { state: FlipPending }) {
+  if (state.kind === 'not-found') {
+    return (
+      <Panel title="That batch isn't here">
+        <p>
+          The tagger pointed back at a batch this browser has no record of. It may have been
+          cleared, or the two tools may be running on different origins — in development they are.
+          Choose the folder again to start over.
+        </p>
+      </Panel>
+    );
+  }
+  if (state.kind === 'needs-reselect') return <ReselectPanel record={state.record} />;
+  return <ReopenPanel record={state.record} />;
+}
+
+/**
+ * No durable handle rode along with the batch, so the folder has to be pointed
+ * at again. Same three-way choice the drop zone makes: the File System Access
+ * picker where it exists (it hands back a handle for next time), the rendered
+ * `webkitdirectory` input on a desktop browser without it, and individual files
+ * on a device that cannot present a folder picker at all.
+ */
+function ReselectPanel({ record }: { record: FlipRecord }) {
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const folderPick = canPickFolder();
+
+  async function adopt(list?: FileList) {
+    setBusy(true);
+    try {
+      const picked = await reselectFolder(list);
+      if (picked) adoptReselected(record, picked.scanned);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="Choose the folder again">
+      <p>
+        Your tags are safe. This browser doesn't keep a durable handle on the folder, so it needs
+        you to point at <span className="font-mono text-ink">{record.files.length}</span> files
+        once more before they can be uploaded.
+      </p>
+      <PanelButton
+        busy={busy}
+        label={folderPick ? 'Choose folder' : 'Choose photos or videos'}
+        onClick={() => {
+          if (supportsDirectoryHandle) void adopt();
+          else inputRef.current?.click();
+        }}
+      />
+      {folderPick ? (
+        <input
+          ref={inputRef}
+          type="file"
+          // @ts-expect-error — non-standard but widely supported folder picker
+          webkitdirectory=""
+          directory=""
+          multiple
+          hidden
+          onChange={onPick}
+        />
+      ) : (
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,video/mp4"
+          multiple
+          hidden
+          onChange={onPick}
+        />
+      )}
+    </Panel>
+  );
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = e.target.files;
+    if (list?.length) void adopt(list);
+    e.target.value = '';
+  }
+}
+
+function ReopenPanel({ record }: { record: FlipRecord }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Panel title="Reopen the batch">
+      <p>
+        Your tags are safe. The browser wants a click before it hands the folder's{' '}
+        <span className="font-mono text-ink">{record.files.length}</span> files back — reading them
+        from a page load alone isn't allowed.
+      </p>
+      <PanelButton
+        busy={busy}
+        label="Reopen batch"
+        onClick={async () => {
+          setBusy(true);
+          // Straight into adoptRecord: the permission request has to be the
+          // first thing this click awaits, or Safari and Firefox drop it.
+          await adoptRecord(record);
+          setBusy(false);
+        }}
+      />
+    </Panel>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="border border-rule bg-panel px-6 py-8 max-w-[640px] space-y-4">
+      <h2 className="font-display text-[20px] font-[600] text-ink">{title}</h2>
+      <div className="font-body text-[14px] text-inkSoft space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function PanelButton({
+  busy,
+  label,
+  onClick,
+}: {
+  busy: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] hover:opacity-90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+    >
+      {busy ? 'Working…' : label}
+    </button>
   );
 }

@@ -4,11 +4,12 @@ Coverage notes for the as-built uploader feature files.
 
 ## What is documented
 
-- **Nine feature files**, one per coherent flow: connecting/session, choosing a
-  folder, inspecting the batch, assigning collection + deployment, capture time
-  and timezone, the upload run itself, resume/retry/History, correcting a
-  published upload, and Settings/local data. Every scenario was traced to code
-  in `src/`, and most are additionally pinned by a unit test in `test/`.
+- **Ten feature files**, one per coherent flow: connecting/session, choosing a
+  folder, inspecting the batch, tagging species before upload, assigning
+  collection + deployment, capture time and timezone, the upload run itself,
+  resume/retry/History, correcting a published upload, and Settings/local data.
+  Every scenario was traced to code in `src/`, and most are additionally pinned
+  by a unit test in `test/`.
 - Scenarios carry a story tag only where the as-built behavior genuinely
   corresponds to that story's acceptance criteria. Everything else is
   `@unmapped` — most of this app is, which is the point of the exercise.
@@ -33,10 +34,13 @@ Coverage notes for the as-built uploader feature files.
   the upload folder and object paths are reused verbatim, done objects are
   skipped after a size + fingerprint check, and location/identity are never
   re-entered.
-- **A1** (tag species before upload) — only the third criterion is met: an
-  untagged batch is accepted and recorded as carrying no species. There is **no
-  tagging surface in this app at all**; an empty observations table is always
-  written.
+- **A1** (tag species before upload) — now met, but not by this app alone.
+  There is still **no tagging surface here**: the batch is handed to the tagger
+  and comes back with species on it, which the uploader shows read-only and
+  publishes as observation rows in the same upload. An untagged batch is still
+  accepted and recorded as carrying no species. Attribution (the tagger's
+  identity travelling with the tags) is recorded on the hand-off record but is
+  **not written into the published data** — that criterion stays unmet.
 - **F3** (announce new data) — only the negative criterion is met: a failed or
   abandoned upload publishes no metadata, so nothing sees it. There is no
   notification mechanism.

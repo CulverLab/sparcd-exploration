@@ -14,6 +14,7 @@
   "dependencies": {
     "@sparcd/auth-ui": "workspace:*",
     "@sparcd/camtrap": "workspace:*",
+    "@sparcd/flip": "workspace:*",
     "@sparcd/s3-safe": "workspace:*",
     "@sparcd/types": "workspace:*",
     "@tanstack/react-query": "^5.59.0",

@@ -5,9 +5,10 @@
 // zone is irrelevant. We capture the components verbatim (never letting
 // `new Date(localString)` reinterpret them in the browser's zone), then
 // interpret them in a user-chosen IANA zone to get the true UTC instant. The
-// result is emitted in the canonical naive shape `YYYY-MM-DDTHH:mm:ss` (no `Z`,
-// no millis, no offset) — the exact byte shape media.csv col 4 carries and the
-// Java app, sparcd-web, the explorer, and the tagger all read.
+// result is emitted as a full ISO 8601 UTC timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`)
+// — matching how sparcd-web itself stamps observation timestamps
+// (`datetime.now(UTC).isoformat()` in `camtrap_utils.py`) — the shape media.csv
+// col 4 and observations.csv col 4 now carry.
 
 /** Naive EXIF wall-clock with no zone — the components as written by the camera. */
 export type NaiveDateTime = {
@@ -129,8 +130,8 @@ function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
 }
 
 /**
- * Interpret naive wall-clock components AS IF in `timeZone`, returning the UTC
- * instant in canonical naive UTC shape `YYYY-MM-DDTHH:mm:ss` (no Z).
+ * Interpret naive wall-clock components AS IF in `timeZone`, returning the true
+ * UTC instant as a full ISO 8601 string (`YYYY-MM-DDTHH:mm:ss.sssZ`).
  *
  * DST-correct without a heavy dependency: start from a UTC guess equal to the
  * components, ask Intl what wall-clock that guess shows in `timeZone`, and
@@ -140,16 +141,12 @@ function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
  * exist) and fall-back folds (ambiguous) resolve deterministically to whatever
  * the two-pass fixed point lands on — pinned by tests, never throws.
  */
-export function naiveInZoneToUtcNaive(n: NaiveDateTime, timeZone: string): string {
+export function naiveInZoneToUtcIso(n: NaiveDateTime, timeZone: string): string {
   let guess = Date.UTC(n.year, n.month - 1, n.day, n.hour, n.minute, n.second);
   guess -= deltaMs(partsInZone(guess, timeZone), n);
   // Second pass: if the first correction crossed a DST boundary, the offset at
   // the corrected instant may differ; re-correct from there.
   guess -= deltaMs(partsInZone(guess, timeZone), n);
 
-  const d = new Date(guess);
-  return (
-    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T` +
-    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-  );
+  return new Date(guess).toISOString();
 }

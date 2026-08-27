@@ -195,9 +195,25 @@ export class App {
 
   /** Drag a folder onto the drop zone, via a synthetic DataTransfer of entries. */
   async dropFolder(specs: FileSpec[], opts: { readDelayMs?: number } = {}): Promise<void> {
+    await this.buildFolder(specs, { drop: true, readDelayMs: opts.readDelayMs ?? 0 });
+  }
+
+  /**
+   * Make the folder dialog ready to hand this folder back, without scanning it.
+   * `addInitScript` re-runs on every navigation, so the picked folder is gone
+   * after a reload — anything that navigates and then reselects needs this.
+   */
+  async seedPickedFolder(specs: FileSpec[]): Promise<void> {
+    await this.buildFolder(specs, { drop: false, readDelayMs: 0 });
+  }
+
+  private async buildFolder(
+    specs: FileSpec[],
+    opts: { drop: boolean; readDelayMs: number },
+  ): Promise<void> {
     this.lastSpecs = specs;
-    await this.page.evaluate(async (payload: { entries: WireFile[]; readDelayMs: number }) => {
-      const { entries, readDelayMs } = payload;
+    await this.page.evaluate(async (payload: { entries: WireFile[]; readDelayMs: number; drop: boolean }) => {
+      const { entries, readDelayMs, drop } = payload;
       const decode = (e: WireFile): BlobPart[] => {
         if (e.zeroBytes !== undefined) return [new Uint8Array(e.zeroBytes)];
         const bin = atob(e.b64 ?? '');
@@ -276,11 +292,70 @@ export class App {
         w.__pickedFolder = toHandle(rootName, rootNode);
       }
 
+      if (!drop) return;
       const zone = document.querySelector('[aria-label^="Drop a folder"]')!;
       const ev = new DragEvent('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer });
       zone.dispatchEvent(ev);
-    }, { entries: this.toWire(specs), readDelayMs: opts.readDelayMs ?? 0 });
+    }, { entries: this.toWire(specs), readDelayMs: opts.readDelayMs, drop: opts.drop });
+  }
+
+  // --- the uploader ↔ tagger hand-off ---------------------------------------
+
+  /** Stand in for the Tagger, which is a different app on the same origin. */
+  async stubTagger(): Promise<void> {
+    await this.page.route(/\/sparcd-exploration\/tagger\//, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><title>tagger</title><body>tagger stub</body>',
+      }),
+    );
+  }
+
+  /** Every hand-off record, with blobs reduced to whether they are there. */
+  async readFlipRecords(): Promise<Record<string, any>[]> {
+    return this.page.evaluate(async () => {
+      const dbs = await indexedDB.databases();
+      if (!dbs.some((d) => d.name === 'sparcd-flip')) return [];
+      const open = indexedDB.open('sparcd-flip');
+      const db: IDBDatabase = await new Promise((resolve) => {
+        open.onsuccess = () => resolve(open.result);
+      });
+      const req = db.transaction('records', 'readonly').objectStore('records').getAll();
+      const rows: Record<string, any>[] = await new Promise((resolve) => {
+        req.onsuccess = () => resolve(req.result);
+      });
+      db.close();
+      return rows.map((r) => ({
+        ...r,
+        dirHandle: !!r.dirHandle,
+        files: (r.files as Record<string, unknown>[]).map((f) => ({ ...f, thumb: !!f.thumb })),
+      }));
+    });
+  }
+
+  /** Stand in for what the Tagger writes back into the record. */
+  async patchFlipRecord(id: string, patch: Record<string, unknown>): Promise<void> {
+    await this.page.evaluate(
+      async ({ id, patch }: { id: string; patch: Record<string, unknown> }) => {
+        const open = indexedDB.open('sparcd-flip');
+        const db: IDBDatabase = await new Promise((resolve) => {
+          open.onsuccess = () => resolve(open.result);
+        });
+        const store = db.transaction('records', 'readwrite').objectStore('records');
+        const existing: Record<string, unknown> = await new Promise((resolve) => {
+          const req = store.get(id);
+          req.onsuccess = () => resolve(req.result);
+        });
+        await new Promise<void>((resolve) => {
+          const req = store.put({ ...existing, ...patch });
+          req.onsuccess = () => resolve();
+        });
+        db.close();
+      },
+      { id, patch },
+    );
   }
 
   /**
@@ -452,6 +527,8 @@ export class App {
       dimensions: string;
       sha256: string;
       hasThumbnail: boolean;
+      /** The read-only species chips a batch back from the Tagger carries. */
+      species: string;
     }[]
   > {
     return this.page.evaluate(() => {
@@ -465,7 +542,13 @@ export class App {
         const titled = Array.from(nameSpan.querySelectorAll('span[title]'));
         const inner = titled[0];
         const shaTitle = titled.find((s) => (s.getAttribute('title') ?? '').startsWith('sha256:'));
+        const chips = nameSpan.querySelector('span[aria-label^="Species on"]');
         return {
+          species: chips
+            ? Array.from(chips.children)
+                .map((c) => (c.textContent ?? '').trim())
+                .join(', ')
+            : '',
           name: inner?.textContent?.trim() ?? '',
           relPath: inner?.getAttribute('title') ?? '',
           status: (statusSpan.textContent ?? '').replace('✕', '').trim(),

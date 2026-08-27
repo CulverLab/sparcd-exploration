@@ -367,7 +367,7 @@ Then(
 Then('the workspace reloads the upload from the newly stored files', async ({ page, s3 }) => {
   const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
   const shifted = media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!;
-  expect(shifted.timestamp).toBe('2024-01-10T09:00:00');
+  expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000Z');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.getByText('2024-01-10T09:00:00')).toBeVisible();
 });

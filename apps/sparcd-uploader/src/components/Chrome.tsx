@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { BrandSwitcher, ConnectionChip } from '@sparcd/auth-ui';
 import { useStore, type Section } from '../store';
 import { StatePill, type UploadState } from './StatePill';
+import { ConfirmNavigateAwayDialog } from './ConfirmNavigateAwayDialog';
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'new', label: 'New upload' },
@@ -12,10 +13,24 @@ const SECTIONS: { id: Section; label: string }[] = [
 export function Chrome({ uploadState, children }: { uploadState: UploadState; children: ReactNode }) {
   const section = useStore((s) => s.section);
   const setSection = useStore((s) => s.setSection);
+  const activeSnap = useStore((s) => s.activeSnap);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const disconnect = useStore((s) => s.disconnect);
+
+  // A real (non-dry) run in progress — disconnect would cancel it, so confirm first.
+  const runningForReal =
+    (activeSnap?.phase === 'blobs' || activeSnap?.phase === 'metadata') && !activeSnap?.dryRun;
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  const handleDisconnect = () => {
+    if (runningForReal) {
+      setConfirmDisconnect(true);
+    } else {
+      disconnect();
+    }
+  };
 
   return (
     <div className="min-h-[100svh] flex flex-col bg-paper">
@@ -58,7 +73,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
           <StatePill state={uploadState} />
-          <ConnectionChip identity={uploaderUser || undefined} onDisconnect={disconnect} />
+          <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 sm:w-8 sm:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
@@ -71,6 +86,16 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
       </header>
 
       <main className="flex-1 min-h-0">{children}</main>
+
+      {confirmDisconnect && (
+        <ConfirmNavigateAwayDialog
+          onContinue={() => {
+            disconnect();
+            setConfirmDisconnect(false);
+          }}
+          onCancel={() => setConfirmDisconnect(false)}
+        />
+      )}
     </div>
   );
 }

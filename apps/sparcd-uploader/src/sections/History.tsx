@@ -53,7 +53,14 @@ export function History() {
   const setPendingResume = useStore((s) => s.setPendingResume);
   const setSection = useStore((s) => s.setSection);
   const setStep = useStore((s) => s.setStep);
-  const activeRunSessionId = useStore((s) => s.activeRunSessionId);
+  // The Upload step owns every run, resumes included, so a run in flight is
+  // simply the store's active snapshot. Its session id is what keeps a running
+  // batch from being resumed twice or discarded out from under itself.
+  const runningSessionId = useStore((s) =>
+    s.activeSnap && (s.activeSnap.phase === 'preparing' || s.activeSnap.phase === 'blobs' || s.activeSnap.phase === 'metadata')
+      ? s.activeSnap.sessionId
+      : null,
+  );
 
   const [rows, setRows] = useState<Row[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -295,7 +302,7 @@ export function History() {
     );
   }
 
-  const busy = verifyingBatchId !== null || pickerOpen || activeRunSessionId !== null;
+  const busy = verifyingBatchId !== null || pickerOpen || runningSessionId !== null;
 
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto space-y-5">
@@ -339,7 +346,7 @@ export function History() {
       <ul className="space-y-3">
         {rows.map(({ batch, counts }) => {
           const isVerifying = verifyingBatchId === batch.id && !!verifyProgress;
-          const isRunning = activeRunSessionId === batch.id;
+          const isRunning = runningSessionId === batch.id;
           const total = batch.totalFiles;
           return (
             <li key={batch.id} className="border border-ruleSoft bg-panel px-4 py-3 space-y-2">

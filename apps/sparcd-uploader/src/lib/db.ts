@@ -13,6 +13,7 @@
 // prefix to record.
 
 import Dexie, { type Table } from 'dexie';
+import type { FlipObservation } from '@sparcd/flip';
 import type { MediaKind } from './scanFiles';
 import type { Location } from './locations';
 
@@ -81,6 +82,10 @@ export interface FileRecord {
   mimeType?: string;
   remoteETag?: string;
   lastError?: string;
+  // Species applied in the tagger before this batch was ever uploaded. Not
+  // indexed, so it needs no schema bump; persisted so a batch interrupted days
+  // after tagging still publishes the identifications it left with.
+  preTags?: FlipObservation[];
 }
 
 export interface BundleRecord {

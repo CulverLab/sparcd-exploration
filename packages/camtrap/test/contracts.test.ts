@@ -26,9 +26,15 @@ import {
 import { fixture } from './fixtures';
 
 describe('uploader contract', () => {
-  it('uploader writes an empty observations.csv base', () => {
-    expect(fixture('uploader-empty-v016', 'observations.csv')).toBe('');
-    expect(parseObservations(fixture('uploader-empty-v016', 'observations.csv'))).toEqual([]);
+  it('uploader writes one observations.csv row per file, species columns blank', () => {
+    const obs = parseObservations(fixture('uploader-empty-v016', 'observations.csv'));
+    expect(obs).toHaveLength(5);
+    for (const o of obs) {
+      expect(o.scientificName).toBe('');
+      expect(o.tags).toBe('');
+    }
+    // count reads back as 0 (blank column), same as parseObservations always does.
+    for (const o of obs) expect(o.count).toBe(0);
   });
 
   it('uploader media carries the DST-corrected naive capture time in col 4', () => {
@@ -133,60 +139,64 @@ describe('UploadMeta delta', () => {
 });
 
 describe('time correction', () => {
-  it('applies a signed +1h offset to a naive timestamp', () => {
+  it('applies a signed +1h offset and emits full ISO 8601 UTC', () => {
+    expect(shiftTimestamp('2024-01-11T06:00:30.000Z', { ...ZERO_OFFSET, hours: 1 })).toBe(
+      '2024-01-11T07:00:30.000Z',
+    );
+  });
+
+  it('accepts legacy naive input too, upgrading it to full ISO on output', () => {
     expect(shiftTimestamp('2024-01-11T06:00:30', { ...ZERO_OFFSET, hours: 1 })).toBe(
-      '2024-01-11T07:00:30',
+      '2024-01-11T07:00:30.000Z',
     );
   });
 
   it('rolls second/day boundaries with exact-duration arithmetic', () => {
-    expect(shiftTimestamp('2024-12-31T23:59:59', { ...ZERO_OFFSET, seconds: 1 })).toBe(
-      '2025-01-01T00:00:00',
+    expect(shiftTimestamp('2024-12-31T23:59:59.000Z', { ...ZERO_OFFSET, seconds: 1 })).toBe(
+      '2025-01-01T00:00:00.000Z',
     );
   });
 
-  // Month/year shifts must match the Java desktop app's TimeShiftController,
-  // which uses LocalDateTime.plusYears(...).plusMonths(...) — each step CLAMPS
+  // Month/year shifts must match the original desktop tooling's clamping
+  // semantics (LocalDateTime.plusYears(...).plusMonths(...)) — each step CLAMPS
   // the day-of-month to the last valid day instead of overflowing into the next
-  // month. The corrected timestamp is written to media.csv col 4 and read by the
-  // Java app and sparcd-web, so this is a hard compatibility contract, not a
-  // stylistic choice.
-  it('clamps month/year overflow to the last valid day, matching Java LocalDateTime', () => {
-    // Jan 31 + 1 month → Feb 29 (2024 leap), NOT Mar 2. Java: clamps to last Feb day.
-    expect(shiftTimestamp('2024-01-31T00:00:00', { ...ZERO_OFFSET, months: 1 })).toBe(
-      '2024-02-29T00:00:00',
+  // month. This is a hard compatibility contract, not a stylistic choice.
+  it('clamps month/year overflow to the last valid day, matching LocalDateTime semantics', () => {
+    // Jan 31 + 1 month → Feb 29 (2024 leap), NOT Mar 2. Clamps to last Feb day.
+    expect(shiftTimestamp('2024-01-31T00:00:00.000Z', { ...ZERO_OFFSET, months: 1 })).toBe(
+      '2024-02-29T00:00:00.000Z',
     );
     // Same shift in a non-leap year clamps to Feb 28.
-    expect(shiftTimestamp('2023-01-31T00:00:00', { ...ZERO_OFFSET, months: 1 })).toBe(
-      '2023-02-28T00:00:00',
+    expect(shiftTimestamp('2023-01-31T00:00:00.000Z', { ...ZERO_OFFSET, months: 1 })).toBe(
+      '2023-02-28T00:00:00.000Z',
     );
     // Leap day + 1 year → Feb 28 the next (non-leap) year.
-    expect(shiftTimestamp('2024-02-29T12:00:00', { ...ZERO_OFFSET, years: 1 })).toBe(
-      '2025-02-28T12:00:00',
+    expect(shiftTimestamp('2024-02-29T12:00:00.000Z', { ...ZERO_OFFSET, years: 1 })).toBe(
+      '2025-02-28T12:00:00.000Z',
     );
     // Order matters: plusYears clamps 29→28 first, then plusMonths carries that
     // 28 forward (→ Mar 28), NOT Mar 29. Proves the two clamps are sequential.
-    expect(shiftTimestamp('2024-02-29T00:00:00', { ...ZERO_OFFSET, years: 1, months: 1 })).toBe(
-      '2025-03-28T00:00:00',
+    expect(shiftTimestamp('2024-02-29T00:00:00.000Z', { ...ZERO_OFFSET, years: 1, months: 1 })).toBe(
+      '2025-03-28T00:00:00.000Z',
     );
     // Negative month wraps the year correctly.
-    expect(shiftTimestamp('2024-01-15T08:30:00', { ...ZERO_OFFSET, months: -1 })).toBe(
-      '2023-12-15T08:30:00',
+    expect(shiftTimestamp('2024-01-15T08:30:00.000Z', { ...ZERO_OFFSET, months: -1 })).toBe(
+      '2023-12-15T08:30:00.000Z',
     );
     // Day/hour/minute/second offsets are exact durations applied after the clamp.
     expect(
-      shiftTimestamp('2024-01-31T22:00:00', { ...ZERO_OFFSET, months: 1, days: 1, hours: 3 }),
-    ).toBe('2024-03-02T01:00:00'); // Feb 29 (clamp) + 1d3h
+      shiftTimestamp('2024-01-31T22:00:00.000Z', { ...ZERO_OFFSET, months: 1, days: 1, hours: 3 }),
+    ).toBe('2024-03-02T01:00:00.000Z'); // Feb 29 (clamp) + 1d3h
   });
 
   it('per-image override wins over the upload offset', () => {
-    expect(correctedTimestamp('2024-01-11T06:00:30', { ...ZERO_OFFSET, hours: 1 }, '2024-01-11T07:00:30')).toBe(
-      '2024-01-11T07:00:30',
+    expect(
+      correctedTimestamp('2024-01-11T06:00:30.000Z', { ...ZERO_OFFSET, hours: 1 }, '2024-01-11T07:00:30.000Z'),
+    ).toBe('2024-01-11T07:00:30.000Z');
+    expect(correctedTimestamp('2024-01-11T06:00:30.000Z', { ...ZERO_OFFSET, hours: 1 }, null)).toBe(
+      '2024-01-11T07:00:30.000Z',
     );
-    expect(correctedTimestamp('2024-01-11T06:00:30', { ...ZERO_OFFSET, hours: 1 }, null)).toBe(
-      '2024-01-11T07:00:30',
-    );
-    expect(correctedTimestamp('2024-01-11T06:00:30', null, null)).toBe('2024-01-11T06:00:30');
+    expect(correctedTimestamp('2024-01-11T06:00:30.000Z', null, null)).toBe('2024-01-11T06:00:30.000Z');
   });
 });
 

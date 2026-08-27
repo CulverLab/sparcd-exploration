@@ -20,10 +20,26 @@ export function App() {
   const section = useStore((s) => s.section);
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
+  const activeSnap = useStore((s) => s.activeSnap);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
+
+  // Warn on tab close/reload while any real run (fresh or resume) is in flight.
+  // Lives here rather than in the section components so it covers History resume
+  // runs too — both sections write into the same store activeSnap.
+  const runningForReal =
+    (activeSnap?.phase === 'blobs' || activeSnap?.phase === 'metadata') && !activeSnap?.dryRun;
+  useEffect(() => {
+    if (!runningForReal) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [runningForReal]);
 
   if (!s3Config) {
     return (

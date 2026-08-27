@@ -128,9 +128,7 @@ export function MetadataPreview({
       <div className="px-4 py-3">
         {empty ? (
           <p className="font-body text-[13px] text-inkMute italic">
-            Empty file. Initial uploads always write an empty{' '}
-            <span className="font-mono not-italic">observations.csv</span>; observations are added
-            later by sparcd-tagger.
+            Empty file — no files in this upload yet.
           </p>
         ) : (
           <pre className="font-mono text-[11.5px] leading-[1.5] text-ink overflow-auto max-h-none md:max-h-[320px] overscroll-contain whitespace-pre-wrap break-all">

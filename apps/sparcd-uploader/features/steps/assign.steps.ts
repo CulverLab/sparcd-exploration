@@ -295,7 +295,7 @@ Then(
     await app.page.getByRole('button', { name: 'media.csv' }).click();
     await expect(app.page.locator('pre')).toContainText('IMG_0001.JPG');
     await app.page.getByRole('button', { name: 'observations.csv' }).click();
-    await expect(app.page.getByText(/Initial uploads always write an empty/)).toBeVisible();
+    await expect(app.page.locator('pre')).toContainText('blank');
   },
 );
 

@@ -6,7 +6,7 @@ story set in `docs/user-stories.md`.
 
 ## What these files are
 
-Eleven `.feature` files describing what `apps/sparcd-tagger` **does today**, not
+Twelve `.feature` files describing what `apps/sparcd-tagger` **does today**, not
 what it should do. Every scenario is traceable to code that exists; nothing
 was written from the plan or the README where the code disagrees. Scenarios
 that map to an agreed story carry its ID; the rest carry `@unmapped`.
@@ -24,6 +24,7 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 | `restore-a-previous-snapshot.feature` | Snapshot listing and restore (supports the M2 constraint) | `@unmapped` |
 | `correct-capture-times.feature` | Whole-upload, selection and per-image time correction | `@unmapped` |
 | `F4-location-visibility.feature` | What the tool actually reveals about camera locations | `@F4` |
+| `local-batch.feature` | Tagging a batch the Uploader handed over, with no connection | `@A1` `@unmapped` |
 
 ## Coverage against the agreed stories
 
@@ -57,9 +58,12 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 
 ## Not covered, because the tagger does not do it
 
-- **F1, F2, A1, A2, AL1, AL2** — all upload-side stories. This app never
-  uploads images; it reads uploads that already exist. Those belong to
-  `apps/sparcd-uploader`.
+- **F1, F2, A2, AL1, AL2** — all upload-side stories. This app never uploads
+  images; it reads uploads that already exist, or tags a batch the Uploader
+  hands it. Those belong to `apps/sparcd-uploader`.
+- **A1** is the exception: the tagging half of "identify species before
+  uploading" happens here, in local-batch mode. The upload itself still belongs
+  to `apps/sparcd-uploader`.
 - **F3** — no announcement, notification or messaging surface exists.
 - **H4, H5, HA1–HA3, JN1–JN2** — no messaging, help-request, expert-hand-off
   or outside-expert path exists.

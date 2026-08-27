@@ -133,17 +133,33 @@ writeFileSync(join(webDir, 'observations.csv'), csv(canonicalObs));
 writeFileSync(join(webDir, 'UploadMeta.json'),
   json(uploadMeta(3, ['Uploaded by priortagger on 2024.01.15.10.00.00'])));
 
-// --- uploader-empty-v016 (fresh upload: empty observations) ----------------
+// --- uploader-empty-v016 (fresh upload: no species identified yet) ---------
 //
-// "empty" refers to observations.csv. media.csv now carries the per-image
-// capture timestamp in col 4: the uploader is the writer-of-record for capture
-// time and stamps the DST-corrected naive wall-clock at upload (matching the
-// java-v016 media shape). Only observations are written empty on a fresh upload.
+// "empty" refers to the species columns, not the file: the uploader writes one
+// observation row per media file at upload time (observation_id = filename,
+// matching sparcd-web's `create_observation_data`), with scientific_name/count/
+// count_new left blank since nothing has been identified. media.csv carries the
+// per-image capture timestamp in col 4 (also used as the observation row's
+// timestamp): the uploader is the writer-of-record for capture time and stamps
+// the DST-corrected full-ISO UTC instant at upload.
+
+const placeholderObs = (k, name, ts) => {
+  const r = new Array(20).fill('');
+  r[0] = name; // observation_id = filename
+  r[1] = DEP;
+  r[3] = k;
+  r[4] = ts;
+  r[6] = 'false'; // camera_setup
+  // 8 scientific_name, 9 count, 10 count_new intentionally left blank.
+  return r;
+};
 
 const upDir = join(here, 'uploader-empty-v016');
 writeFileSync(join(upDir, 'deployments.csv'), deployments);
 writeFileSync(join(upDir, 'media.csv'), csv(mediaBase));
-writeFileSync(join(upDir, 'observations.csv'), ''); // always written empty on upload
+writeFileSync(join(upDir, 'observations.csv'), csv(mediaBase.map((r) =>
+  placeholderObs(r[0], r[6], r[4]),
+)));
 writeFileSync(join(upDir, 'UploadMeta.json'), json(uploadMeta(0, [])));
 
 // --- tagger-edited-v016 (expected output, built by hand) -------------------

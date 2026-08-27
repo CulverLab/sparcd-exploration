@@ -95,6 +95,16 @@ export async function scanDataTransfer(items: DataTransferItemList): Promise<Sca
 export const supportsDirectoryHandle = typeof window.showDirectoryPicker === 'function';
 
 /**
+ * Whether whole-folder selection is possible at all. iOS Safari supports
+ * neither `showDirectoryPicker` nor a working `<input webkitdirectory>`, so a
+ * coarse-only pointer without File System Access is our proxy for a device that
+ * has to fall back to picking individual files.
+ */
+export function canPickFolder(): boolean {
+  return supportsDirectoryHandle || !window.matchMedia?.('(pointer: coarse)').matches;
+}
+
+/**
  * Prompt for a folder via the File System Access API, returning the durable
  * handle (or null if the user dismissed the picker). Read-only — this tool
  * never writes to the local disk.

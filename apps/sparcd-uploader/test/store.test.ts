@@ -74,7 +74,7 @@ describe('store persistence', () => {
     useStore.getState().setUploadConcurrency(16);
     useStore.getState().setShardEndpoints('https://proxy:8443');
     useStore.getState().setFiles([scanned('a.jpg')]);
-    useStore.getState().setActiveRunSessionId('session-1');
+    useStore.getState().setActiveSnap({ sessionId: 'session-1' } as never);
 
     const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
 
