@@ -157,7 +157,7 @@ function a1({ stepBack = 'fastest', bailOnDrop = false, windowMs = 3_000, ...opt
   let bestRate = 0;
   let bestTarget = target;
   let payingTarget = target;
-  let startupBest = 0;
+  let payingRate = 0;
   const grow = () => {
     target = clamp(Math.ceil(target * 1.5));
   };
@@ -173,11 +173,12 @@ function a1({ stepBack = 'fastest', bailOnDrop = false, windowMs = 3_000, ...opt
         bestRate = rate;
         bestTarget = measured;
       }
-      startupBest = Math.max(startupBest, rate);
       // The first window covers lanes spinning up from nothing, so it has no
       // gradient to read — take it as the baseline and grow unconditionally.
       if (prevRate === null) {
         prevRate = rate;
+        payingTarget = measured;
+        payingRate = rate;
         if (target < max) grow();
         return;
       }
@@ -186,12 +187,16 @@ function a1({ stepBack = 'fastest', bailOnDrop = false, windowMs = 3_000, ...opt
       if (growth >= 0.2) {
         flatRounds = 0;
         payingTarget = measured;
+        payingRate = rate;
       } else {
         flatRounds += bailOnDrop && growth <= -0.1 ? 2 : 1;
       }
       if (flatRounds >= 2 || target >= max) {
         phase = 'climb';
-        climber.adopt(stepBack === 'fastest' ? bestTarget : payingTarget, startupBest);
+        // The bar has to be the rate measured at the size being adopted, or the
+        // climber's first window reads as a regression and undoes the handoff.
+        if (stepBack === 'fastest') climber.adopt(bestTarget, bestRate);
+        else climber.adopt(payingTarget, payingRate);
         return;
       }
       grow();

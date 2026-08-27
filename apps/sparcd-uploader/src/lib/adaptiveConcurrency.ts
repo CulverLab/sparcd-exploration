@@ -60,8 +60,12 @@ const DEFAULTS = {
 
 type HillClimber = {
   target: () => number;
-  /** Take over from startup at a lane count already known to pay. */
-  adopt: (lanes: number, rate: number) => void;
+  /**
+   * Take over from startup at a lane count already known to pay, with the rate
+   * measured at that lane count as the bar. A null rate means startup never got
+   * a measurement, so the climber baselines on its own first window instead.
+   */
+  adopt: (lanes: number, rate: number | null) => void;
   onWindow: (sample: WindowSample) => void;
 };
 
@@ -93,7 +97,7 @@ function createHillClimber(o: Required<AdaptiveOptions>): HillClimber {
       holding = false;
       probing = false;
       flats = 0;
-      prevBytes = 1;
+      prevBytes = rate === null ? -1 : 1;
     },
     onWindow: ({ bytes, ms }) => {
       // Files under the streaming threshold report their bytes only once they
@@ -175,15 +179,18 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
   let prevRate: number | null = null;
   let flatRounds = 0;
   let rounds = 0;
-  // Lane count of the most recent window that clearly paid, and the best rate
-  // startup saw — the hill climber inherits both so its first window isn't
-  // spent rediscovering a baseline.
+  // The most recent lane count that clearly paid, and the rate measured *at
+  // that lane count*. The hill climber inherits both, so its first window isn't
+  // spent rediscovering a baseline. The two have to travel together: startup
+  // usually peaks at a lane count past the one it settles on, and handing the
+  // climber a bar it can't reach at the size it was given makes the first
+  // honest window read as a regression and give lanes straight back.
   let payingLanes = target;
-  let bestRate = 0;
+  let payingRate: number | null = null;
 
   const handOff = () => {
     startup = false;
-    climber.adopt(payingLanes, bestRate);
+    climber.adopt(payingLanes, payingRate);
   };
 
   return {
@@ -195,14 +202,16 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
       rounds++;
       const rate = sample.ms > 0 ? sample.bytes / sample.ms : 0;
       if (sample.bytes === 0) {
-        // Nothing landed, so there is no gradient. Drop the round and make the
-        // next window a fresh baseline — comparing a full window against a
-        // window that reported nothing would read as runaway growth.
+        // Nothing landed, so there is no gradient. Drop the round and start the
+        // comparison over — the next window is a fresh baseline (measuring it
+        // against a window that reported nothing would read as runaway growth),
+        // and the plateau count restarts with it, since rounds either side of
+        // the gap were never consecutive measurements of anything.
         prevRate = null;
+        flatRounds = 0;
         if (rounds >= MAX_STARTUP_ROUNDS) handOff();
         return;
       }
-      bestRate = Math.max(bestRate, rate);
 
       // The first window covers lanes spinning up from nothing, so it measures
       // the ramp rather than the path. Baseline on it and grow regardless — and
@@ -211,12 +220,14 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
       if (prevRate === null) {
         prevRate = rate;
         payingLanes = target;
+        payingRate = rate;
       } else {
         const growth = rate / prevRate - 1;
         prevRate = rate;
         if (growth >= o.startupGain) {
           flatRounds = 0;
           payingLanes = target;
+          payingRate = rate;
         } else {
           flatRounds += growth <= -DROP ? PLATEAU_ROUNDS : 1;
         }

@@ -567,10 +567,13 @@ function makeRunner(
   };
 
   /**
-   * Batched final review, for when the per-file HEAD after each PUT was
-   * skipped: one listing pass (1 request per 1000 objects) confirms every
-   * blob landed at its exact size, instead of a HEAD round-trip per file
-   * during the run.
+   * How a wet run confirms itself: one listing pass (1 request per 1000
+   * objects) checks every blob landed at its exact size, instead of a HEAD
+   * round-trip per file during the run.
+   *
+   * Only files the run believes it finished are checked — one that already
+   * failed its own retries has nothing to confirm, and the count reported is
+   * the number actually reviewed, not the size of the batch.
    */
   const finalReview = async (
     sessionId: string,
@@ -584,9 +587,11 @@ function makeRunner(
     }
     const byId = new Map(snap.files.map((f) => [f.id, f]));
     let mismatched = 0;
+    let reviewed = 0;
     for (const it of items) {
       const fp = byId.get(it.id);
       if (!fp || (fp.state !== 'done' && fp.state !== 'skipped')) continue;
+      reviewed++;
       const size = sizes.get(it.key);
       if (size !== it.size) {
         mismatched++;
@@ -602,8 +607,8 @@ function makeRunner(
     log(
       'info',
       mismatched === 0
-        ? `final review: all ${items.length} objects confirmed by listing`
-        : `final review: ${mismatched} objects failed the listing check`,
+        ? `final review: all ${reviewed} objects confirmed by listing`
+        : `final review: ${mismatched} of ${reviewed} objects failed the listing check`,
     );
     emit(true);
   };

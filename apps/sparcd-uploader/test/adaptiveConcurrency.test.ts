@@ -61,6 +61,16 @@ describe('adaptive startup', () => {
     expect(c.target()).toBe(12);
   });
 
+  it('restarts the plateau count across a zero-byte gap', () => {
+    const c = createAdaptiveController();
+    // Flat, then a window where nothing landed, then flat again. The two flat
+    // rounds measured different lane counts either side of the gap and were
+    // never consecutive, so they must not add up to a plateau.
+    const path = trajectory([30_000_000, 31_000_000, 0, 30_000_000, 31_000_000], c, STARTUP_MS);
+    expect(path).toEqual([12, 18, 18, 27, 32]);
+    expect(c.windowMs()).toBe(STARTUP_MS);
+  });
+
   it('does not read a window after a zero-byte one as growth', () => {
     const c = createAdaptiveController();
     // A window where nothing completed is followed by one carrying two windows'
@@ -122,6 +132,23 @@ describe('adaptive steady state', () => {
     settled(c);
     expect(c.target()).toBe(12);
     expect(c.windowMs()).toBe(MS);
+  });
+
+  // Startup usually peaks at a lane count past the one it settles on. The bar
+  // it hands over has to be the rate measured at the size it handed over, or
+  // the first honest window at that size reads as a regression and the climber
+  // gives the lanes straight back.
+  it('inherits a bar it can actually reach at the size it was given', () => {
+    const c = createAdaptiveController();
+    // 8 warms up, 12 doubles the rate, then 18 and 27 each creep up 5% — so
+    // the fastest window startup ever saw was at 27 lanes, not at the 12 it
+    // plateaus back to.
+    trajectory([30_000_000, 60_000_000, 63_000_000, 66_000_000], c, STARTUP_MS);
+    expect(c.target()).toBe(12);
+
+    // The same rate 12 lanes actually produced, over a full-length window.
+    c.onWindow({ bytes: (60_000_000 / STARTUP_MS) * MS, ms: MS });
+    expect(c.target()).toBe(12);
   });
 
   it('climbs while throughput keeps improving and settles at the cap', () => {
