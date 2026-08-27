@@ -329,15 +329,28 @@ Then(
 
 // --- concurrency -----------------------------------------------------------
 
-Then('the number of parallel uploads can be set between 4 and 16', async ({ app }) => {
-  const slider = app.page.locator('input[type="range"]');
-  await expect(slider).toHaveAttribute('min', '4');
-  await expect(slider).toHaveAttribute('max', '16');
-  await slider.fill('12');
-  await expect(app.page.getByText('12', { exact: true })).toBeVisible();
+Then('the number of parallel uploads is chosen automatically by default', async ({ app }) => {
+  // The Upload step reports "adaptive" instead of a slider (the row also holds
+  // the 'i' explainer, so the text isn't an exact match).
+  await expect(app.page.getByText(/^adaptive/)).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'About adaptive concurrency' })).toBeVisible();
+  await expect(app.laneSlider()).toHaveCount(0);
+  await app.gotoSection('Settings');
+  await expect(app.concurrencyModeRadio('Adaptive (default)')).toBeChecked();
+  await app.gotoSection('New upload');
 });
 
-Then('it defaults to 8', async ({ app }) => {
+Then('it can be pinned to a number between 4 and 32', async ({ app }) => {
+  await app.pinConcurrency(12);
+  const slider = app.laneSlider();
+  await expect(slider).toHaveAttribute('min', '4');
+  await expect(slider).toHaveAttribute('max', '32');
+  await expect(slider).toHaveValue('12');
+});
+
+Then('a pinned number defaults to 8', async ({ app }) => {
+  // A fresh tab starts from the shipped defaults, so this reads the default
+  // lane count rather than the 12 the previous step pinned in this session.
   await app.reopenInNewTab();
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
@@ -345,15 +358,20 @@ Then('it defaults to 8', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.walkToUploadStep();
-  await expect(app.page.locator('input[type="range"]')).toHaveValue('8');
+  await app.pinConcurrency();
+  await expect(app.laneSlider()).toHaveValue('8');
 });
 
-Then('it cannot be changed while a run is in progress', async ({ app }) => {
+Then('a pinned number can be changed while a run is in progress', async ({ app }) => {
   app.s3.putDelayMs = 1000;
   await app.dryRunCheckbox().uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
-  await expect(app.page.locator('input[type="range"]')).toBeDisabled();
+  // The lane pool re-reads the setting on every pull, so the slider stays live
+  // — unlike the run options, which are locked once bytes are moving.
+  await expect(app.laneSlider()).toBeEnabled();
+  await app.laneSlider().fill('6');
+  await expect(app.laneSlider()).toHaveValue('6');
   await expect(app.dryRunCheckbox()).toBeDisabled();
   await app.waitForRunPhase('done', 120_000);
 });
@@ -392,7 +410,9 @@ Then('the retry is recorded in the activity log', async ({ app }) => {
 
 Given("a file's upload is refused for lack of permission", async ({ app }) => {
   await rescanFromUpload(app, manyJpegs(24));
-  await app.page.locator('input[type="range"]').fill('4');
+  // Pin the lanes so the abort has files left to skip — adaptive would be free
+  // to open enough of them to finish the batch before the 403 lands.
+  await app.pinConcurrency(4);
   app.s3.putDelayMs = 40;
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0000.JPG') ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,

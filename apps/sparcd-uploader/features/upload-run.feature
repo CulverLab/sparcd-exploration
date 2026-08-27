@@ -106,11 +106,13 @@ Feature: Upload and publish a batch
   @unmapped
   Scenario: The number of files uploaded at once can be tuned
     Given the upload has not been started
-    Then the number of parallel uploads can be set between 4 and 16
-    And it defaults to 8
-    And it cannot be changed while a run is in progress
-    # The setting lives on the Upload step, not in Settings, and is not
-    # remembered across page loads.
+    Then the number of parallel uploads is chosen automatically by default
+    And it can be pinned to a number between 4 and 32
+    And a pinned number defaults to 8
+    And a pinned number can be changed while a run is in progress
+    # Choosing automatic or pinned is a Settings choice, remembered for the
+    # rest of the browser session. Once pinned, the slider also appears on the
+    # Upload step and stays live while a run is going.
 
   @unmapped
   Scenario: A momentary failure is retried before the file is given up on

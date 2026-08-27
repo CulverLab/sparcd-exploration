@@ -684,6 +684,15 @@ function makeRunner(
     const windows = onWindow
       ? setInterval(() => {
           const now = Date.now();
+          // Offline, every lane is parked in `waitForOnline` and moves nothing.
+          // Feeding that window in would read as a throughput collapse and make
+          // the climber reverse direction on the way back up. Roll the window
+          // forward instead, so the outage never reaches the controller.
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            windowBytes = transferred();
+            windowAt = now;
+            return;
+          }
           onWindow({
             bytes: Math.max(0, transferred() - windowBytes),
             ms: now - windowAt,

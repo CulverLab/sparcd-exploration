@@ -98,4 +98,21 @@ describe('adaptive concurrency controller', () => {
     c.onWindow({ bytes: 0, ms: MS });
     expect(c.target()).toBe(10);
   });
+
+  // A network outage parks every lane in `waitForOnline`, so its windows carry
+  // no bytes through no fault of the lane count. The engine drops those windows
+  // rather than reporting them (see the `navigator.onLine` guard in upload.ts);
+  // this pins what that buys — the climb picks up where it left off instead of
+  // reversing, which is what the previous test shows an unsuppressed one does.
+  it('keeps climbing across a suppressed offline window', () => {
+    const c = createAdaptiveController();
+    trajectory([10_000_000, 20_000_000], c);
+    expect(c.target()).toBe(12);
+
+    // The outage windows never reach the controller at all.
+    expect(c.target()).toBe(12);
+
+    trajectory([30_000_000], c);
+    expect(c.target()).toBe(14);
+  });
 });

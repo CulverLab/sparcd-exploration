@@ -675,6 +675,24 @@ export class App {
     return this.page.getByLabel('Test the upload, nothing is written');
   }
 
+  concurrencyModeRadio(mode: 'Adaptive (default)' | 'Manual'): Locator {
+    return this.page.getByRole('radio', { name: mode });
+  }
+
+  /** The lane-count slider. Only rendered once concurrency is pinned to manual. */
+  laneSlider(): Locator {
+    return this.page.locator('input[type="range"]');
+  }
+
+  /** Settings → pin concurrency to a fixed lane count, then come back. Omit
+   *  `lanes` to pin at whatever the current value is. */
+  async pinConcurrency(lanes?: number): Promise<void> {
+    await this.gotoSection('Settings');
+    await this.concurrencyModeRadio('Manual').check();
+    if (lanes !== undefined) await this.laneSlider().fill(String(lanes));
+    await this.gotoSection('New upload');
+  }
+
   async startRun(): Promise<void> {
     await this.page.getByRole('button', { name: /^Start (dry run|upload)$/ }).click();
   }

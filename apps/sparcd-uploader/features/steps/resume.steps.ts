@@ -162,7 +162,10 @@ Then(
     // No durable handle was ever granted, so the reselect path is the one taken.
     const [batch] = await app.readBatchRecords();
     expect(batch.fileAccessMode).toBe('reselect-required');
-    await expect(app.page.getByText(/^Resuming \d/)).toBeVisible({ timeout: 60_000 });
+    // History reattaches, then hands the prepared session to the wizard's
+    // Upload step, which is where the run itself becomes visible.
+    await app.expectStep('Upload');
+    await expect.poll(() => app.logText(), { timeout: 60_000 }).toContain('resuming ');
   },
 );
 
@@ -426,7 +429,10 @@ Given('a resume is running', async ({ app }) => {
   app.s3.putHooks.length = 0;
   holdFirstMediaPut(app);
   await resumeFromHistory(app);
-  await expect(app.page.getByText(/^Resuming \d/)).toBeVisible({ timeout: 60_000 });
+  // History prepares the resume and hands it to the wizard's Upload step, which
+  // owns the run UI — so that is where a resume in flight is watched.
+  await app.expectStep('Upload');
+  await expect(app.runPhase()).toHaveText('uploading', { timeout: 60_000 });
 });
 
 Then(
@@ -439,11 +445,7 @@ Then(
 );
 
 Then('the resume can be cancelled', async ({ app }) => {
-  // While the resume runs, the session's own Resume button is disabled — and so
-  // is every other one, since the flag is shared by the whole list.
-  app.notes.resumeDisabledWhileRunning = await app.page
-    .getByRole('button', { name: 'Resuming…' })
-    .isDisabled();
+  // The Upload step's own Cancel, the same control a fresh run offers.
   const cancel = app.page.getByRole('button', { name: 'Cancel' });
   await expect(cancel).toBeVisible();
   await cancel.click();
@@ -451,9 +453,14 @@ Then('the resume can be cancelled', async ({ app }) => {
 });
 
 Then('no other upload can be resumed while one is running', async ({ app }) => {
-  expect(app.notes.resumeDisabledWhileRunning).toBe(true);
-  await app.page.getByRole('button', { name: 'Dismiss' }).click();
-  await expect(app.page.getByRole('button', { name: 'Resume' })).toBeEnabled();
+  // The store's `activeRunSessionId` is what disables every Resume and the
+  // running session's Discard while a run is in flight, so History is where it
+  // shows. Checking it must leave the run alone — the user is looking, not
+  // abandoning.
+  await app.gotoSection('History');
+  await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeDisabled();
+  await app.gotoSection('New upload');
+  await expect(app.runPhase()).toHaveText('uploading');
 });
 
 // --- a retry with no readable record ---------------------------------------
