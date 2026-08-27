@@ -87,8 +87,6 @@ export function Upload() {
   const concurrencyMode = useStore((s) => s.concurrencyMode);
   const concurrency = useStore((s) => s.uploadConcurrency);
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
-  const verifyAfterPut = useStore((s) => s.verifyAfterPut);
-  const setVerifyAfterPut = useStore((s) => s.setVerifyAfterPut);
   const shardEndpoints = useStore((s) => s.shardEndpoints);
   const nextBatch = useStore((s) => s.nextBatch);
   const fileAccessMode = useStore((s) => s.fileAccessMode);
@@ -167,12 +165,11 @@ export function Upload() {
         session: pending.session,
         attached: pending.attached,
         concurrency: concurrencyControl(),
-        verifyAfterPut,
         shardEndpoints,
       },
       setSnap,
     );
-  }, [pendingResume, s3Config, verifyAfterPut, shardEndpoints]);
+  }, [pendingResume, s3Config, shardEndpoints]);
 
   // Let History know which session is running so it can't be discarded mid-run.
   useEffect(() => {
@@ -262,7 +259,6 @@ export function Upload() {
         config: s3Config,
         dryRun: effectiveDryRun,
         concurrency: concurrencyControl(),
-        verifyAfterPut,
         shardEndpoints,
         uploaderUser,
         fileAccessMode,
@@ -368,7 +364,6 @@ export function Upload() {
           session: finalSession,
           attached,
           concurrency: concurrencyControl(),
-          verifyAfterPut,
           shardEndpoints,
         },
         setSnap,
@@ -380,7 +375,7 @@ export function Upload() {
     } finally {
       retryPending.current = false;
     }
-  }, [snap, s3Config, files, verifyAfterPut, shardEndpoints]);
+  }, [snap, s3Config, files, shardEndpoints]);
 
   // Self-heal after an interruption the user might not notice — a run that
   // landed on 'partial' (some files failed after exhausting their own
@@ -472,20 +467,6 @@ export function Upload() {
                 message={`If not testing the upload and it fails right away, that's usually a setup issue on the storage side, not something you did wrong. Contact your administrator and give them this collection ID: ${collection.uuid}.`}
               />
             )}
-
-            <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
-              <input
-                type="checkbox"
-                checked={verifyAfterPut}
-                disabled={running}
-                onChange={(e) => setVerifyAfterPut(e.target.checked)}
-                className="accent-accent"
-              />
-              HEAD-verify each file after upload
-              <span className="font-body text-[12px] text-inkMute">
-                — off trusts the PUT response, saving a round-trip per file
-              </span>
-            </label>
           </>
         )}
 

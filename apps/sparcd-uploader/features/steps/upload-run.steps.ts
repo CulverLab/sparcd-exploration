@@ -304,7 +304,7 @@ Given('a run is in progress', async ({ app }) => {
 Then('each file shows its own state and percentage', async ({ app }) => {
   const states = await app.page.locator('div[data-index] span.text-right').allTextContents();
   expect(states.length).toBeGreaterThan(0);
-  expect(states.some((s) => /^\d+%$/.test(s) || ['pending', 'done', 'inspecting', 'verifying'].includes(s))).toBe(true);
+  expect(states.some((s) => /^\d+%$/.test(s) || ['pending', 'done', 'inspecting'].includes(s))).toBe(true);
 });
 
 Then(

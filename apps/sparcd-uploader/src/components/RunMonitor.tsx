@@ -13,7 +13,6 @@ const STATE_DOT: Record<FileState, string> = {
   inspecting: 'bg-inkMute',
   pending: 'bg-ruleSoft',
   uploading: 'bg-accent',
-  verifying: 'bg-accent',
   done: 'bg-ok',
   skipped: 'bg-inkMute',
   failed: 'bg-warn',
@@ -111,7 +110,7 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
                 />
               </span>
               <span className="col-start-3 row-start-2 sm:col-start-4 sm:row-start-1 font-mono text-[11px] text-inkSoft text-right">
-                {f.state === 'uploading' || f.state === 'verifying' ? `${Math.round(pct)}%` : f.state}
+                {f.state === 'uploading' ? `${Math.round(pct)}%` : f.state}
               </span>
             </div>
           );
@@ -287,12 +286,10 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
               <span className="font-mono text-inkMute">{counts.inspecting}</span> inspecting
             </>
           ) : null}
-          {counts.uploading || counts.verifying ? (
+          {counts.uploading ? (
             <>
               {' · '}
-              <span className="font-mono text-accent">
-                {(counts.uploading ?? 0) + (counts.verifying ?? 0)}
-              </span>{' '}
+              <span className="font-mono text-accent">{counts.uploading}</span>{' '}
               in flight
             </>
           ) : null}

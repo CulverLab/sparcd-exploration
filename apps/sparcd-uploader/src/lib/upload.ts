@@ -1,7 +1,7 @@
 // Upload orchestration. Runs the full publish sequence for one bundle:
 //
 //   1. Stream every image blob under the upload prefix (bounded concurrency,
-//      exponential backoff + jitter on transient failures, HEAD verify).
+//      exponential backoff + jitter on transient failures).
 //   2. Write the three CSVs.
 //   3. Write UploadMeta.json — upstream SPARC'd's completion marker, so it
 //      lands after the blobs and CSVs.
@@ -34,7 +34,7 @@
 // lazily pull the next blob, so memory stays flat across thousands of files and
 // a hard failure aborts the in-flight set at once. The pool size follows a live
 // target — either the manual setting (readable mid-run) or the adaptive
-// controller, which hill-climbs on measured throughput.
+// controller, which searches for the throughput knee and then holds it.
 //
 // Blob transfers stripe round-robin over the configured endpoint shards (see
 // `getShardClients`), sticky per item so a retry reuses the same connection.
@@ -43,7 +43,7 @@
 import type { S3Config } from '@sparcd/types';
 import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
 import { getShardClients } from './s3';
-import { createAdaptiveController } from './adaptiveConcurrency';
+import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
   resolveBatchNaming,
@@ -69,7 +69,7 @@ import {
 export type UploadPhase = 'idle' | 'preparing' | 'blobs' | 'metadata' | 'partial' | 'done' | 'error';
 // 'inspecting': part of the batch, not yet processed by Inspect — only
 // reachable via a streamed run; a fixed-plan run never has such a file.
-export type FileState = 'inspecting' | 'pending' | 'uploading' | 'verifying' | 'done' | 'skipped' | 'failed';
+export type FileState = 'inspecting' | 'pending' | 'uploading' | 'done' | 'skipped' | 'failed';
 
 export type FileProgress = {
   id: string;
@@ -105,7 +105,7 @@ export type UploadSnapshot = {
 /**
  * How the blob lane count is decided. `manual` reads `get()` live on every
  * pull, so a mid-run slider change applies without restarting the run;
- * `adaptive` hands the target to the throughput hill climber.
+ * `adaptive` hands the target to the throughput controller.
  */
 export type ConcurrencyControl = { mode: 'manual'; get: () => number } | { mode: 'adaptive' };
 
@@ -117,7 +117,6 @@ export type UploadParams = {
   // Raw comma/newline-separated extra endpoints for the same storage; blob
   // lanes stripe across them so each gets its own browser connection.
   shardEndpoints?: string;
-  verifyAfterPut?: boolean; // default true; false trusts the PUT response, saving a HEAD per file
   // Resume metadata persisted in the batch row; absent for dry runs.
   uploaderUser?: string; // raw identity (the slug lives in build.uploaderSlug)
   fileAccessMode?: FileAccessMode;
@@ -129,7 +128,6 @@ export type ResumeParams = {
   session: LoadedSession;
   attached: Map<string, File>; // localPath → reattached source file
   concurrency: ConcurrencyControl;
-  verifyAfterPut?: boolean;
   shardEndpoints?: string;
 };
 
@@ -139,9 +137,6 @@ const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 500;
 // Ten independent blob failures usually means credentials, CORS, or endpoint policy, not bad files.
 const MAX_FILE_FAILURES = 10;
-// Adaptive measurement window. Long enough that a handful of multi-MB files
-// land inside it, so one slow file doesn't read as a throughput collapse.
-const WINDOW_MS = 12_000;
 // How often the supervisor refills the pool. Lanes also pump on every landed
 // item; the interval is what notices a raised target while every lane is busy
 // with a long file.
@@ -390,9 +385,9 @@ function makeRunner(
   shardEndpoints: string,
   concurrency: ConcurrencyControl,
   onUpdate: (snap: UploadSnapshot) => void,
-  opts: { persist: boolean; isResume: boolean; dryRun: boolean; verifyAfterPut: boolean },
+  opts: { persist: boolean; isResume: boolean; dryRun: boolean },
 ) {
-  const { persist, isResume, dryRun, verifyAfterPut } = opts;
+  const { persist, isResume, dryRun } = opts;
   const clients = getShardClients(config, shardEndpoints);
   const client = clients[0]; // metadata, listings, and existing-object checks
   let cancelled = false;
@@ -421,13 +416,12 @@ function makeRunner(
   };
 
   // Manual reads the caller's getter on every pull, so a slider change lands
-  // mid-run; adaptive hands the target to the hill climber, which the blob
-  // phase feeds one throughput window at a time.
-  const control =
-    concurrency.mode === 'manual'
-      ? { target: concurrency.get, onWindow: undefined }
-      : createAdaptiveController();
-  const currentTarget = () => Math.max(1, Math.round(control.target()));
+  // mid-run; adaptive owns both the lane target and the length of the window it
+  // wants measured, which the blob phase feeds it one sample at a time.
+  const adaptive: AdaptiveController | null =
+    concurrency.mode === 'adaptive' ? createAdaptiveController() : null;
+  const targetLanes = concurrency.mode === 'manual' ? concurrency.get : adaptive!.target;
+  const currentTarget = () => Math.max(1, Math.round(targetLanes()));
 
   const snap: UploadSnapshot = {
     version: 0,
@@ -535,16 +529,6 @@ function makeRunner(
             emit();
           },
         });
-        // Portable verification: HEAD and confirm size + recorded digest.
-        // Optional: at high RTT the extra round-trip per file dominates small
-        // uploads, and the conditional PUT already succeeded with our body.
-        if (verifyAfterPut) {
-          fp.state = 'verifying';
-          emit(true);
-          const stat = await blobClient.statObject(snap.bucket, it.key);
-          if (stat.size !== fp.size) throw new Error(`size mismatch (${stat.size} ≠ ${fp.size})`);
-          if (stat.metadata.sha256 !== it.sha256) throw new Error('sha256 metadata mismatch');
-        }
         fp.state = 'done';
         persistFile(sessionId, it.localPath, {
           state: 'done',
@@ -672,43 +656,46 @@ function makeRunner(
     });
 
     const supervisor = setInterval(() => pump(), SUPERVISOR_MS);
-    // Feed the hill climber one throughput sample per window, counting only
+    // Feed the controller one throughput sample per window, counting only
     // bytes that crossed the wire — a verified skip credits a whole file
     // instantly and would read as a throughput spike the lane count didn't
     // earn. Bytes can also dip when a retry rewinds a file's contribution;
     // clamp so a rewind reads as a slow window rather than a negative rate.
+    //
+    // Rescheduled rather than fixed-interval: the controller runs short windows
+    // while it hunts for the knee and long ones once it's holding it, so the
+    // next window's length is only known after the current one is reported.
     const transferred = () => snap.uploadedBytes - snap.skippedBytes;
     let windowBytes = transferred();
     let windowAt = Date.now();
-    const onWindow = control.onWindow;
-    const windows = onWindow
-      ? setInterval(() => {
-          const now = Date.now();
-          // Offline, every lane is parked in `waitForOnline` and moves nothing.
-          // Feeding that window in would read as a throughput collapse and make
-          // the climber reverse direction on the way back up. Roll the window
-          // forward instead, so the outage never reaches the controller.
-          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-            windowBytes = transferred();
-            windowAt = now;
-            return;
-          }
-          onWindow({
+    let windowTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleWindow = (ctl: AdaptiveController) => {
+      windowTimer = setTimeout(() => {
+        const now = Date.now();
+        // Offline, every lane is parked in `waitForOnline` and moves nothing.
+        // Feeding that window in would read as a throughput collapse and make
+        // the controller give up lanes on the way back up. Roll the window
+        // forward instead, so the outage never reaches it.
+        if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+          ctl.onWindow({
             bytes: Math.max(0, transferred() - windowBytes),
             ms: now - windowAt,
           });
-          windowBytes = transferred();
-          windowAt = now;
           pump();
-        }, WINDOW_MS)
-      : undefined;
+        }
+        windowBytes = transferred();
+        windowAt = now;
+        scheduleWindow(ctl);
+      }, ctl.windowMs());
+    };
+    if (adaptive) scheduleWindow(adaptive);
 
     try {
       pump();
       await drained;
     } finally {
       clearInterval(supervisor);
-      if (windows) clearInterval(windows);
+      if (windowTimer) clearTimeout(windowTimer);
     }
   };
 
@@ -806,7 +793,7 @@ function makeRunner(
 
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun && !verifyAfterPut) await finalReview(plan.sessionId, plan.uploadPath, plan.items);
+    if (!dryRun) await finalReview(plan.sessionId, plan.uploadPath, plan.items);
 
     const failed = snap.files.filter((f) => f.state === 'failed').length;
     if (failed > 0) {
@@ -977,7 +964,7 @@ function makeRunner(
     if (fatal) throw fatal;
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun && !verifyAfterPut) await finalReview(seed.sessionId, seed.uploadPath, pulled);
+    if (!dryRun) await finalReview(seed.sessionId, seed.uploadPath, pulled);
 
     // The blob loop only exits normally (no fatal/cancel) once the queue is
     // closed and drained — the caller only closes it once every file in the
@@ -1072,7 +1059,6 @@ export function runStreamingUpload(
     persist,
     isResume: false,
     dryRun,
-    verifyAfterPut: params.verifyAfterPut ?? true,
   });
   const sessionId = crypto.randomUUID();
   runner.snap.sessionId = sessionId;
@@ -1295,7 +1281,6 @@ export function resumeUpload(
     persist: true,
     isResume: true,
     dryRun: false,
-    verifyAfterPut: params.verifyAfterPut ?? true,
   });
   runner.snap.sessionId = batch.id;
 

@@ -822,8 +822,10 @@ write allowlist and the live-verification checklist.
   pull the next blob so memory stays flat across thousands of files, and a hard
   failure aborts the in-flight set at once), **exponential backoff with full
   jitter** on transient failures (network/5xx/429; 412 and access denials are
-  never retried), then a portable **HEAD verify** (size + `x-amz-meta-sha256`)
-  per blob; then the three CSVs; then `UploadMeta.json` (upstream's completion
+  never retried), then a **final review** — one `listObjects` pass over the
+  prefix per 1000 objects, checking every key is present at its expected size,
+  instead of a HEAD round-trip per blob; then the three CSVs; then
+  `UploadMeta.json` (upstream's completion
   marker, so it lands after blobs + CSVs); then `UploadComplete.json` last. A
   412 on any final-prefix metadata write triggers the **re-stamp retry**: bump
   the stamp +1s, rebuild the bundle (new prefix → new keys), retry once, then

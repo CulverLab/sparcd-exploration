@@ -1,10 +1,18 @@
-// Adaptive upload concurrency: a hill climber over measured throughput.
+// Adaptive upload concurrency: a fast multiplicative search for the knee,
+// then a hill climber that holds it.
 //
 // The right lane count for a long-haul, lossy path isn't knowable up front —
 // too few lanes leave the pipe idle, too many draw server pushback and
 // congestion loss. So the engine measures instead: every window it reports the
-// bytes that landed, and this controller nudges the lane target up or down and
-// keeps whichever direction is paying.
+// bytes that landed, and this controller decides where the lane target goes.
+//
+// The hill climber alone converged far too slowly to matter. Its 12 s windows
+// and ±2 steps need roughly half a minute to walk from the starting guess to a
+// knee at 12 lanes, and a typical batch is over before that. So startup
+// borrows from BBR: short 3 s windows and ×1.5 lane growth for as long as each
+// window moves clearly more than the last, then a step back to the last lane
+// count that clearly paid, then the hill climber takes over for the long tail.
+// `bench/adaptive-sim.mjs` is the race that picked this shape.
 //
 // Deliberately pure: no clock, no timers, no I/O. The engine supplies both the
 // bytes and the elapsed time of each window, which makes the whole policy
@@ -15,6 +23,8 @@ export type WindowSample = { bytes: number; ms: number };
 export type AdaptiveController = {
   /** Lane target the pool should currently hold. */
   target: () => number;
+  /** How long the engine should measure before reporting the next window. */
+  windowMs: () => number;
   /** Feed one measurement window; may move the target. */
   onWindow: (sample: WindowSample) => void;
 };
@@ -26,14 +36,39 @@ export type AdaptiveOptions = {
   max?: number;
   /** Relative rate change that counts as signal rather than noise. */
   threshold?: number;
+  /** Startup window. Short enough to converge inside a small batch. */
+  startupMs?: number;
+  /** Steady-state window. Long enough that one slow file isn't a collapse. */
+  windowMs?: number;
+  /** Lane multiplier per startup round. */
+  growth?: number;
+  /** Relative gain that keeps startup growing. */
+  startupGain?: number;
 };
 
-export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveController {
-  const { start = 8, step = 2, min = 2, max = 32, threshold = 0.05 } = opts;
+const DEFAULTS = {
+  start: 8,
+  step: 2,
+  min: 2,
+  max: 32,
+  threshold: 0.05,
+  startupMs: 3_000,
+  windowMs: 12_000,
+  growth: 1.5,
+  startupGain: 0.2,
+};
 
-  const clamp = (n: number) => Math.min(max, Math.max(min, n));
+type HillClimber = {
+  target: () => number;
+  /** Take over from startup at a lane count already known to pay. */
+  adopt: (lanes: number, rate: number) => void;
+  onWindow: (sample: WindowSample) => void;
+};
 
-  let target = clamp(start);
+function createHillClimber(o: Required<AdaptiveOptions>): HillClimber {
+  const clamp = (n: number) => Math.min(o.max, Math.max(o.min, n));
+
+  let target = clamp(o.start);
   let direction = 1; // climb first: the starting point is a guess, not a peak
   let best: number | null = null; // rate to beat; null until the first measured window
   let holding = false; // one settling window is skipped after a reversal
@@ -43,7 +78,7 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
 
   /** Step in the current direction; false when pinned at a bound. */
   const move = (): boolean => {
-    const next = clamp(target + direction * step);
+    const next = clamp(target + direction * o.step);
     if (next === target) return false;
     target = next;
     return true;
@@ -51,6 +86,15 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
 
   return {
     target: () => target,
+    adopt: (lanes, rate) => {
+      target = clamp(lanes);
+      best = rate;
+      direction = 1;
+      holding = false;
+      probing = false;
+      flats = 0;
+      prevBytes = 1;
+    },
     onWindow: ({ bytes, ms }) => {
       // Files under the streaming threshold report their bytes only once they
       // complete, so an all-zero window usually means "nothing has landed yet",
@@ -76,11 +120,11 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
         return;
       }
 
-      if (rate > best * (1 + threshold)) {
+      if (rate > best * (1 + o.threshold)) {
         best = rate;
         flats = 0;
         probing = move(); // still paying off — keep going; pinned at a bound = settled
-      } else if (rate < best * (1 - threshold)) {
+      } else if (rate < best * (1 - o.threshold)) {
         best = rate; // re-baseline: the old peak may no longer be reachable
         flats = 0;
         direction = -direction;
@@ -90,7 +134,7 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
         // The probe bought nothing — undo it. This is what stops flat
         // throughput from silently ratcheting lanes toward the cap.
         best = Math.max(best, rate);
-        target = clamp(target - direction * step);
+        target = clamp(target - direction * o.step);
         probing = false;
         flats = 0;
       } else {
@@ -108,6 +152,81 @@ export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveCo
           probing = true;
         }
       }
+    },
+  };
+}
+
+// Startup ends after two rounds without clear growth. A round that lost ≥10%
+// counts double: a drop says the knee is already behind us, which is stronger
+// evidence than a plateau and not worth spending another window to confirm.
+const PLATEAU_ROUNDS = 2;
+const DROP = 0.1;
+// Startup can only stall on a path that reports no bytes for round after round.
+// Bound it so a pathological batch still ends up under the hill climber.
+const MAX_STARTUP_ROUNDS = 8;
+
+export function createAdaptiveController(opts: AdaptiveOptions = {}): AdaptiveController {
+  const o = { ...DEFAULTS, ...opts };
+  const clamp = (n: number) => Math.min(o.max, Math.max(o.min, n));
+  const climber = createHillClimber(o);
+
+  let startup = true;
+  let target = clamp(o.start);
+  let prevRate: number | null = null;
+  let flatRounds = 0;
+  let rounds = 0;
+  // Lane count of the most recent window that clearly paid, and the best rate
+  // startup saw — the hill climber inherits both so its first window isn't
+  // spent rediscovering a baseline.
+  let payingLanes = target;
+  let bestRate = 0;
+
+  const handOff = () => {
+    startup = false;
+    climber.adopt(payingLanes, bestRate);
+  };
+
+  return {
+    target: () => (startup ? target : climber.target()),
+    windowMs: () => (startup ? o.startupMs : o.windowMs),
+    onWindow: (sample) => {
+      if (!startup) return climber.onWindow(sample);
+
+      rounds++;
+      const rate = sample.ms > 0 ? sample.bytes / sample.ms : 0;
+      if (sample.bytes === 0) {
+        // Nothing landed, so there is no gradient. Drop the round and make the
+        // next window a fresh baseline — comparing a full window against a
+        // window that reported nothing would read as runaway growth.
+        prevRate = null;
+        if (rounds >= MAX_STARTUP_ROUNDS) handOff();
+        return;
+      }
+      bestRate = Math.max(bestRate, rate);
+
+      // The first window covers lanes spinning up from nothing, so it measures
+      // the ramp rather than the path. Baseline on it and grow regardless — and
+      // bank the size, since a window that moved bytes is evidence for the lane
+      // count that moved them even when there's nothing to compare it against.
+      if (prevRate === null) {
+        prevRate = rate;
+        payingLanes = target;
+      } else {
+        const growth = rate / prevRate - 1;
+        prevRate = rate;
+        if (growth >= o.startupGain) {
+          flatRounds = 0;
+          payingLanes = target;
+        } else {
+          flatRounds += growth <= -DROP ? PLATEAU_ROUNDS : 1;
+        }
+      }
+
+      if (flatRounds >= PLATEAU_ROUNDS || target >= o.max || rounds >= MAX_STARTUP_ROUNDS) {
+        handOff();
+        return;
+      }
+      target = clamp(Math.ceil(target * o.growth));
     },
   };
 }

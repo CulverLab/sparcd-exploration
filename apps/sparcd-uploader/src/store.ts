@@ -73,7 +73,6 @@ type UploaderState = {
   dryRun: boolean; // off by default; when on, logs PUTs and writes nothing
   concurrencyMode: ConcurrencyMode; // adaptive tunes lanes during the run; manual pins them
   uploadConcurrency: number; // manual lane count, 4–32
-  verifyAfterPut: boolean; // HEAD-check each blob after PUT; off saves a round-trip per file
   // Extra endpoints for the same storage, comma/newline separated. Kept raw and
   // parsed at point of use so the store stays dumb.
   shardEndpoints: string;
@@ -103,7 +102,6 @@ type UploaderState = {
   setDryRun: (value: boolean) => void;
   setConcurrencyMode: (value: ConcurrencyMode) => void;
   setUploadConcurrency: (value: number) => void;
-  setVerifyAfterPut: (value: boolean) => void;
   setShardEndpoints: (value: string) => void;
   setPendingResume: (value: PendingResume | null) => void;
   setActiveRunSessionId: (value: string | null) => void;
@@ -203,7 +201,6 @@ export const useStore = create<UploaderState>()(
       dryRun: false,
       concurrencyMode: 'adaptive',
       uploadConcurrency: 8,
-      verifyAfterPut: true,
       shardEndpoints: '',
       pendingResume: null,
       activeRunSessionId: null,
@@ -369,7 +366,6 @@ export const useStore = create<UploaderState>()(
       setDryRun: (value) => set({ dryRun: value }),
       setConcurrencyMode: (value) => set({ concurrencyMode: value }),
       setUploadConcurrency: (value) => set({ uploadConcurrency: value }),
-      setVerifyAfterPut: (value) => set({ verifyAfterPut: value }),
       setShardEndpoints: (value) => set({ shardEndpoints: value }),
       setPendingResume: (value) => set({ pendingResume: value }),
       setActiveRunSessionId: (value) => set({ activeRunSessionId: value }),
@@ -410,7 +406,6 @@ export const useStore = create<UploaderState>()(
         dryRun: s.dryRun,
         concurrencyMode: s.concurrencyMode,
         uploadConcurrency: s.uploadConcurrency,
-        verifyAfterPut: s.verifyAfterPut,
         shardEndpoints: s.shardEndpoints,
       }),
     },
