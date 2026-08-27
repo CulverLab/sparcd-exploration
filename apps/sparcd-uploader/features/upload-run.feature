@@ -44,14 +44,14 @@ Feature: Upload and publish a batch
     And each stored object's path is the one recorded for it in the media table
 
   @F1
-  Scenario: Each stored object is verified after it is written
+  Scenario: Every stored object is confirmed once the batch is written
     When a file has been uploaded
-    Then the tool re-reads the stored object's size and recorded fingerprint
-    And a mismatch is treated as a failure of that file, not as a success
-    # A mismatch is retried like any other transient failure. The retry then
-    # re-PUTs a key the first attempt already stored, so the append-only guard
-    # rejects it and the run stops there rather than working through the retry
-    # budget — the file is never counted as done either way.
+    Then the tool lists the upload folder and confirms every object is stored at its recorded size
+    And an object the listing contradicts is treated as a failure of that file, not as a success
+    # One listing pass per thousand objects rather than a re-read per file: at
+    # long-haul latency the extra round trip per file dominated a small upload,
+    # and the listing answers the question that matters — is every object there,
+    # at the size the metadata claims for it.
 
   @unmapped
   Scenario: Uploading begins before the whole batch has finished being examined

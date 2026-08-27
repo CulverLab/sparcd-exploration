@@ -49,6 +49,8 @@ export class S3Mock {
   puts: PutRecord[] = [];
   gets: string[] = [];
   heads: string[] = [];
+  /** Every listing the app issued, as `bucket/prefix`. */
+  lists: string[] = [];
 
   /** Buckets whose object reads fail with 403 (simulating IAM/CORS refusal). */
   unreadable = new Set<string>();
@@ -224,6 +226,7 @@ export class S3Mock {
       if (method === 'GET' && key === '' ) {
         const prefix = url.searchParams.get('prefix') ?? '';
         const delimiter = url.searchParams.get('delimiter');
+        this.lists.push(`${bucket}/${prefix}`);
         if (this.unreadable.has(bucket)) {
           await fail({ status: 403, code: 'AccessDenied', message: 'Access Denied' });
           return;
