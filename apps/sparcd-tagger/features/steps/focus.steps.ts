@@ -396,10 +396,10 @@ When('another image is opened in the Focus view', async ({ page, scratch }) => {
   await expect(page.locator('.react-transform-component img')).toBeVisible();
 });
 
-Then('the same adjustments still apply', async ({ page, scratch }) => {
-  const now = await page.locator('.react-transform-component img').first().getAttribute('style');
-  expect(now).toBe(scratch.filterBefore);
-  await expect(adjustToggle(page).locator('span.bg-accent')).toBeVisible();
+Then('the adjustments are reset to neutral', async ({ page }) => {
+  await expect(adjustToggle(page).locator('span.bg-accent')).toHaveCount(0);
+  const style = await page.locator('.react-transform-component img').first().getAttribute('style');
+  expect(style ?? '').toContain('brightness(100%) contrast(100%) hue-rotate(0deg) saturate(100%)');
 });
 
 Then('leaving the Focus view returns the adjustments to neutral', async ({ page }) => {

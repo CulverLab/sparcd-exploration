@@ -101,8 +101,8 @@ Feature: Examine an image closely enough to catch every species
     And the adjustments can be reset to neutral in one action
 
   @H1
-  Scenario: Display adjustments persist across images within a viewing session
+  Scenario: Display adjustments reset when switching to a different image in the Focus view
     Given the display adjustments have been changed in the Focus view
     When another image is opened in the Focus view
-    Then the same adjustments still apply
+    Then the adjustments are reset to neutral
     And leaving the Focus view returns the adjustments to neutral
