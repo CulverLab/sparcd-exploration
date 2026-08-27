@@ -217,6 +217,10 @@ export const useStore = create<UploaderState>()(
           selectedLocationKey: null,
           selectedBucket: null,
           uploaderUser: s.uploaderUser || config.accessKey,
+          // Shards are origins of the endpoint we just left. Carrying them into
+          // a new connection would stripe signed PUTs, bodies and all, at the
+          // previous provider.
+          shardEndpoints: '',
         }));
       },
       disconnect: () => {
@@ -236,6 +240,7 @@ export const useStore = create<UploaderState>()(
           selectedBucket: null,
           uploaderUser: '',
           uploadTimeZone: localTimeZone(),
+          shardEndpoints: '',
         }));
       },
       setSection: (section) => set({ section }),
@@ -422,6 +427,9 @@ subscribeSharedConnection((cfg) => {
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
+    // Same reason as `connect`: a sibling tab's login can be a different
+    // provider, and this tab's shards belong to the endpoint it just left.
+    shardEndpoints: '',
     ...(cfg
       ? { uploaderUser: s.uploaderUser || cfg.accessKey }
       : {

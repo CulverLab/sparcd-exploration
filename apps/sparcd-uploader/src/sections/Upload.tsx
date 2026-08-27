@@ -15,6 +15,7 @@ import {
   type UploadRun,
   type UploadSnapshot,
 } from '../lib/upload';
+import { parseShardEndpoints } from '../lib/s3';
 import { onFilesReady } from '../lib/processing';
 import type { ProcessResponse } from '../lib/processPool';
 import { ensureBundle } from '../lib/resume';
@@ -103,8 +104,10 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
-  // One browser connection per endpoint — the main one plus each shard.
-  const shardCount = shardEndpoints.split(/[,\n]/).filter((s) => s.trim()).length;
+  // One browser connection per endpoint — the main one plus each shard. Counted
+  // through the same parser the lanes are built from, so the number shown is
+  // the number of connections actually opened.
+  const shardCount = parseShardEndpoints(shardEndpoints).origins.length;
 
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
@@ -377,7 +380,7 @@ export function Upload() {
     } finally {
       retryPending.current = false;
     }
-  }, [snap, s3Config, files, verifyAfterPut]);
+  }, [snap, s3Config, files, verifyAfterPut, shardEndpoints]);
 
   // Self-heal after an interruption the user might not notice — a run that
   // landed on 'partial' (some files failed after exhausting their own

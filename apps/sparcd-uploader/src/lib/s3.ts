@@ -53,6 +53,38 @@ export function getClient(cfg: S3Config): SafeS3Client {
   return client;
 }
 
+export type ShardEndpoints = { origins: string[]; rejected: string[] };
+
+/**
+ * Split a comma/newline list of shard endpoints into bare origins.
+ *
+ * Only the origin is ever used to build a client, so an entry carrying
+ * credentials, a path, a query or a fragment is rejected rather than silently
+ * truncated — signed PUTs (bodies included) would otherwise go somewhere the
+ * user did not knowingly name. Same reason for http/https only.
+ */
+export function parseShardEndpoints(raw: string): ShardEndpoints {
+  const origins: string[] = [];
+  const rejected: string[] = [];
+  for (const entry of raw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)) {
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      rejected.push(entry);
+      continue;
+    }
+    const bare = url.pathname === '' || url.pathname === '/';
+    const httpish = url.protocol === 'http:' || url.protocol === 'https:';
+    if (!httpish || url.username || url.password || !bare || url.search || url.hash) {
+      rejected.push(entry);
+      continue;
+    }
+    if (!origins.includes(url.origin)) origins.push(url.origin);
+  }
+  return { origins, rejected };
+}
+
 /**
  * The clients an upload run stripes its blob lanes across: the primary plus one
  * per configured shard endpoint.
@@ -64,10 +96,7 @@ export function getClient(cfg: S3Config): SafeS3Client {
  * multiplies the ceiling.
  */
 export function getShardClients(cfg: S3Config, shardEndpoints: string): SafeS3Client[] {
-  const endpoints = shardEndpoints
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const endpoints = parseShardEndpoints(shardEndpoints).origins;
   if (endpoints.length === 0) return [getClient(cfg)];
 
   if (shardCached?.config !== cfg) shardCached = { config: cfg, byEndpoint: new Map() };
