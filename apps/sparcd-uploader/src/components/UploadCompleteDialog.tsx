@@ -1,6 +1,14 @@
 import { useEffect } from 'react';
 
-export function UploadCompleteDialog({ count, onClose }: { count: number; onClose: () => void }) {
+export function UploadCompleteDialog({
+  doneCount,
+  skippedCount,
+  onClose,
+}: {
+  doneCount: number;
+  skippedCount: number;
+  onClose: () => void;
+}) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -25,8 +33,13 @@ export function UploadCompleteDialog({ count, onClose }: { count: number; onClos
             Upload complete
           </h2>
           <p className="font-body text-[14px] text-ink">
-            {count} file{count === 1 ? '' : 's'} successfully uploaded.
+            {doneCount} file{doneCount === 1 ? '' : 's'} successfully uploaded.
           </p>
+          {skippedCount > 0 && (
+            <p className="font-body text-[14px] text-inkSoft">
+              {skippedCount} file{skippedCount === 1 ? '' : 's'} already stored and skipped.
+            </p>
+          )}
         </div>
         <footer className="flex items-center justify-end border-t border-rule px-5 py-3">
           <button

@@ -74,9 +74,9 @@ Feature: Assign a batch to a collection and a camera location
     And a location can be chosen with the keyboard or by clicking it
 
   @unmapped
-  Scenario: A location's exact position can be checked before committing to it
+  Scenario: A location's elevation can be checked before committing to it, with no coordinates shown
     When a location's details are opened
-    Then its decimal coordinates, its UTM coordinates, and its elevation in both metres and feet are shown
+    Then its elevation in both metres and feet is shown, with no coordinates
 
   @unmapped
   Scenario: Two locations sharing an identifier are kept apart
@@ -99,11 +99,13 @@ Feature: Assign a batch to a collection and a camera location
     And no deployment can be chosen until it can be read
 
   @unmapped
-  Scenario: The uploader identity is shown as the name that will be stamped on the upload
+  Scenario: The uploader identity typed here carries through to its key-safe form in Settings
     When an uploader identity is typed
     Then the tool shows the key-safe form of it that will appear in the upload's storage path and object names
     # The identity is free text; the tool does not check it against the
-    # credentials it connected with.
+    # credentials it connected with. Assign itself only holds the raw
+    # identity — the key-safe preview lives in Settings, since that field is
+    # the same shared uploaderUser Assign just set.
 
   @unmapped
   Scenario: A description can be recorded with the batch

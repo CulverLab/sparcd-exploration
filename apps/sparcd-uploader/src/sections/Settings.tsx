@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { OfflineBanner } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { listResumable } from '../lib/db';
@@ -38,6 +39,7 @@ export function Settings() {
 
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto space-y-8">
+      <OfflineBanner />
       <section>
         <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-3">
           Connection

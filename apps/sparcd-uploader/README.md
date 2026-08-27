@@ -48,6 +48,10 @@ Security controls:
   copy API.
 - Conditional writes, `HEAD` verification, dry-run-by-default, and completion
   sentinels reduce accidental publish risk.
+- The secret key never reaches `localStorage`; only the endpoint, access key
+  and region go there, to pre-fill the Connect form. The full credentials live
+  in a tab-scoped `sessionStorage` stash, so switching between SPARC'd tools in
+  the same tab and reloading keep the session, and closing the tab ends it.
 
 Non-controls:
 

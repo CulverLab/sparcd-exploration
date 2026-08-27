@@ -101,6 +101,19 @@ Given('a successful connection was made earlier in this browser', async ({ page 
 
 When('the tagger is opened again in a new page load', async ({ page }) => {
   await page.reload();
+});
+
+Then('it is still connected without asking for the secret again', async ({ page }) => {
+  await expect(sectionTab(page, 'Browse')).toBeVisible();
+  await expect(page.locator('#secretKey')).toHaveCount(0);
+});
+
+// The session lives in sessionStorage, which is per-tab: emptying it and
+// reloading is exactly what a new tab sees — localStorage survives to pre-fill
+// the form, and no other tab is open to relay the secret.
+When('the tab is closed and the tagger is opened in a new one', async ({ page }) => {
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
@@ -150,7 +163,7 @@ Given('two tabs are connected to the same store', async ({ page, context, s3, sc
 });
 
 When('one of them disconnects', async ({ page }) => {
-  await page.locator('header').getByRole('button', { name: 'Disconnect' }).click();
+  await page.locator('header').getByRole('button', { name: 'Logout' }).click();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
@@ -351,13 +364,16 @@ Then('the workspace switches between the light and dark presentation', async ({ 
   await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
-Then('the choice is remembered for the rest of the browser session', async ({ page }) => {
-  await page.reload();
-  await expect(page.locator('html')).toHaveClass(/dark/);
-  expect(await page.evaluate(() => sessionStorage.getItem('sparcd-tagger-session'))).toContain(
-    'dark',
-  );
-});
+Then(
+  "the choice is remembered on this machine, shared with the other SPARC'd tools",
+  async ({ page }) => {
+    await page.reload();
+    await expect(page.locator('html')).toHaveClass(/dark/);
+    // One key for every tool on this origin, so walking to another one from the
+    // brand switcher lands in the same appearance.
+    expect(await page.evaluate(() => localStorage.getItem('sparcd-theme'))).toBe('dark');
+  },
+);
 
 // --- helpers ----------------------------------------------------------------
 

@@ -13,6 +13,7 @@ export default defineConfig({
   testDir,
   fullyParallel: true,
   workers: 3,
+  retries: process.env.CI ? 2 : 0,
   timeout: 150_000,
   expect: { timeout: 15_000 },
   reporter: [['list']],

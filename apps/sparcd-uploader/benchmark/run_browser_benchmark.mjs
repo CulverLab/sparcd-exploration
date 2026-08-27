@@ -335,6 +335,9 @@ async function main() {
 
     const endpointOrigin = new URL(args.endpoint).origin;
     const appOrigin = new URL(args['app-url']).origin;
+    if (!/^https?:\/\/localhost(:\d+)?$/.test(appOrigin)) {
+      throw new Error(`--app-url must be a localhost origin (got ${appOrigin}); refusing to inject credentials into an untrusted page`);
+    }
     const bucketXml = `<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>benchmark</ID><DisplayName>benchmark</DisplayName></Owner><Buckets><Bucket><Name>${BUCKET}</Name><CreationDate>2026-07-25T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`;
     const uploadPrefix = 'Collections/uploader-benchmark/Uploads/';
     const deploymentsXml = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${BUCKET}</Name><Prefix>${uploadPrefix}</Prefix><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>${uploadPrefix}bootstrap/</Prefix></CommonPrefixes></ListBucketResult>`;

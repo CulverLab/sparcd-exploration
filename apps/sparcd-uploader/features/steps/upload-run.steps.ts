@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
-import { manyJpegs, publishableBatch, slowVideo, standardBatch } from './batches';
+import { manyJpegs, publishableBatch, slowPublishableBatch, standardBatch } from './batches';
 import { rescanFromUpload, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
@@ -16,12 +16,19 @@ const METADATA_NAMES = [
 const mediaPuts = (app: App) =>
   app.s3.puts.filter((p) => !METADATA_NAMES.some((n) => p.key.endsWith(n)));
 
+function holdFirstMediaPut(app: App): void {
+  let held = false;
+  app.s3.holdPut = (_bucket, key) => {
+    if (held || METADATA_NAMES.some((n) => key.endsWith(n))) return false;
+    held = true;
+    return true;
+  };
+}
+
 Given(
   'a batch has a collection, a deployment, an uploader identity and capture times',
   async ({ app }) => {
     await app.connect();
-    // The batch carries one deliberately slow file: as-built the publish phase
-    // is only reachable while examination is still running (CORRECTIONS.md).
     await app.dropFolder(publishableBatch());
     await expect(app.fileListPane()).toBeVisible();
   },
@@ -38,15 +45,19 @@ Given('the upload has not been started', async ({ app }) => {
   expect(app.s3.puts).toHaveLength(0);
 });
 
-Then('dry run is switched on by default', async ({ app }) => {
-  await expect(app.dryRunCheckbox()).toBeChecked();
-  await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeVisible();
+Then('dry run is switched off by default', async ({ app }) => {
+  await expect(app.dryRunCheckbox()).not.toBeChecked();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
+});
+
+When('the operator opts into a dry run', async ({ app }) => {
+  await app.dryRunCheckbox().check();
 });
 
 Then(
   'starting it lists every object that would be written, with its size and fingerprint',
   async ({ app }) => {
-    await app.startRunWhileInspecting();
+    await app.startRun();
     await app.waitForRunPhase('done');
     const log = await app.logText();
     for (const name of ['IMG_0001.JPG', 'IMG_0002.JPG', 'IMG_0003.JPG', 'BIG_CLIP.MP4']) {
@@ -67,22 +78,18 @@ Then('the run is not recorded in History', async ({ app }) => {
   await expect(app.page.getByText('No uploads yet')).toBeVisible();
 });
 
-When('dry run is switched off', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
-});
-
 Then(
-  "the tool states that the credentials must permit append-only writes, reads and listing for the target collection's bucket",
+  "the tool states that a setup issue on the storage side is not the user's fault",
   async ({ app }) => {
-    await expect(app.page.getByText(/Wet upload uses the connected credentials directly/)).toContainText(
-      `append-only PUT/HEAD/LIST for ${BUCKET_A}`,
+    await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
+      "not something you did wrong",
     );
   },
 );
 
-Then('that the bucket must allow this web origin', async ({ app }) => {
-  await expect(app.page.getByText(/Wet upload uses the connected credentials directly/)).toContainText(
-    'must allow this web origin with CORS',
+Then('that the collection ID is given to contact an administrator with', async ({ app }) => {
+  await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
+    `this collection ID: ${UUID_A}`,
   );
 });
 
@@ -90,7 +97,7 @@ Then('that the bucket must allow this web origin', async ({ app }) => {
 
 When('a real upload is started and completes', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -124,7 +131,7 @@ Then("each stored object's path is the one recorded for it in the media table", 
 
 When('a file has been uploaded', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -157,18 +164,21 @@ Then('a mismatch is treated as a failure of that file, not as a success', async 
 // --- streaming past Inspect ------------------------------------------------
 
 Given('some files are still being examined', async ({ app }) => {
+  await app.holdInspect('BIG_CLIP.MP4');
+  await rescanFromUpload(app, slowPublishableBatch());
   await expect(app.page.getByText(/still being inspected/)).toBeVisible();
 });
 
 When('the upload is started', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
   app.notes.putsAtStart = app.s3.puts.length;
-  await app.startRunWhileInspecting();
+  await app.startRun();
 });
 
 Then('files that have already been examined start uploading immediately', async ({ app }) => {
   await expect.poll(() => mediaPuts(app).length, { timeout: 30_000 }).toBeGreaterThanOrEqual(3);
   expect(app.s3.puts.every((p) => !p.key.endsWith('BIG_CLIP.MP4'))).toBe(true);
+  await app.releaseHeldInspect();
 });
 
 Then("each remaining file starts as soon as its own examination finishes", async ({ app }) => {
@@ -186,7 +196,7 @@ Then('the tool reports how many files are still being examined', async ({ app })
 
 Given('a real upload is running', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
 });
 
 Then(
@@ -215,7 +225,7 @@ Given('a real upload in which some files failed after their retries', async ({ a
     key.endsWith('IMG_0002.JPG') ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 });
 
@@ -241,9 +251,9 @@ Then(
 // --- abandoned runs --------------------------------------------------------
 
 Given('a real upload that was cancelled or ended in failure', async ({ app }) => {
-  app.s3.putDelayMs = 150;
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByText('cancelled').first()).toBeVisible();
@@ -265,7 +275,7 @@ Then('nothing reading the collection sees a new upload there', async ({ app }) =
 
 When('a batch is published', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -285,9 +295,9 @@ Then('the upload metadata records that none of its images carry a species', asyn
 // --- progress reporting ----------------------------------------------------
 
 Given('a run is in progress', async ({ app }) => {
-  app.s3.putDelayMs = 200;
+  app.s3.putDelayMs = 1000;
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
 });
 
@@ -328,7 +338,7 @@ Then('the number of parallel uploads can be set between 4 and 16', async ({ app 
 });
 
 Then('it defaults to 8', async ({ app }) => {
-  await app.reopen();
+  await app.reopenInNewTab();
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -339,10 +349,13 @@ Then('it defaults to 8', async ({ app }) => {
 });
 
 Then('it cannot be changed while a run is in progress', async ({ app }) => {
+  app.s3.putDelayMs = 1000;
+  await app.dryRunCheckbox().uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
   await expect(app.page.locator('input[type="range"]')).toBeDisabled();
   await expect(app.dryRunCheckbox()).toBeDisabled();
+  await app.waitForRunPhase('done', 120_000);
 });
 
 // --- retries and hard failures ---------------------------------------------
@@ -356,7 +369,7 @@ Given(
         : undefined,
     );
     await app.dryRunCheckbox().uncheck();
-    await app.startRunWhileInspecting();
+    await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
   },
 );
@@ -378,14 +391,14 @@ Then('the retry is recorded in the activity log', async ({ app }) => {
 });
 
 Given("a file's upload is refused for lack of permission", async ({ app }) => {
-  await rescanFromUpload(app, [...manyJpegs(24), slowVideo()]);
+  await rescanFromUpload(app, manyJpegs(24));
   await app.page.locator('input[type="range"]').fill('4');
   app.s3.putDelayMs = 40;
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0000.JPG') ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -400,12 +413,12 @@ Then('the failure is reported', async ({ app }) => {
 });
 
 Given('ten files have failed independently in one run', async ({ app }) => {
-  await rescanFromUpload(app, [...manyJpegs(14), slowVideo()]);
+  await rescanFromUpload(app, manyJpegs(14));
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('.JPG') ? { status: 400, code: 'InvalidRequest', message: 'nope' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -432,7 +445,7 @@ Given('an object already exists at a path the run intends to write', async ({ ap
 
 When('a fresh upload attempts that write', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
 
@@ -450,9 +463,9 @@ Then('the run reports the failure', async ({ app }) => {
 // --- cancelling ------------------------------------------------------------
 
 When('a run is cancelled', async ({ app }) => {
-  app.s3.putDelayMs = 200;
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   app.notes.storedAtCancel = app.s3.writtenKeys();
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -486,7 +499,7 @@ Then('the Back button is disabled', async ({ app }) => {
 
 Given('a real upload has completed', async ({ app }) => {
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -494,7 +507,7 @@ When('"Next batch" is chosen', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Next batch' }).click();
 });
 
-Then('the wizard returns to the Drop step with an empty batch', async ({ app }) => {
+Then('the wizard returns to the Files step with an empty batch', async ({ app }) => {
   await app.expectStep('Files');
   await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
   await expect(app.fileListPane()).toHaveCount(0);

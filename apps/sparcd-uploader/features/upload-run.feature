@@ -13,27 +13,28 @@ Feature: Upload and publish a batch
   Background:
     Given a batch has a collection, a deployment, an uploader identity and capture times
     And the New upload section is showing the Upload step
-    # As-built constraint that colours every scenario below: a run only ever
-    # leaves the transfer phase if at least one file finishes being examined
-    # after the run is started. A batch that was fully examined before Start is
-    # pressed transfers every object and then hangs, never publishing. Every
-    # scenario here that reaches the publish phase starts its run while one
-    # deliberately slow file is still being examined. See CORRECTIONS.md.
+    # PR #26 fixed the old publish hang for fully examined batches. Scenarios
+    # now use ordinary small media, except where the behavior under test is
+    # explicitly about background examination or cancelling an in-flight write.
 
   @unmapped
-  Scenario: A dry run is offered first and writes nothing
+  Scenario: A real upload is offered by default; a dry run is opt-in
     Given the upload has not been started
-    Then dry run is switched on by default
-    And starting it lists every object that would be written, with its size and fingerprint
+    Then dry run is switched off by default
+    # Dry run resets to off for every new page load; it is not remembered.
+
+  @unmapped
+  Scenario: Switching dry run on lists every object that would be written, without writing it
+    Given the upload has not been started
+    When the operator opts into a dry run
+    Then starting it lists every object that would be written, with its size and fingerprint
     And nothing is written to storage
     And the run is not recorded in History
-    # Dry run resets to on for every new page load; it is not remembered.
 
   @unmapped
   Scenario: A real upload states what access it needs before it starts
-    When dry run is switched off
-    Then the tool states that the credentials must permit append-only writes, reads and listing for the target collection's bucket
-    And that the bucket must allow this web origin
+    Then the tool states that a setup issue on the storage side is not the user's fault
+    And that the collection ID is given to contact an administrator with
 
   @F1
   Scenario: Every file in the batch is stored under one upload folder in the collection
@@ -155,5 +156,5 @@ Feature: Upload and publish a batch
   Scenario: The next batch from the same site keeps the previous choices
     Given a real upload has completed
     When "Next batch" is chosen
-    Then the wizard returns to the Drop step with an empty batch
+    Then the wizard returns to the Files step with an empty batch
     And the collection, deployment, uploader identity, description and timezone of the previous batch are kept

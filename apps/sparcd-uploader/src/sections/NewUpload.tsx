@@ -86,6 +86,20 @@ export function NewUpload() {
       severityFilter === filter ? 'underline' : ''
     }`;
 
+  // Draw the eye to Continue the moment it becomes enabled, then settle down
+  // — a permanent throb reads as nagging, not helpful. Re-triggers if it goes
+  // back to disabled (e.g. a new error surfaces) and becomes ready again.
+  const [throb, setThrob] = useState(false);
+  useEffect(() => {
+    if (!summary.ready) {
+      setThrob(false);
+      return;
+    }
+    setThrob(true);
+    const timer = setTimeout(() => setThrob(false), 10_000);
+    return () => clearTimeout(timer);
+  }, [summary.ready]);
+
   return (
     <div className="px-6 py-6">
       <div className="mb-6">
@@ -164,7 +178,9 @@ export function NewUpload() {
                 onClick={() => setStep('assign')}
                 title={summary.ready ? 'Continue to assignment' : 'Resolve files that need attention first'}
                 className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-                  summary.ready ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
+                  summary.ready
+                    ? `hover:opacity-90 hover:animate-none ${throb ? 'animate-throb' : ''}`
+                    : 'opacity-40 cursor-not-allowed'
                 }`}
               >
                 Continue
@@ -173,8 +189,8 @@ export function NewUpload() {
           </div>
           <FileList severityFilter={severityFilter} />
           <p className="font-body text-[13px] text-inkMute">
-            Files with no capture time get manual entry in Assign; duplicates are warnings you can
-            keep or drop with <span className="font-mono">D</span>.
+            Press <span className="font-mono">D</span> to drop a flagged duplicate — it's kept
+            otherwise. Missing a timestamp? Add one in Assign or Upload.
           </p>
         </div>
       )}

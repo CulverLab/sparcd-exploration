@@ -189,6 +189,51 @@ function isRunFatalBlobError(err: unknown): boolean {
 // Full jitter: random in [0, base * 2^attempt].
 const backoff = (attempt: number) => Math.random() * (BASE_BACKOFF_MS * 2 ** attempt);
 
+// Resolves once the browser reports it has a network link — immediately if
+// it already does. A whole-connection drop makes every concurrently-uploading
+// lane fail at once, which looks identical (per file) to N independent
+// failures — without pausing here instead of spending a retry attempt, that
+// single blip alone can exhaust MAX_FILE_FAILURES and abort the run as
+// "systemic" well before the network has any chance to come back.
+// How often to re-check `navigator.onLine` even without an `online` event —
+// the event isn't guaranteed to fire (VPNs and some adapters can leave it
+// permanently wrong), so this is the escape hatch that keeps a stuck reading
+// from hanging the run forever instead of just delaying it.
+const ONLINE_POLL_MS = 30_000;
+
+function waitForOnline(signal: AbortSignal): Promise<void> {
+  // Strictly `false`, not falsy: `navigator.onLine` is `undefined` in plain
+  // Node (no `window` either, e.g. the test environment) — treat "unknown"
+  // as online rather than waiting on a `window.addEventListener` that would
+  // throw there.
+  if (typeof window === 'undefined' || navigator.onLine !== false) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      window.removeEventListener('online', onDone);
+      window.removeEventListener('focus', onDone);
+      clearInterval(poll);
+      signal.removeEventListener('abort', onAbort);
+    };
+    // Resolving here doesn't assert the network is actually back — the
+    // caller re-checks `navigator.onLine` itself and calls back in if it's
+    // still reporting offline. This just guarantees that recheck happens
+    // periodically and whenever the tab regains focus, so a stuck or
+    // never-fired `online` event can't wait forever.
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new Error('cancelled'));
+    };
+    window.addEventListener('online', onDone);
+    window.addEventListener('focus', onDone);
+    const poll = setInterval(onDone, ONLINE_POLL_MS);
+    signal.addEventListener('abort', onAbort);
+  });
+}
+
 // A statObject 404 (the object isn't there) is a recognizable shape; anything
 // without a 2xx/expected stat means "re-upload".
 function isNotFound(err: unknown): boolean {
@@ -422,6 +467,20 @@ function makeRunner(
     it: PlanItem,
     blobClient: SafeS3Client,
   ): Promise<void> => {
+    // Shared by the pre-verify check below and the upload retry loop — a
+    // whole-connection drop hits `statObject` (verify) exactly as it hits
+    // `writeImmutableStream` (upload), so a resume started offline needs the
+    // same wait-don't-fail treatment before it ever reaches the network,
+    // not just once the retry loop is already running.
+    const ensureOnline = async (): Promise<void> => {
+      while (typeof window !== 'undefined' && navigator.onLine === false) {
+        if (cancelled) throw new Error('cancelled');
+        log('warn', `waiting for network to retry ${it.key}`);
+        await waitForOnline(abort.signal);
+      }
+      if (cancelled) throw new Error('cancelled');
+    };
+
     // A completed blob from a prior run: sanity-check the remote copy before
     // skipping it. Size + recorded SHA-256 metadata is the portable contract.
     const verifyExisting = async (): Promise<boolean> => {
@@ -445,6 +504,7 @@ function makeRunner(
     };
 
     if (it.doneAlready) {
+      await ensureOnline();
       if (await verifyExisting()) return;
     }
 
@@ -456,8 +516,9 @@ function makeRunner(
       throw new Error(fp.error);
     }
 
-    for (let attempt = 0; ; attempt++) {
-      if (cancelled) throw new Error('cancelled');
+    let attempt = 0;
+    for (;;) {
+      await ensureOnline();
       fp.attempt = attempt + 1;
       fp.state = 'uploading';
       snap.uploadedBytes -= fp.loaded; // reset this file's contribution on retry
@@ -516,6 +577,7 @@ function makeRunner(
         const wait = backoff(attempt);
         log('warn', `retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms: ${msg}`);
         await sleep(wait);
+        attempt++;
       }
     }
   };
@@ -1023,16 +1085,33 @@ export function runStreamingUpload(
   const enqueuedIds = new Set<string>();
   let finalFiles: FileEntry[] | null = null;
 
-  const enqueue = (f: FileEntry): void => {
-    if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return;
+  // Returns whether this call flipped a display row from 'inspecting' to
+  // 'pending' — callers that enqueue a whole batch at once use that to emit
+  // a single update instead of one per file.
+  const enqueue = (f: FileEntry, opts: { silent?: boolean } = {}): boolean => {
+    if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return false;
     enqueuedIds.add(f.id);
     const item = planItemFor(f, naming, build.timeZone);
     queue.push({ ...item, doneAlready: false });
+    // Flip the display row the moment a file is actually queued, not when a
+    // lane eventually dequeues it — the queue is FIFO and only `concurrency`
+    // lanes drain it, so a file queued behind a large head-of-line batch
+    // would otherwise look stuck on "inspecting" long after Inspect finished
+    // it. (No-op before `runStreaming` seeds `snap.files` — the initial
+    // per-file state already accounts for files ready at that point.)
+    let flipped = false;
+    const idx = runner.snap.files.findIndex((fp) => fp.id === item.id);
+    if (idx >= 0 && runner.snap.files[idx].state === 'inspecting') {
+      runner.snap.files[idx] = { ...runner.snap.files[idx], key: item.key, state: 'pending' };
+      flipped = true;
+      if (!opts.silent) runner.emit(true);
+    }
     if (persist) {
       void runner.afterLedger(() =>
         markFileState(fileRecordId(sessionId, item.localPath), fileRecordFor(sessionId, item, 'pending')),
       );
     }
+    return flipped;
   };
 
   if (persist) {
@@ -1129,7 +1208,11 @@ export function runStreamingUpload(
     cancel: runner.cancel,
     done,
     notifyReady: (files) => {
-      for (const f of files) enqueue(f);
+      let anyFlipped = false;
+      for (const f of files) {
+        if (enqueue(f, { silent: true })) anyFlipped = true;
+      }
+      if (anyFlipped) runner.emit(true);
     },
     close: (files) => {
       finalFiles = files;
@@ -1184,15 +1267,14 @@ export function runStreamingUpload(
  * keys are reused verbatim, so completed blobs skip (after a sanity check) and
  * only the interrupted/pending files re-upload. Always a wet run.
  *
- * A streamed run that's interrupted before every file finished Inspect has no
- * bundle yet — `session.bundle` is null. There's nothing byte-identical to
- * republish in that case (the CSVs were never built), and re-driving Inspect
- * standalone outside the live wizard session is out of scope here — this
- * surfaces a clear, actionable error instead of attempting it. No data is
- * lost: blobs already uploaded stay on S3 under their (deterministic, keyed
- * by content) object names, and starting a fresh upload with the same folder
- * will detect and skip them automatically via the normal verify-before-upload
- * check.
+ * Requires `session.bundle` to already be attached. A streamed run interrupted
+ * before it ever reached publish has no bundle yet — callers going through
+ * `History.tsx`'s `beginResume` resolve that first via `resume.ts`'s
+ * `ensureBundle` (re-hashes whatever hadn't finished Inspect and builds/attaches
+ * the bundle from persisted records) before ever calling this. This fallback
+ * error path only remains for a caller that skips that step: no data is lost
+ * either way — blobs already uploaded stay on S3 under their (deterministic,
+ * keyed by content) object names.
  */
 export function resumeUpload(
   params: ResumeParams,
@@ -1212,7 +1294,7 @@ export function resumeUpload(
     const done = (async () => {
       runner.snap.phase = 'error';
       runner.snap.error =
-        'This upload was interrupted before every file finished being inspected, so there is no publish-ready bundle to resume. Start a fresh upload with the same folder — files already uploaded will be detected and skipped automatically.';
+        'This session has no publish-ready bundle yet and could not be resolved automatically. Go back to History and try Resume again.';
       runner.log('error', runner.snap.error);
       runner.emit(true);
     })();

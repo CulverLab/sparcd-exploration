@@ -35,9 +35,17 @@ Feature: Connect the uploader to storage and manage the session
     And any of them can be overridden before connecting
 
   @unmapped
-  Scenario: The secret key is never kept on this machine
+  Scenario: Reloading the page keeps the connection
     Given a successful connection was made earlier in this browser
     When the uploader is opened again in a new page load
+    Then it is still connected without asking for the secret again
+    # The credentials are held for the life of the tab, so a reload — and a
+    # switch to another SPARC'd tool in the same tab — lands back in the app.
+
+  @unmapped
+  Scenario: The secret key is never kept on this machine
+    Given a successful connection was made earlier in this browser
+    When the tab is closed and the uploader is opened in a new one
     Then the endpoint and access key are pre-filled from the previous connection
     And the secret key field is empty
     And the uploader stays on the connection screen until the secret is re-entered
@@ -47,9 +55,9 @@ Feature: Connect the uploader to storage and manage the session
     Given one tab of a SPARC'd tool is already connected in this browser
     When another tab of the uploader is opened
     Then it adopts the live connection without asking for the secret again
-    # Live relay between tabs that are open at the same time only; nothing
-    # secret is written to disk, so a tab opened after every other tab has been
-    # closed must ask for the secret again.
+    # A new tab starts with nothing of its own, so this is the live relay
+    # between tabs open at the same time; nothing secret is written to disk, so
+    # a tab opened after every other tab has been closed must ask again.
 
   @unmapped
   Scenario: Disconnecting in one tab disconnects the others

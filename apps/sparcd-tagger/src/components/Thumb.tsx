@@ -1,6 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { useStore } from '../store';
-import { parseCollectionKey, presignImage } from '../lib/s3';
+import { useMediaUrl } from '../lib/useMediaUrl';
 import { isVideoKey } from '../lib/workspace';
 
 // One presigned-GET thumbnail. The URL is signed lazily (per connection +
@@ -21,20 +19,7 @@ export function Thumb({
   alt: string;
   isVideo?: boolean;
 }) {
-  const cfg = useStore((s) => s.s3Config);
-  const connectionId = useStore((s) => s.connectionId);
-  const collectionKey = useStore((s) => s.selectedCollectionKey);
-
-  const { data, isError } = useQuery({
-    queryKey: ['presign', connectionId, objectKey],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return presignImage(cfg!, bucket, objectKey);
-    },
-    enabled: !!cfg && !!collectionKey,
-    staleTime: 50 * 60 * 1000, // under the 1h URL TTL
-    retry: 1,
-  });
+  const { url, isError } = useMediaUrl(objectKey);
 
   if (isError) {
     return (
@@ -45,11 +30,11 @@ export function Thumb({
   }
   return (
     <div className="relative aspect-[4/3] bg-paperHover border border-rule overflow-hidden">
-      {data &&
+      {url &&
         (isVideo ? (
           <>
             <video
-              src={data}
+              src={url}
               muted
               playsInline
               preload="metadata"
@@ -69,7 +54,7 @@ export function Thumb({
             </span>
           </>
         ) : (
-          <img src={data} alt={alt} loading="lazy" className="w-full h-full object-cover" />
+          <img src={url} alt={alt} loading="lazy" className="w-full h-full object-cover" />
         ))}
     </div>
   );

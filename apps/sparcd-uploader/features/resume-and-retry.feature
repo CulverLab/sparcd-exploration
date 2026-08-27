@@ -83,12 +83,11 @@ Feature: Resume an interrupted upload and retry a failed one
     And the tool states how many files could not be re-attached and asks for the original folder
 
   @AL1
-  Scenario: An upload interrupted before the batch was fully examined explains what to do
+  Scenario: An upload interrupted before the batch was fully examined can still be resumed
     Given an upload was interrupted before every file had been examined
     Then no publishable metadata exists for it
     When it is resumed
-    Then the tool states plainly that a fresh upload of the same folder is needed
-    And it states that files already stored will be detected and skipped
+    Then the remaining files are examined again and the upload completes
     And no data is lost
 
   @unmapped

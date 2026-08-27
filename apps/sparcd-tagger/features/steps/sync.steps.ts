@@ -30,7 +30,7 @@ import {
   waitForDirtyDrafts,
 } from './support/flows';
 
-const statePill = (page: Page) => page.locator('header span[title^="Sync: "]');
+const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
 
 const canonicalPuts = (puts: { key: string }[]) =>
   puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
@@ -515,38 +515,38 @@ Then(
   async ({ page, s3 }) => {
     const seen: string[] = [];
     const record = async () => {
-      const title = (await statePill(page).getAttribute('title')) ?? '';
+      const title = (await statePill(page).getAttribute('aria-label')) ?? '';
       if (!seen.includes(title)) seen.push(title);
       return title;
     };
 
     // unsynced — the Background's local edit.
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: unsynced edits');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: unsynced edits');
     await record();
 
     // syncing — held open by a slow canonical read.
     s3.delay(`${PREFIX_A}media.csv`, 2000);
     await page.getByRole('button', { name: 'Sync…' }).click();
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: syncing…');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: syncing…');
     await record();
     s3.delays.clear();
     await expect(page.getByText('Checking the canonical base…')).toBeHidden({ timeout: 20000 });
 
     // dry-run
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: dry-run');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: dry-run');
     await record();
 
     // error — a store that refuses the conditional replacement.
     s3.replaceMode = 'unsupported';
     await setSyncDryRun(page, false);
     await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: error');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: error');
     await record();
 
     // synced
     s3.replaceMode = 'ok';
     await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: synced');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced');
     await record();
     await dialogClose(page).click();
 
@@ -555,24 +555,24 @@ Then(
     await speciesApply(page, 'Pecari tajacu').click();
     s3.put(BUCKET, `${PREFIX_A}observations.csv`, 'x', 'text/csv');
     await openSyncDialog(page);
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: conflict');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: conflict');
     await record();
     await page.getByRole('button', { name: 'Keep editing' }).click();
 
     // local-only — an upload this browser has never edited.
     await sectionTab(page, 'Browse').click();
     await uploadRow(page, 'fielduser').click();
-    await expect(statePill(page)).toHaveAttribute('title', 'Sync: local-only');
+    await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: local-only');
     await record();
 
     expect(seen.sort()).toEqual([
-      'Sync: conflict',
-      'Sync: dry-run',
-      'Sync: error',
-      'Sync: local-only',
-      'Sync: synced',
-      'Sync: syncing…',
-      'Sync: unsynced edits',
+      'Sync status: conflict',
+      'Sync status: dry-run',
+      'Sync status: error',
+      'Sync status: local-only',
+      'Sync status: synced',
+      'Sync status: syncing…',
+      'Sync status: unsynced edits',
     ]);
   },
 );

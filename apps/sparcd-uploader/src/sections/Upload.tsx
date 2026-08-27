@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { useStore, type FileEntry } from '../store';
 import { useLocations } from '../lib/useLocations';
 import { useCollections } from '../lib/useCollections';
@@ -15,9 +16,13 @@ import {
   type UploadSnapshot,
 } from '../lib/upload';
 import { onFilesReady } from '../lib/processing';
+import type { ProcessResponse } from '../lib/processPool';
+import { ensureBundle } from '../lib/resume';
 import { captureTimeComplete, processingComplete } from '../lib/validation';
 import { Note, RunMonitor } from '../components/RunMonitor';
 import { UploadCompleteDialog } from '../components/UploadCompleteDialog';
+import { MetadataPreview } from '../components/MetadataPreview';
+import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 
 const sectionLabel = 'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
 
@@ -101,6 +106,15 @@ export function Upload() {
   // One browser connection per endpoint — the main one plus each shard.
   const shardCount = shardEndpoints.split(/[,\n]/).filter((s) => s.trim()).length;
 
+  // A dry run never touches the network (nothing is written), so it's still
+  // usable offline — only a real upload/retry needs to be gated.
+  const online = useOnline();
+
+  // Preview is opt-in — building it rebuilds the whole bundle. Unlike on
+  // Assign, nothing on this step is still being live-edited, so it just
+  // reflects the current files/description/etc. directly, no debounce needed.
+  const [previewOpen, setPreviewOpen] = useState(false);
+
   const [snap, setSnap] = useState<UploadSnapshot | null>(null);
   const [resumeProblems, setResumeProblems] = useState<ReconcileProblem[]>([]);
   const runRef = useRef<UploadRun | StreamingUploadRun | null>(null);
@@ -162,6 +176,59 @@ export function Upload() {
     setActiveRunSessionId(running && snap ? snap.sessionId : null);
     return () => setActiveRunSessionId(null);
   }, [running, snap?.sessionId, setActiveRunSessionId]);
+
+  // Hold a screen wake lock while actively uploading, so OS/display idle-sleep
+  // doesn't interrupt it. Best-effort: unsupported browsers (Firefox, as of
+  // this writing) and rejected requests (e.g. low battery) just mean no lock —
+  // never fatal to the upload itself. The lock is auto-released by the browser
+  // whenever the tab is hidden, so it's re-acquired on regaining visibility.
+  //
+  // Caveats — cases this can't prevent: the tab being minimized/backgrounded
+  // (the lock releases the moment it's hidden), the laptop lid closing (a
+  // separate sleep trigger the OS honors regardless of any page's wake lock),
+  // and Firefox (no Wake Lock API support at all, so no lock is ever held
+  // there).
+  useEffect(() => {
+    if (!running || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let cancelled = false;
+    // Incremented on every acquire() call. The resolved sentinel is kept only
+    // if gen still matches — two visibility events arriving before either
+    // request resolves would otherwise orphan the first sentinel.
+    let gen = 0;
+
+    const acquire = () => {
+      const myGen = ++gen;
+      navigator.wakeLock
+        .request('screen')
+        .then((l) => {
+          if (cancelled || myGen !== gen) {
+            void l.release();
+          } else {
+            lock = l;
+          }
+        })
+        .catch(() => {
+          /* not fatal — e.g. low battery, or acquired while hidden */
+        });
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      void lock?.release();
+      lock = null;
+      acquire();
+    };
+
+    acquire();
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      void lock?.release();
+    };
+  }, [running]);
 
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
   const stillInspecting = files.length - ready.length;
@@ -232,15 +299,15 @@ export function Upload() {
   // processed, and (the same integrity gate Assign used to enforce up front)
   // every ready file has a capture time. If processing finishes but a file
   // still lacks a capture time, this simply doesn't fire yet: the render
-  // below already redirects the user back to Assign to fix it, and this
-  // effect re-fires (closedRef is per-run, not per-render) once they do.
+  // below already lets the user fix it inline, and this effect re-fires
+  // (closedRef is per-run, not per-render) once they do.
   useEffect(() => {
     maybeCloseQueue(files);
   }, [files]);
 
   const retryPending = useRef(false);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const retryFailed = async () => {
+  const retryFailed = useCallback(async () => {
     // The async gap before resumeUpload's first emit leaves the Retry button
     // mounted — guard so a double-click can't start two concurrent runs.
     if (!snap || !s3Config || retryPending.current) return;
@@ -254,13 +321,48 @@ export function Upload() {
       const session = await loadSession(snap.sessionId);
       if (!session) throw new Error('no saved record for this session');
       const attached = attachedRef.current ?? new Map(files.map((f) => [f.relPath, f.file]));
+
+      // A run that hit the systemic-failure abort (e.g. many concurrent
+      // blobs failing at once when the network drops) never reaches the
+      // publish step, so it has no bundle — same gap History's Resume
+      // fixes, resolved here from the files already in memory instead of a
+      // disk re-hash pass, since they never left the page.
+      if (!session.bundle) {
+        const resolved = new Map<string, ProcessResponse>(
+          files
+            .filter((f) => f.processState === 'ready' && f.sha256)
+            .map((f) => [
+              f.relPath,
+              {
+                id: f.relPath,
+                sha256: f.sha256,
+                exifNaive: f.exifNaive,
+                exifCamera: f.exifCamera,
+                gps: f.gps,
+                width: f.width,
+                height: f.height,
+                mediaKind: f.mediaKind,
+                mimeType: f.mimeType,
+              },
+            ]),
+        );
+        const result = await ensureBundle(session.batch, session, resolved);
+        if (!result.ok) {
+          const reasons = result.problems.map((p) => `${p.fileName}: ${p.reason}`).slice(0, 3).join('; ');
+          throw new Error(`${result.problems.length} file(s) couldn't be resolved (${reasons})`);
+        }
+      }
+
+      const finalSession = session.bundle ? session : await loadSession(snap.sessionId);
+      if (!finalSession) throw new Error('session record disappeared while resolving it');
+
       // A resumed run is a plain UploadRun (no notifyReady/close) — stop the
       // now-finished streaming run's methods from being called again.
       streamingRef.current = null;
       runRef.current = resumeUpload(
         {
           config: s3Config,
-          session,
+          session: finalSession,
           attached,
           concurrency: concurrencyControl(),
           verifyAfterPut,
@@ -270,12 +372,40 @@ export function Upload() {
       );
     } catch (e) {
       setRetryError(
-        `Couldn't load the saved upload record for this batch (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
+        `Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
       );
     } finally {
       retryPending.current = false;
     }
-  };
+  }, [snap, s3Config, files, verifyAfterPut]);
+
+  // Self-heal after an interruption the user might not notice — a run that
+  // landed on 'partial' (some files failed after exhausting their own
+  // retries) resumes automatically instead of waiting for them to notice and
+  // click Retry. Only 'partial' — not the fatal 'error' phase, which usually
+  // means credentials/CORS/policy, not a transient blip a blind retry would
+  // fix.
+  //
+  // "Wakes up" on either of two edge-triggered signals, whichever comes
+  // first: the tab regaining visibility (covers minimize/lid-close/sleep —
+  // the OS resumes and the visibilitychange fires), or the browser's `online`
+  // event (covers a network drop that resolves while the tab stayed visible
+  // the whole time, e.g. wifi flapping). Both conditions (visible AND online)
+  // are re-checked at the moment either fires, so a machine that wakes with
+  // wifi still reconnecting won't retry until `online` actually follows.
+  useEffect(() => {
+    const tryAutoResume = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && snap?.phase === 'partial' && !snap.dryRun) {
+        void retryFailed();
+      }
+    };
+    document.addEventListener('visibilitychange', tryAutoResume);
+    window.addEventListener('online', tryAutoResume);
+    return () => {
+      document.removeEventListener('visibilitychange', tryAutoResume);
+      window.removeEventListener('online', tryAutoResume);
+    };
+  }, [snap, retryFailed]);
 
   // A resumed run replays a persisted bundle and needs nothing from Assign, so
   // these guards stand down once a run is in flight or handed off.
@@ -300,11 +430,13 @@ export function Upload() {
   // active in the background (processing.ts keeps going regardless of the
   // screen), and swapping out the whole step would hide it. A file missing a
   // capture time only blocks the final publish (see the close-triggering
-  // effect above) — the fix (Assign) is one click away, surfaced inline.
-  const captureComplete = captureTimeComplete(files);
+  // effect above) — fixed inline below, the same editor Assign uses, so
+  // there's no need to leave this step for it.
+  const needsCaptureTime = files.some((f) => f.processState === 'ready' && !f.exifNaive);
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
+      <OfflineBanner message="You're offline — the dry run still works, but a real upload won't until your connection is back." />
       {/* Run configuration. A resume handed off from History replays a persisted
           bundle with no Assign state behind it, so the options collapse away. */}
       <section className="space-y-3">
@@ -328,13 +460,13 @@ export function Upload() {
                 onChange={(e) => setDryRun(e.target.checked)}
                 className="accent-accent"
               />
-              Dry run — log every PUT, write nothing
+              Test the upload, nothing is written
             </label>
 
             {!effectiveDryRun && (
               <Note
                 tone="warn"
-                message={`Wet upload uses the connected credentials directly. The bucket must allow this web origin with CORS, and the credentials must permit append-only PUT/HEAD/LIST for ${collection.bucket}.`}
+                message={`If not testing the upload and it fails right away, that's usually a setup issue on the storage side, not something you did wrong. Contact your administrator and give them this collection ID: ${collection.uuid}.`}
               />
             )}
 
@@ -361,12 +493,40 @@ export function Upload() {
           />
         )}
 
-        {!captureComplete && (
-          <Note
-            tone="warn"
-            message="One or more files still have no capture time — publishing will wait until every ready file has one. Go back to Assign to set it."
-          />
+        {location && collection && slug && (
+          <div className="space-y-2">
+            <h2 className={sectionLabel}>Preview</h2>
+            {previewOpen ? (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(false)}
+                  className="font-body text-[12px] text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  Hide preview
+                </button>
+                <MetadataPreview
+                  location={location}
+                  collectionUuid={collection.uuid}
+                  bucket={collection.bucket}
+                  uploaderSlug={slug}
+                  description={description}
+                  timeZone={uploadTimeZone}
+                  files={files}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                className="w-full border border-rule bg-paper px-3 py-2.5 text-left font-body text-[13px] text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+              >
+                Click to preview the generated bundle files (UploadMeta.json, deployments/media/observations CSVs)…
+              </button>
+            )}
+          </div>
         )}
+
 
         {/* Concurrency sits outside the config gate: a resume handed off from
             History has no Assign state behind it but still runs lanes. */}
@@ -429,6 +589,16 @@ export function Upload() {
         </div>
       )}
 
+      {needsCaptureTime && (
+        <section className="space-y-2">
+          <h2 className={sectionLabel}>Capture time</h2>
+          <p className="font-body text-[13px] text-inkSoft">
+            Publishing waits until every file below has a capture time.
+          </p>
+          <CaptureTimeEditor files={files} />
+        </section>
+      )}
+
       {/* Live run */}
       {snap && <RunMonitor snap={snap} />}
 
@@ -464,34 +634,18 @@ export function Upload() {
             >
               Next batch
             </button>
-          ) : snap?.phase === 'partial' && !snap.dryRun ? (
+          ) : (snap?.phase === 'partial' || snap?.phase === 'error') && !snap.dryRun ? (
             <button
               onClick={retryFailed}
+              title={!online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
-              Retry failed files
+              {snap.phase === 'error' ? 'Retry' : 'Retry failed files'}
             </button>
-          ) : snap?.phase === 'error' && !snap.dryRun && snap.sessionId ? (
-            // An interrupted wet run has a persisted ledger — resuming skips the
-            // blobs that already landed. Starting over uses a fresh prefix and
-            // re-uploads everything.
-            <>
-              <button
-                onClick={() => setSnap(null)}
-                className="border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              >
-                Start over
-              </button>
-              <button
-                onClick={retryFailed}
-                className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-              >
-                Resume upload
-              </button>
-            </>
           ) : (
             <button
               onClick={start}
+              title={!effectiveDryRun && !online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
               {effectiveDryRun ? 'Start dry run' : 'Start upload'}
@@ -502,7 +656,8 @@ export function Upload() {
 
       {snap?.phase === 'done' && !snap.dryRun && !completeDismissed && (
         <UploadCompleteDialog
-          count={snap.files.length}
+          doneCount={snap.files.filter((f) => f.state === 'done').length}
+          skippedCount={snap.files.filter((f) => f.state === 'skipped').length}
           onClose={() => setCompleteDismissed(true)}
         />
       )}

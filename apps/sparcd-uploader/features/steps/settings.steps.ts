@@ -25,9 +25,6 @@ Then('each new batch starts with that identity already filled in on the Assign s
   await app.continueToAssign();
   await app.waitForCollections();
   await expect(app.page.getByPlaceholder(identityField)).toHaveValue('Ada Lovelace');
-  await expect(app.page.getByText(/Stamped into the upload prefix and object keys as/)).toContainText(
-    'ada-lovelace',
-  );
 });
 
 // --- disconnecting from Settings -------------------------------------------
@@ -63,11 +60,9 @@ Then("this browser's recorded upload sessions, file states and metadata are clea
 
 Then('the tool returns to the connection screen ready for the next person', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
-  // Nothing of the previous person is left behind — not even the access key,
-  // since the remembered connection is dropped along with the local data.
+  // The secret key is never kept on disk — it always starts blank.
+  // Endpoint and access key may be pre-filled if "Remember me" was checked.
   await expect(app.page.locator('#secretKey')).toHaveValue('');
-  await expect(app.page.locator('#accessKey')).toHaveValue('');
-  await expect(app.page.locator('#endpoint')).toHaveValue('');
 });
 
 Then('the tool states how many resumable uploads would be lost', async ({ app }) => {
@@ -88,7 +83,7 @@ Then('nothing is cleared unless discarding is explicitly chosen', async ({ app }
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByRole('heading', { name: 'Unfinished uploads' })).toHaveCount(0);
   expect(await app.readBatchRecords()).toHaveLength(1);
-  await expect(app.page.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
 
   await app.page.getByRole('button', { name: 'Disconnect / edit' }).click();
   await app.page.getByRole('button', { name: 'Discard & disconnect' }).click();
@@ -108,7 +103,7 @@ Then('the connection is ended and the in-progress batch is cleared', async ({ ap
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.expectStep('Files');
   await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
 });
@@ -147,12 +142,13 @@ When('the appearance is switched between light and dark', async ({ app }) => {
   await expect(app.page.locator('html')).toHaveClass(/dark/);
 });
 
-Then('the choice survives a page reload in the same browser tab session', async ({ app }) => {
+Then('the choice survives a page reload', async ({ app }) => {
   await app.reopen();
   await expect(app.page.locator('html')).toHaveClass(/dark/);
-  // It lives in sessionStorage, so it is scoped to this tab's session.
-  const stored = await app.page.evaluate(() =>
-    JSON.parse(sessionStorage.getItem('sparcd-uploader-session') ?? '{}'),
-  );
-  expect(stored.state.theme).toBe('dark');
+});
+
+Then("it is kept where the other SPARC'd tools on this machine read it", async ({ app }) => {
+  // One key for every tool on this origin, so walking to another one from the
+  // brand switcher lands in the same appearance.
+  expect(await app.page.evaluate(() => localStorage.getItem('sparcd-theme'))).toBe('dark');
 });

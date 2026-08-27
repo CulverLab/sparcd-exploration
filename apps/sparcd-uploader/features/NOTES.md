@@ -92,4 +92,7 @@ They now run: `pnpm test:bdd` in `apps/sparcd-uploader` generates the specs with
 `bddgen` and drives the real app in Chromium, with storage served by an
 in-memory S3 mock (`features/steps/s3mock.ts`). Everything the run changed about
 these files — corrected claims, one `@manual` scenario, and the app bugs found
-along the way — is written up in `features/CORRECTIONS.md`.
+along the way — is written up in `features/CORRECTIONS.md`. Since PR #26 fixed
+publishing after Inspect completes, publish scenarios use small media by
+default; only scenarios about background examination keep the deliberately slow
+MP4, and in-flight upload checks are held by the S3 mock.

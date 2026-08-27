@@ -17,8 +17,10 @@ export function StatePill({ state }: { state: SyncState }) {
   const p = PILLS[state];
   return (
     <span
-      className="inline-flex items-center gap-1.5 border border-rule px-2.5 h-7 text-[12px] font-mono text-inkSoft"
-      title={`Sync: ${p.label}`}
+      className="inline-flex items-center gap-1.5 border border-rule px-2.5 h-7 text-[12px] font-mono text-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+      role="status"
+      tabIndex={0}
+      aria-label={`Sync status: ${p.label}`}
     >
       <span aria-hidden>{p.glyph}</span>
       {p.label}

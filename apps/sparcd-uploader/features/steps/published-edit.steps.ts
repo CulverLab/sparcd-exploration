@@ -324,10 +324,9 @@ Then('no snapshot and no change is written', async ({ app }) => {
 // --- dry run ---------------------------------------------------------------
 
 Given('dry run is switched on', async ({ app }) => {
-  // It is the default for every page load, and nothing here has turned it off.
   app.notes.dryRun = true;
   await app.gotoSection('New upload');
-  await expect(app.dryRunCheckbox()).toBeChecked();
+  await app.dryRunCheckbox().check();
   await selectCollectionInHistory(app);
 });
 

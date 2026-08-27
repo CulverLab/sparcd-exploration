@@ -173,13 +173,13 @@ When("a location's details are opened", async ({ app }) => {
 });
 
 Then(
-  'its decimal coordinates, its UTM coordinates, and its elevation in both metres and feet are shown',
+  "its elevation in both metres and feet is shown, with no coordinates",
   async ({ app }) => {
     const detail = app.deploymentOptions().filter({ hasText: 'Bear Canyon' }).first();
-    await expect(detail).toContainText('32.40000, -110.70000');
-    await expect(detail).toContainText(/12S \d+E \d+N/);
     await expect(detail).toContainText('1200 m');
     await expect(detail).toContainText('3937.01 ft');
+    await expect(detail).not.toContainText('32.4');
+    await expect(detail).not.toContainText('12S');
   },
 );
 
@@ -195,8 +195,8 @@ Then('both are offered as separate locations', async ({ app }) => {
   await app.openDeploymentList();
   await app.page.getByPlaceholder('Filter by name or id…').fill('DUP9');
   await expect(app.deploymentOptions()).toHaveCount(2);
-  await expect(app.deploymentOptions().nth(0)).toContainText('33.0000');
-  await expect(app.deploymentOptions().nth(1)).toContainText('33.5000');
+  await expect(app.deploymentOptions().nth(0)).toContainText('2000 m');
+  await expect(app.deploymentOptions().nth(1)).toContainText('2100 m');
 });
 
 Then('an entry repeated with identical identifier and coordinates is offered once', async ({ app }) => {
@@ -254,7 +254,8 @@ When('an uploader identity is typed', async ({ app }) => {
 Then(
   "the tool shows the key-safe form of it that will appear in the upload's storage path and object names",
   async ({ app }) => {
-    await expect(app.page.getByText(/Stamped into the upload prefix and object keys as/)).toContainText(
+    await app.gotoSection('Settings');
+    await expect(app.page.getByText(/Used in upload prefixes and object keys as/)).toContainText(
       'ada-lovelace',
     );
   },
@@ -266,6 +267,7 @@ When('a description is entered', async ({ app }) => {
 });
 
 Then("it is stored as the upload's description in the upload's metadata file", async ({ app }) => {
+  await app.continueToUpload();
   await app.page.getByRole('button', { name: /Click to preview the generated bundle files/ }).click();
   await expect(app.page.getByRole('button', { name: 'UploadMeta.json' })).toBeVisible();
   await expect(app.page.locator('pre')).toContainText('"description": "South ridge, July retrieval"');
@@ -279,6 +281,7 @@ Given('a collection, a deployment and an uploader identity have been chosen', as
 });
 
 When('the preview is opened', async ({ app }) => {
+  await app.continueToUpload();
   await app.page.getByRole('button', { name: /Click to preview the generated bundle files/ }).click();
   await expect(app.page.locator('pre').first()).toBeVisible();
 });

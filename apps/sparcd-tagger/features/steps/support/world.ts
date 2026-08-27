@@ -120,6 +120,7 @@ export async function connect(page: Page): Promise<void> {
   await page.locator('#endpoint').fill(ENDPOINT);
   await page.locator('#accessKey').fill('testkey');
   await page.locator('#secretKey').fill('testsecret');
+  await page.getByLabel('Remember endpoint & access key on this device').check();
   await page.getByRole('button', { name: 'Connect' }).click();
   await expect(sectionTab(page, 'Browse')).toBeVisible();
 }

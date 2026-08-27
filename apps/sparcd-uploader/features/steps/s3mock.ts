@@ -3,7 +3,7 @@
 // apart from a Vite asset request on the same origin — anything unsigned falls
 // through to the dev server untouched.
 
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 
 export type StoredObject = {
   body: Buffer;
@@ -60,6 +60,15 @@ export class S3Mock {
   /** Artificial latency on every object write, for observing a run in flight. */
   putDelayMs = 0;
 
+  /**
+   * Hold matching PUTs after storage records them but before S3 responds. This
+   * lets scenarios observe or cancel a real in-flight write without racing the
+   * whole upload against wall-clock timing.
+   */
+  holdPut?: (bucket: string, key: string) => boolean;
+
+  private heldPutResolvers: (() => void)[] = [];
+
   /** Fires once an object has been stored — lets a scenario corrupt it. */
   afterPut?: (bucket: string, key: string, obj: StoredObject) => void;
 
@@ -108,6 +117,28 @@ export class S3Mock {
   /** Keys written by the app during this scenario, in write order. */
   writtenKeys(): string[] {
     return this.puts.map((p) => `${p.bucket}/${p.key}`);
+  }
+
+  releaseHeldPuts(): void {
+    const resolvers = this.heldPutResolvers.splice(0);
+    for (const resolve of resolvers) resolve();
+  }
+
+  private async maybeHoldPut(bucket: string, key: string): Promise<boolean> {
+    if (!this.holdPut?.(bucket, key)) return false;
+    await new Promise<void>((resolve) => {
+      this.heldPutResolvers.push(resolve);
+    });
+    return true;
+  }
+
+  private async fulfillHeldPut(route: Route, response: Parameters<Route['fulfill']>[0], held: boolean): Promise<void> {
+    try {
+      await route.fulfill(response);
+    } catch (err) {
+      if (held) return;
+      throw err;
+    }
   }
 
   addBucket(name: string): void {
@@ -286,7 +317,8 @@ export class S3Mock {
         this.put(bucket, key, body, { contentType: mpu.contentType, meta: mpu.meta });
         this.afterPut?.(bucket, key, this.get(bucket, key)!);
         this.puts.push({ bucket, key, size: body.length, body: '', meta: mpu.meta });
-        await route.fulfill({
+        const held = await this.maybeHoldPut(bucket, key);
+        await this.fulfillHeldPut(route, {
           status: 200,
           contentType: 'application/xml',
           body: `<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUploadResult xmlns="${XMLNS}"><Bucket>${xmlEscape(
@@ -294,7 +326,7 @@ export class S3Mock {
           )}</Bucket><Key>${xmlEscape(key)}</Key><ETag>${xmlEscape(
             this.get(bucket, key)!.etag,
           )}</ETag></CompleteMultipartUploadResult>`,
-        });
+        }, held);
         return;
       }
 
@@ -338,11 +370,12 @@ export class S3Mock {
           ifMatch,
           meta,
         });
-        await route.fulfill({
+        const held = await this.maybeHoldPut(bucket, key);
+        await this.fulfillHeldPut(route, {
           status: 200,
           headers: { etag: this.get(bucket, key)!.etag },
           body: '',
-        });
+        }, held);
         return;
       }
 

@@ -1,22 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { Spinner } from '../components/Spinner';
 import { useLocations } from '../lib/useLocations';
 import { useCollections, useCollectionDeployments } from '../lib/useCollections';
 import { DeploymentPicker } from '../components/DeploymentPicker';
 import { CollectionPicker } from '../components/CollectionPicker';
-import { MetadataPreview } from '../components/MetadataPreview';
 import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
 import { timeZoneForCoords } from '../lib/coords';
 import { captureTimeComplete } from '../lib/validation';
-
-// How long to wait after the last keystroke before pushing a fresh value into
-// an already-open preview — keeps it feeling live without rebuilding the whole
-// bundle on every keystroke.
-const PREVIEW_DEBOUNCE_MS = 300;
 
 const sectionLabel =
   'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
@@ -79,7 +74,14 @@ export function Assign() {
   const elevationUnit = useStore((s) => s.elevationUnit);
   const files = useStore((s) => s.files);
 
-  const { data, isLoading, isError, error, isFetching } = useLocations(s3Config, connectionId);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch: refetchLocations,
+  } = useLocations(s3Config, connectionId);
   const collections = useCollections(s3Config, connectionId);
   const slug = sanitizeUploaderUser(uploaderUser);
 
@@ -107,6 +109,25 @@ export function Assign() {
   // deployed — but the ones it has already deployed (derived from its uploads'
   // deployments.csv) are listed first, since they're the likely picks.
   const deployments = useCollectionDeployments(s3Config, connectionId, collection);
+
+  // react-query pauses a query's in-flight fetch while offline and resumes it
+  // automatically on reconnect (default `networkMode: 'online'`) — but a
+  // query that already exhausted its retry and settled into an error state
+  // before this step was even reached (e.g. offline from the start, or the
+  // failure happened before this transition was ever observed) needs an
+  // explicit nudge rather than relying on that pause ever having happened.
+  const online = useOnline();
+  const wasOffline = useRef(!online);
+  useEffect(() => {
+    if (online && wasOffline.current) {
+      void refetchLocations();
+      void collections.refetch();
+      if (collection) void deployments.refetch();
+    }
+    wasOffline.current = !online;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online]);
+
   const usedLocationCount = useMemo(
     () => new Set(deployments.data ?? []).size,
     [deployments.data],
@@ -124,9 +145,19 @@ export function Assign() {
   // Picking a deployment implies a zone — the camera's naive EXIF wall-clock
   // needs to be interpreted in wherever it physically sits, not the browser's
   // zone. Fires only when the *selection* changes, so a manual override the
-  // user makes afterward for the same location sticks.
+  // user makes afterward for the same location sticks. The mount-time run is
+  // special-cased: uploadTimeZone/selectedLocationKey are both restored from
+  // sessionStorage before this component ever renders, so if the location on
+  // mount is the same one that was already selected, re-deriving here would
+  // clobber a manual override that survived the reload.
+  const mountedLocationKeyRef = useRef(selectedLocationKey);
+  const isFirstLocationEffect = useRef(true);
   useEffect(() => {
     if (!location) return;
+    if (isFirstLocationEffect.current) {
+      isFirstLocationEffect.current = false;
+      if (location.key === mountedLocationKeyRef.current) return;
+    }
     setUploadTimeZone(timeZoneForCoords(location.latitude, location.longitude));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.key]);
@@ -147,34 +178,6 @@ export function Assign() {
     setStep('upload');
   }
 
-  // Preview is opt-in (building it rebuilds the whole bundle) and, once open,
-  // only takes the live name/description on a short pause or on blur — not on
-  // every keystroke.
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewSlug, setPreviewSlug] = useState(slug);
-  const [previewDescription, setPreviewDescription] = useState(description);
-
-  useEffect(() => {
-    if (!previewOpen) return;
-    const t = window.setTimeout(() => {
-      setPreviewSlug(slug);
-      setPreviewDescription(description);
-    }, PREVIEW_DEBOUNCE_MS);
-    return () => window.clearTimeout(t);
-  }, [slug, description, previewOpen]);
-
-  function openPreview() {
-    setPreviewSlug(slug);
-    setPreviewDescription(description);
-    setPreviewOpen(true);
-  }
-
-  function flushPreview() {
-    if (!previewOpen) return;
-    setPreviewSlug(slug);
-    setPreviewDescription(description);
-  }
-
   // The chosen zone is always offered even if it isn't in the platform's list.
   const timeZones = useMemo(() => {
     const all = supportedTimeZones();
@@ -183,6 +186,7 @@ export function Assign() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
+      <OfflineBanner message="You're offline — locations and collections won't load until your connection is back." />
       <section>
         <RefreshableLabel
           label="Target collection"
@@ -271,20 +275,16 @@ export function Assign() {
       <section>
         <h2 className={sectionLabel}>Uploader</h2>
         <input
+          id="uploaderUser"
+          name="uploaderUser"
+          autoComplete="name"
           value={uploaderUser}
           onChange={(e) => setUploaderUser(e.target.value)}
-          onBlur={flushPreview}
           placeholder="e.g. John Doe"
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Stamped into the upload prefix and object keys as{' '}
-          {slug ? (
-            <span className="font-mono text-inkSoft">{slug}</span>
-          ) : (
-            <span className="italic">a key-safe slug</span>
-          )}
-          . Set a default in Settings.
+          Defaults to your access key unless you set one in Settings.
         </p>
       </section>
 
@@ -302,9 +302,8 @@ export function Assign() {
           ))}
         </select>
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          EXIF times are wall-clock with no zone. Interpreting them in this zone fixes the stored
-          capture instant (DST-aware). Defaults to this machine’s zone; change it to the camera’s
-          zone when they differ.
+          Defaults to the selected deployment location's zone — change it here if the camera's
+          clock was actually set to a different one.
         </p>
       </section>
 
@@ -318,55 +317,21 @@ export function Assign() {
       <section>
         <h2 className={sectionLabel}>Description</h2>
         <textarea
+          id="uploadDescription"
+          name="uploadDescription"
+          autoComplete="on"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          onBlur={flushPreview}
           rows={3}
           placeholder="What this batch is — site, date range, notes."
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Saved to <span className="font-mono">UploadMeta.json</span> as the upload description.
+          Mountain Range - Site Name - No. of images collected - Date Uploaded - Date collected
         </p>
-      </section>
-
-      <section>
-        <h2 className={sectionLabel}>Preview</h2>
-        {location && collection && slug ? (
-          previewOpen ? (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(false)}
-                className="font-body text-[12px] text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                Hide preview
-              </button>
-              <MetadataPreview
-                location={location}
-                collectionUuid={collection.uuid}
-                bucket={collection.bucket}
-                uploaderSlug={previewSlug}
-                description={previewDescription}
-                timeZone={uploadTimeZone}
-                files={files}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={openPreview}
-              className="w-full border border-rule bg-paper px-3 py-2.5 text-left font-body text-[13px] text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
-            >
-              Click to preview the generated bundle files (UploadMeta.json, deployments/media/observations CSVs)…
-            </button>
-          )
-        ) : (
-          <LocationsState
-            tone="mute"
-            message="Select a deployment, a target collection, and an uploader identity to preview the bundle."
-          />
-        )}
+        <p className="font-body text-[12px] text-inkMute">
+          (e.g.: Santa Rita Mountains - SAN06 - 39 images - uploaded 04-10-2020 - collected 03-28-2000)
+        </p>
       </section>
 
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">

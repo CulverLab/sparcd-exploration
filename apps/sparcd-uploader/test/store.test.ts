@@ -80,7 +80,6 @@ describe('store persistence', () => {
     const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
 
     expect(persisted).toEqual({
-      theme: 'light',
       elevationUnit: 'meters',
       uploaderUser: 'Ada Lovelace',
       uploadDescription: 'Sky Island transect',

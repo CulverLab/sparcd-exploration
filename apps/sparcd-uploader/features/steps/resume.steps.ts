@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
-import { FOLDER, jpegAt, publishableBatch } from './batches';
+import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batches';
 import { BUCKET_A, UUID_A } from './fixtures-data';
 import { FAILING_FILE, producePartialRun as basePartialRun } from './helpers';
 
@@ -11,6 +11,15 @@ const metadataPuts = (app: App) =>
   app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n)));
 const mediaPuts = (app: App) =>
   app.s3.puts.filter((p) => !METADATA_NAMES.some((n) => p.key.endsWith(n)));
+
+function holdFirstMediaPut(app: App): void {
+  let held = false;
+  app.s3.holdPut = (_bucket, key) => {
+    if (held || METADATA_NAMES.some((n) => key.endsWith(n))) return false;
+    held = true;
+    return true;
+  };
+}
 
 /** The upload folders that exist in collection A's storage right now. */
 function uploadFolders(app: App): string[] {
@@ -38,10 +47,15 @@ async function resumeFromHistory(app: App): Promise<void> {
 // --- recording -------------------------------------------------------------
 
 When('a real upload starts', async ({ app }) => {
+  // See CORRECTIONS.md "The session ledger can clobber per-file state it
+  // just recorded" — openSession's un-awaited bulk write can overwrite a
+  // file's just-landed done/failed state with pending. Give storage a beat
+  // so the ledger settles first, matching every other real-run helper.
+  app.s3.putDelayMs = 150;
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -74,7 +88,8 @@ Then("each file's state is updated as it lands", async ({ app }) => {
 When('a dry run is started', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace' });
-  await app.startRunWhileInspecting();
+  await app.dryRunCheckbox().check();
+  await app.startRun();
   await app.waitForRunPhase('done');
 });
 
@@ -106,8 +121,13 @@ Then('it shows how many of its files are done and how many failed', async ({ app
 
 Then('only uploads whose metadata was published are marked complete', async ({ app }) => {
   // A second, unobstructed run of the same folder does publish, and it is the
-  // one that shows as complete.
+  // one that shows as complete. Upload paths are stamped to the second, so
+  // give this run a fresh stamp: started inside the same second as the
+  // partial run, both would target one folder and the second run's
+  // immutable writes would be refused as "Object already exists".
   app.s3.putHooks.length = 0;
+  app.s3.putDelayMs = 0;
+  await app.page.waitForTimeout(1_100);
   await app.gotoSection('New upload');
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.page.getByRole('button', { name: 'Back' }).click();
@@ -115,7 +135,7 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await app.page.getByRole('button', { name: 'Continue' }).click();
   await app.continueToUpload();
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
   await app.gotoSection('History');
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
@@ -346,11 +366,12 @@ Then(
 // --- interrupted before examination finished -------------------------------
 
 Given('an upload was interrupted before every file had been examined', async ({ app }) => {
-  app.notes.sourceSpecs = publishableBatch();
+  app.notes.sourceSpecs = slowPublishableBatch();
   await app.dropFolder(app.notes.sourceSpecs as FileSpec[]);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+  holdFirstMediaPut(app);
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
   await expect(app.page.getByText('cancelled').first()).toBeVisible();
@@ -361,19 +382,12 @@ Then('no publishable metadata exists for it', async ({ app }) => {
   expect(app.s3.puts.some((p) => METADATA_NAMES.some((n) => p.key.endsWith(n)))).toBe(false);
 });
 
-Then('the tool states plainly that a fresh upload of the same folder is needed', async ({ app }) => {
-  await expect(
-    app.page.getByText(
-      /This upload was interrupted before every file finished being inspected, so there is no publish-ready bundle to resume\./,
-    ).first(),
-  ).toBeVisible({ timeout: 60_000 });
-  await expect(app.page.getByText(/Start a fresh upload with the same folder/).first()).toBeVisible();
-});
-
-Then('it states that files already stored will be detected and skipped', async ({ app }) => {
-  await expect(
-    app.page.getByText(/files already uploaded will be detected and skipped automatically/).first(),
-  ).toBeVisible();
+Then('the remaining files are examined again and the upload completes', async ({ app }) => {
+  // No publish-ready bundle existed yet (Then('no publishable metadata
+  // exists for it')), so resuming re-examines whatever never finished
+  // Inspect and builds the bundle this session never got, then publishes to
+  // the same destination the original run was headed for.
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
 });
 
 Then('no data is lost', async ({ app }) => {
@@ -410,7 +424,7 @@ Then('nothing stored in the collection is touched', async ({ app }) => {
 Given('a resume is running', async ({ app }) => {
   await producePartialRun(app);
   app.s3.putHooks.length = 0;
-  app.s3.putDelayMs = 400;
+  holdFirstMediaPut(app);
   await resumeFromHistory(app);
   await expect(app.page.getByText(/^Resuming \d/)).toBeVisible({ timeout: 60_000 });
 });
@@ -459,8 +473,12 @@ Given('the local record for a partial run cannot be read', async ({ app }) => {
 });
 
 Then('the tool reports that the saved record could not be loaded', async ({ app }) => {
+  // retryFailed's catch is now a single generic wrapper covering every
+  // failure mode in its try block (not just a missing session record, since
+  // ensureBundle can fail here too) — the underlying reason still comes
+  // through via the error message it wraps.
   await expect(
-    app.page.getByText(/Couldn't load the saved upload record for this batch/),
+    app.page.getByText(/Couldn't resume this upload \(no saved record for this session\)/),
   ).toBeVisible({ timeout: 60_000 });
 });
 
@@ -476,5 +494,5 @@ Then('repeated clicks never start two runs at once', async ({ app }) => {
   await retry.click();
   await retry.click();
   await expect(app.runPhase()).toHaveText('partial');
-  await expect(app.page.getByText(/Couldn't load the saved upload record/)).toHaveCount(1);
+  await expect(app.page.getByText(/Couldn't resume this upload/)).toHaveCount(1);
 });

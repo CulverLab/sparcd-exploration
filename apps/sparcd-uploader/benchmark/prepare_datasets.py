@@ -302,10 +302,14 @@ def set_capture_mtime(path, capture_time):
 
 def copy_padded_jpeg(source, destination, target_size, seed, capture_time):
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists() or destination.stat().st_size != target_size:
-        temporary = destination.with_name(destination.name + ".part")
-        shutil.copyfile(source, temporary)
-        pad_jpeg(temporary, target_size, seed)
+    temporary = destination.with_name(destination.name + ".part")
+    shutil.copyfile(source, temporary)
+    pad_jpeg(temporary, target_size, seed)
+    # Compare by content, not just size, so a same-sized but altered derivative
+    # is always replaced rather than silently accepted into the manifest.
+    if destination.exists() and sha256_file(destination) == sha256_file(temporary):
+        temporary.unlink()
+    else:
         temporary.replace(destination)
     set_capture_mtime(destination, capture_time)
 

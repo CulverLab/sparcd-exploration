@@ -20,7 +20,7 @@ export async function reconnectAndReturnToAssign(
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.dropFolder(specs);
   await app.waitForInspected();
   await app.continueToAssign();
@@ -61,8 +61,14 @@ export function writtenCsvRows(app: App, suffix: string): string[][] {
     });
 }
 
-/** Swap the batch while keeping the Assign choices, ending back on Upload. */
+/**
+ * Swap the batch while keeping the Assign choices, ending back on Upload.
+ * Upload paths are stamped to the second, so a re-run started inside the same
+ * second as the previous run would target that run's folder and have its
+ * immutable writes refused as "Object already exists" — wait a fresh second.
+ */
 export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<void> {
+  await app.page.waitForTimeout(1_100);
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Back' }).click();
@@ -87,7 +93,7 @@ export async function producePartialRun(app: App, specs: FileSpec[] = publishabl
     key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 }
 
@@ -98,6 +104,6 @@ export async function produceCompleteRun(app: App, specs: FileSpec[] = publishab
   await app.dropFolder(specs);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   await app.dryRunCheckbox().uncheck();
-  await app.startRunWhileInspecting();
+  await app.startRun();
   await app.waitForRunPhase('done');
 }

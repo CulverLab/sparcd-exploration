@@ -75,6 +75,15 @@ When('the uploader is opened again in a new page load', async ({ app }) => {
   await app.reopen();
 });
 
+Then('it is still connected without asking for the secret again', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+  await expect(app.connectForm()).toHaveCount(0);
+});
+
+When('the tab is closed and the uploader is opened in a new one', async ({ app }) => {
+  await app.reopenInNewTab();
+});
+
 Then('the endpoint and access key are pre-filled from the previous connection', async ({ app }) => {
   await expect(app.page.locator('#endpoint')).toHaveValue(S3_ORIGIN);
   await expect(app.page.locator('#accessKey')).toHaveValue(ACCESS_KEY);
@@ -89,7 +98,7 @@ Then('the uploader stays on the connection screen until the secret is re-entered
   await expect(app.page.getByRole('button', { name: 'Connect', exact: true })).toBeDisabled();
   await app.page.fill('#secretKey', SECRET_KEY);
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
 });
 
 Given("one tab of a SPARC'd tool is already connected in this browser", async ({ app }) => {
@@ -102,7 +111,7 @@ When('another tab of the uploader is opened', async ({ app }) => {
 
 Then('it adopts the live connection without asking for the secret again', async ({ app }) => {
   const tab = app.notes.secondTab as Page;
-  await expect(tab.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(tab.getByRole('button', { name: 'Logout' })).toBeVisible();
   await expect(tab.locator('form[aria-label*="Connect"]')).toHaveCount(0);
 });
 
@@ -111,12 +120,12 @@ Given('two tabs are connected to the same storage endpoint', async ({ app }) => 
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   app.notes.secondTab = await app.openSecondTab();
-  await expect((app.notes.secondTab as Page).getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect((app.notes.secondTab as Page).getByRole('button', { name: 'Logout' })).toBeVisible();
 });
 
 When('one of them disconnects', async ({ app }) => {
   const tab = app.notes.secondTab as Page;
-  await tab.getByRole('button', { name: 'Disconnect' }).click();
+  await tab.getByRole('button', { name: 'Logout' }).click();
 });
 
 Then('the other returns to the connection screen', async ({ app }) => {
@@ -133,7 +142,7 @@ Then('its in-progress batch, chosen collection and chosen deployment are cleared
 Then('the header shows the endpoint host and a masked form of the access key', async ({ app }) => {
   const header = app.page.locator('header');
   await expect(header).toContainText('localhost');
-  await expect(header).toContainText('AKIA…01');
+  await expect(header).toContainText('AK…01');
 });
 
 Then('it shows the uploader identity when one has been set', async ({ app }) => {
@@ -160,7 +169,7 @@ When('the user disconnects and connects again', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.gotoSection('History');
   await expect(app.page.getByRole('option', { name: COLLECTION_A_NAME })).toBeAttached();
 });
@@ -200,10 +209,10 @@ Then('the uploader identity is pre-filled with the connected access key', async 
 Then(
   'an identity carried over from a previous connection in this browser is not overwritten by connecting',
   async ({ app }) => {
-    await app.reopen();
+    await app.reopenInNewTab();
     await app.fillConnection({ accessKey: 'AKIADIFFERENT002' });
     await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(app.page.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
     await app.gotoSection('Settings');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
   },

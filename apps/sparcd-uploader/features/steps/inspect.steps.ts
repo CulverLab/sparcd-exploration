@@ -5,7 +5,7 @@ import {
   jpegNoTime,
   manyJpegs,
   mp4At,
-  publishableBatch,
+  slowPublishableBatch,
   slowVideo,
   standardBatch,
 } from './batches';
@@ -241,7 +241,8 @@ Then('it explains that files needing attention must be resolved first', async ({
 // --- working while examination continues -----------------------------------
 
 Given('a large batch is still being examined', async ({ app }) => {
-  await app.rescan(publishableBatch());
+  await app.holdInspect('BIG_CLIP.MP4');
+  await app.rescan(slowPublishableBatch());
   await expect(app.fileListPane()).toBeVisible();
   await expect.poll(() => app.batchSummary()).toMatch(/\d+ processing/);
 });
@@ -262,6 +263,7 @@ Then('examination carries on in the background while the user works on Assign', 
   // The Upload step reports the still-running examination, then it completes
   // without anyone going back to Inspect.
   await expect(app.page.getByText(/still being inspected/)).toBeVisible();
+  await app.releaseHeldInspect();
   await expect(app.page.getByText(/still being inspected/)).toHaveCount(0, { timeout: 60_000 });
   await expect(app.page.getByText(/^\d+ files ready · /)).toBeVisible();
 });
@@ -282,9 +284,15 @@ When('the user switches to History or Settings and back', async ({ app }) => {
 });
 
 Then('examination has continued in the background rather than restarting', async ({ app }) => {
-  const m = /(\d+) processing/.exec(await app.batchSummary());
-  const pendingNow = m ? Number(m[1]) : 0;
-  expect(pendingNow).toBeLessThan(app.notes.pendingBefore as number);
+  await expect
+    .poll(
+      async () => {
+        const m = /(\d+) processing/.exec(await app.batchSummary());
+        return m ? Number(m[1]) : 0;
+      },
+      { timeout: 30_000 },
+    )
+    .toBeLessThan(app.notes.pendingBefore as number);
   await app.waitForInspected();
   expect(await app.fileCount()).toBe(1200);
 });
@@ -293,7 +301,7 @@ When('"Start over" is chosen', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Start over' }).click();
 });
 
-Then('the batch is cleared and the wizard returns to the Drop step', async ({ app }) => {
+Then('the batch is cleared and the wizard returns to the Files step', async ({ app }) => {
   await app.expectStep('Files');
   await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
   await expect(app.fileListPane()).toHaveCount(0);

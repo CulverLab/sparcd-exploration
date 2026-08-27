@@ -11,7 +11,7 @@ Feature: Choose the folder of media to upload
 
   Background:
     Given the uploader is connected
-    And the New upload section is showing the Drop step
+    And the New upload section is showing the Files step
 
   @F1
   Scenario: Only JPEG images and MP4 videos are taken from the chosen folder
@@ -37,7 +37,7 @@ Feature: Choose the folder of media to upload
   Scenario: A folder that holds no usable media says so instead of continuing
     When a folder containing no JPEG or MP4 files is chosen
     Then the tool reports that the folder was read but held no images or videos
-    And it stays on the Drop step so another folder can be chosen
+    And it stays on the Files step so another folder can be chosen
 
   @unmapped
   Scenario: A device that cannot select whole folders offers individual files

@@ -50,6 +50,7 @@ Feature: Settings and the data the uploader keeps on this machine
     And it never shows the secret key
 
   @unmapped
-  Scenario: The light or dark appearance is remembered for the session
+  Scenario: The light or dark appearance is remembered across the SPARC'd tools
     When the appearance is switched between light and dark
-    Then the choice survives a page reload in the same browser tab session
+    Then the choice survives a page reload
+    And it is kept where the other SPARC'd tools on this machine read it

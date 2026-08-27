@@ -53,6 +53,24 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
     overscan: 12,
   });
 
+  // Follow the run, but don't fight a user who scrolled up to look at
+  // something: only advance once every file currently on screen has settled
+  // (done/skipped/failed), then center the next not-yet-settled file so
+  // there's room to watch it either way.
+  useEffect(() => {
+    const isSettled = (f: (typeof files)[number]) =>
+      f.state === 'done' || f.state === 'skipped' || f.state === 'failed';
+    const activeIndex = files.findIndex((f) => !isSettled(f));
+    if (activeIndex < 0) return;
+    const visible = virtualizer.range;
+    if (!visible) return;
+    for (let i = visible.startIndex; i <= visible.endIndex; i++) {
+      if (!isSettled(files[i])) return;
+    }
+    virtualizer.scrollToIndex(activeIndex, { align: 'center' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap.version]);
+
   return (
     <div
       ref={parentRef}

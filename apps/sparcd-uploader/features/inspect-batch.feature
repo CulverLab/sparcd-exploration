@@ -89,7 +89,7 @@ Feature: Inspect the scanned batch before assigning it
   @unmapped
   Scenario: Starting over discards the batch
     When "Start over" is chosen
-    Then the batch is cleared and the wizard returns to the Drop step
+    Then the batch is cleared and the wizard returns to the Files step
 
   @unmapped
   Scenario: The file list stays usable for a very large batch

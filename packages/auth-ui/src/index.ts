@@ -4,10 +4,16 @@ export { BrandSwitcher } from './BrandSwitcher';
 export type { BrandSwitcherProps } from './BrandSwitcher';
 export { ConnectionChip } from './ConnectionChip';
 export type { ConnectionChipProps } from './ConnectionChip';
+export { OfflineBanner } from './OfflineBanner';
+export type { OfflineBannerProps } from './OfflineBanner';
+export { useOnline } from './useOnline';
 export {
   loadPersistedConnection,
+  loadSessionConnection,
   saveSharedConnection,
   clearSharedConnection,
   subscribeSharedConnection,
 } from './session';
 export type { PersistedConnection } from './session';
+export { loadSharedTheme, saveSharedTheme } from './theme';
+export type { Theme } from './theme';

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { useStore } from '../store';
 import { useTagImages, useSpecies } from '../lib/queries';
-import { parseCollectionKey, presignImage } from '../lib/s3';
+import { useMediaUrl } from '../lib/useMediaUrl';
+import { parseCollectionKey } from '../lib/s3';
 import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
 import { SpeciesPanel } from '../components/SpeciesPanel';
 import { AppliedSpecies } from '../components/AppliedSpecies';
@@ -937,24 +937,12 @@ function FocusImage({
   alt: string;
   filter?: string;
 }) {
-  const cfg = useStore((s) => s.s3Config);
-  const connectionId = useStore((s) => s.connectionId);
-  const collectionKey = useStore((s) => s.selectedCollectionKey);
-  const { data, isError } = useQuery({
-    queryKey: ['presign', connectionId, objectKey],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return presignImage(cfg!, bucket, objectKey);
-    },
-    enabled: !!cfg && !!collectionKey,
-    staleTime: 50 * 60 * 1000,
-    retry: 1,
-  });
+  const { url, isError } = useMediaUrl(objectKey);
   if (isError)
     return <div className="text-[13px] font-mono text-warn">Could not load this image.</div>;
-  if (!data) return <div className="text-[13px] font-mono text-inkMute">…</div>;
-  if (isVideoKey(objectKey)) return <FocusVideo src={data} alt={alt} resetKey={objectKey} />;
-  return <ZoomableImage src={data} alt={alt} resetKey={objectKey} filter={filter} />;
+  if (!url) return <div className="text-[13px] font-mono text-inkMute">…</div>;
+  if (isVideoKey(objectKey)) return <FocusVideo src={url} alt={alt} resetKey={objectKey} />;
+  return <ZoomableImage src={url} alt={alt} resetKey={objectKey} filter={filter} />;
 }
 
 // Video media plays with native controls. No zoom/pan/Lightbox: the

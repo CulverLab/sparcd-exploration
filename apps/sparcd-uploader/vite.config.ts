@@ -13,6 +13,10 @@ export default defineConfig({
   // Vite dev still serves from '/', so this only affects the production build.
   base: '/sparcd-exploration/uploader/',
   plugins: [react()],
+  // The dep scanner doesn't follow Web Workers, so exifr and hash-wasm (only
+  // imported by fileProcessor.worker.ts) were discovered on first use and made
+  // Vite re-bundle and reload every open page mid-run.
+  optimizeDeps: { include: ['exifr', 'hash-wasm'] },
   resolve: {
     alias: {
       '@sparcd/types': pkg('types', 'index.ts'),

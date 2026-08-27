@@ -56,10 +56,25 @@ export function processBatch(
       type: 'module',
     });
     worker.onmessage = (e: MessageEvent<ProcessResponse>) => {
-      inFlight--;
+      const req = active.get(worker);
       active.delete(worker);
-      if (!cancelled) onResult(e.data);
-      feed(worker);
+      // Allow test harnesses to hold a result until explicitly released.
+      // Set window.__holdInspectResult = (id, filename) => Promise before
+      // processing starts; call releaseHeldInspect() when ready to proceed.
+      const holdFn = (
+        window as unknown as { __holdInspectResult?: (id: string, name: string) => Promise<void> }
+      ).__holdInspectResult;
+      if (holdFn && req) {
+        void holdFn(e.data.id, req.file.name).then(() => {
+          inFlight--;
+          if (!cancelled) onResult(e.data);
+          feed(worker);
+        });
+      } else {
+        inFlight--;
+        if (!cancelled) onResult(e.data);
+        feed(worker);
+      }
     };
     worker.onerror = (err) => {
       // Surface a worker-level crash as a per-file processing error so the
