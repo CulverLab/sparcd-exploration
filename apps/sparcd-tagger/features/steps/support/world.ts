@@ -77,7 +77,7 @@ export const speciesClearKey = (page: Page, scientific: string): Locator =>
 export const speciesBadge = (page: Page, scientific: string): Locator =>
   speciesRow(page, scientific).locator('kbd');
 
-export const ghostRow = (page: Page): Locator => speciesRow(page, 'empty / false-trigger');
+export const ghostRow = (page: Page): Locator => speciesRow(page, 'Casper');
 
 export const gridCell = (page: Page, fileName: string): Locator =>
   page.locator(`button[title="${fileName}"]`);

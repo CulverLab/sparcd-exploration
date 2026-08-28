@@ -235,6 +235,12 @@ export const SPECIES_JSON = JSON.stringify(
       speciesIconURL: 'https://example.org/javelina.png',
       keyBinding: null,
     },
+    {
+      name: 'Ghost',
+      scientificName: 'Casper',
+      speciesIconURL: '',
+      keyBinding: 'G',
+    },
     // A deliberately malformed entry — the Browse rail reports skipped rows.
     { name: '', scientificName: '', speciesIconURL: '', keyBinding: null },
   ],

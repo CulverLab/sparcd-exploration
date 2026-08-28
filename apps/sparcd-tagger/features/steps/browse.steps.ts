@@ -81,7 +81,7 @@ Then(
   'the rail reports how many species were loaded and which settings bucket they came from',
   async ({ page }) => {
     await expect(collectionRail(page).getByText(/species loaded from/)).toContainText(
-      `4 species loaded from ${SETTINGS_BUCKET}`,
+      `5 species loaded from ${SETTINGS_BUCKET}`,
     );
   },
 );

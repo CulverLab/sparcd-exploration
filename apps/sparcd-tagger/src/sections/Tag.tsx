@@ -27,7 +27,6 @@ import { findFilenameMatches } from '../lib/imageSearch';
 import {
   useDraftStore,
   dirtyCount,
-  GHOST,
   type AppliedTag,
   type TagTarget,
   type BulkTimeTarget,
@@ -41,7 +40,6 @@ import type { Species } from '../lib/species';
 import { isVideoImage, type TagImage } from '../lib/workspace';
 import type { DraftRecord } from '../lib/db';
 
-const GHOST_KEY = 'g';
 const RECENT_LIMIT = 12;
 const EMPTY: TagImage[] = []; // stable ref so memos don't churn before data loads
 
@@ -272,11 +270,9 @@ export function Tag() {
     return k ? k.toUpperCase() : null;
   };
 
-  // key char → action, built once per species/override change. Precedence
-  // low→high: Ghost default, species.json bindings, then local overrides.
+  // key char → action, built once per species/override change.
   const keyMap = useMemo(() => {
-    const m = new Map<string, { kind: 'ghost' } | { kind: 'species'; species: Species }>();
-    m.set(GHOST_KEY, { kind: 'ghost' });
+    const m = new Map<string, { kind: 'species'; species: Species }>();
     for (const s of speciesList) {
       const k = normalizeJavaKeyCode(s.keyBinding);
       if (k) m.set(k, { kind: 'species', species: s });
@@ -1235,7 +1231,7 @@ type HandlerState = {
   selected: Set<number>;
   setSelected: (s: Set<number>) => void;
   ctx: UploadCtx;
-  keyMap: Map<string, { kind: 'ghost' } | { kind: 'species'; species: Species }>;
+  keyMap: Map<string, { kind: 'species'; species: Species }>;
   capturingFor: string | null;
   setCapturingFor: (v: string | null) => void;
   assignKey: (sci: string, key: string) => void;
@@ -1424,6 +1420,5 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   const action = s.keyMap.get(e.key.toLowerCase());
   if (!action || !current) return;
   e.preventDefault();
-  if (action.kind === 'ghost') s.apply({ scientificName: GHOST.label, commonName: GHOST.commonName, count: 1 });
-  else s.apply({ scientificName: action.species.scientificName, commonName: action.species.commonName, count: 1 });
+  s.apply({ scientificName: action.species.scientificName, commonName: action.species.commonName, count: 1 });
 }

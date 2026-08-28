@@ -2,8 +2,6 @@ import { useMemo, type ReactNode, type RefObject } from 'react';
 import Fuse from 'fuse.js';
 import type { Species } from '../lib/species';
 import type { AppliedTag } from '../lib/drafts';
-import { GHOST } from '../lib/drafts';
-
 // The species selector. Persistent, scrollable, browsable — not only a
 // type-to-filter popover — because volunteers scan to recognize a species.
 // Each row carries an example thumbnail, common + scientific name, and its
@@ -28,8 +26,6 @@ export type SpeciesPanelProps = {
   headerSlot?: ReactNode; // the compact applied-species strip, under the filter
   onZoom?: (species: Species) => void; // open the enlarged reference image
 };
-
-const GHOST_KEY = 'G';
 
 export function SpeciesPanel(props: SpeciesPanelProps) {
   const { species, filter } = props;
@@ -86,17 +82,6 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Ghost — a built-in label, shown as a text chip not a photo. */}
-        <Row
-          chip="◯ Ghost"
-          common="Ghost"
-          scientific="empty / false-trigger"
-          badge={GHOST_KEY}
-          applied={props.appliedSet.has(GHOST.label)}
-          disabled={props.disabled}
-          onApply={() => props.onApply({ scientificName: GHOST.label, commonName: GHOST.commonName, count: 1 })}
-        />
-
         {ordered.map((s) => (
           <Row
             key={s.key}
