@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OfflineBanner } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { sanitizeUploaderUser } from '../lib/normalize';
@@ -27,9 +27,23 @@ export function Settings() {
   const [shardDraft, setShardDraft] = useState(shardEndpoints);
   const [rejectedShards, setRejectedShards] = useState<string[]>([]);
 
+  // Adopting another tab's connection replaces the endpoints under a mounted
+  // Settings. Without this the draft still holds the previous provider's
+  // origins and the next blur writes them back. Tracked against what we last
+  // wrote so a save's own store update doesn't wipe the rejected list it just
+  // produced.
+  const saved = useRef(shardEndpoints);
+  useEffect(() => {
+    if (shardEndpoints === saved.current) return;
+    saved.current = shardEndpoints;
+    setShardDraft(shardEndpoints);
+    setRejectedShards([]);
+  }, [shardEndpoints]);
+
   function saveShards() {
     const { origins, rejected } = parseShardEndpoints(shardDraft);
     const normalized = origins.join(', ');
+    saved.current = normalized;
     setShardDraft(normalized);
     setShardEndpoints(normalized);
     setRejectedShards(rejected);
