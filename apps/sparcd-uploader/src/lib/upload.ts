@@ -575,6 +575,11 @@ function makeRunner(
    * Only files the run believes it finished are checked — one that already
    * failed its own retries has nothing to confirm, and the count reported is
    * the number actually reviewed, not the size of the batch.
+   *
+   * A listing can't show the recorded SHA-256, so a handful of HEADs sample
+   * that half of the contract. Sampling is enough because the way it breaks
+   * is systematic — something in the path dropping `x-amz-meta-*` on write —
+   * not one object at a time.
    */
   const finalReview = async (
     sessionId: string,
@@ -587,8 +592,15 @@ function makeRunner(
       sizes.set(o.key, o.size);
     }
     const byId = new Map(snap.files.map((f) => [f.id, f]));
+    const fail = (it: PlanItem, fp: FileProgress, reason: string) => {
+      fp.state = 'failed';
+      fp.error = reason;
+      persistFile(sessionId, it.localPath, { state: 'failed', lastError: reason });
+      log('error', `${reason}: ${it.key}`);
+    };
     let mismatched = 0;
     let reviewed = 0;
+    const confirmed: PlanItem[] = [];
     for (const it of items) {
       const fp = byId.get(it.id);
       if (!fp || (fp.state !== 'done' && fp.state !== 'skipped')) continue;
@@ -596,20 +608,44 @@ function makeRunner(
       const size = sizes.get(it.key);
       if (size !== it.size) {
         mismatched++;
-        fp.state = 'failed';
-        fp.error =
+        fail(
+          it,
+          fp,
           size === undefined
             ? 'final review: object missing'
-            : `final review: size mismatch (${size} ≠ ${it.size})`;
-        persistFile(sessionId, it.localPath, { state: 'failed', lastError: fp.error });
-        log('error', `${fp.error}: ${it.key}`);
+            : `final review: size mismatch (${size} ≠ ${it.size})`,
+        );
+      } else {
+        confirmed.push(it);
       }
     }
+
+    // First, middle, last of what the listing confirmed — spread across the
+    // run so a sample lands in whichever lane or window went wrong.
+    const n = confirmed.length;
+    const picks = n === 0 ? [] : [...new Set([0, (n - 1) >> 1, n - 1])];
+    for (const i of picks) {
+      const it = confirmed[i];
+      const fp = byId.get(it.id)!;
+      const stat = await client.statObject(snap.bucket, it.key);
+      if (stat.size === it.size && stat.metadata.sha256 === it.sha256) continue;
+      mismatched++;
+      fail(
+        it,
+        fp,
+        `final review: digest contract broken (recorded sha256 ${stat.metadata.sha256 ?? 'absent'}, expected ${it.sha256})`,
+      );
+      log(
+        'error',
+        'a sampled object lost its sha256 metadata — treat the whole batch as suspect and check that nothing in the upload path strips x-amz-meta-* headers',
+      );
+    }
+
     log(
       'info',
       mismatched === 0
-        ? `final review: all ${reviewed} objects confirmed by listing`
-        : `final review: ${mismatched} of ${reviewed} objects failed the listing check`,
+        ? `final review: all ${reviewed} objects confirmed by listing, ${picks.length} sampled for digest`
+        : `final review: ${mismatched} of ${reviewed} objects failed the final check`,
     );
     emit(true);
   };

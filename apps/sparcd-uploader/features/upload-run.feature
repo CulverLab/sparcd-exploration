@@ -47,11 +47,14 @@ Feature: Upload and publish a batch
   Scenario: Every stored object is confirmed once the batch is written
     When a file has been uploaded
     Then the tool lists the upload folder and confirms every object is stored at its recorded size
+    And a few of the stored objects are re-read to confirm storage kept their recorded fingerprint
     And an object the listing contradicts is treated as a failure of that file, not as a success
     # One listing pass per thousand objects rather than a re-read per file: at
     # long-haul latency the extra round trip per file dominated a small upload,
     # and the listing answers the question that matters — is every object there,
-    # at the size the metadata claims for it.
+    # at the size the metadata claims for it. A listing can't show the recorded
+    # fingerprint, so a handful of objects are re-read for it — losing it is a
+    # property of the path, not of one object.
 
   @unmapped
   Scenario: Uploading begins before the whole batch has finished being examined

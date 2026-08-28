@@ -143,11 +143,21 @@ Then(
     // not the per-file subfolders underneath it.
     const folder = puts[0].key.split('/').slice(0, 4).join('/');
     expect(app.s3.lists).toContain(`${puts[0].bucket}/${folder}/`);
-    // The confirmation is the listing, so no media object is re-read one by one.
-    for (const put of puts) expect(app.s3.heads).not.toContain(`${put.bucket}/${put.key}`);
     await expect(
       app.page.getByText(new RegExp(`final review: all ${puts.length} objects confirmed`)),
     ).toBeVisible();
+  },
+);
+
+Then(
+  'a few of the stored objects are re-read to confirm storage kept their recorded fingerprint',
+  async ({ app }) => {
+    const puts = mediaPuts(app);
+    // The listing carries the size but not the fingerprint, so a sample is
+    // re-read for it — a sample, not every object.
+    const reread = puts.filter((p) => app.s3.heads.includes(`${p.bucket}/${p.key}`));
+    expect(reread.length).toBeGreaterThan(0);
+    expect(reread.length).toBeLessThan(puts.length);
   },
 );
 

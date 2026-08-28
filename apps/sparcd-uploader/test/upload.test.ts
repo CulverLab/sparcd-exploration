@@ -363,7 +363,8 @@ describe('upload runs continue past per-file blob failures', () => {
 
       const snap = await collect(run, () => last);
       expect(snap.phase).toBe('done');
-      expect(mocks.client.statObject).toHaveBeenCalledTimes(1);
+      // The verify HEAD, then the final review's digest sample of the one file.
+      expect(mocks.client.statObject).toHaveBeenCalledTimes(2);
       expect(mocks.client.writeImmutableStream).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
@@ -394,8 +395,8 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
   });
 
-  it('confirms a resumed run by one listing pass, with no per-file HEAD', async () => {
-    const session = makeSession(Array.from({ length: 3 }, () => 'pending'));
+  it('confirms a resumed run by one listing pass plus a digest sample, not a HEAD per file', async () => {
+    const session = makeSession(Array.from({ length: 8 }, () => 'pending'));
     mocks.client = makeClient(session.files);
     let last: UploadSnapshot | null = null;
 
@@ -413,9 +414,42 @@ describe('upload runs continue past per-file blob failures', () => {
     const snap = await collect(run, () => last);
 
     expect(snap.phase).toBe('done');
-    expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(3);
-    expect(mocks.client.statObject).not.toHaveBeenCalled();
+    expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(8);
     expect(mocks.client.listObjects).toHaveBeenCalledTimes(1);
+    expect(mocks.client.statObject.mock.calls.map((c) => c[1])).toEqual([
+      session.files[0].remoteKey,
+      session.files[3].remoteKey,
+      session.files[7].remoteKey,
+    ]);
+  });
+
+  it('final review fails a file whose sampled object lost its sha256 metadata', async () => {
+    const session = makeSession(Array.from({ length: 3 }, () => 'pending'));
+    mocks.client = makeClient(session.files);
+    // A proxy that strips x-amz-meta-* on write: the listing still agrees on
+    // every size, only the HEAD shows the digest contract is gone.
+    mocks.client.statObject.mockImplementation(async (_bucket: string, key: string) => {
+      const r = session.files.find((f) => f.remoteKey === key)!;
+      return key === session.files[1].remoteKey
+        ? { size: r.size, metadata: {} }
+        : { size: r.size, metadata: { sha256: r.sha256 } };
+    });
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(3) },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('partial');
+    const failed = snap.files.filter((f) => f.state === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error).toContain('digest contract broken');
+    expect(snap.log.some((l) => l.text.includes('x-amz-meta-*'))).toBe(true);
+    expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
   });
 
   it('final review fails files the listing contradicts', async () => {
@@ -1081,9 +1115,10 @@ describe('streamed runs upload as files individually become ready', () => {
 
     expect(snap.phase).toBe('done');
     expect(client.writeImmutableStream).toHaveBeenCalledTimes(3);
-    // One listing for the whole batch, instead of a HEAD per file.
-    expect(client.statObject).not.toHaveBeenCalled();
+    // One listing for the whole batch, plus the digest sample — not a HEAD per
+    // file during the run.
     expect(client.listObjects).toHaveBeenCalledTimes(1);
+    expect(client.statObject.mock.calls.length).toBeLessThanOrEqual(3);
   });
 
   it('fails a streamed run whose final review listing cannot find an object', async () => {
