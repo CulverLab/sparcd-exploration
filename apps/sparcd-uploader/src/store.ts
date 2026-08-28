@@ -82,6 +82,9 @@ type UploaderState = {
   dryRun: boolean; // off by default; when on, logs PUTs and writes nothing
   concurrencyMode: ConcurrencyMode; // adaptive tunes lanes during the run; manual pins them
   uploadConcurrency: number; // manual lane count, 4–32
+  // Extra endpoints for the same storage, comma/newline separated. Kept raw and
+  // parsed at point of use so the store stays dumb.
+  shardEndpoints: string;
   pendingResume: PendingResume | null; // prepared in History, consumed by the Upload step
   // Active upload run and its latest snapshot. Components subscribe to
   // activeSnap for display; the run lives here so disconnect() and App-level
@@ -128,6 +131,7 @@ type UploaderState = {
   setDryRun: (value: boolean) => void;
   setConcurrencyMode: (value: ConcurrencyMode) => void;
   setUploadConcurrency: (value: number) => void;
+  setShardEndpoints: (value: string) => void;
   setPendingResume: (value: PendingResume | null) => void;
   nextBatch: () => void;
 };
@@ -226,6 +230,7 @@ export const useStore = create<UploaderState>()(
       dryRun: false,
       concurrencyMode: 'adaptive',
       uploadConcurrency: 8,
+      shardEndpoints: '',
       pendingResume: null,
       activeRun: null,
       activeSnap: null,
@@ -240,6 +245,10 @@ export const useStore = create<UploaderState>()(
           selectedLocationKey: null,
           selectedBucket: null,
           uploaderUser: s.uploaderUser || config.accessKey,
+          // Shards are origins of the endpoint we just left. Carrying them into
+          // a new connection would stripe signed PUTs, bodies and all, at the
+          // previous provider.
+          shardEndpoints: '',
         }));
       },
       disconnect: () => {
@@ -261,6 +270,7 @@ export const useStore = create<UploaderState>()(
           selectedBucket: null,
           uploaderUser: '',
           uploadTimeZone: localTimeZone(),
+          shardEndpoints: '',
           activeRun: null,
           activeSnap: null,
           activeRunSource: null,
@@ -417,6 +427,7 @@ export const useStore = create<UploaderState>()(
       setDryRun: (value) => set({ dryRun: value }),
       setConcurrencyMode: (value) => set({ concurrencyMode: value }),
       setUploadConcurrency: (value) => set({ uploadConcurrency: value }),
+      setShardEndpoints: (value) => set({ shardEndpoints: value }),
       setPendingResume: (value) => set({ pendingResume: value }),
 
       // Start a fresh batch after a completed upload, keeping the deployment,
@@ -459,6 +470,7 @@ export const useStore = create<UploaderState>()(
         dryRun: s.dryRun,
         concurrencyMode: s.concurrencyMode,
         uploadConcurrency: s.uploadConcurrency,
+        shardEndpoints: s.shardEndpoints,
       }),
     },
   ),
@@ -474,6 +486,9 @@ subscribeSharedConnection((cfg) => {
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
+    // Same reason as `connect`: a sibling tab's login can be a different
+    // provider, and this tab's shards belong to the endpoint it just left.
+    shardEndpoints: '',
     ...(cfg
       ? { uploaderUser: s.uploaderUser || cfg.accessKey }
       : {

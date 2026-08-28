@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OfflineBanner } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { listResumable } from '../lib/db';
+import { parseShardEndpoints } from '../lib/s3';
 import { resetLocalState } from '../lib/reset';
 
 export function Settings() {
@@ -15,7 +16,38 @@ export function Settings() {
   const setConcurrencyMode = useStore((s) => s.setConcurrencyMode);
   const concurrency = useStore((s) => s.uploadConcurrency);
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
+  const shardEndpoints = useStore((s) => s.shardEndpoints);
+  const setShardEndpoints = useStore((s) => s.setShardEndpoints);
   const slug = sanitizeUploaderUser(uploaderUser);
+
+  // The textarea holds raw text while it is being typed; committing normalizes
+  // it to bare origins, which is all a client is ever built from. Anything that
+  // can't be reduced to one is named back to the user rather than dropped
+  // quietly — this is the list signed uploads get striped across.
+  const [shardDraft, setShardDraft] = useState(shardEndpoints);
+  const [rejectedShards, setRejectedShards] = useState<string[]>([]);
+
+  // Adopting another tab's connection replaces the endpoints under a mounted
+  // Settings. Without this the draft still holds the previous provider's
+  // origins and the next blur writes them back. Tracked against what we last
+  // wrote so a save's own store update doesn't wipe the rejected list it just
+  // produced.
+  const saved = useRef(shardEndpoints);
+  useEffect(() => {
+    if (shardEndpoints === saved.current) return;
+    saved.current = shardEndpoints;
+    setShardDraft(shardEndpoints);
+    setRejectedShards([]);
+  }, [shardEndpoints]);
+
+  function saveShards() {
+    const { origins, rejected } = parseShardEndpoints(shardDraft);
+    const normalized = origins.join(', ');
+    saved.current = normalized;
+    setShardDraft(normalized);
+    setShardEndpoints(normalized);
+    setRejectedShards(rejected);
+  }
 
   // Logout clears all local data so the next user gets a clean app. Guard it:
   // if there are resumable (incomplete) uploads, confirm before wiping them.
@@ -121,6 +153,28 @@ export function Settings() {
               stays live during a run.
             </span>
           </div>
+          <label className="block">
+            <span className="block font-body text-[13px] text-inkSoft mb-1.5">Endpoint shards</span>
+            <textarea
+              value={shardDraft}
+              onChange={(e) => setShardDraft(e.target.value)}
+              onBlur={saveShards}
+              rows={2}
+              placeholder="https://proxy:8443, https://proxy:8444"
+              className="w-full border border-rule bg-paper px-3 py-2 font-mono text-[13px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+            />
+            {rejectedShards.length > 0 && (
+              <span className="block font-body text-[12px] text-warn mt-1.5">
+                Not a plain endpoint, so {rejectedShards.length === 1 ? 'it was' : 'they were'}{' '}
+                dropped: <span className="font-mono">{rejectedShards.join(', ')}</span>. Use just the
+                scheme, host and port — no credentials, path, query or fragment.
+              </span>
+            )}
+            <span className="block font-body text-[12px] text-inkMute mt-1.5">
+              Lanes stripe uploads across these additional endpoints — same storage, one browser
+              connection each. Leave empty to use only the main endpoint.
+            </span>
+          </label>
         </div>
       </section>
 

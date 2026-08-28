@@ -14,6 +14,7 @@ import {
   type ConcurrencyControl,
   type StreamingUploadRun,
 } from '../lib/upload';
+import { parseShardEndpoints } from '../lib/s3';
 import { onFilesReady } from '../lib/processing';
 import type { ProcessResponse } from '../lib/processPool';
 import { ensureBundle } from '../lib/resume';
@@ -85,6 +86,7 @@ export function Upload() {
   const concurrencyMode = useStore((s) => s.concurrencyMode);
   const concurrency = useStore((s) => s.uploadConcurrency);
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
+  const shardEndpoints = useStore((s) => s.shardEndpoints);
   const nextBatch = useStore((s) => s.nextBatch);
   const flipId = useStore((s) => s.flipId);
   const fileAccessMode = useStore((s) => s.fileAccessMode);
@@ -99,6 +101,11 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
+  // One browser connection per endpoint — the main one plus each shard. Counted
+  // through the same parser the lanes are built from, so the number shown is
+  // the number of connections actually opened.
+  const shardCount = parseShardEndpoints(shardEndpoints).origins.length;
+
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
@@ -153,11 +160,12 @@ export function Upload() {
         session: pending.session,
         attached: pending.attached,
         concurrency: concurrencyControl(),
+        shardEndpoints,
       },
       setActiveSnap,
     );
     setActiveRun(run);
-  }, [pendingResume, s3Config, setActiveRun, setActiveSnap]);
+  }, [pendingResume, s3Config, shardEndpoints, setActiveRun, setActiveSnap]);
 
   // Hold a screen wake lock while actively uploading, so OS/display idle-sleep
   // doesn't interrupt it. Best-effort: unsupported browsers (Firefox, as of
@@ -254,6 +262,7 @@ export function Upload() {
         config: s3Config,
         dryRun: effectiveDryRun,
         concurrency: concurrencyControl(),
+        shardEndpoints,
         uploaderUser,
         fileAccessMode,
         dirHandle,
@@ -368,6 +377,7 @@ export function Upload() {
           session: finalSession,
           attached,
           concurrency: concurrencyControl(),
+          shardEndpoints,
         },
         setActiveSnap,
       );
@@ -379,7 +389,7 @@ export function Upload() {
     } finally {
       retryPending.current = false;
     }
-  }, [snap, s3Config, files]);
+  }, [snap, s3Config, files, shardEndpoints]);
 
   // Self-heal after an interruption the user might not notice — a run that
   // landed on 'partial' (some files failed after exhausting their own
@@ -547,6 +557,15 @@ export function Upload() {
               <p className="font-body text-[12px] text-inkMute">
                 Changes apply immediately, mid-run. Switch to adaptive tuning in Settings.
               </p>
+            )}
+            {shardCount > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="font-body text-[13px] text-inkSoft w-28">Endpoints</span>
+                <span className="font-mono text-[13px] text-ink">
+                  {shardCount + 1} connections (main + {shardCount} shard
+                  {shardCount === 1 ? '' : 's'})
+                </span>
+              </div>
             )}
           </div>
         )}

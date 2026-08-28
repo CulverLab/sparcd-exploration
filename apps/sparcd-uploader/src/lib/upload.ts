@@ -35,10 +35,14 @@
 // a hard failure aborts the in-flight set at once. The pool size follows a live
 // target — either the manual setting (readable mid-run) or the adaptive
 // controller, which searches for the throughput knee and then holds it.
+//
+// Blob transfers stripe round-robin over the configured endpoint shards (see
+// `getShardClients`), sticky per item so a retry reuses the same connection.
+// Metadata and listings always go through the primary endpoint.
 
 import type { S3Config } from '@sparcd/types';
-import { PreconditionFailedError } from '@sparcd/s3-safe';
-import { getClient } from './s3';
+import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
+import { getShardClients } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
@@ -110,6 +114,9 @@ export type UploadParams = {
   build: Omit<BuildInput, 'now'>;
   dryRun: boolean;
   concurrency: ConcurrencyControl; // parallel blob lanes
+  // Raw comma/newline-separated extra endpoints for the same storage; blob
+  // lanes stripe across them so each gets its own browser connection.
+  shardEndpoints?: string;
   // Resume metadata persisted in the batch row; absent for dry runs.
   uploaderUser?: string; // raw identity (the slug lives in build.uploaderSlug)
   fileAccessMode?: FileAccessMode;
@@ -121,6 +128,7 @@ export type ResumeParams = {
   session: LoadedSession;
   attached: Map<string, File>; // localPath → reattached source file
   concurrency: ConcurrencyControl;
+  shardEndpoints?: string;
 };
 
 export type UploadRun = { cancel: () => void; done: Promise<void> };
@@ -375,12 +383,14 @@ function makeAsyncQueue<T>() {
  */
 function makeRunner(
   config: S3Config,
+  shardEndpoints: string,
   concurrency: ConcurrencyControl,
   onUpdate: (snap: UploadSnapshot) => void,
   opts: { persist: boolean; isResume: boolean; dryRun: boolean },
 ) {
   const { persist, isResume, dryRun } = opts;
-  const client = getClient(config);
+  const clients = getShardClients(config, shardEndpoints);
+  const client = clients[0]; // metadata, listings, and existing-object checks
   let cancelled = false;
   let abort = new AbortController();
   // Set for the life of a streamed run so `cancel()` can also release lanes
@@ -446,7 +456,12 @@ function makeRunner(
 
   // Upload (or skip) one blob. Returns once the object is present and verified,
   // or throws on a non-recoverable failure.
-  const processItem = async (sessionId: string, fp: FileProgress, it: PlanItem): Promise<void> => {
+  const processItem = async (
+    sessionId: string,
+    fp: FileProgress,
+    it: PlanItem,
+    blobClient: SafeS3Client,
+  ): Promise<void> => {
     // Shared by the pre-verify check below and the upload retry loop — a
     // whole-connection drop hits `statObject` (verify) exactly as it hits
     // `writeImmutableStream` (upload), so a resume started offline needs the
@@ -505,7 +520,7 @@ function makeRunner(
       fp.loaded = 0;
       emit(true);
       try {
-        const { etag } = await client.writeImmutableStream(snap.bucket, it.key, it.file, {
+        const { etag } = await blobClient.writeImmutableStream(snap.bucket, it.key, it.file, {
           sha256: it.sha256,
           contentType: it.mimeType,
           signal: abort.signal,
@@ -780,7 +795,8 @@ function makeRunner(
           if (i >= plan.items.length) return;
           const it = plan.items[i];
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it);
+            // Sticky per item, not per lane: a retry stays on the same shard.
+            await processItem(plan.sessionId, byId.get(it.id)!, it, clients[i % clients.length]);
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -935,6 +951,8 @@ function makeRunner(
           queue.unshift(it);
           return;
         }
+        // Sticky per item, not per lane: a retry stays on the same shard.
+        const blobClient = clients[pulled.length % clients.length];
         pulled.push(it);
         const fp: FileProgress = { id: it.id, key: it.key, size: it.size, loaded: 0, state: 'pending', attempt: 0 };
         const idx = snap.files.findIndex((f) => f.id === it.id);
@@ -951,7 +969,7 @@ function makeRunner(
           continue;
         }
         try {
-          await processItem(seed.sessionId, fp, it);
+          await processItem(seed.sessionId, fp, it, blobClient);
         } catch (err) {
           if (cancelled || abort.signal.aborted) return;
           if (isRunFatalBlobError(err)) {
@@ -1079,7 +1097,7 @@ export function runStreamingUpload(
 ): StreamingUploadRun {
   const { config, build, dryRun, concurrency } = params;
   const persist = !dryRun;
-  const runner = makeRunner(config, concurrency, onUpdate, {
+  const runner = makeRunner(config, params.shardEndpoints ?? '', concurrency, onUpdate, {
     persist,
     isResume: false,
     dryRun,
@@ -1301,7 +1319,7 @@ export function resumeUpload(
 ): UploadRun {
   const { config, session, attached, concurrency } = params;
   const { batch, bundle, files } = session;
-  const runner = makeRunner(config, concurrency, onUpdate, {
+  const runner = makeRunner(config, params.shardEndpoints ?? '', concurrency, onUpdate, {
     persist: true,
     isResume: true,
     dryRun: false,

@@ -72,6 +72,7 @@ describe('store persistence', () => {
     useStore.getState().setDryRun(false);
     useStore.getState().setConcurrencyMode('manual');
     useStore.getState().setUploadConcurrency(16);
+    useStore.getState().setShardEndpoints('https://proxy:8443');
     useStore.getState().setFiles([scanned('a.jpg')]);
     useStore.getState().setActiveSnap({ sessionId: 'session-1' } as never);
 
@@ -87,7 +88,22 @@ describe('store persistence', () => {
       dryRun: false,
       concurrencyMode: 'manual',
       uploadConcurrency: 16,
+      shardEndpoints: 'https://proxy:8443',
     });
+  });
+
+  // Shards are extra origins of one particular endpoint. Keeping them across a
+  // connection change would stripe signed PUTs at the previous provider.
+  it('forgets endpoint shards on connect and on disconnect', () => {
+    const config = { endpoint: 'https://one', accessKey: 'ak', secretKey: 'sk', region: 'us' };
+
+    useStore.getState().setShardEndpoints('https://proxy:8443');
+    useStore.getState().connect(config as never, false);
+    expect(useStore.getState().shardEndpoints).toBe('');
+
+    useStore.getState().setShardEndpoints('https://proxy:8443');
+    useStore.getState().disconnect();
+    expect(useStore.getState().shardEndpoints).toBe('');
   });
 });
 

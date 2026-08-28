@@ -21,6 +21,8 @@ type FakeClient = {
 
 const mocks = vi.hoisted(() => ({
   client: null as FakeClient | null,
+  // Set only by the sharding test; otherwise the run gets the single client.
+  shardClients: null as FakeClient[] | null,
   openSession: vi.fn(),
   attachBundle: vi.fn(),
   markFileState: vi.fn(),
@@ -29,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/lib/s3', () => ({
   getClient: vi.fn(() => mocks.client),
+  getShardClients: vi.fn(() => mocks.shardClients ?? [mocks.client]),
 }));
 
 vi.mock('../src/lib/db', () => ({
@@ -181,8 +184,11 @@ function makeClient(records: FileRecord[], failingKeys = new Set<string>()): Fak
 function makeStreamingClient(
   failingRelPaths = new Set<string>(),
   hooks: { onPut?: () => Promise<void>; omitFromListing?: (key: string) => boolean } = {},
+  // Shard clients are extra connections to one bucket, so a sharded run's
+  // clients share the object store — a listing through any of them sees
+  // everything, whichever connection wrote it.
+  written = new Map<string, { size: number; sha256: string }>(),
 ): FakeClient {
-  const written = new Map<string, { size: number; sha256: string }>();
   return {
     statObject: vi.fn(async (_bucket: string, key: string) => {
       const w = written.get(key);
@@ -215,6 +221,7 @@ async function collect(run: { done: Promise<void> }, onDone: () => UploadSnapsho
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.client = null;
+  mocks.shardClients = null;
 });
 
 describe('upload runs continue past per-file blob failures', () => {
@@ -1209,5 +1216,78 @@ describe('streamed runs upload as files individually become ready', () => {
     expect(snap.phase).toBe('done');
     expect(client.writeImmutableStream).toHaveBeenCalledTimes(3);
     expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('endpoint sharding', () => {
+  it('stripes blobs across shard clients and keeps metadata on the primary', async () => {
+    const session = makeSession(Array.from({ length: 4 }, () => 'pending'));
+    const primary = makeClient(session.files);
+    const shard = makeClient(session.files);
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      {
+        config: CONFIG,
+        session,
+        attached: attachedFor(session.files),
+        concurrency: manual(2),
+        shardEndpoints: 'https://proxy:8443',
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(primary.writeImmutable).toHaveBeenCalledTimes(5);
+    expect(shard.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('stripes a streamed run across shard clients too, not just a resume', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1), makeFileEntry(2), makeFileEntry(3)];
+    const bucket = new Map<string, { size: number; sha256: string }>();
+    const primary = makeStreamingClient(new Set(), {}, bucket);
+    const shard = makeStreamingClient(new Set(), {}, bucket);
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: manual(2),
+        shardEndpoints: 'https://proxy:8443',
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(2);
+    // Metadata and the completion marker never leave the primary endpoint.
+    expect(primary.writeImmutable).toHaveBeenCalledTimes(5);
+    expect(shard.writeImmutable).not.toHaveBeenCalled();
   });
 });
