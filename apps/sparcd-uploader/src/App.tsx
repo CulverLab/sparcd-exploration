@@ -25,6 +25,7 @@ export function App() {
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
   const activeSnap = useStore((s) => s.activeSnap);
+  const retryPartialRun = useStore((s) => s.retryPartialRun);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -51,6 +52,25 @@ export function App() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [runningForReal]);
+
+  // Self-heal after an interruption the user might not notice. Lives here
+  // rather than in Upload so it covers runs started from History and still
+  // active after the user navigates away from the Upload step. "Wakes up" on
+  // either visibilitychange or the browser `online` event, whichever comes
+  // first; both conditions are re-checked at the moment either fires.
+  useEffect(() => {
+    const tryAutoResume = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        void retryPartialRun();
+      }
+    };
+    document.addEventListener('visibilitychange', tryAutoResume);
+    window.addEventListener('online', tryAutoResume);
+    return () => {
+      document.removeEventListener('visibilitychange', tryAutoResume);
+      window.removeEventListener('online', tryAutoResume);
+    };
+  }, [retryPartialRun]);
 
   // Hold a screen wake lock while any run is in flight (including dry runs and
   // the preparing phase). Lives here (not in Upload) so it survives the user
