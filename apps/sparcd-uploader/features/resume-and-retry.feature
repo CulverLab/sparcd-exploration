@@ -105,6 +105,16 @@ Feature: Resume an interrupted upload and retry a failed one
     And the resume can be cancelled
 
   @unmapped
+  Scenario: Cancelling the folder picker re-enables Resume on browsers without the cancel event
+    Given an open upload is listed in History
+    And the browser cannot present a folder picker
+    When the folder picker is opened and dismissed without selecting a folder
+    Then the Resume button becomes available again
+    # Regression for #68: on Safari ≤16 / Firefox ≤90 the `cancel` event on
+    # <input type="file"> does not fire, so a window `focus` fallback clears
+    # the guard when the picker closes with no files.
+
+  @unmapped
   Scenario: Returning to History keeps a live resume protected
     Given a resume is running
     When the user leaves History and returns while the resume is running
