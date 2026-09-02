@@ -82,8 +82,8 @@ The meeting focused on four immediate needs: resolving upload and storage perfor
 
 - Ask Matt and Andy about University of Arizona AI allocations, discounts, and available inference resources.
 - Write user stories for the admin application.
-- Create a GitHub issue for the MinIO-to-Jetstream migration, including the `research1` and `research2` test plan.
-- Notify the community-science team about the expected migration and maintenance period.
+- Not sure about this:::: Create a GitHub issue for the MinIO-to-Jetstream migration, including the `research1` and `research2` test plan.
+- Notify the community-science team about the expected migration and maintenance period.(When time appropriate)
 - Review existing GitHub issues, assign herself to the items she will address, and add issues for the proposed Tagger and other interface changes.
 
 ### All team members
