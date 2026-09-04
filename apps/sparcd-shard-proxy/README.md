@@ -40,38 +40,39 @@ one vCPU — so h3 stays enabled but is not the default assumption. Its case is
 lossy, high-RTT field networks, which is exactly where these uploads often
 start.
 
-## Measured (2026-09-03, inside Jetstream2 IU → the same proxy)
+## Measured (2026-09-03, inside Jetstream2 → the same proxy)
 
-Client `sparcd-bench-01` (m3.medium, CCR190024), 0.3 ms to the object store,
-250 × 4 MiB synthetic JPEGs per run. Browser rows drive the real uploader
-headless; native rows are rclone. Settled MB/s, one row per configuration.
+Client `sparcd-bench-bio-01` (m3.medium, same JS2 project as the proxy),
+0.3 ms to the object store, 250 × 4 MiB synthetic JPEGs per run, two repeats
+per configuration. Browser rows drive the real uploader headless; native rows
+are rclone. Settled MB/s, both repeats.
 
 | Path | Proto | Origins | Lanes | Browser | Native |
 |---|---|---|---|---|---|
-| js2:8001 direct | h2 | 1 | 32 | — | 176–182 |
-| JS2 via proxy | h2 | 1 | 16 | 208 | 133 |
-| JS2 via proxy | h2 | 1 | 32 | 245 | 151–179 |
-| JS2 via proxy | h2 | 1 | 64 / 96 | 244 / 233 | 113–123 |
-| JS2 via proxy | h2 | 2 | 32 | 262 | — |
-| JS2 via proxy | h2 | 4 | 16 | 236 | 159 |
-| JS2 via proxy | h2 | 4 | 32 | 202 | 179–219 |
-| JS2 via proxy | h2 | 4 | 64 / 96 | 199 / 251 | 136 |
-| JS2 via proxy | h3 | 1 / 2 / 4 | 32 | 52 / 54 / 54 | — |
-| JS2 via proxy | h3 | 1 / 4 | 64 | 47 / 47 | — |
+| js2:8001 direct | — | 1 | 32 | — | 199 / 206 |
+| JS2 via proxy | h2 | 1 | 16 | 226 / 186 | — |
+| JS2 via proxy | h2 | 1 | 32 | 272 / 211 | 186 / 192 |
+| JS2 via proxy | h2 | 1 | 64 | 230 / 212 | — |
+| JS2 via proxy | h2 | 4 | 16 | 223 / 191 | — |
+| JS2 via proxy | h2 | 4 | 32 | 277 / 210 | 239 / 233 |
+| JS2 via proxy | h2 | 4 | 64 | 227 / 292 | — |
+| JS2 via proxy | h3 | 1 / 4 | 32 | 58 / 56 / 57 / 57 | — |
 
-From inside the datacenter there is no knee: every HTTP/2 point from one
-origin at 16 lanes to four origins at 96 lanes lands between 199 and 262 MB/s,
-and repeats of one configuration spread as widely as the whole grid (the
-system drifted upward over the session; single rows are indicative). The
-browser matches native rclone. Origins and lanes buy nothing here because the
-per-connection congestion window is not the constraint on a 0.3 ms path; the
-ceiling is the object store itself, at roughly 200–260 MB/s through an m3.tiny
-proxy that never became the limit on h2. HTTP/3 pins at 47–54 MB/s whatever
-the origins or lanes, which is that one-vCPU proxy doing userspace QUIC.
+From inside the datacenter the curve is flat: every HTTP/2 point from one
+origin at 16 lanes to four origins at 64 lanes lands between 186 and 292 MB/s,
+and the spread between two repeats of one configuration is as wide as the
+spread across the grid. One origin and four overlap completely. The browser
+matches native rclone, and the m3.tiny proxy adds no measurable latency and
+never became the limit on h2. The ceiling is the object store itself, at
+roughly 200–290 MB/s. Origins and lanes buy nothing here because the
+per-connection congestion window is not the constraint on a 0.3 ms path.
+HTTP/3 pins at 56–58 MB/s whatever the origins or lanes, which is that
+one-vCPU proxy doing userspace QUIC.
 
-Raising the shipped 32-lane cap is not justified: in-cloud the curve is flat
-from 16 lanes, and volunteers on a WAN are bounded by per-connection capacity,
-where extra lanes on the same origin do not help and extra origins do.
+The knee is 32 lanes on one origin: 16 underruns slightly, 64 never beats 32.
+Raising the shipped 32-lane cap is not justified. In-cloud it buys nothing,
+and volunteers on a WAN are bounded by per-connection capacity, where extra
+lanes on the same origin do not help and extra origins do.
 
 ## How sharding is spelled
 
