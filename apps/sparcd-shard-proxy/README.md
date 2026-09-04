@@ -46,13 +46,13 @@ Two ways to hand out extra origins, both supported by the same config:
 
 - **Extra ports** — `proxy.example.org:443`, `:8443`, `:8444`, `:8445`. One
   DNS record, one certificate. Needs those ports open outbound on the client's
-  network, which some institutional firewalls will not allow.
+  network, which some institutional firewalls will not allow. This is the shape
+  the uploader finds by itself — see [Client convention](#client-convention).
 - **Subdomains on :443** — `shard1.example.org` … `shard4.example.org`. Works
-  from behind any firewall that permits HTTPS, costs a DNS record per shard.
-  This is the production shape.
+  from behind any firewall that permits HTTPS, costs a DNS record per shard,
+  and needs a client that is told the names.
 
-Set `SHARD_ADDRESSES` to whichever you are using; the client's shard-endpoint
-list has to match.
+Set `SHARD_ADDRESSES` to whichever you are using.
 
 ## What the config gets right
 
@@ -187,13 +187,32 @@ the two the proxy cannot cover:
   connection to each.
 - **Strip `?x-id=` before signing.** See lesson 4 above.
 
-Client-side striping ships in the uploader's endpoint-sharding PR
-(`pr/endpoint-sharding`), not on `main` yet. There it is a comma- or
-newline-separated **Endpoint shards** list in Settings; `getShardClients` in
-`apps/sparcd-uploader/src/lib/s3.ts` builds one client per endpoint, all
-sharing the connection's credentials. Blob lanes stripe round-robin and stay
-sticky per item so a retry lands on the same origin; metadata writes and
-listings stay on the primary endpoint.
+### Client convention
+
+`apps/sparcd-uploader` derives its shard origins from the one endpoint a
+volunteer enters: same host, https, ports **8443, 8444, 8445**. It probes all
+three once per session with the signed `ListBuckets` the connect flow already
+makes, then stripes blob lanes round-robin across whichever answered, sticky
+per item so a retry lands on the same origin. Metadata writes, listings, and
+existing-object checks stay on the primary. `deriveShardOrigins` and
+`probeShardClients` in `apps/sparcd-uploader/src/lib/s3.ts` are the whole of
+it.
+
+Nothing about shards is entered in the client, and no run depends on one: an
+endpoint that is not a shard proxy answers on none of those ports and uploads
+over a single connection. An endpoint that already names a port of its own —
+`store.example:9000` — gets no shards either, since it names a service rather
+than a proxy front door.
+
+A proxy fronting another store is found only if it publishes those exact
+ports:
+
+```
+SHARD_ADDRESSES=proxy.example.org:8443, proxy.example.org:8444, proxy.example.org:8445
+```
+
+The subdomain recipe above is not discovered this way. It still serves a client
+that is given the names.
 
 ## Security note
 

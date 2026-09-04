@@ -91,6 +91,8 @@ packaged unit reads no environment file of its own.
   On a long lossy path, cubic collapses per-connection throughput on loss that
   is not congestion. BBR does not.
 - **Ports, not subdomains.** JS2 auto-creates one DNS record per floating IP
-  and nothing else, so extra origins have to be extra ports here. A deployment
-  with its own DNS zone should prefer subdomain shards on :443 — they survive
-  firewalls that only allow outbound 443.
+  and nothing else, so extra origins have to be extra ports here. That suits
+  the uploader, which looks for 8443/8444/8445 on the endpoint's own host and
+  finds nothing else. A deployment with its own DNS zone can use subdomain
+  shards on :443 instead — they survive firewalls that only allow outbound 443
+  — but only a client told those names will use them.
