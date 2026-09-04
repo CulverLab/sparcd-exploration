@@ -100,17 +100,23 @@ export function Upload() {
 
   // One browser connection per origin the blob lanes are built from: the main
   // endpoint plus each shard proxy port that answered. Asking here also warms
-  // the probe, so the run's first blob doesn't wait on it.
+  // the probe, so a run started now already has the shards that are up. The set
+  // grows as they answer and there is no event for a join, so poll it until the
+  // slowest probe times out.
   const [connections, setConnections] = useState(1);
   useEffect(() => {
     setConnections(1);
     if (!s3Config || effectiveDryRun) return;
-    let live = true;
-    void probeShardClients(s3Config).then((clients) => {
-      if (live) setConnections(clients.length);
+    const shards = probeShardClients(s3Config);
+    let mounted = true;
+    const joins = setInterval(() => setConnections(shards.live.length), 250);
+    void shards.settled.then((clients) => {
+      clearInterval(joins);
+      if (mounted) setConnections(clients.length);
     });
     return () => {
-      live = false;
+      mounted = false;
+      clearInterval(joins);
     };
   }, [s3Config, effectiveDryRun]);
   // A dry run never touches the network (nothing is written), so it's still

@@ -44,7 +44,9 @@ const config = (endpoint: string): S3Config => ({
   forcePathStyle: true,
 });
 
-const endpoints = (clients: unknown[]) => clients.map((c) => (c as { endpoint: string }).endpoint);
+// Shards join as they answer, so compare as a set: only membership is promised.
+const endpoints = (clients: readonly unknown[]) =>
+  clients.map((c) => (c as { endpoint: string }).endpoint).sort();
 
 const shard = (port: number) => `https://proxy.example.org:${port}`;
 
@@ -71,16 +73,16 @@ describe('deriveShardOrigins', () => {
 
 describe('shard probing', () => {
   // Three published ports out of the twenty asked about — the operator sets the
-  // shard count, and the client takes whatever answers, in port order.
+  // shard count, and the client takes whatever answers.
   it('keeps the origins that list buckets and drops a refusal or a dead port', async () => {
     behavior.set(shard(8443), 'ok');
     behavior.set(shard(8444), 'ok');
     behavior.set(shard(8445), 'ok');
     behavior.set(shard(8446), 'http');
 
-    const clients = await probeShardClients(config('https://proxy.example.org'));
+    const shards = probeShardClients(config('https://proxy.example.org'));
 
-    expect(endpoints(clients)).toEqual([
+    expect(endpoints(await shards.settled)).toEqual([
       'https://proxy.example.org',
       shard(8443),
       shard(8444),
@@ -88,31 +90,41 @@ describe('shard probing', () => {
     ]);
   });
 
-  it('drops an origin that never answers', async () => {
+  // The point of the live list: one blackholed port must not hold the run for
+  // the whole timeout when the shards that are up have already answered.
+  it('lists a shard the moment it answers, without waiting for a dead one', async () => {
     vi.useFakeTimers();
     try {
       behavior.set(shard(8443), 'ok');
       behavior.set(shard(8444), 'hang');
-      const pending = probeShardClients(config('https://proxy.example.org'));
+      const shards = probeShardClients(config('https://proxy.example.org'));
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(endpoints(shards.live)).toEqual(['https://proxy.example.org', shard(8443)]);
+
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(endpoints(await pending)).toEqual(['https://proxy.example.org', shard(8443)]);
+      expect(endpoints(await shards.settled)).toEqual([
+        'https://proxy.example.org',
+        shard(8443),
+      ]);
     } finally {
       vi.useRealTimers();
     }
   });
 
   it('leaves an endpoint with no derived shards on the primary alone', async () => {
-    expect(endpoints(await probeShardClients(config('http://localhost:5311')))).toEqual([
-      'http://localhost:5311',
-    ]);
+    const shards = probeShardClients(config('http://localhost:5311'));
+    expect(endpoints(shards.live)).toEqual(['http://localhost:5311']);
+    expect(endpoints(await shards.settled)).toEqual(['http://localhost:5311']);
   });
 
   it('probes once per connection', async () => {
     behavior.set(shard(8443), 'ok');
 
-    const first = await probeShardClients(config('https://proxy.example.org'));
+    const first = probeShardClients(config('https://proxy.example.org'));
+    await first.settled;
     behavior.set(shard(8444), 'ok');
 
-    expect(await probeShardClients(config('https://proxy.example.org'))).toBe(first);
+    expect(probeShardClients(config('https://proxy.example.org'))).toBe(first);
   });
 });

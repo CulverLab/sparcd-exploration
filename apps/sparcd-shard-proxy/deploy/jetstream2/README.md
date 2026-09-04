@@ -99,3 +99,7 @@ packaged unit reads no environment file of its own.
   own DNS zone can use subdomain shards on :443 instead —
   they survive firewalls that only allow outbound 443 — but only a client told
   those names will use them.
+- **Open the whole 8443-8462 range in the security group**, even though only 11
+  ports listen. The client asks about all twenty; a port that answers with an
+  RST is dismissed at once, while one the network drops holds a probe for the
+  full five seconds. proxy-03's group already allows the range.

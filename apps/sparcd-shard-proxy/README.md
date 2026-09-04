@@ -230,10 +230,14 @@ volunteer's link on every path measured above and nothing beyond that moved.
 Adding a shard is a port pair in `compose.yaml` and an address in
 `SHARD_ADDRESSES`; the client picks it up on the next session with no release.
 
+Shards join the run as they answer rather than the run waiting on the slowest
+probe, so a port that blackholes instead of refusing costs a slower ramp and
+nothing else.
+
 Nothing about shards is entered in the client, and no run depends on one: an
-endpoint that is not a shard proxy refuses every one of those ports — instantly,
-so probing costs it nothing — and uploads over a single connection, and a file
-that fails twice on a shard mid-run finishes on the primary. An endpoint that already names a port of its own —
+endpoint that is not a shard proxy refuses every one of those ports and uploads
+over a single connection, and a file that fails twice on a shard mid-run
+finishes on the primary. An endpoint that already names a port of its own —
 `store.example:9000` — gets no shards either, since it names a service rather
 than a proxy front door.
 

@@ -44,7 +44,7 @@
 
 import type { S3Config } from '@sparcd/types';
 import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
-import { getClient, probeShardClients } from './s3';
+import { getClient, probeShardClients, type ShardSet } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
@@ -389,15 +389,15 @@ function makeRunner(
 ) {
   const { persist, isResume, dryRun } = opts;
   const client = getClient(config); // metadata, listings, existing-object checks
-  // Started here, awaited at the first blob: by then the Upload step's own
-  // probe has usually already settled it, so lanes never wait on the network
-  // to find out how many connections they have.
-  const shardClients = dryRun ? Promise.resolve([client]) : probeShardClients(config);
+  // Read at assignment time, never awaited: the run starts striping over
+  // whatever has answered so far, so a shard port that blackholes costs a
+  // slower ramp rather than five seconds before the first blob moves.
+  const shards: ShardSet = dryRun
+    ? { live: [client], settled: Promise.resolve([client]) }
+    : probeShardClients(config);
   // Sticky per item, not per lane: a retry stays on the same origin.
-  const blobClientFor = async (index: number): Promise<SafeS3Client> => {
-    const clients = await shardClients;
-    return clients[index % clients.length];
-  };
+  const blobClientFor = (index: number): SafeS3Client =>
+    shards.live[index % shards.live.length];
   let cancelled = false;
   let abort = new AbortController();
   // Set for the life of a streamed run so `cancel()` can also release lanes
@@ -805,7 +805,7 @@ function makeRunner(
           if (i >= plan.items.length) return;
           const it = plan.items[i];
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it, await blobClientFor(i));
+            await processItem(plan.sessionId, byId.get(it.id)!, it, blobClientFor(i));
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -987,7 +987,7 @@ function makeRunner(
           continue;
         }
         try {
-          await processItem(seed.sessionId, fp, it, await blobClientFor(blobIndex));
+          await processItem(seed.sessionId, fp, it, blobClientFor(blobIndex));
         } catch (err) {
           if (cancelled || abort.signal.aborted) return;
           if (isRunFatalBlobError(err)) {

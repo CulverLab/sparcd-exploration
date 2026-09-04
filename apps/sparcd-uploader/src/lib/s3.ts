@@ -44,7 +44,7 @@ let shardCached: { config: S3Config; byOrigin: Map<string, SafeS3Client> } | nul
 // The probe result is keyed by what actually decides it — which host, and
 // which credentials sign the probe — so it survives the config object being
 // rebuilt within one session but not a reconnect elsewhere.
-let probeCached: { key: string; clients: Promise<SafeS3Client[]> } | null = null;
+let probeCached: { key: string; set: ShardSet } | null = null;
 
 export function clearClientCache(): void {
   cached = null;
@@ -134,27 +134,39 @@ async function answers(client: SafeS3Client): Promise<boolean> {
   }
 }
 
+export type ShardSet = {
+  /** Grows as shards answer. Always holds the primary, always safe to read. */
+  live: readonly SafeS3Client[];
+  /** The final list, once every probe has answered, failed, or timed out. */
+  settled: Promise<readonly SafeS3Client[]>;
+};
+
 /**
- * The clients an upload run actually stripes across: the primary plus every
- * derived shard that answered.
+ * The clients an upload run stripes across: the primary plus every derived
+ * shard that answered.
  *
  * Most endpoints are not a shard proxy — a bare MinIO, a direct store, a dev
- * box — and have nothing on those ports, so striping is earned rather than
- * assumed. Probed once per connection and never load-bearing: whatever the
- * result, the primary alone runs the upload.
+ * box — and have nothing on those ports. A port that answers with an RST is
+ * dismissed at once; one the network drops holds its probe for the full
+ * timeout, so the set is read live rather than awaited — a run starts on the
+ * primary and widens as shards join. Probed once per connection and never
+ * load-bearing: whatever the result, the primary alone runs the upload.
  */
-export function probeShardClients(cfg: S3Config): Promise<SafeS3Client[]> {
+export function probeShardClients(cfg: S3Config): ShardSet {
   const key = `${cfg.endpoint}\n${cfg.accessKey}`;
-  if (probeCached?.key !== key) probeCached = { key, clients: probeShards(cfg) };
-  return probeCached.clients;
+  if (probeCached?.key !== key) probeCached = { key, set: probeShards(cfg) };
+  return probeCached.set;
 }
 
-async function probeShards(cfg: S3Config): Promise<SafeS3Client[]> {
-  const origins = deriveShardOrigins(cfg.endpoint);
-  if (origins.length === 0) return [getClient(cfg)];
-  const [primary, ...shards] = getShardClients(cfg, origins);
-  const live = await Promise.all(shards.map(answers));
-  return [primary, ...shards.filter((_, i) => live[i])];
+function probeShards(cfg: S3Config): ShardSet {
+  const [primary, ...shards] = getShardClients(cfg, deriveShardOrigins(cfg.endpoint));
+  const live: SafeS3Client[] = [primary];
+  const settled = Promise.all(
+    shards.map(async (shard) => {
+      if (await answers(shard)) live.push(shard);
+    }),
+  ).then(() => live);
+  return { live, settled };
 }
 
 function settingsRank(bucket: string): number {

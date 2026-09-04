@@ -31,7 +31,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/lib/s3', () => ({
   getClient: vi.fn(() => mocks.client),
-  probeShardClients: vi.fn(async () => mocks.shardClients ?? [mocks.client]),
+  probeShardClients: vi.fn(() => {
+    const live = mocks.shardClients ?? [mocks.client];
+    return { live, settled: Promise.resolve(live) };
+  }),
 }));
 
 vi.mock('../src/lib/db', () => ({
