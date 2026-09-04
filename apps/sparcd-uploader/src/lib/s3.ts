@@ -112,10 +112,9 @@ export function getShardClients(cfg: S3Config, origins: string[]): SafeS3Client[
 }
 
 /**
- * Whether a derived origin is really there. `listBuckets` is the same request
- * the connect flow already makes, and any HTTP status back means the origin
- * answered as the storage — a refusal the primary would have made too still
- * proves the connection lands. A request that never gets a response does not.
+ * Whether a derived origin is really there. `listBuckets` is the request the
+ * connect flow already made against the primary, so a shard fronting the same
+ * store answers it the same way; anything else on that port does not.
  */
 async function answers(client: SafeS3Client): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout>;
@@ -124,8 +123,7 @@ async function answers(client: SafeS3Client): Promise<boolean> {
   });
   const request = client.listBuckets().then(
     () => true,
-    (err: { $metadata?: { httpStatusCode?: number } }) =>
-      typeof err?.$metadata?.httpStatusCode === 'number',
+    () => false,
   );
   return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
 }

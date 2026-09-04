@@ -70,7 +70,7 @@ describe('deriveShardOrigins', () => {
 });
 
 describe('shard probing', () => {
-  it('keeps the origins that answer and drops the rest', async () => {
+  it('keeps the origins that list buckets and drops a refusal or a dead port', async () => {
     behavior.set('https://proxy.example.org:8443', 'ok');
     behavior.set('https://proxy.example.org:8444', 'http');
     behavior.set('https://proxy.example.org:8445', 'network');
@@ -80,7 +80,6 @@ describe('shard probing', () => {
     expect(endpoints(clients)).toEqual([
       'https://proxy.example.org',
       'https://proxy.example.org:8443',
-      'https://proxy.example.org:8444',
     ]);
   });
 
