@@ -47,7 +47,8 @@ Two ways to hand out extra origins, both supported by the same config:
 - **Extra ports** — `proxy.example.org:443`, `:8443`, `:8444`, `:8445`. One
   DNS record, one certificate. Needs those ports open outbound on the client's
   network, which some institutional firewalls will not allow. This is the shape
-  the uploader finds by itself — see [Client convention](#client-convention).
+  the uploader finds by itself, anywhere in 8443-8462 — see
+  [Client convention](#client-convention).
 - **Subdomains on :443** — `shard1.example.org` … `shard4.example.org`. Works
   from behind any firewall that permits HTTPS, costs a DNS record per shard,
   and needs a client that is told the names.
@@ -190,23 +191,29 @@ the two the proxy cannot cover:
 ### Client convention
 
 `apps/sparcd-uploader` derives its shard origins from the one endpoint a
-volunteer enters: same host, https, ports **8443, 8444, 8445**. It probes all
-three once per session with the signed `ListBuckets` the connect flow already
-makes, then stripes blob lanes round-robin across whichever answered, sticky
-per item so a retry lands on the same origin. Metadata writes, listings, and
-existing-object checks stay on the primary. `deriveShardOrigins` and
-`probeShardClients` in `apps/sparcd-uploader/src/lib/s3.ts` are the whole of
-it.
+volunteer enters: same host, https, every port from **8443 through 8462**. It
+probes all twenty in parallel once per session with the signed `ListBuckets`
+the connect flow already makes, then stripes blob lanes round-robin across
+whichever answered, sticky per item so a retry lands on the same origin.
+Metadata writes, listings, and existing-object checks stay on the primary.
+`deriveShardOrigins` and `probeShardClients` in
+`apps/sparcd-uploader/src/lib/s3.ts` are the whole of it.
+
+**The operator sets the shard count, not the client.** However many of those
+twenty ports a proxy lists in `SHARD_ADDRESSES` is how many connections an
+upload gets — three is the shape below, twenty is the ceiling. Adding a shard
+is a port pair in `compose.yaml` and an address in `SHARD_ADDRESSES`; the
+client picks it up on the next session with no release.
 
 Nothing about shards is entered in the client, and no run depends on one: an
-endpoint that is not a shard proxy answers on none of those ports and uploads
-over a single connection, and a file that fails twice on a shard mid-run
-finishes on the primary. An endpoint that already names a port of its own —
+endpoint that is not a shard proxy refuses every one of those ports — instantly,
+so probing costs it nothing — and uploads over a single connection, and a file
+that fails twice on a shard mid-run finishes on the primary. An endpoint that already names a port of its own —
 `store.example:9000` — gets no shards either, since it names a service rather
 than a proxy front door.
 
-A proxy fronting another store is found only if it publishes those exact
-ports:
+A proxy fronting another store is found only if it publishes ports inside that
+range:
 
 ```
 SHARD_ADDRESSES=proxy.example.org:8443, proxy.example.org:8444, proxy.example.org:8445

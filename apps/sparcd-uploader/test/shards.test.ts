@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { S3Config } from '@sparcd/types';
 
-// How each origin answers a probe, keyed by endpoint. Unset never settles.
-const behavior = new Map<string, 'ok' | 'http' | 'network'>();
+// How each origin answers a probe, keyed by endpoint. Unset is a dead port,
+// which is what all but a handful of the derived range always are.
+const behavior = new Map<string, 'ok' | 'http' | 'hang'>();
 
 vi.mock('@sparcd/s3-safe', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@sparcd/s3-safe')>();
@@ -21,12 +22,12 @@ vi.mock('@sparcd/s3-safe', async (importOriginal) => {
             return Promise.reject(
               Object.assign(new Error('AccessDenied'), { $metadata: { httpStatusCode: 403 } }),
             );
-          case 'network':
-            return Promise.reject(new Error('Failed to fetch'));
-          default:
+          case 'hang':
             return new Promise<string[]>((_, reject) => {
               opts.signal?.addEventListener('abort', () => reject(new Error('AbortError')));
             });
+          default:
+            return Promise.reject(new Error('Failed to fetch'));
         }
       }
     },
@@ -45,18 +46,17 @@ const config = (endpoint: string): S3Config => ({
 
 const endpoints = (clients: unknown[]) => clients.map((c) => (c as { endpoint: string }).endpoint);
 
+const shard = (port: number) => `https://proxy.example.org:${port}`;
+
 beforeEach(() => {
   clearClientCache();
   behavior.clear();
 });
 
 describe('deriveShardOrigins', () => {
-  it('names the proxy ports for an https endpoint on the default port', () => {
-    const expected = [
-      'https://proxy.example.org:8443',
-      'https://proxy.example.org:8444',
-      'https://proxy.example.org:8445',
-    ];
+  it('names every port a proxy could publish, for an https endpoint on :443', () => {
+    const expected = Array.from({ length: 20 }, (_, i) => shard(8443 + i));
+    expect(expected.at(-1)).toBe('https://proxy.example.org:8462');
     expect(deriveShardOrigins('https://proxy.example.org')).toEqual(expected);
     expect(deriveShardOrigins('https://proxy.example.org:443')).toEqual(expected);
     expect(deriveShardOrigins('proxy.example.org')).toEqual(expected);
@@ -70,29 +70,32 @@ describe('deriveShardOrigins', () => {
 });
 
 describe('shard probing', () => {
+  // Three published ports out of the twenty asked about — the operator sets the
+  // shard count, and the client takes whatever answers, in port order.
   it('keeps the origins that list buckets and drops a refusal or a dead port', async () => {
-    behavior.set('https://proxy.example.org:8443', 'ok');
-    behavior.set('https://proxy.example.org:8444', 'http');
-    behavior.set('https://proxy.example.org:8445', 'network');
+    behavior.set(shard(8443), 'ok');
+    behavior.set(shard(8444), 'ok');
+    behavior.set(shard(8445), 'ok');
+    behavior.set(shard(8446), 'http');
 
     const clients = await probeShardClients(config('https://proxy.example.org'));
 
     expect(endpoints(clients)).toEqual([
       'https://proxy.example.org',
-      'https://proxy.example.org:8443',
+      shard(8443),
+      shard(8444),
+      shard(8445),
     ]);
   });
 
   it('drops an origin that never answers', async () => {
     vi.useFakeTimers();
     try {
-      behavior.set('https://proxy.example.org:8443', 'ok');
+      behavior.set(shard(8443), 'ok');
+      behavior.set(shard(8444), 'hang');
       const pending = probeShardClients(config('https://proxy.example.org'));
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(endpoints(await pending)).toEqual([
-        'https://proxy.example.org',
-        'https://proxy.example.org:8443',
-      ]);
+      expect(endpoints(await pending)).toEqual(['https://proxy.example.org', shard(8443)]);
     } finally {
       vi.useRealTimers();
     }
@@ -105,12 +108,10 @@ describe('shard probing', () => {
   });
 
   it('probes once per connection', async () => {
-    behavior.set('https://proxy.example.org:8443', 'ok');
-    behavior.set('https://proxy.example.org:8444', 'network');
-    behavior.set('https://proxy.example.org:8445', 'network');
+    behavior.set(shard(8443), 'ok');
 
     const first = await probeShardClients(config('https://proxy.example.org'));
-    behavior.set('https://proxy.example.org:8444', 'ok');
+    behavior.set(shard(8444), 'ok');
 
     expect(await probeShardClients(config('https://proxy.example.org'))).toBe(first);
   });

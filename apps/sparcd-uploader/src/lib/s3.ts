@@ -59,15 +59,20 @@ export function getClient(cfg: S3Config): SafeS3Client {
   return client;
 }
 
-// The ports `apps/sparcd-shard-proxy` publishes alongside :443. A proxy
-// deployed for another store has to use these exact ports to be found.
-export const SHARD_PORTS = [8443, 8444, 8445];
+// The ports a shard proxy may publish alongside :443. The client looks for the
+// whole range every time; the operator decides how many of them to answer on
+// (`SHARD_ADDRESSES` in `apps/sparcd-shard-proxy`), and that is what sets the
+// shard count. Twenty is the ceiling, not the expectation.
+const FIRST_SHARD_PORT = 8443;
+const MAX_SHARDS = 20;
+export const SHARD_PORTS = Array.from({ length: MAX_SHARDS }, (_, i) => FIRST_SHARD_PORT + i);
 
 const PROBE_TIMEOUT_MS = 5_000;
 
 /**
- * The shard origins an endpoint implies: same host, https, our proxy's fixed
- * ports. Nothing is typed by hand — a volunteer enters one endpoint.
+ * The shard origins an endpoint implies: same host, https, every port a shard
+ * proxy might publish. Nothing is typed by hand — a volunteer enters one
+ * endpoint, and the probe decides which of these are real.
  *
  * An endpoint already naming a non-default port is a specific service rather
  * than a proxy front door, and a plaintext one is a local store, so neither

@@ -1,6 +1,8 @@
 #cloud-config
 # sparcd-shard-proxy on a Jetstream2 instance: Caddy fronting the JS2 object
-# store (Ceph RGW) on ports 443/8443/8444/8445, HTTP/3 on every one.
+# store (Ceph RGW) on port 443 plus the shard ports 8443-8462, HTTP/3 on every
+# one. The uploader asks about that whole range and stripes across whatever
+# answers, so this list is what sets the shard count.
 #
 # The Caddyfile below is a verbatim copy of the canonical
 # apps/sparcd-shard-proxy/Caddyfile — cloud-init has no way to reference a file
@@ -25,7 +27,7 @@ write_files:
     content: |
       UPSTREAM=https://js2.jetstream-cloud.org:8001
       PROXY_DOMAIN=sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org
-      SHARD_ADDRESSES=sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8443, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8444, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8445
+      SHARD_ADDRESSES=sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8443, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8444, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8445, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8446, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8447, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8448, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8449, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8450, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8451, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8452, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8453, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8454, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8455, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8456, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8457, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8458, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8459, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8460, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8461, sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org:8462
 
   # The packaged caddy.service reads no environment file of its own.
   - path: /etc/systemd/system/caddy.service.d/10-sparcd.conf

@@ -1,8 +1,8 @@
 # Jetstream2 deploy
 
 The running deployment: a Caddy shard proxy on a Jetstream2 instance fronting
-the JS2 object store (`js2.jetstream-cloud.org:8001`, Ceph RGW) on ports
-443/8443/8444/8445, HTTP/3 on every one.
+the JS2 object store (`js2.jetstream-cloud.org:8001`, Ceph RGW) on port 443
+plus the shard ports 8443-8462, HTTP/3 on every one.
 
 `cloud-init.yaml` is the whole machine. It installs Caddy from the upstream
 apt repository, mounts the certificate volume, enables BBR, and writes the
@@ -41,7 +41,7 @@ From the repo root:
 ```sh
 node apps/sparcd-shard-proxy/smoke.mjs \
   --base https://sparcd-quic-proxy-03.bio260073.projects.jetstream-cloud.org \
-  --ports 443,8443,8444,8445
+  --ports 443,8443,8444,8445,8446,8447,8448,8449,8450,8451,8452,8453,8454,8455,8456,8457,8458,8459,8460,8461,8462
 ```
 
 Add `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` to make the signed checks real.
@@ -92,7 +92,9 @@ packaged unit reads no environment file of its own.
   is not congestion. BBR does not.
 - **Ports, not subdomains.** JS2 auto-creates one DNS record per floating IP
   and nothing else, so extra origins have to be extra ports here. That suits
-  the uploader, which looks for 8443/8444/8445 on the endpoint's own host and
-  finds nothing else. A deployment with its own DNS zone can use subdomain
-  shards on :443 instead — they survive firewalls that only allow outbound 443
-  — but only a client told those names will use them.
+  the uploader, which looks for 8443 through 8462 on the endpoint's own host
+  and finds nothing else — which is also what sets the shard count, since it
+  stripes across however many of those `SHARD_ADDRESSES` publishes. A
+  deployment with its own DNS zone can use subdomain shards on :443 instead —
+  they survive firewalls that only allow outbound 443 — but only a client told
+  those names will use them.

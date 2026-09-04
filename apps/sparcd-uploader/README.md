@@ -23,9 +23,10 @@ Runtime-discovered BYO-S3 uploader.
 - Dry-run is on by default. Wet uploads use the connected credentials directly;
   IAM and bucket CORS are the real access gates.
 - Blob lanes stripe across the shard origins the endpoint implies (same host,
-  https, ports 8443/8444/8445 — what `apps/sparcd-shard-proxy` publishes),
-  probed once per session so an endpoint without them uploads over the single
-  connection. Nothing to configure.
+  https, ports 8443 through 8462 — the range `apps/sparcd-shard-proxy` publishes
+  from). All twenty are probed once per session and the lanes use whichever
+  answered, so the proxy operator sets the shard count and an endpoint without
+  any uploads over the single connection. Nothing to configure.
 - History lists prior runs and resumes interrupted uploads from the ledger.
 - Published uploads can be edited after the fact (description, deployment
   reassignment) through the single reviewed conditional-replace path, with
