@@ -200,7 +200,8 @@ it.
 
 Nothing about shards is entered in the client, and no run depends on one: an
 endpoint that is not a shard proxy answers on none of those ports and uploads
-over a single connection. An endpoint that already names a port of its own —
+over a single connection, and a file that fails twice on a shard mid-run
+finishes on the primary. An endpoint that already names a port of its own —
 `store.example:9000` — gets no shards either, since it names a service rather
 than a proxy front door.
 
