@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { correctedTimestamp } from '@sparcd/camtrap';
 import { Thumb } from './Thumb';
 import { useDraftStore } from '../lib/drafts';
 import { effectiveOf, isEditedFromBase, isGhostObs } from '../lib/effective';
@@ -44,6 +45,9 @@ const LIST_ROW_H = 56;
 const GRID_CARD_H = 158;
 const GRID_GAP = 8;
 const GRID_CELL_MIN = 150; // target card width; columns derive from container width
+// Full list metadata needs room for a useful filename in addition to its fixed
+// columns. Below this width, use the same compact row as the Focus strip.
+const DETAILED_LIST_MIN_WIDTH = 480;
 
 type FlatItem =
   | { kind: 'band'; burst: Burst }
@@ -153,6 +157,7 @@ export function Overview({
                   selected={selected.has(item.indices[0])}
                   onPick={onPick}
                   onDrill={onDrill}
+                  narrow={width < DETAILED_LIST_MIN_WIDTH}
                 />
               ) : (
                 <div
@@ -221,6 +226,7 @@ function BurstBand({
 
 // Each cell subscribes only to its own draft, so tagging one image never
 // re-renders its neighbours (on top of virtualization already bounding the count).
+// narrow=true collapses type/timestamp for compact Overview rows and the Focus strip.
 function ListCell({
   img,
   index,
@@ -228,6 +234,7 @@ function ListCell({
   selected,
   onPick,
   onDrill,
+  narrow,
 }: {
   img: TagImage;
   index: number;
@@ -235,15 +242,32 @@ function ListCell({
   selected: boolean;
   onPick: (i: number, mods: PickMods) => void;
   onDrill?: (i: number) => void;
+  narrow?: boolean;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
+  const timeOffset = useDraftStore((s) => s.timeOffset);
   const eff = effectiveOf(img, draft);
+  const isVideo = isVideoImage(img);
+  const species = summarize(eff.observations) || 'untagged';
+  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null);
+  const timestampDisplay = timestamp ? `${timestamp.slice(0, 10)} ${timestamp.slice(11, 16)}` : null;
+  const edited = isEditedFromBase(eff);
+  const rowLabel = [
+    `Filename: ${img.fileName}`,
+    ...(!narrow
+      ? [`Media type: ${isVideo ? 'video' : 'image'}`, timestamp ? `Capture time: ${timestamp}` : 'Capture time unavailable']
+      : []),
+    `Species: ${species}`,
+    ...(edited ? ['Unsaved edit'] : []),
+    ...(eff.questionable ? ['Questionable'] : []),
+  ].join('; ');
   return (
     <button
       onClick={(e) => onPick(index, modsOf(e))}
       onDoubleClick={onDrill ? (e) => plainDrill(e, onDrill, index) : undefined}
       aria-current={active ? 'true' : undefined}
-      className={`w-full h-full flex items-center gap-2.5 px-2.5 text-left border-b border-ruleSoft border-l-2 ${
+      aria-label={rowLabel}
+      className={`w-full h-full flex items-center gap-2 px-2.5 overflow-hidden text-left border-b border-ruleSoft border-l-2 ${
         selected
           ? 'border-l-accent bg-mark'
           : active
@@ -252,40 +276,64 @@ function ListCell({
       }`}
     >
       <span className="w-12 shrink-0">
-        <Thumb objectKey={img.key} alt={img.fileName} isVideo={isVideoImage(img)} />
+        <Thumb objectKey={img.key} alt={img.fileName} isVideo={isVideo} />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          {isVideoImage(img) && (
-            <span className="shrink-0 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
-              VIDEO
-            </span>
-          )}
-          <span
-            className="block text-[12px] font-mono text-inkSoft truncate"
-            title={img.fileName}
-          >
-            {img.fileName}
+      <span
+        data-column="filename"
+        aria-label={`Filename: ${img.fileName}`}
+        className="min-w-0 flex-1 font-mono text-[12px] text-inkSoft truncate"
+        title={img.fileName}
+      >
+        {img.fileName}
+      </span>
+      {!narrow && (
+        <span
+          data-column="media-type"
+          aria-label={`Media type: ${isVideo ? 'video' : 'image'}`}
+          className="w-7 shrink-0 flex justify-center"
+        >
+          <span className="bg-paperHover border border-rule text-inkSoft font-mono text-[9px] px-0.5 leading-tight">
+            {isVideo ? 'VID' : 'IMG'}
           </span>
         </span>
-        <span className="block text-[12px] truncate">
-          {eff.observations.length ? (
-            <span className="text-ink">{summarize(eff.observations)}</span>
+      )}
+      {!narrow && (
+        <span
+          data-column="timestamp"
+          aria-label={timestamp ? `Capture time: ${timestamp}` : 'Capture time unavailable'}
+          title={timestamp || 'No capture timestamp'}
+          className="w-28 shrink-0 whitespace-nowrap font-mono text-[11px] text-inkSoft leading-tight"
+        >
+          {timestampDisplay ? (
+            timestampDisplay
           ) : (
-            <span className="text-inkMute">untagged</span>
+            <span className="text-inkMute">—</span>
           )}
         </span>
+      )}
+      <span
+        data-column="species"
+        aria-label={`Species: ${species}`}
+        title={species}
+        className={`${narrow ? 'w-20' : 'w-24'} shrink-0 text-[12px] truncate ${
+          eff.observations.length ? 'text-ink' : 'text-inkMute'
+        }`}
+      >
+        {species}
       </span>
-      <span className="shrink-0 flex flex-col items-end gap-0.5">
-        {isEditedFromBase(eff) && (
-          <span className="w-1.5 h-1.5 rounded-full bg-accent" title="unsaved edit" />
+      <span data-column="markers" className="shrink-0 flex flex-col items-center gap-0.5 w-4">
+        {edited && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-accent"
+            title="unsaved edit"
+            aria-label="Unsaved edit"
+          />
         )}
         {eff.questionable && (
-          <span className="text-[11px] text-warn" title="questionable">
+          <span className="text-[11px] text-warn" title="questionable" aria-label="Questionable">
             ?
           </span>
         )}
-        <span className="text-[11px] font-mono text-inkMute">{index + 1}</span>
       </span>
       {onDrill && (
         <span
