@@ -13,12 +13,10 @@ vi.mock('@sparcd/s3-safe', async (importOriginal) => {
       constructor(cfg: S3Config) {
         this.endpoint = cfg.endpoint;
       }
-      listBuckets(): Promise<string[]> {
+      listBuckets(opts: { signal?: AbortSignal } = {}): Promise<string[]> {
         switch (behavior.get(this.endpoint)) {
           case 'ok':
             return Promise.resolve(['bucket']);
-          // An origin the storage itself refuses is still an origin: the
-          // primary would have been refused the same way.
           case 'http':
             return Promise.reject(
               Object.assign(new Error('AccessDenied'), { $metadata: { httpStatusCode: 403 } }),
@@ -26,7 +24,9 @@ vi.mock('@sparcd/s3-safe', async (importOriginal) => {
           case 'network':
             return Promise.reject(new Error('Failed to fetch'));
           default:
-            return new Promise<string[]>(() => {});
+            return new Promise<string[]>((_, reject) => {
+              opts.signal?.addEventListener('abort', () => reject(new Error('AbortError')));
+            });
         }
       }
     },

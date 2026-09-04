@@ -1320,6 +1320,28 @@ describe('endpoint sharding', () => {
     expect(shard.writeImmutable).not.toHaveBeenCalled();
   });
 
+  it('moves a file to the primary after its shard fails it twice', async () => {
+    const session = makeSession(Array.from({ length: 4 }, () => 'pending'));
+    const primary = makeClient(session.files);
+    const shard = makeClient(session.files);
+    shard.writeImmutableStream.mockRejectedValue(new Error('Failed to fetch'));
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(4);
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(4);
+  });
+
   it('stripes a streamed run too, not just a resume', async () => {
     const entries = [makeFileEntry(0), makeFileEntry(1), makeFileEntry(2), makeFileEntry(3)];
     const bucket = new Map<string, { size: number; sha256: string }>();

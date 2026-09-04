@@ -275,8 +275,8 @@ export class SafeS3Client {
    * gated by the allowlist — the allowlist scopes object operations, and a
    * caller still cannot read or write a disallowed bucket's objects.
    */
-  async listBuckets(): Promise<string[]> {
-    const res = await this.client.send(new ListBucketsCommand({}));
+  async listBuckets(opts: { signal?: AbortSignal } = {}): Promise<string[]> {
+    const res = await this.client.send(new ListBucketsCommand({}), { abortSignal: opts.signal });
     return (res.Buckets ?? []).map((b) => b.Name!).filter(Boolean);
   }
 

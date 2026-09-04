@@ -117,15 +117,16 @@ export function getShardClients(cfg: S3Config, origins: string[]): SafeS3Client[
  * store answers it the same way; anything else on that port does not.
  */
 async function answers(client: SafeS3Client): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(false), PROBE_TIMEOUT_MS);
-  });
-  const request = client.listBuckets().then(
-    () => true,
-    () => false,
-  );
-  return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    await client.listBuckets({ signal: ctl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

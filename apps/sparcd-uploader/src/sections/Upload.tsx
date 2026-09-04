@@ -103,7 +103,8 @@ export function Upload() {
   // the probe, so the run's first blob doesn't wait on it.
   const [connections, setConnections] = useState(1);
   useEffect(() => {
-    if (!s3Config) return;
+    setConnections(1);
+    if (!s3Config || effectiveDryRun) return;
     let live = true;
     void probeShardClients(s3Config).then((clients) => {
       if (live) setConnections(clients.length);
@@ -111,7 +112,7 @@ export function Upload() {
     return () => {
       live = false;
     };
-  }, [s3Config]);
+  }, [s3Config, effectiveDryRun]);
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();

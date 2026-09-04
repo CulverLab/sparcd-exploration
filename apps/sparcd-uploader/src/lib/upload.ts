@@ -38,7 +38,9 @@
 //
 // Blob transfers stripe round-robin over the endpoint's live shard origins (see
 // `probeShardClients`), sticky per item so a retry reuses the same connection.
-// Metadata, listings, and existing-object checks always go through the primary.
+// An item that fails twice on its shard finishes on the primary, which the run
+// depends on anyway. Metadata, listings, and existing-object checks always go
+// through the primary.
 
 import type { S3Config } from '@sparcd/types';
 import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
@@ -390,7 +392,7 @@ function makeRunner(
   // Started here, awaited at the first blob: by then the Upload step's own
   // probe has usually already settled it, so lanes never wait on the network
   // to find out how many connections they have.
-  const shardClients = probeShardClients(config);
+  const shardClients = dryRun ? Promise.resolve([client]) : probeShardClients(config);
   // Sticky per item, not per lane: a retry stays on the same origin.
   const blobClientFor = async (index: number): Promise<SafeS3Client> => {
     const clients = await shardClients;
@@ -569,6 +571,7 @@ function makeRunner(
         log('warn', `retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms: ${msg}`);
         await sleep(wait);
         attempt++;
+        if (attempt >= 2) blobClient = client;
       }
     }
   };
