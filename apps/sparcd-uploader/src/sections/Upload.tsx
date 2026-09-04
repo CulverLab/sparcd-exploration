@@ -13,6 +13,7 @@ import {
   runStreamingUpload,
   type ConcurrencyControl,
 } from '../lib/upload';
+import { probeShardClients } from '../lib/s3';
 import type { ProcessResponse } from '../lib/processPool';
 import { ensureBundle } from '../lib/resume';
 import { Note, RunMonitor } from '../components/RunMonitor';
@@ -96,6 +97,21 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
+
+  // One browser connection per origin the blob lanes are built from: the main
+  // endpoint plus each shard proxy port that answered. Asking here also warms
+  // the probe, so the run's first blob doesn't wait on it.
+  const [connections, setConnections] = useState(1);
+  useEffect(() => {
+    if (!s3Config) return;
+    let live = true;
+    void probeShardClients(s3Config).then((clients) => {
+      if (live) setConnections(clients.length);
+    });
+    return () => {
+      live = false;
+    };
+  }, [s3Config]);
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
@@ -449,6 +465,14 @@ export function Upload() {
                 Changes apply immediately, mid-run. Switch to adaptive tuning in Settings.
               </p>
             )}
+            <div className="flex items-center gap-3">
+              <span className="font-body text-[13px] text-inkSoft w-28">Endpoints</span>
+              <span className="font-mono text-[13px] text-ink">
+                {connections} connection{connections === 1 ? '' : 's'}
+                {connections > 1 &&
+                  ` (main + ${connections - 1} shard${connections === 2 ? '' : 's'})`}
+              </span>
+            </div>
           </div>
         )}
       </section>
