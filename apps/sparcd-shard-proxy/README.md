@@ -40,6 +40,30 @@ one vCPU — so h3 stays enabled but is not the default assumption. Its case is
 lossy, high-RTT field networks, which is exactly where these uploads often
 start.
 
+## Measured (2026-09-04, origins sweep)
+
+Mean settled MB/s of two repeats: the real uploader, 32 lanes, HTTP/2, 100 x
+4 MiB per run, against proxy-03's 20 ports with the rest blocked in the browser
+to set the origin count.
+
+| Path | Link MB/s | 1 | 2 | 4 | 8 | 12 | 16 | 20 |
+|---|---|---|---|---|---|---|---|---|
+| Residential, real (Mac, 68 ms RTT) | 13.9 | 6.5 | 9.5 | 12.4 | 12.3 | 14.0 | 14.5 | 14.8 |
+| Campus, emulated (30 ms, 0.01% loss) | 100 | 27.0 | 57.3 | 88.7 | 97.9 | 101.2 | 96.2 | 95.9 |
+| Home, emulated (60 ms, 0.2% loss) | 25 | 4.6 | 12.3 | 18.6 | 23.2 | 25.6 | 23.5 | 25.9 |
+| Field, emulated (150 ms, 0.3% loss) | 12.5 | 2.1 | 4.1 | 8.2 | 11.8 | 12.3 | 12.2 | 12.3 |
+
+The emulated rows are `tc netem` on a Jetstream2 client VM — delay, loss, rate
+cap — with loss calibrated so one TCP flow gets 12.9 / 5.7 / 2.9 MB/s.
+
+Throughput scales with origins until the client's link is full. Eight origins
+reach 92-98% of the link on every path, twelve reach it within noise, and
+nothing past twelve moved anywhere; inside Jetstream the store itself tops out
+around 200-290 MB/s, so at twelve the volunteer's own link is the bottleneck on
+every path we can imagine. The deployed proxy therefore publishes 11 shards.
+The client scans up to 20, so an operator can go higher without a client
+change, and nothing measured suggests a reason to.
+
 ## How sharding is spelled
 
 Two ways to hand out extra origins, both supported by the same config:
@@ -47,7 +71,7 @@ Two ways to hand out extra origins, both supported by the same config:
 - **Extra ports** — `proxy.example.org:443`, `:8443`, `:8444`, `:8445`. One
   DNS record, one certificate. Needs those ports open outbound on the client's
   network, which some institutional firewalls will not allow. This is the shape
-  the uploader finds by itself, anywhere in 8443-8462 — see
+  the uploader finds by itself, on any port up to 8462 — see
   [Client convention](#client-convention).
 - **Subdomains on :443** — `shard1.example.org` … `shard4.example.org`. Works
   from behind any firewall that permits HTTPS, costs a DNS record per shard,
@@ -201,9 +225,10 @@ Metadata writes, listings, and existing-object checks stay on the primary.
 
 **The operator sets the shard count, not the client.** However many of those
 twenty ports a proxy lists in `SHARD_ADDRESSES` is how many connections an
-upload gets — three is the shape below, twenty is the ceiling. Adding a shard
-is a port pair in `compose.yaml` and an address in `SHARD_ADDRESSES`; the
-client picks it up on the next session with no release.
+upload gets. The deployed proxy publishes 11, because twelve origins fill a
+volunteer's link on every path measured above and nothing beyond that moved.
+Adding a shard is a port pair in `compose.yaml` and an address in
+`SHARD_ADDRESSES`; the client picks it up on the next session with no release.
 
 Nothing about shards is entered in the client, and no run depends on one: an
 endpoint that is not a shard proxy refuses every one of those ports — instantly,
