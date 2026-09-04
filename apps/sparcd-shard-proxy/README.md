@@ -40,6 +40,39 @@ one vCPU — so h3 stays enabled but is not the default assumption. Its case is
 lossy, high-RTT field networks, which is exactly where these uploads often
 start.
 
+## Measured (2026-09-03, inside Jetstream2 IU → the same proxy)
+
+Client `sparcd-bench-01` (m3.medium, CCR190024), 0.3 ms to the object store,
+250 × 4 MiB synthetic JPEGs per run. Browser rows drive the real uploader
+headless; native rows are rclone. Settled MB/s, one row per configuration.
+
+| Path | Proto | Origins | Lanes | Browser | Native |
+|---|---|---|---|---|---|
+| js2:8001 direct | h2 | 1 | 32 | — | 176–182 |
+| JS2 via proxy | h2 | 1 | 16 | 208 | 133 |
+| JS2 via proxy | h2 | 1 | 32 | 245 | 151–179 |
+| JS2 via proxy | h2 | 1 | 64 / 96 | 244 / 233 | 113–123 |
+| JS2 via proxy | h2 | 2 | 32 | 262 | — |
+| JS2 via proxy | h2 | 4 | 16 | 236 | 159 |
+| JS2 via proxy | h2 | 4 | 32 | 202 | 179–219 |
+| JS2 via proxy | h2 | 4 | 64 / 96 | 199 / 251 | 136 |
+| JS2 via proxy | h3 | 1 / 2 / 4 | 32 | 52 / 54 / 54 | — |
+| JS2 via proxy | h3 | 1 / 4 | 64 | 47 / 47 | — |
+
+From inside the datacenter there is no knee: every HTTP/2 point from one
+origin at 16 lanes to four origins at 96 lanes lands between 199 and 262 MB/s,
+and repeats of one configuration spread as widely as the whole grid (the
+system drifted upward over the session; single rows are indicative). The
+browser matches native rclone. Origins and lanes buy nothing here because the
+per-connection congestion window is not the constraint on a 0.3 ms path; the
+ceiling is the object store itself, at roughly 200–260 MB/s through an m3.tiny
+proxy that never became the limit on h2. HTTP/3 pins at 47–54 MB/s whatever
+the origins or lanes, which is that one-vCPU proxy doing userspace QUIC.
+
+Raising the shipped 32-lane cap is not justified: in-cloud the curve is flat
+from 16 lanes, and volunteers on a WAN are bounded by per-connection capacity,
+where extra lanes on the same origin do not help and extra origins do.
+
 ## How sharding is spelled
 
 Two ways to hand out extra origins, both supported by the same config:
