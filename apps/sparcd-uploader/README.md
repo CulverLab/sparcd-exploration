@@ -25,7 +25,7 @@ Runtime-discovered BYO-S3 uploader.
 - Blob lanes stripe across the shard origins the endpoint implies: same host,
   https, every port up to 8462 — the range `apps/sparcd-shard-proxy` publishes
   from. All of them are probed once per session and the lanes use whichever
-  answered, so the proxy operator sets the shard count (11 on the deployed one)
+  answered, so the proxy operator sets the shard count (7 on the deployed one)
   and an endpoint with none uploads over the single connection. Nothing to
   configure.
 - History lists prior runs and resumes interrupted uploads from the ledger.

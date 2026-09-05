@@ -60,9 +60,9 @@ Throughput scales with origins until the client's link is full. Eight origins
 reach 92-98% of the link on every path, twelve reach it within noise, and
 nothing past twelve moved anywhere; inside Jetstream the store itself tops out
 around 200-290 MB/s, so at twelve the volunteer's own link is the bottleneck on
-every path we can imagine. The deployed proxy therefore publishes 11 shards.
-The client scans up to 20, so an operator can go higher without a client
-change, and nothing measured suggests a reason to.
+every path we can imagine. The deployed proxy publishes 7 shards: eight origins
+is the knee, twelve buys the last few percent, and an operator who wants them
+adds ports. The client scans up to 8462 either way.
 
 ## How sharding is spelled
 
@@ -225,10 +225,10 @@ Metadata writes, listings, and existing-object checks stay on the primary.
 
 **The operator sets the shard count, not the client.** However many of those
 twenty ports a proxy lists in `SHARD_ADDRESSES` is how many connections an
-upload gets. The deployed proxy publishes 11, because twelve origins fill a
-volunteer's link on every path measured above and nothing beyond that moved.
-Adding a shard is a port pair in `compose.yaml` and an address in
-`SHARD_ADDRESSES`; the client picks it up on the next session with no release.
+upload gets. The deployed proxy publishes 7 — the knee of the sweep above,
+where eight origins already reach 92-98% of a volunteer's link. Adding a shard
+is a port pair in `compose.yaml` and an address in `SHARD_ADDRESSES`; the
+client picks it up on the next session with no release.
 
 Shards join the run as they answer rather than the run waiting on the slowest
 probe, so a port that blackholes instead of refusing costs a slower ramp and
