@@ -39,8 +39,19 @@ const WRITE_SCOPE =
 // reconnect, and it does not put raw secrets into cache keys.
 let cached: { config: S3Config; client: SafeS3Client } | null = null;
 
+// Same posture for the shard clients: keyed by origin within one connection
+// object, so SDK clients are reused across runs but never outlive a reconnect.
+let shardCached: { config: S3Config; byOrigin: Map<string, SafeS3Client> } | null = null;
+
+// The probe result is keyed by what actually decides it — which host, and
+// which credentials sign the probe — so it survives the config object being
+// rebuilt within one session but not a reconnect elsewhere.
+let probeCached: { key: string; set: ShardSet } | null = null;
+
 export function clearClientCache(): void {
   cached = null;
+  shardCached = null;
+  probeCached = null;
 }
 
 export function getClient(cfg: S3Config): SafeS3Client {
@@ -48,6 +59,116 @@ export function getClient(cfg: S3Config): SafeS3Client {
   const client = new SafeS3Client(cfg, RUNTIME_BUCKET_SCOPE, WRITE_SCOPE);
   cached = { config: cfg, client };
   return client;
+}
+
+// The ports a shard proxy may publish alongside :443. The client looks for the
+// whole range every time; the operator decides how many of them to answer on
+// (`SHARD_ADDRESSES` in `apps/sparcd-shard-proxy`), and that is what sets the
+// shard count. Twenty is the ceiling, not the expectation.
+const FIRST_SHARD_PORT = 8443;
+const MAX_SHARDS = 20;
+export const SHARD_PORTS = Array.from({ length: MAX_SHARDS }, (_, i) => FIRST_SHARD_PORT + i);
+
+const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * The shard origins an endpoint implies: same host, https, every port a shard
+ * proxy might publish. Nothing is typed by hand — a volunteer enters one
+ * endpoint, and the probe decides which of these are real.
+ *
+ * An endpoint already naming a non-default port is a specific service rather
+ * than a proxy front door, and a plaintext one is a local store, so neither
+ * gets shards. A scheme-less `host[:port]` resolves to https the same way
+ * `@sparcd/s3-safe` resolves it.
+ */
+export function deriveShardOrigins(endpoint: string): string[] {
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`);
+  } catch {
+    return [];
+  }
+  if (url.protocol !== 'https:' || (url.port && url.port !== '443')) return [];
+  return SHARD_PORTS.map((port) => `https://${url.hostname}:${port}`);
+}
+
+/**
+ * The clients a run can stripe its blob lanes across: the primary plus one per
+ * shard origin.
+ *
+ * A browser coalesces all HTTP/2 and h3 traffic to an origin onto a single
+ * connection, so N parallel lanes share one congestion window and one
+ * throughput ceiling. Origins are keyed by host+port, so pointing lanes at the
+ * same storage through additional ports opens one connection per shard and
+ * multiplies the ceiling.
+ */
+export function getShardClients(cfg: S3Config, origins: string[]): SafeS3Client[] {
+  if (shardCached?.config !== cfg) shardCached = { config: cfg, byOrigin: new Map() };
+  const byOrigin = shardCached.byOrigin;
+  return [
+    getClient(cfg),
+    ...origins.map((endpoint) => {
+      let client = byOrigin.get(endpoint);
+      if (!client) {
+        client = new SafeS3Client({ ...cfg, endpoint }, RUNTIME_BUCKET_SCOPE, WRITE_SCOPE);
+        byOrigin.set(endpoint, client);
+      }
+      return client;
+    }),
+  ];
+}
+
+/**
+ * Whether a derived origin is really there. `listBuckets` is the request the
+ * connect flow already made against the primary, so a shard fronting the same
+ * store answers it the same way; anything else on that port does not.
+ */
+async function answers(client: SafeS3Client): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    await client.listBuckets({ signal: ctl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type ShardSet = {
+  /** Grows as shards answer. Always holds the primary, always safe to read. */
+  live: readonly SafeS3Client[];
+  /** The final list, once every probe has answered, failed, or timed out. */
+  settled: Promise<readonly SafeS3Client[]>;
+};
+
+/**
+ * The clients an upload run stripes across: the primary plus every derived
+ * shard that answered.
+ *
+ * Most endpoints are not a shard proxy — a bare MinIO, a direct store, a dev
+ * box — and have nothing on those ports. A port that answers with an RST is
+ * dismissed at once; one the network drops holds its probe for the full
+ * timeout, so the set is read live rather than awaited — a run starts on the
+ * primary and widens as shards join. Probed once per connection and never
+ * load-bearing: whatever the result, the primary alone runs the upload.
+ */
+export function probeShardClients(cfg: S3Config): ShardSet {
+  const key = `${cfg.endpoint}\n${cfg.accessKey}`;
+  if (probeCached?.key !== key) probeCached = { key, set: probeShards(cfg) };
+  return probeCached.set;
+}
+
+function probeShards(cfg: S3Config): ShardSet {
+  const [primary, ...shards] = getShardClients(cfg, deriveShardOrigins(cfg.endpoint));
+  const live: SafeS3Client[] = [primary];
+  const settled = Promise.all(
+    shards.map(async (shard) => {
+      if (await answers(shard)) live.push(shard);
+    }),
+  ).then(() => live);
+  return { live, settled };
 }
 
 function settingsRank(bucket: string): number {

@@ -35,10 +35,16 @@
 // a hard failure aborts the in-flight set at once. The pool size follows a live
 // target — either the manual setting (readable mid-run) or the adaptive
 // controller, which searches for the throughput knee and then holds it.
+//
+// Blob transfers stripe round-robin over the endpoint's live shard origins (see
+// `probeShardClients`), sticky per item so a retry reuses the same connection.
+// An item that fails twice on its shard finishes on the primary, which the run
+// depends on anyway. Metadata, listings, and existing-object checks always go
+// through the primary.
 
 import type { S3Config } from '@sparcd/types';
-import { PreconditionFailedError } from '@sparcd/s3-safe';
-import { getClient } from './s3';
+import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
+import { getClient, probeShardClients, type ShardSet } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
@@ -382,7 +388,16 @@ function makeRunner(
   opts: { persist: boolean; isResume: boolean; dryRun: boolean },
 ) {
   const { persist, isResume, dryRun } = opts;
-  const client = getClient(config);
+  const client = getClient(config); // metadata, listings, existing-object checks
+  // Read at assignment time, never awaited: the run starts striping over
+  // whatever has answered so far, so a shard port that blackholes costs a
+  // slower ramp rather than five seconds before the first blob moves.
+  const shards: ShardSet = dryRun
+    ? { live: [client], settled: Promise.resolve([client]) }
+    : probeShardClients(config);
+  // Sticky per item, not per lane: a retry stays on the same origin.
+  const blobClientFor = (index: number): SafeS3Client =>
+    shards.live[index % shards.live.length];
   let cancelled = false;
   let abort = new AbortController();
   // Set for the life of a streamed run so `cancel()` can also release lanes
@@ -449,7 +464,12 @@ function makeRunner(
 
   // Upload (or skip) one blob. Returns once the object is present and verified,
   // or throws on a non-recoverable failure.
-  const processItem = async (sessionId: string, fp: FileProgress, it: PlanItem): Promise<void> => {
+  const processItem = async (
+    sessionId: string,
+    fp: FileProgress,
+    it: PlanItem,
+    blobClient: SafeS3Client,
+  ): Promise<void> => {
     // Shared by the pre-verify check below and the upload retry loop — a
     // whole-connection drop hits `statObject` (verify) exactly as it hits
     // `writeImmutableStream` (upload), so a resume started offline needs the
@@ -508,7 +528,7 @@ function makeRunner(
       fp.loaded = 0;
       emit(true);
       try {
-        const { etag } = await client.writeImmutableStream(snap.bucket, it.key, it.file, {
+        const { etag } = await blobClient.writeImmutableStream(snap.bucket, it.key, it.file, {
           sha256: it.sha256,
           contentType: it.mimeType,
           signal: abort.signal,
@@ -551,6 +571,7 @@ function makeRunner(
         log('warn', `retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms: ${msg}`);
         await sleep(wait);
         attempt++;
+        if (attempt >= 2) blobClient = client;
       }
     }
   };
@@ -784,7 +805,7 @@ function makeRunner(
           if (i >= plan.items.length) return;
           const it = plan.items[i];
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it);
+            await processItem(plan.sessionId, byId.get(it.id)!, it, blobClientFor(i));
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -950,6 +971,7 @@ function makeRunner(
           return;
         }
         pulled.push(it);
+        const blobIndex = pulled.length - 1;
         const fp: FileProgress = { id: it.id, key: it.key, size: it.size, loaded: 0, state: 'pending', attempt: 0 };
         const idx = snap.files.findIndex((f) => f.id === it.id);
         if (idx >= 0) snap.files[idx] = fp;
@@ -965,7 +987,7 @@ function makeRunner(
           continue;
         }
         try {
-          await processItem(seed.sessionId, fp, it);
+          await processItem(seed.sessionId, fp, it, blobClientFor(blobIndex));
         } catch (err) {
           if (cancelled || abort.signal.aborted) return;
           if (isRunFatalBlobError(err)) {

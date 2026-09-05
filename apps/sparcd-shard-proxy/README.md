@@ -74,19 +74,44 @@ Raising the shipped 32-lane cap is not justified. In-cloud it buys nothing,
 and volunteers on a WAN are bounded by per-connection capacity, where extra
 lanes on the same origin do not help and extra origins do.
 
+## Measured (2026-09-04, origins sweep)
+
+Mean settled MB/s of two repeats: the real uploader, 32 lanes, HTTP/2, 100 x
+4 MiB per run, against proxy-03's 20 ports with the rest blocked in the browser
+to set the origin count.
+
+| Path | Link MB/s | 1 | 2 | 4 | 8 | 12 | 16 | 20 |
+|---|---|---|---|---|---|---|---|---|
+| Residential, real (Mac, 68 ms RTT) | 13.9 | 6.5 | 9.5 | 12.4 | 12.3 | 14.0 | 14.5 | 14.8 |
+| Campus, emulated (30 ms, 0.01% loss) | 100 | 27.0 | 57.3 | 88.7 | 97.9 | 101.2 | 96.2 | 95.9 |
+| Home, emulated (60 ms, 0.2% loss) | 25 | 4.6 | 12.3 | 18.6 | 23.2 | 25.6 | 23.5 | 25.9 |
+| Field, emulated (150 ms, 0.3% loss) | 12.5 | 2.1 | 4.1 | 8.2 | 11.8 | 12.3 | 12.2 | 12.3 |
+
+The emulated rows are `tc netem` on a Jetstream2 client VM — delay, loss, rate
+cap — with loss calibrated so one TCP flow gets 12.9 / 5.7 / 2.9 MB/s.
+
+Throughput scales with origins until the client's link is full. Eight origins
+reach 92-98% of the link on every path, twelve reach it within noise, and
+nothing past twelve moved anywhere; inside Jetstream the store itself tops out
+around 200-290 MB/s, so at twelve the volunteer's own link is the bottleneck on
+every path we can imagine. The deployed proxy publishes 7 shards: eight origins
+is the knee, twelve buys the last few percent, and an operator who wants them
+adds ports. The client scans up to 8462 either way.
+
 ## How sharding is spelled
 
 Two ways to hand out extra origins, both supported by the same config:
 
 - **Extra ports** — `proxy.example.org:443`, `:8443`, `:8444`, `:8445`. One
   DNS record, one certificate. Needs those ports open outbound on the client's
-  network, which some institutional firewalls will not allow.
+  network, which some institutional firewalls will not allow. This is the shape
+  the uploader finds by itself, on any port up to 8462 — see
+  [Client convention](#client-convention).
 - **Subdomains on :443** — `shard1.example.org` … `shard4.example.org`. Works
-  from behind any firewall that permits HTTPS, costs a DNS record per shard.
-  This is the production shape.
+  from behind any firewall that permits HTTPS, costs a DNS record per shard,
+  and needs a client that is told the names.
 
-Set `SHARD_ADDRESSES` to whichever you are using; the client's shard-endpoint
-list has to match.
+Set `SHARD_ADDRESSES` to whichever you are using.
 
 ## What the config gets right
 
@@ -221,13 +246,44 @@ the two the proxy cannot cover:
   connection to each.
 - **Strip `?x-id=` before signing.** See lesson 4 above.
 
-Client-side striping ships in the uploader's endpoint-sharding PR
-(`pr/endpoint-sharding`), not on `main` yet. There it is a comma- or
-newline-separated **Endpoint shards** list in Settings; `getShardClients` in
-`apps/sparcd-uploader/src/lib/s3.ts` builds one client per endpoint, all
-sharing the connection's credentials. Blob lanes stripe round-robin and stay
-sticky per item so a retry lands on the same origin; metadata writes and
-listings stay on the primary endpoint.
+### Client convention
+
+`apps/sparcd-uploader` derives its shard origins from the one endpoint a
+volunteer enters: same host, https, every port from **8443 through 8462**. It
+probes all twenty in parallel once per session with the signed `ListBuckets`
+the connect flow already makes, then stripes blob lanes round-robin across
+whichever answered, sticky per item so a retry lands on the same origin.
+Metadata writes, listings, and existing-object checks stay on the primary.
+`deriveShardOrigins` and `probeShardClients` in
+`apps/sparcd-uploader/src/lib/s3.ts` are the whole of it.
+
+**The operator sets the shard count, not the client.** However many of those
+twenty ports a proxy lists in `SHARD_ADDRESSES` is how many connections an
+upload gets. The deployed proxy publishes 7 — the knee of the sweep above,
+where eight origins already reach 92-98% of a volunteer's link. Adding a shard
+is a port pair in `compose.yaml` and an address in `SHARD_ADDRESSES`; the
+client picks it up on the next session with no release.
+
+Shards join the run as they answer rather than the run waiting on the slowest
+probe, so a port that blackholes instead of refusing costs a slower ramp and
+nothing else.
+
+Nothing about shards is entered in the client, and no run depends on one: an
+endpoint that is not a shard proxy refuses every one of those ports and uploads
+over a single connection, and a file that fails twice on a shard mid-run
+finishes on the primary. An endpoint that already names a port of its own —
+`store.example:9000` — gets no shards either, since it names a service rather
+than a proxy front door.
+
+A proxy fronting another store is found only if it publishes ports inside that
+range:
+
+```
+SHARD_ADDRESSES=proxy.example.org:8443, proxy.example.org:8444, proxy.example.org:8445
+```
+
+The subdomain recipe above is not discovered this way. It still serves a client
+that is given the names.
 
 ## Security note
 
