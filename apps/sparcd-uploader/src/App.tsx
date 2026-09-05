@@ -8,6 +8,7 @@ import { History } from './sections/History';
 import { Settings } from './sections/Settings';
 import { uploadStateOf } from './lib/uploadState';
 import { cancelProcessing } from './lib/processing';
+import { SpeciesKeyBindingGate } from './components/SpeciesKeyBindingGate';
 
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
@@ -102,10 +103,12 @@ export function App() {
   }
 
   return (
-    <Chrome uploadState={uploadStateOf(activeSnap)}>
-      {section === 'new' && <NewUpload />}
-      {section === 'history' && <History />}
-      {section === 'settings' && <Settings />}
-    </Chrome>
+    <SpeciesKeyBindingGate>
+      <Chrome uploadState={uploadStateOf(activeSnap)}>
+        {section === 'new' && <NewUpload />}
+        {section === 'history' && <History />}
+        {section === 'settings' && <Settings />}
+      </Chrome>
+    </SpeciesKeyBindingGate>
   );
 }
