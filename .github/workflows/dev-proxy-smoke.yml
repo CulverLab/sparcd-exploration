@@ -4,24 +4,18 @@ on:
   pull_request:
     paths:
       - "apps/sparcd-dev-proxy/**"
-      - "apps/sparcd-uploader/vite.config.*"
-      - "apps/sparcd-uploader/playwright.cross-tool.config.ts"
-      - "apps/sparcd-uploader/features/tag-before-upload.feature"
-      - "apps/sparcd-uploader/features/steps/tag-before-upload.steps.ts"
-      - "apps/sparcd-uploader/package.json"
-      - "apps/sparcd-tagger/vite.config.*"
+      - "apps/sparcd-uploader/**"
+      - "apps/sparcd-tagger/**"
+      - "packages/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/dev-proxy-smoke.yml"
   push:
     branches: [main]
     paths:
       - "apps/sparcd-dev-proxy/**"
-      - "apps/sparcd-uploader/vite.config.*"
-      - "apps/sparcd-uploader/playwright.cross-tool.config.ts"
-      - "apps/sparcd-uploader/features/tag-before-upload.feature"
-      - "apps/sparcd-uploader/features/steps/tag-before-upload.steps.ts"
-      - "apps/sparcd-uploader/package.json"
-      - "apps/sparcd-tagger/vite.config.*"
+      - "apps/sparcd-uploader/**"
+      - "apps/sparcd-tagger/**"
+      - "packages/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/dev-proxy-smoke.yml"
   workflow_dispatch:
@@ -29,7 +23,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -47,6 +41,12 @@ jobs:
 
       - name: Verify both apps through one origin
         run: pnpm --filter sparcd-dev-proxy smoke
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright Chromium
         run: pnpm --filter sparcd-uploader exec playwright install --with-deps chromium
