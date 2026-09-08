@@ -42,7 +42,7 @@ type TaggerState = {
 
   // Settings (the login gate stays three-field; identity + dry-run live here).
   taggerUser: string; // logical userId for snapshot paths + editComments
-  dryRun: boolean; // on by default; P4 sync logs and writes nothing until off
+  dryRun: boolean; // off by default; on to preview a sync without writing anything
   burstGroupingEnabled: boolean; // off by default — our cameras shoot no bursts
   burstThresholdSec: number; // sequence grouping threshold (5–600s), used when enabled
 
@@ -110,7 +110,7 @@ export const useStore = create<TaggerState>()(
     selectedUploadPrefix: null,
     pendingSnapshots: false,
     taggerUser: '',
-    dryRun: true,
+    dryRun: false,
     burstGroupingEnabled: false,
     burstThresholdSec: 60,
 

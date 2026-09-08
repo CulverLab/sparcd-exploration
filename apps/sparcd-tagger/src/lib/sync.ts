@@ -12,7 +12,7 @@
 //      injected `SyncIO`, so the conflict / snapshot-collision / partial-resume
 //      behaviour is testable with fakes and never touches a real bucket.
 //
-// Dry-run is the default (see the store): a dry-run returns the planned writes
+// Dry-run is opt-in (see the store): a dry-run returns the planned writes
 // and touches nothing — not even a snapshot.
 
 import {

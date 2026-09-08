@@ -127,6 +127,7 @@ Then(
     await page.getByRole('button', { name: 'Cancel' }).click();
     await page.getByRole('button', { name: 'Close', exact: true }).first().click();
     await sectionTab(page, 'Settings').click();
+    await settingsDryRunCheckbox(page).check();
     await expect(settingsDryRunCheckbox(page)).toBeChecked();
     await page.locator('#user').fill('jgonzalez');
     await sectionTab(page, 'Tag').click();

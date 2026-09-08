@@ -87,9 +87,9 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 3. **Identity is unverified free text.** Anything typed in Settings becomes
    the attribution and the snapshot folder name. Two people sharing a browser
    are distinguished only by remembering to change it.
-4. **Dry-run defaults to on, per session.** It is a session preference, not
-   persisted; a page reload restores the safe default. Confirm this is wanted
-   rather than remembering the last choice.
+4. **Dry-run defaults to off, per session.** It is a shared preference for
+   syncs and snapshot restores and is not persisted; a page reload restores
+   the live-write default.
 5. **"Done" in Browse means every image carries a species**, computed from
    the upload's own stored tally. An upload where every image is legitimately
    an empty frame counts as done only if those frames carry the Ghost label.

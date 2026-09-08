@@ -73,8 +73,8 @@ export function Settings() {
           Dry-run (log writes, change nothing)
         </label>
         <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          On by default. While on, Sync previews the canonical writes and a snapshot but changes
-          nothing. Turn it off to perform the conditional in-place replacement.
+          Off by default. Turn it on to preview canonical writes without changing anything. This
+          preference applies to both syncs and snapshot restores.
         </p>
       </section>
 

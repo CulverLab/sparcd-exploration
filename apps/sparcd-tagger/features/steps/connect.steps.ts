@@ -252,21 +252,20 @@ Then('{string} is switched off', async ({ page }, label: string) => {
 });
 
 Then(
-  'Sync previews what it would write without changing anything until it is switched off',
+  'Sync writes for real unless dry-run is switched on',
   async ({ page, s3 }) => {
-    await expect(settingsDryRunCheckbox(page)).toBeChecked();
-    // An identity is required before the dialog will run anything at all — even
-    // a dry-run — so set one and prove the dry-run still writes nothing.
+    await expect(settingsDryRunCheckbox(page)).not.toBeChecked();
+    // An identity is required before the dialog will run anything at all.
     await page.locator('#user').fill('jgonzalez');
     await sectionTab(page, 'Browse').click();
     await collectionButton(page, COLLECTION_NAME).click();
     await openWorkspaceFromBrowse(page);
     await makeLocalEdit(page);
     await openSyncDialog(page);
-    await expect(page.getByText(/Would write \d+ file\(s\)/)).toBeVisible();
-    await page.getByRole('button', { name: 'Run dry-run' }).click();
-    await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
-    expect(s3.puts).toHaveLength(0);
+    await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
+    await page.getByRole('button', { name: 'Sync now' }).click();
+    await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
+    expect(s3.puts.length).toBeGreaterThan(0);
   },
 );
 

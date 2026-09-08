@@ -412,6 +412,7 @@ Then('the sync preview counts how many images would have a corrected time', asyn
 Then(
   "only a live sync writes the corrected times into the upload's stored files",
   async ({ page, s3 }) => {
+    await setSyncDryRun(page, true);
     await page.getByRole('button', { name: 'Run dry-run' }).click();
     await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
     expect(s3.puts).toHaveLength(0);

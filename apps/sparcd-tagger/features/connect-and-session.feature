@@ -77,11 +77,11 @@ Feature: Connect the tagger to a collection store and manage the session
     # against the credentials it connected with.
 
   @unmapped
-  Scenario: Writes are a dry-run by default
+  Scenario: Real writes are the default; dry-run is opt-in
     Given the tagger is connected
     When Settings is opened for the first time in a session
-    Then "Dry-run (log writes, change nothing)" is switched on
-    And Sync previews what it would write without changing anything until it is switched off
+    Then "Dry-run (log writes, change nothing)" is switched off
+    And Sync writes for real unless dry-run is switched on
 
   @unmapped
   Scenario: Burst grouping is off by default and its window is adjustable
