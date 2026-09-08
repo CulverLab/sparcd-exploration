@@ -27,10 +27,9 @@ Feature: Recover a previous state of an upload
     # The manifest is written last, so a partial copy has none and is skipped.
 
   @unmapped
-  Scenario: An upload that has never been synced says so
+  Scenario: An upload that has never been synced offers no Snapshots list to open
     Given no sync has ever been run for this upload
-    When the snapshots list is opened
-    Then it states that snapshots are created the first time the upload is synced
+    Then the Snapshots button is disabled, explaining that a snapshot is taken on first sync
 
   @unmapped
   Scenario: A restore is previewed before anything is written

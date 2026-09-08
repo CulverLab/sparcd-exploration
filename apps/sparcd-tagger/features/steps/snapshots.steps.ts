@@ -73,11 +73,17 @@ Given('no sync has ever been run for this upload', async ({ page, s3 }) => {
   await expect(gridCell(page, 'FOX001.JPG')).toBeVisible();
 });
 
-Then('it states that snapshots are created the first time the upload is synced', async ({ page }) => {
-  await expect(
-    page.getByText('No snapshots yet. They are created the first time you sync this upload.'),
-  ).toBeVisible();
-});
+Then(
+  'the Snapshots button is disabled, explaining that a snapshot is taken on first sync',
+  async ({ page }) => {
+    const button = page.getByRole('button', { name: 'Snapshots…' });
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute(
+      'title',
+      'No snapshots yet — a snapshot is taken the first time this upload is synced',
+    );
+  },
+);
 
 // --- Restore preview --------------------------------------------------------
 

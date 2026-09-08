@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { useStore } from '../store';
-import { useTagImages, useSpecies } from '../lib/queries';
+import { useTagImages, useSpecies, useUploadSnapshots } from '../lib/queries';
 import { useMediaUrl } from '../lib/useMediaUrl';
 import { parseCollectionKey } from '../lib/s3';
 import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
@@ -80,6 +80,8 @@ export function Tag() {
 
   const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
   const species = useSpecies(cfg, connectionId);
+  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
+  const hasSnapshot = (snapshots.data?.length ?? 0) > 0;
 
   const localImages = useMemo(
     () => (localRecord ? localTagImages(localRecord) : EMPTY),
@@ -750,8 +752,13 @@ export function Tag() {
             <>
               <button
                 onClick={() => setShowSnapshots(true)}
-                className="text-[12px] font-mono border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                title="Browse and restore prior canonical snapshots of this upload"
+                disabled={!hasSnapshot}
+                className="text-[12px] font-mono border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-inkSoft disabled:hover:border-rule"
+                title={
+                  hasSnapshot
+                    ? 'Browse and restore prior canonical snapshots of this upload'
+                    : 'No snapshots yet — a snapshot is taken the first time this upload is synced'
+                }
               >
                 Snapshots…
               </button>
