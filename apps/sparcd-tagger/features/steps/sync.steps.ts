@@ -17,6 +17,8 @@ import {
   PREFIX_A,
   OBS_A,
   MEDIA_A,
+  COLLECTION_NAME,
+  STAMP_A,
   observationsCsv,
   mediaCsv,
 } from './support/data';
@@ -146,10 +148,8 @@ Then('which stored files would be rewritten', async ({ page }) => {
   await expect(page.getByText(/Would write 2 file\(s\)/)).toContainText('observations, uploadMeta');
 });
 
-Then('where the pre-change snapshot would be filed', async ({ page }) => {
-  await expect(page.getByText(/snapshot →/)).toContainText(
-    `${PREFIX_A}.sparcd-tagger-snapshots/jgonzalez/`,
-  );
+Then('which collection and upload it would write to', async ({ page }) => {
+  await expect(page.getByText(`${COLLECTION_NAME} / ${STAMP_A}`)).toBeVisible();
 });
 
 // --- Dry-run gate -----------------------------------------------------------

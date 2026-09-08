@@ -3,9 +3,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useStore } from '../store';
 import { useDraftStore, type UploadCtx } from '../lib/drafts';
 import { performSync } from '../lib/syncRunner';
+import { useCollections } from '../lib/queries';
 import type { SyncResult } from '../lib/sync';
 import type { TagImage } from '../lib/workspace';
 import type { DraftRecord } from '../lib/db';
+
+// Upload prefixes are stamped `YYYY.MM.DD.HH.MM.SS_user` — the folder name
+// under Uploads/ is the closest thing this data model has to an upload name.
+function uploadNameOf(uploadPrefix: string): string {
+  const segments = uploadPrefix.split('/').filter(Boolean);
+  return segments[segments.length - 1] ?? uploadPrefix;
+}
 
 // The Sync action: the tagger's only path that writes to S3. It previews the
 // diff against the canonical base (a dry-run, so the preview itself writes
@@ -32,6 +40,11 @@ export function SyncDialog({
   const setDryRun = useStore((s) => s.setDryRun);
   const setSyncState = useStore((s) => s.setSyncState);
   const connectionId = useStore((s) => s.connectionId);
+  const collectionKey = useStore((s) => s.selectedCollectionKey);
+  const collections = useCollections(cfg, connectionId);
+  const collection = collections.data?.find((c) => c.key === collectionKey);
+  const collectionName = collection?.name ?? collection?.bucket ?? ctx.bucket;
+  const uploadName = uploadNameOf(ctx.uploadPrefix);
   const markUploadSynced = useDraftStore((s) => s.markUploadSynced);
   const setTimeOffset = useDraftStore((s) => s.setTimeOffset);
   const discardUpload = useDraftStore((s) => s.discardUpload);
@@ -140,7 +153,15 @@ export function SyncDialog({
             </p>
           )}
 
-          {result && <ResultBody result={result} dryRun={dryRun} live={phase === 'done'} />}
+          {result && (
+            <ResultBody
+              result={result}
+              dryRun={dryRun}
+              live={phase === 'done'}
+              collectionName={collectionName}
+              uploadName={uploadName}
+            />
+          )}
 
           {!isConflict && !isNoop && !error && (
             <label className="flex items-center gap-2.5 border-t border-ruleSoft pt-3">
@@ -190,10 +211,14 @@ function ResultBody({
   result,
   dryRun,
   live,
+  collectionName,
+  uploadName,
 }: {
   result: SyncResult;
   dryRun: boolean;
   live: boolean;
+  collectionName: string;
+  uploadName: string;
 }) {
   switch (result.status) {
     case 'noop':
@@ -219,7 +244,7 @@ function ResultBody({
             {result.writes.map((w) => w.role).join(', ') || '—'}.
           </p>
           <p className="text-[12px] text-inkMute font-mono break-all">
-            snapshot → {result.snapshotPrefix}
+            {collectionName} / {uploadName}
           </p>
           {live && <p className="text-accent text-[13px]">Dry-run complete — nothing was written.</p>}
         </div>

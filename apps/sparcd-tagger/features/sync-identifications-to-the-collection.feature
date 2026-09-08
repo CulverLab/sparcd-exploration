@@ -33,7 +33,7 @@ Feature: Publish local identifications back to the collection
     Then it reports how many images gain, change or lose identifications
     And how many images have a corrected capture time
     And which stored files would be rewritten
-    And where the pre-change snapshot would be filed
+    And which collection and upload it would write to
 
   @unmapped
   Scenario: A real write requires switching off the dry-run setting

@@ -210,7 +210,6 @@ Then(
     await openWorkspaceFromBrowse(page);
     await makeLocalEdit(page);
     await openSyncDialog(page);
-    await expect(page.getByText(/snapshot →/)).toContainText('/jgonzalez/');
     await setSyncDryRun(page, false);
     await page.getByRole('button', { name: 'Sync now' }).click();
     await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
