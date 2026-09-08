@@ -328,6 +328,19 @@ Then("clearing the search leaves the upload's order untouched", async ({ page })
   expect(await tileOrder(page)).toEqual(before);
 });
 
+Given('the image search is not focused', async ({ page }) => {
+  await gridCell(page, 'IMG001.JPG').click();
+  await expect(imageSearch(page)).not.toBeFocused();
+});
+
+When('{string} is pressed', async ({ page }, key: string) => {
+  await page.keyboard.press(key);
+});
+
+Then('the image search has the keyboard focus', async ({ page }) => {
+  await expect(imageSearch(page)).toBeFocused();
+});
+
 // --- Mouse selection --------------------------------------------------------
 
 When('an image is clicked', async ({ page }) => {

@@ -69,6 +69,12 @@ Feature: Move through an upload and choose which images an action applies to
     And clearing the search leaves the upload's order untouched
 
   @unmapped
+  Scenario: The / key focuses the image search from anywhere in the workspace
+    Given the image search is not focused
+    When "/" is pressed
+    Then the image search has the keyboard focus
+
+  @unmapped
   Scenario: Images are selected by clicking, extending or adding
     Given the Overview is shown
     When an image is clicked

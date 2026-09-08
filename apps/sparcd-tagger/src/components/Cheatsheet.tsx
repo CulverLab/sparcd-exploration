@@ -14,6 +14,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
       { keys: ['PgDn'], action: 'Next burst' },
       { keys: ['PgUp'], action: 'Previous burst' },
       { keys: ['Enter'], action: 'Open focused image (Overview)' },
+      { keys: ['/'], action: 'Find image by filename' },
     ],
   },
   {
