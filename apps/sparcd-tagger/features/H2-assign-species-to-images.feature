@@ -102,7 +102,12 @@ Feature: Assign species to images in an upload
       | j   |
       | k   |
       | x   |
-      | 7   |
+
+  @H2
+  Scenario: Digit keys are reserved for species counts
+    Given an image is focused
+    When a digit is pressed while assigning a species key
+    Then key capture remains active and no key is assigned
 
   @H2
   Scenario: Alt or Option modified keys remain available to the browser
@@ -153,6 +158,69 @@ Feature: Assign species to images in an upload
     Given an image is focused
     When the Ghost key is pressed multiple times
     Then the image still carries Ghost with a count of one
+
+  @H2
+  Scenario: A count can be entered before adding a species to one image
+    Given an image is focused
+    When count 15 is entered before the bound species key
+    Then the new species count is 15
+    And the pending species count is cleared
+
+  @H2
+  Scenario: A prefixed species count is capped at twenty
+    Given an image is focused
+    When count 25 is entered before the bound species key
+    Then the new species count is 20
+
+  @H2
+  Scenario: A count prefix does not replace an existing species count
+    Given the focused image already carries the bound species at count two
+    When count 15 is entered before the bound species key
+    Then the existing species count increments to three
+
+  @H2
+  Scenario: A count prefix never changes Ghost's fixed count
+    Given an image is focused
+    When count 15 is entered before the Ghost key
+    Then the image still carries Ghost with a count of one
+
+  @H2
+  Scenario: Count-prefix entry is unavailable for multiple selected images
+    Given several images are selected
+    When count 15 is typed before the bound species key
+    Then no pending species count is shown
+    And each selected image increments the species from its own count
+
+  @H2
+  Scenario: Backspace edits a pending species count
+    Given an image is focused
+    When count 15 is entered and Backspace is pressed before the bound species key
+    Then the new species count is 1
+
+  @H2
+  Scenario: Escape cancels a pending species count
+    Given an image is focused
+    When count 15 is entered and Escape is pressed
+    Then no pending species count is shown
+
+  @H2
+  Scenario: Creating a multi-image selection clears a pending species count
+    Given an image is focused
+    And count 15 is pending
+    When several images are selected
+    Then no pending species count is shown
+
+  @H2
+  Scenario: Numbers typed into an input do not become a species count
+    Given an image is focused
+    When numbers are typed into the species filter
+    Then no pending species count is shown
+
+  @H2
+  Scenario: The existing species count editor is not capped at twenty
+    Given the focused image already carries the bound species at count two
+    When its existing count is changed to 25
+    Then its existing count is 25
 
   @H2
   Scenario: A key belongs to only one species

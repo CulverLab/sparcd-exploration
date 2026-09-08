@@ -73,11 +73,14 @@ export function effectiveKey(
   jsonKeyBinding: string | null,
   overrides: KeyOverrides | Record<string, string>,
 ): string | null {
+  let resolved: string | null;
   if (Object.prototype.hasOwnProperty.call(overrides, scientificName)) {
     const override = overrides[scientificName];
-    return override === '' ? null : override;
+    resolved = override === '' ? null : override;
+  } else {
+    resolved = normalizeJavaKeyCode(jsonKeyBinding);
   }
-  return normalizeJavaKeyCode(jsonKeyBinding);
+  return resolved && !/^\d$/.test(resolved) ? resolved : null;
 }
 
 export function conflictingKeyOwners(

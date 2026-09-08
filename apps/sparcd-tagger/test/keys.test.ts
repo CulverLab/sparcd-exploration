@@ -87,6 +87,11 @@ describe('effectiveKey', () => {
     expect(effectiveKey('Canis latrans', 'D', {})).toBe('d');
   });
 
+  it('reserves digit bindings for count-prefix entry', () => {
+    expect(effectiveKey('Canis latrans', 'DIGIT7', {})).toBeNull();
+    expect(effectiveKey('Canis latrans', 'D', { 'Canis latrans': '7' })).toBeNull();
+  });
+
   it('is null when neither source binds the species', () => {
     expect(effectiveKey('Canis latrans', null, {})).toBeNull();
   });
