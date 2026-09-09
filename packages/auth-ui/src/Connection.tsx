@@ -15,6 +15,13 @@ export type ConnectionProps = {
   /** `remember` reflects the "Remember me" checkbox at submit time — the
    *  caller decides what to persist (never the secret key) based on it. */
   onConnect: (config: S3Config, remember: boolean) => void;
+  /** When provided, offers a secondary "Login later" action so a caller can
+   *  let someone proceed without a connection until one is actually needed. */
+  onSkip?: () => void;
+  /** Drops the full-screen background/centering so the form can be dropped
+   *  into a caller's own layout (e.g. mid-wizard, asking to connect only once
+   *  a step needs it) instead of taking over the whole viewport. */
+  embedded?: boolean;
 };
 
 const fieldLabel = 'block font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
@@ -29,7 +36,13 @@ const textInput =
  * secure inferred from the endpoint and exposed only behind "Advanced".
  * Parameterized solely by `toolName`.
  */
-export function Connection({ toolName, initialConfig, onConnect }: ConnectionProps) {
+export function Connection({
+  toolName,
+  initialConfig,
+  onConnect,
+  onSkip,
+  embedded,
+}: ConnectionProps) {
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
   const [accessKey, setAccessKey] = useState(initialConfig?.accessKey ?? '');
   const [secretKey, setSecretKey] = useState(initialConfig?.secretKey ?? '');
@@ -76,8 +89,12 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
 
   return (
     <div
-      className="min-h-screen bg-paper bg-cover bg-center flex items-center justify-center p-6"
-      style={{ backgroundImage: `url(${backgroundImage})` }}
+      className={
+        embedded
+          ? ''
+          : 'min-h-screen bg-paper bg-cover bg-center flex items-center justify-center p-6'
+      }
+      style={embedded ? undefined : { backgroundImage: `url(${backgroundImage})` }}
     >
       <form
         onSubmit={submit}
@@ -205,6 +222,16 @@ export function Connection({ toolName, initialConfig, onConnect }: ConnectionPro
         >
           Connect
         </button>
+
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="mt-3 w-full text-[13px] font-body text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule"
+          >
+            Login later
+          </button>
+        )}
       </form>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
 import { useStore } from './store';
 import './lib/streamingBridge';
@@ -21,6 +21,8 @@ const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: d
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
+  const loginDeferred = useStore((s) => s.loginDeferred);
+  const setLoginDeferred = useStore((s) => s.setLoginDeferred);
   const section = useStore((s) => s.section);
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
@@ -31,9 +33,13 @@ export function App() {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
 
+  const previousConnection = useRef(s3Config);
   useEffect(() => {
-    cancelProcessing();
-  }, [connectionId]);
+    // Initial login can happen while an offline batch is still being inspected.
+    // Only a session being torn down/replaced invalidates that local work.
+    if (previousConnection.current || !s3Config) cancelProcessing();
+    previousConnection.current = s3Config;
+  }, [connectionId, s3Config]);
 
   // Warn on tab close/reload while any real run (fresh or resume) is in flight.
   // Lives here rather than in the section components so it covers History resume
@@ -115,9 +121,14 @@ export function App() {
     };
   }, [activelyRunning]);
 
-  if (!s3Config) {
+  if (!s3Config && !loginDeferred) {
     return (
-      <Connection toolName="Uploader" initialConfig={connectPrefill} onConnect={connect} />
+      <Connection
+        toolName="Uploader"
+        initialConfig={connectPrefill}
+        onConnect={connect}
+        onSkip={() => setLoginDeferred(true)}
+      />
     );
   }
 

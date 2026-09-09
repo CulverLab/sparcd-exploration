@@ -11,6 +11,7 @@ const SECTIONS: { id: Section; label: string }[] = [
 ];
 
 export function Chrome({ uploadState, children }: { uploadState: UploadState; children: ReactNode }) {
+  const s3Config = useStore((s) => s.s3Config);
   const section = useStore((s) => s.section);
   const setSection = useStore((s) => s.setSection);
   const activeSnap = useStore((s) => s.activeSnap);
@@ -73,7 +74,9 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
           <StatePill state={uploadState} />
-          <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />
+          {s3Config && (
+            <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />
+          )}
           <button
             onClick={toggleTheme}
             className="w-11 h-11 sm:w-8 sm:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"

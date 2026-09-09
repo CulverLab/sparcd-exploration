@@ -5,9 +5,10 @@ Feature: Connect the uploader to storage and manage the session
 
   """
   As-built flow: the uploader is a static, bring-your-own-credentials page with
-  no accounts of its own. Before any upload work is possible the user supplies
-  an S3-compatible endpoint, an access key and a secret key. What the tool can
-  see and write is decided entirely by those credentials and by the bucket's
+  no accounts of its own. The user can defer login to stage and inspect files
+  offline. Assigning a collection requires an S3-compatible endpoint, an access
+  key and a secret key. What the tool can see and write is decided entirely by
+  those credentials and by the bucket's
   CORS policy — not by anything configured in the page.
   """
 
@@ -15,10 +16,41 @@ Feature: Connect the uploader to storage and manage the session
     Given the uploader is open in a browser
 
   @unmapped
-  Scenario: Nothing in the tool is reachable before a connection is made
+  Scenario: The connection screen is shown until login is completed or deferred
     Given no connection has been made in this browser session
     Then the connection screen is the only thing shown
     And the New upload, History and Settings sections are not reachable
+
+  @unmapped
+  Scenario: Login can be deferred to work offline, then is asked for again when needed
+    Given no connection has been made in this browser session
+    When "Login later" is chosen instead of connecting
+    Then the New upload, History and Settings sections become reachable
+    And a batch can be dropped and inspected with no connection
+    When the Assign step is reached with no connection
+    Then it shows the connection screen instead of a collection picker
+    And going back from it returns to Inspect with the batch intact
+
+  @unmapped @offline
+  Scenario: A loaded uploader can inspect its first batch without network access
+    Given no connection has been made in this browser session
+    And the browser is offline before deferring login
+    When "Login later" is chosen instead of connecting
+    Then a batch can be dropped and inspected with no connection
+    When the Assign step is reached with no connection
+    Then it shows the connection screen instead of a collection picker
+    And going back from it returns to Inspect with the batch intact
+
+  @unmapped
+  Scenario: Connecting after deferring login preserves an inspection in progress
+    Given no connection has been made in this browser session
+    When "Login later" is chosen instead of connecting
+    And a deferred batch is still being inspected
+    And the Assign step is reached with no connection
+    Then it shows the connection screen instead of a collection picker
+    When a connection is made
+    Then Assign loads collections without losing the batch
+    And the deferred inspection finishes after connecting
 
   @unmapped
   Scenario: Connecting requires an endpoint, an access key and a secret key

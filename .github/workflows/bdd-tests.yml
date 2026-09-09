@@ -67,3 +67,8 @@ jobs:
       - name: Run BDD suite
         working-directory: apps/${{ matrix.app }}
         run: pnpm test:bdd
+
+      - name: Verify offline inspection in the built uploader
+        if: matrix.app == 'sparcd-uploader'
+        working-directory: apps/sparcd-uploader
+        run: pnpm test:bdd:offline

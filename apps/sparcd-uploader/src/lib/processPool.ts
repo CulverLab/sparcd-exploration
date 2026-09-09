@@ -3,6 +3,8 @@
 // few files in flight. Returns a cancel handle and a promise that settles when
 // the batch drains.
 
+// Include worker code in the loaded app so Inspect can start after going offline.
+import FileProcessorWorker from '../workers/fileProcessor.worker?worker&inline';
 import type { ProcessRequest, ProcessResponse } from '../workers/fileProcessor.worker';
 
 export type { ProcessResponse } from '../workers/fileProcessor.worker';
@@ -52,9 +54,7 @@ export function processBatch(
   };
 
   for (let i = 0; i < size; i++) {
-    const worker = new Worker(new URL('../workers/fileProcessor.worker.ts', import.meta.url), {
-      type: 'module',
-    });
+    const worker = new FileProcessorWorker();
     worker.onmessage = (e: MessageEvent<ProcessResponse>) => {
       const req = active.get(worker);
       active.delete(worker);

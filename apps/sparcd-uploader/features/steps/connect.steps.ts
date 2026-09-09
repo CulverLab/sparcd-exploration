@@ -37,6 +37,62 @@ Then('the New upload, History and Settings sections are not reachable', async ({
   }
 });
 
+Given('the browser is offline before deferring login', async ({ app }) => {
+  await app.page.context().setOffline(true);
+  await expect.poll(() => app.page.evaluate(() => navigator.onLine)).toBe(false);
+  await expect(app.page.getByRole('button', { name: 'Connect', exact: true })).toBeDisabled();
+});
+
+When('"Login later" is chosen instead of connecting', async ({ app }) => {
+  const skip = app.page.getByRole('button', { name: 'Login later' });
+  await expect(skip).toBeEnabled();
+  await skip.click();
+});
+
+Then('the New upload, History and Settings sections become reachable', async ({ app }) => {
+  for (const label of ['New upload', 'History', 'Settings']) {
+    await expect(app.page.getByRole('button', { name: label })).toBeVisible();
+    await app.gotoSection(label as 'New upload' | 'History' | 'Settings');
+  }
+  await expect(app.page.getByText('Not connected to storage.')).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.connectForm()).toBeVisible();
+  await app.page.getByRole('button', { name: 'Login later' }).click();
+  await app.gotoSection('New upload');
+});
+
+Then('a batch can be dropped and inspected with no connection', async ({ app }) => {
+  await app.dropFolder(standardBatch());
+  await app.waitForInspected();
+  const files = await app.listedFiles();
+  expect(files).toHaveLength(standardBatch().length);
+  for (const file of files) {
+    expect(file.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(file.issues).toBe('Valid');
+  }
+  app.notes.deferredFiles = files;
+  expect(app.s3.gets).toHaveLength(0);
+  expect(app.s3.puts).toHaveLength(0);
+});
+
+When('the Assign step is reached with no connection', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Continue' }).click();
+});
+
+Then('it shows the connection screen instead of a collection picker', async ({ app }) => {
+  await expect(app.connectForm()).toBeVisible();
+  await app.expectStep('Assign');
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
+});
+
+Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back' }).click();
+  await expect(app.fileListPane()).toBeVisible();
+  await expect.poll(() => app.listedFiles()).toEqual(app.notes.deferredFiles);
+});
+
 Given('the connection screen is shown', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
 });
@@ -329,3 +385,29 @@ Then(
     await expect(app.page.getByRole('option', { name: COLLECTION_B_NAME })).toHaveCount(0);
   },
 );
+
+When('a deferred batch is still being inspected', async ({ app }) => {
+  await app.holdInspect('BIG_CLIP.MP4');
+  await app.dropFolder(slowPublishableBatch());
+  await expect.poll(() => app.page.evaluate(() =>
+    (window as unknown as { __inspectHoldResolvers?: unknown[] }).__inspectHoldResolvers?.length ?? 0,
+  )).toBeGreaterThan(0);
+});
+
+Then('Assign loads collections without losing the batch', async ({ app }) => {
+  await app.expectStep('Assign');
+  await expect(app.connectForm()).toHaveCount(0);
+  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
+});
+
+Then('the deferred inspection finishes after connecting', async ({ app }) => {
+  await app.releaseHeldInspect();
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.waitForInspected();
+  const files = await app.listedFiles();
+  for (const file of files) expect(file.sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(files.map((file) => file.name).sort()).toEqual(
+    slowPublishableBatch().map((file) => file.path.split('/').pop()).sort(),
+  );
+});

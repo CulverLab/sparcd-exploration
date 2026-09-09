@@ -67,6 +67,10 @@ export type FileEntry = ScannedFile & {
 type UploaderState = {
   s3Config: S3Config | null;
   connectionId: number; // increments on connect/disconnect to scope client-side caches
+  // Set when the operator chooses "Login later" on the connect screen — lets
+  // Drop/Inspect proceed without a connection; Assign asks again once it
+  // actually needs one to list collections/deployments.
+  loginDeferred: boolean;
   section: Section;
   theme: Theme;
   elevationUnit: ElevationUnit; // display pref for location elevation (persisted)
@@ -126,6 +130,7 @@ type UploaderState = {
 
   connect: (config: S3Config, remember: boolean) => void;
   disconnect: () => void;
+  setLoginDeferred: (value: boolean) => void;
   setSection: (section: Section) => void;
   beginActiveRun: () => number | null;
   setActiveRun: (
@@ -177,6 +182,7 @@ function disconnectedState(s: UploaderState): Partial<UploaderState> {
   return {
     s3Config: null,
     connectionId: s.connectionId + 1,
+    loginDeferred: false,
     section: 'new',
     step: 'drop',
     files: [],
@@ -292,6 +298,7 @@ export const useStore = create<UploaderState>()(
     (set, get) => ({
       s3Config: initialSession,
       connectionId: 0,
+      loginDeferred: false,
       section: 'new',
       theme: initialTheme(),
       elevationUnit: 'meters',
@@ -333,11 +340,13 @@ export const useStore = create<UploaderState>()(
         set((s) => ({
           s3Config: config,
           connectionId: s.connectionId + 1,
+          loginDeferred: false,
           selectedLocationKey: null,
           selectedBucket: null,
           uploaderUser: s.uploaderUser || config.accessKey,
         }));
       },
+      setLoginDeferred: (value) => set({ loginDeferred: value }),
       disconnect: () => {
         invalidateRetryPartialRun();
         const run = get().activeRun;
@@ -722,6 +731,7 @@ subscribeSharedConnection((cfg) => {
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
+    loginDeferred: false,
     uploaderUser: s.uploaderUser || cfg.accessKey,
   }));
 }, () => useStore.getState().s3Config);

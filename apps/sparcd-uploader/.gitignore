@@ -12,3 +12,5 @@ scratch
 .features-gen-cross-tool
 bench/.fixtures/
 bench/results/
+
+.features-gen-offline

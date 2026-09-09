@@ -8,6 +8,7 @@ import { resetLocalState } from '../lib/reset';
 export function Settings() {
   const s3Config = useStore((s) => s.s3Config);
   const disconnect = useStore((s) => s.disconnect);
+  const setLoginDeferred = useStore((s) => s.setLoginDeferred);
   const setSection = useStore((s) => s.setSection);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
@@ -43,20 +44,34 @@ export function Settings() {
           Connection
         </h2>
         <div className="border border-rule bg-panel p-5 space-y-3">
-          <p className="font-body text-[14px] text-inkSoft">
-            Connected to{' '}
-            <span className="font-mono text-ink">{s3Config?.endpoint}</span>{' '}
-            (region <span className="font-mono text-ink">{s3Config?.region}</span>).
-          </p>
-          <button
-            onClick={() => void logout()}
-            className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          >
-            Disconnect
-          </button>
-          <p className="font-body text-[12px] text-inkMute">
-            Clears this browser's local upload sessions so the next person connects to a clean app.
-          </p>
+          {s3Config ? (
+            <>
+              <p className="font-body text-[14px] text-inkSoft">
+                Connected to{' '}
+                <span className="font-mono text-ink">{s3Config?.endpoint}</span>{' '}
+                (region <span className="font-mono text-ink">{s3Config?.region}</span>).
+              </p>
+              <button
+                onClick={() => void logout()}
+                className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              >
+                Disconnect
+              </button>
+              <p className="font-body text-[12px] text-inkMute">
+                Clears this browser's local upload sessions so the next person connects to a clean app.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-body text-[14px] text-inkSoft">Not connected to storage.</p>
+              <button
+                onClick={() => setLoginDeferred(false)}
+                className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              >
+                Connect
+              </button>
+            </>
+          )}
         </div>
       </section>
 

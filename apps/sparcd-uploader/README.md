@@ -8,6 +8,9 @@ design and phase breakdown.
 
 Runtime-discovered BYO-S3 uploader.
 
+- Choose **Login later** to stage and inspect files without credentials. Once the
+  app has loaded, inspection works without network access; Assign asks for a
+  connection to load collections and deployments.
 - Shared Connection gate (`@sparcd/auth-ui`) — three fields, endpoint-inferred
   region / path-style / secure behind "Advanced".
 - Tool chrome with section tabs (New upload · History · Settings), upload-state
@@ -76,6 +79,9 @@ pnpm --filter sparcd-uploader dev
 
 Optional dev prefill: copy `.env.example` to `.env` and set
 `VITE_SPARCD_S3_ENDPOINT` (endpoint only — never secrets).
+
+Verify offline inspection of the production build with `pnpm test:bdd:offline`.
+This test disables browser networking before the first batch is dropped.
 
 ## Shared packages
 

@@ -128,7 +128,9 @@ Then('a narrow Overview keeps filenames visible in its compact rows', async ({ p
   const row = listRow(page, 'IMG002.JPG');
   const filename = row.locator('[data-column="filename"]');
   await expect(filename).toBeVisible();
-  expect((await filename.boundingBox())?.width).toBeGreaterThan(80);
+  // ResizeObserver updates the compact-row layout after the viewport resize.
+  await expect.poll(async () => (await filename.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(80);
   await expect(row.locator('[data-column="species"]')).toBeVisible();
   await expect(row.locator('[data-column="media-type"]')).toHaveCount(0);
   await expect(row.locator('[data-column="timestamp"]')).toHaveCount(0);
