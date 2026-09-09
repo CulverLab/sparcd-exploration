@@ -21,6 +21,8 @@ type FakeClient = {
 
 const mocks = vi.hoisted(() => ({
   client: null as FakeClient | null,
+  // Set only by the sharding tests; otherwise the run gets the single client.
+  shardClients: null as FakeClient[] | null,
   openSession: vi.fn(),
   attachBundle: vi.fn(),
   markFileState: vi.fn(),
@@ -29,6 +31,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/lib/s3', () => ({
   getClient: vi.fn(() => mocks.client),
+  probeShardClients: vi.fn(() => {
+    const live = mocks.shardClients ?? [mocks.client];
+    return { live, settled: Promise.resolve(live) };
+  }),
 }));
 
 vi.mock('../src/lib/db', () => ({
@@ -181,8 +187,11 @@ function makeClient(records: FileRecord[], failingKeys = new Set<string>()): Fak
 function makeStreamingClient(
   failingRelPaths = new Set<string>(),
   hooks: { onPut?: () => Promise<void>; omitFromListing?: (key: string) => boolean } = {},
+  // Shard clients are extra connections to one bucket, so a sharded run's
+  // clients share the object store — a listing through any of them sees
+  // everything, whichever connection wrote it.
+  written = new Map<string, { size: number; sha256: string }>(),
 ): FakeClient {
-  const written = new Map<string, { size: number; sha256: string }>();
   return {
     statObject: vi.fn(async (_bucket: string, key: string) => {
       const w = written.get(key);
@@ -226,6 +235,7 @@ async function collect(run: { done: Promise<void> }, onDone: () => UploadSnapsho
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.client = null;
+  mocks.shardClients = null;
 });
 
 describe('cancellation during metadata publication', () => {
@@ -439,6 +449,135 @@ describe('upload runs continue past per-file blob failures', () => {
     }
   });
 
+  it('unblocks a retrying offline lane immediately when the systemic abort fires', async () => {
+    // Regression for #69. The scenario:
+    //   1. Two lanes start online. File 0 hits a transient error and goes to
+    //      sleep(backoff) before its next attempt. File 1 hits a run-fatal
+    //      forbidden error, which makes the supervisor call abort.abort() —
+    //      without setting `cancelled`.
+    //   2. The network drops while file 0 is sleeping.
+    //   3. File 0 wakes, calls ensureOnline(). It sees onLine===false and
+    //      abort.signal.aborted===true (systemic abort, not user cancel).
+    //   With the fix: ensureOnline throws immediately at the aborted check.
+    //   Without: it called waitForOnline with an already-fired signal — the
+    //   abort listener was registered too late, the poll timer (30 s) was the
+    //   only escape, so the run hung until that tick.
+    vi.useFakeTimers();
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('navigator', { onLine: true });
+    try {
+      const session = makeSession(['pending', 'pending']);
+      const f0key = session.files[0].remoteKey!;
+      mocks.client = makeClient(session.files);
+      mocks.client.writeImmutableStream.mockImplementation(async (_bucket: string, key: string) => {
+        if (key === f0key) {
+          // Transient server error: lane retries via sleep(backoff).
+          throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+        }
+        // Run-fatal: supervisor triggers abort.abort() without setting cancelled.
+        throw forbidden();
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+        (snap) => { last = snap; },
+      );
+      // Flush microtasks: both lanes have attempted their writes. File 1's
+      // forbidden has propagated to the supervisor, which called abort.abort().
+      // File 0's lane is now sleeping in backoff (setTimeout, frozen by fake
+      // timers). abort.signal.aborted is true; cancelled is false.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      // Go offline before the sleeping lane wakes and calls ensureOnline.
+      vi.stubGlobal('navigator', { onLine: false });
+      // Advance the fake clock: file 0's backoff sleep resolves, the lane
+      // calls ensureOnline, which now sees onLine===false and
+      // abort.signal.aborted===true and must throw rather than park in
+      // waitForOnline indefinitely.
+      // Use runAllTimersAsync so microtasks flush between timer firings —
+      // synchronous runAllTimers would loop the supervisor interval (1 s) tens
+      // of thousands of times before the test runner detects an infinite loop.
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('error');
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('logs the offline wait once per outage, not once per poll tick', async () => {
+    // Regression for #71 (log flood). Before the fix, ensureOnline logged
+    // "waiting for network…" inside the while loop, so every 30-second poll
+    // produced a log entry per lane. After the fix: one warn on entry to the
+    // offline wait, one info when the network returns — no matter how many
+    // polls fire in between.
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('navigator', { onLine: false });
+    try {
+      const session = makeSession(['pending']);
+      mocks.client = makeClient(session.files);
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) },
+        (snap) => { last = snap; },
+      );
+      // Let the lane reach ensureOnline and emit the "waiting" warn.
+      await new Promise((r) => setTimeout(r, 20));
+      vi.stubGlobal('navigator', { onLine: true });
+      fakeWindow.dispatchEvent(new Event('online'));
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('done');
+      const waitingLogs = snap.log.filter((l) => l.text.includes('waiting for network'));
+      const backLogs    = snap.log.filter((l) => l.text.includes('network back'));
+      expect(waitingLogs).toHaveLength(1);
+      expect(waitingLogs[0].kind).toBe('warn');
+      expect(backLogs).toHaveLength(1);
+      expect(backLogs[0].kind).toBe('info');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('proceeds after the bounded wait even when focus events interrupt every poll', async () => {
+    // Regression for #70. VPNs and some adapters can leave navigator.onLine
+    // permanently false even while packets flow normally. Before this fix,
+    // ensureOnline looped forever — focus reset the poll counter and restarted
+    // its timer. The elapsed-time deadline must expire independently of those
+    // events and let one attempt through.
+    // Here the mock succeeds, so the run completes — proving the bail-out
+    // unblocks the upload rather than hanging it forever.
+    vi.useFakeTimers();
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    vi.stubGlobal('navigator', { onLine: false }); // stuck false, never changes
+    try {
+      const session = makeSession(['pending']);
+      mocks.client = makeClient(session.files);
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) },
+        (snap) => { last = snap; },
+      );
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      // Interrupt every poll before it can fire. At the 90-second deadline a
+      // final focus event wakes the loop; it must proceed rather than reset.
+      for (let elapsed = 10_000; elapsed <= 90_000; elapsed += 10_000) {
+        await vi.advanceTimersByTimeAsync(10_000);
+        fakeWindow.dispatchEvent(new Event('focus'));
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+      }
+      expect(mocks.client.writeImmutableStream).toHaveBeenCalledTimes(1);
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('done');
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('publishes metadata after a clean sweep', async () => {
     const session = makeSession(Array.from({ length: 2 }, () => 'pending'));
     mocks.client = makeClient(session.files);
@@ -648,6 +787,88 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(snap.files.filter((f) => f.state === 'skipped')).toHaveLength(2);
     expect(snap.skippedBytes).toBe(session.files[0].size + session.files[1].size);
     expect(snap.uploadedBytes).toBe(session.files.reduce((n, f) => n + f.size, 0));
+  });
+
+  it('retries a transient statObject error during verify instead of counting it as a file failure', async () => {
+    // Regression for #71. Before the fix, a transient statObject error (network
+    // blip, 5xx) in verifyExisting propagated straight to the lane and
+    // incremented fileFailures. At concurrency 11+ a single blip could exhaust
+    // MAX_FILE_FAILURES (10) and trigger the systemic abort. With the fix,
+    // verifyExisting has its own retry loop: transient errors back off and retry,
+    // never reaching the lane's failure counter.
+    vi.useFakeTimers();
+    try {
+      const count = 11; // one more than MAX_FILE_FAILURES
+      const session = makeSession(Array.from({ length: count }, () => 'done'));
+      mocks.client = makeClient(session.files);
+      const callCounts = new Map<string, number>();
+      mocks.client.statObject.mockImplementation(async (_bucket: string, key: string) => {
+        const n = (callCounts.get(key) ?? 0) + 1;
+        callCounts.set(key, n);
+        if (n === 1) {
+          // First call throws a transient 503 — without the verify retry loop
+          // this would propagate to the lane and increment fileFailures.
+          throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+        }
+        const r = session.files.find((f) => f.remoteKey === key)!;
+        return { size: r.size, metadata: { sha256: r.sha256 } };
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(count) },
+        (snap) => { last = snap; },
+      );
+      // Advance fake clock through all 11 backoff sleeps (each ≤ 500 ms) plus
+      // the drivePool supervisor ticks between them.
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+      expect(snap.phase).toBe('done');
+      expect(snap.files.every((f) => f.state === 'skipped')).toBe(true);
+      // Every key must have been tried at least twice: the first 503 was
+      // retried rather than counted as a file failure. (Some keys get a third
+      // call from the finalReview digest sample — >= 2 covers both.)
+      for (const f of session.files) expect(callCounts.get(f.remoteKey!)).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not issue another verify HEAD after a sibling lane aborts during retry backoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession(['done', 'done']);
+      mocks.client = makeClient(session.files);
+      const originalStat = mocks.client.statObject.getMockImplementation()!;
+      const retryKey = session.files[0].remoteKey!;
+      const fatalKey = session.files[1].remoteKey!;
+      let retryCalls = 0;
+      mocks.client.statObject.mockImplementation(async (bucket: string, key: string) => {
+        if (key === retryKey) {
+          retryCalls++;
+          if (retryCalls === 1) {
+            throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+          }
+        }
+        if (key === fatalKey) {
+          await Promise.resolve();
+          throw forbidden();
+        }
+        return originalStat(bucket, key);
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+        (snap) => { last = snap; },
+      );
+
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('error');
+      expect(retryCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('respawns lanes when a manual target rises mid-run', async () => {
@@ -1306,4 +1527,91 @@ it('waits for final camera references before planning a streamed missing time', 
   expect((await collect(run, () => last)).phase).toBe('done');
   expect(mocks.markFileState.mock.calls.some(([, record]) => record.timestampSource === 'interpolated')).toBe(true);
   expect(mocks.attachBundle.mock.calls[0][0].mediaCsv).toContain('[TIMESTAMP:interpolated]');
+});
+
+describe('endpoint sharding', () => {
+  it('stripes blobs across the live shard clients and keeps metadata on the primary', async () => {
+    const session = makeSession(Array.from({ length: 4 }, () => 'pending'));
+    const primary = makeClient(session.files);
+    const shard = makeClient(session.files);
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(primary.writeImmutable).toHaveBeenCalledTimes(5);
+    expect(shard.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('moves a file to the primary after its shard fails it twice', async () => {
+    const session = makeSession(Array.from({ length: 4 }, () => 'pending'));
+    const primary = makeClient(session.files);
+    const shard = makeClient(session.files);
+    shard.writeImmutableStream.mockRejectedValue(new Error('Failed to fetch'));
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => {
+        last = snap;
+      },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(4);
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(4);
+  });
+
+  it('stripes a streamed run too, not just a resume', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1), makeFileEntry(2), makeFileEntry(3)];
+    const bucket = new Map<string, { size: number; sha256: string }>();
+    const primary = makeStreamingClient(new Set(), {}, bucket);
+    const shard = makeStreamingClient(new Set(), {}, bucket);
+    mocks.client = primary;
+    mocks.shardClients = [primary, shard];
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: manual(2),
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(primary.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(shard.writeImmutableStream).toHaveBeenCalledTimes(2);
+    expect(primary.writeImmutable).toHaveBeenCalledTimes(5);
+    expect(shard.writeImmutable).not.toHaveBeenCalled();
+  });
 });

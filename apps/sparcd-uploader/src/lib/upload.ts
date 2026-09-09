@@ -35,12 +35,18 @@
 // a hard failure aborts the in-flight set at once. The pool size follows a live
 // target — either the manual setting (readable mid-run) or the adaptive
 // controller, which searches for the throughput knee and then holds it.
+//
+// Blob transfers stripe round-robin over the endpoint's live shard origins (see
+// `probeShardClients`), sticky per item so a retry reuses the same connection.
+// An item that fails twice on its shard finishes on the primary, which the run
+// depends on anyway. Metadata, listings, and existing-object checks always go
+// through the primary.
 
 import { processingComplete } from './validation';
 import { estimateCaptureTimes } from './estimateCaptureTime';
 import type { S3Config } from '@sparcd/types';
-import { PreconditionFailedError } from '@sparcd/s3-safe';
-import { getClient } from './s3';
+import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
+import { getClient, probeShardClients, type ShardSet } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
@@ -190,6 +196,11 @@ const backoff = (attempt: number) => Math.random() * (BASE_BACKOFF_MS * 2 ** att
 // permanently wrong), so this is the escape hatch that keeps a stuck reading
 // from hanging the run forever instead of just delaying it.
 const ONLINE_POLL_MS = 30_000;
+// After this much elapsed time with navigator.onLine still false, ensureOnline
+// lets one upload attempt proceed. Elapsed time—not a count of poll wakeups—is
+// deliberate: repeated focus events restart the poll timer and must not starve
+// the escape indefinitely.
+const MAX_STUCK_OFFLINE_MS = 3 * ONLINE_POLL_MS;
 
 function waitForOnline(signal: AbortSignal): Promise<void> {
   // Strictly `false`, not falsy: `navigator.onLine` is `undefined` in plain
@@ -197,30 +208,23 @@ function waitForOnline(signal: AbortSignal): Promise<void> {
   // as online rather than waiting on a `window.addEventListener` that would
   // throw there.
   if (typeof window === 'undefined' || navigator.onLine !== false) return Promise.resolve();
+  if (signal.aborted) return Promise.reject(new Error('cancelled'));
   return new Promise((resolve, reject) => {
+    let poll: ReturnType<typeof setInterval> | null = null;
     const cleanup = () => {
-      window.removeEventListener('online', onDone);
-      window.removeEventListener('focus', onDone);
-      clearInterval(poll);
+      window.removeEventListener('online', onEvent);
+      window.removeEventListener('focus', onEvent);
+      if (poll !== null) clearInterval(poll);
       signal.removeEventListener('abort', onAbort);
     };
-    // Resolving here doesn't assert the network is actually back — the
-    // caller re-checks `navigator.onLine` itself and calls back in if it's
-    // still reporting offline. This just guarantees that recheck happens
-    // periodically and whenever the tab regains focus, so a stuck or
-    // never-fired `online` event can't wait forever.
-    const onDone = () => {
-      cleanup();
-      resolve();
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new Error('cancelled'));
-    };
-    window.addEventListener('online', onDone);
-    window.addEventListener('focus', onDone);
-    const poll = setInterval(onDone, ONLINE_POLL_MS);
+    const onEvent = () => { cleanup(); resolve(); };
+    const onAbort = () => { cleanup(); reject(new Error('cancelled')); };
+    window.addEventListener('online', onEvent);
+    window.addEventListener('focus', onEvent);
+    poll = setInterval(onEvent, ONLINE_POLL_MS);
     signal.addEventListener('abort', onAbort);
+    // Close the race between the preflight check and listener registration.
+    if (signal.aborted) onAbort();
   });
 }
 
@@ -385,7 +389,16 @@ function makeRunner(
   opts: { persist: boolean; isResume: boolean; dryRun: boolean },
 ) {
   const { persist, isResume, dryRun } = opts;
-  const client = getClient(config);
+  const client = getClient(config); // metadata, listings, existing-object checks
+  // Read at assignment time, never awaited: the run starts striping over
+  // whatever has answered so far, so a shard port that blackholes costs a
+  // slower ramp rather than five seconds before the first blob moves.
+  const shards: ShardSet = dryRun
+    ? { live: [client], settled: Promise.resolve([client]) }
+    : probeShardClients(config);
+  // Sticky per item, not per lane: a retry stays on the same origin.
+  const blobClientFor = (index: number): SafeS3Client =>
+    shards.live[index % shards.live.length];
   let cancelled = false;
   let abort = new AbortController();
   // Set for the life of a streamed run so `cancel()` can also release lanes
@@ -452,41 +465,78 @@ function makeRunner(
 
   // Upload (or skip) one blob. Returns once the object is present and verified,
   // or throws on a non-recoverable failure.
-  const processItem = async (sessionId: string, fp: FileProgress, it: PlanItem): Promise<void> => {
+  const processItem = async (
+    sessionId: string,
+    fp: FileProgress,
+    it: PlanItem,
+    blobClient: SafeS3Client,
+  ): Promise<void> => {
     // Shared by the pre-verify check below and the upload retry loop — a
     // whole-connection drop hits `statObject` (verify) exactly as it hits
     // `writeImmutableStream` (upload), so a resume started offline needs the
     // same wait-don't-fail treatment before it ever reaches the network,
     // not just once the retry loop is already running.
     const ensureOnline = async (): Promise<void> => {
-      while (typeof window !== 'undefined' && navigator.onLine === false) {
-        if (cancelled) throw new Error('cancelled');
+      if (typeof window !== 'undefined' && navigator.onLine === false) {
+        // Log once when entering the offline wait, not on every poll tick —
+        // a long outage with many lanes would otherwise flood the run monitor.
         log('warn', `waiting for network to retry ${it.key}`);
-        await waitForOnline(abort.signal);
+        const escapeAt = Date.now() + MAX_STUCK_OFFLINE_MS;
+        let stuck = false;
+        while (navigator.onLine === false) {
+          if (cancelled || abort.signal.aborted) throw new Error('cancelled');
+          if (Date.now() >= escapeAt) {
+            // navigator.onLine has stayed false for the bounded wait even after
+            // any focus/online nudges. Let one attempt through and
+            // let the retry/backoff loop be the actual connectivity arbiter —
+            // it handles transient network errors the same way regardless.
+            log('warn', `navigator.onLine stuck false after ${MAX_STUCK_OFFLINE_MS / 1000}s — attempting ${it.key} anyway`);
+            stuck = true;
+            break;
+          }
+          await waitForOnline(abort.signal);
+        }
+        if (!stuck) log('info', `network back, retrying ${it.key}`);
       }
-      if (cancelled) throw new Error('cancelled');
+      if (cancelled || abort.signal.aborted) throw new Error('cancelled');
     };
 
     // A completed blob from a prior run: sanity-check the remote copy before
     // skipping it. Size + recorded SHA-256 metadata is the portable contract.
+    // Transient statObject failures (network blip, 5xx) are retried with the
+    // same backoff as uploads — without this, all verify lanes can trip
+    // MAX_FILE_FAILURES from a single blip and trigger the systemic abort.
     const verifyExisting = async (): Promise<boolean> => {
-      try {
-        const stat = await client.statObject(snap.bucket, it.key);
-        if (stat.size === it.size && stat.metadata.sha256 === it.sha256) {
-          fp.state = 'skipped';
-          snap.uploadedBytes += it.size - fp.loaded;
-          snap.skippedBytes += it.size;
-          fp.loaded = it.size;
-          log('info', `verified, skip: ${it.key}`);
-          emit(true);
-          return true;
+      let attempt = 0;
+      for (;;) {
+        try {
+          const stat = await client.statObject(snap.bucket, it.key);
+          if (stat.size === it.size && stat.metadata.sha256 === it.sha256) {
+            fp.state = 'skipped';
+            snap.uploadedBytes += it.size - fp.loaded;
+            snap.skippedBytes += it.size;
+            fp.loaded = it.size;
+            log('info', `verified, skip: ${it.key}`);
+            emit(true);
+            return true;
+          }
+          log('warn', `remote mismatch: ${it.key}`);
+          return false;
+        } catch (err) {
+          if (isNotFound(err)) {
+            log('warn', `remote missing, re-uploading: ${it.key}`);
+            return false;
+          }
+          if (cancelled || abort.signal.aborted) throw err;
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          const wait = backoff(attempt);
+          log('warn', `verify retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
+          await sleep(wait);
+          if (cancelled || abort.signal.aborted) throw err;
+          await ensureOnline();
+          attempt++;
         }
-        log('warn', `remote mismatch: ${it.key}`);
-      } catch (err) {
-        if (isNotFound(err)) log('warn', `remote missing, re-uploading: ${it.key}`);
-        else throw err;
       }
-      return false;
     };
 
     if (it.doneAlready) {
@@ -511,7 +561,7 @@ function makeRunner(
       fp.loaded = 0;
       emit(true);
       try {
-        const { etag } = await client.writeImmutableStream(snap.bucket, it.key, it.file, {
+        const { etag } = await blobClient.writeImmutableStream(snap.bucket, it.key, it.file, {
           sha256: it.sha256,
           contentType: it.mimeType,
           signal: abort.signal,
@@ -554,6 +604,7 @@ function makeRunner(
         log('warn', `retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms: ${msg}`);
         await sleep(wait);
         attempt++;
+        if (attempt >= 2) blobClient = client;
       }
     }
   };
@@ -787,7 +838,7 @@ function makeRunner(
           if (i >= plan.items.length) return;
           const it = plan.items[i];
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it);
+            await processItem(plan.sessionId, byId.get(it.id)!, it, blobClientFor(i));
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -953,6 +1004,7 @@ function makeRunner(
           return;
         }
         pulled.push(it);
+        const blobIndex = pulled.length - 1;
         const fp: FileProgress = { id: it.id, key: it.key, size: it.size, loaded: 0, state: 'pending', attempt: 0 };
         const idx = snap.files.findIndex((f) => f.id === it.id);
         if (idx >= 0) snap.files[idx] = fp;
@@ -968,7 +1020,7 @@ function makeRunner(
           continue;
         }
         try {
-          await processItem(seed.sessionId, fp, it);
+          await processItem(seed.sessionId, fp, it, blobClientFor(blobIndex));
         } catch (err) {
           if (cancelled || abort.signal.aborted) return;
           if (isRunFatalBlobError(err)) {

@@ -46,9 +46,11 @@ Feature: Upload and publish a batch
     Then the title-bar pill and tooltip show dry-run while blobs are processing and after completion
 
   @unmapped
-  Scenario: A real upload states what access it needs before it starts
-    Then the tool states that a setup issue on the storage side is not the user's fault
-    And that the collection ID is given to contact an administrator with
+  Scenario: The admin setup guidance note is absent before and after a successful run
+    Given the upload has not been started
+    Then the admin setup guidance note is not visible
+    When a real upload is started and completes
+    Then the admin setup guidance note is not visible
 
   @F1
   Scenario: Every file in the batch is stored under one upload folder in the collection
@@ -108,6 +110,7 @@ Feature: Upload and publish a batch
     Then no metadata files are written
     And the run is reported as partial, stating how many files failed
     And the tool states that the upload is not yet visible and can be completed by retrying the failed files
+    And the admin setup guidance note is shown with the collection ID
 
   @F3
   Scenario: An upload that fails or is abandoned announces nothing
@@ -160,15 +163,55 @@ Feature: Upload and publish a batch
     And the retry is recorded in the activity log
 
   @unmapped
+  Scenario: A transient error during the resume verify pass is retried rather than counted as a file failure
+    Given a resumed run is verifying files already stored in a previous session
+    When the storage service returns a transient error for a verify HEAD request
+    Then the verify is retried with the same backoff as a failed upload
+    And the error is not counted toward the per-run file failure limit
+    # Without this, a single network blip at concurrency 10+ can exhaust
+    # MAX_FILE_FAILURES across all verify lanes simultaneously and trigger
+    # the systemic abort — the same problem #35 fixed on the upload path.
+
+  @unmapped
+  Scenario: The run monitor shows one offline warning per outage, not one per poll tick
+    Given a run pauses because the network is reported offline
+    Then the activity log records the offline wait exactly once
+    When the network returns
+    Then the activity log records the recovery exactly once
+    And no further offline entries appear for that outage
+    # Before this fix, ensureOnline logged inside the poll loop — a 5-minute
+    # outage with 10 lanes produced 100 warning lines in the run monitor.
+
+  @unmapped
+  Scenario: A run paused because the browser reports offline still completes if packets actually flow
+    Given the browser's navigator.onLine flag is stuck reporting offline
+    And ordinary focus events do not correct the stuck flag
+    When the run has waited through several poll intervals with no change to the flag
+    Then it lets one upload attempt proceed anyway
+    And if that attempt succeeds the run completes normally
+    # A VPN or certain network adapters can leave navigator.onLine permanently
+    # false. After a bounded 90-second wait with the flag still false,
+    # ensureOnline bails out and treats the upload attempt itself
+    # as the connectivity test. The retry/backoff loop handles a genuine
+    # network failure the same way it handles any transient error.
+
+  @unmapped
   Scenario: A permission failure stops the whole run at once
     Given a file's upload is refused for lack of permission
     Then the run stops immediately without working through the remaining files
     And the failure is reported
+    And the admin setup guidance note is shown with the collection ID
 
   @unmapped
   Scenario: Many independent file failures are treated as a systemic problem
     Given ten files have failed independently in one run
     Then the run stops and reports that the problem looks systemic rather than per-file
+
+  @unmapped
+  Scenario: A lane stuck offline after a systemic abort surfaces the error without waiting for the network
+    Given a run aborts systemically while some lanes are waiting for the network
+    Then the error screen is shown immediately
+    And the run does not wait for the network to return before reporting the failure
 
   @unmapped
   Scenario: An object already present at the same path is never silently overwritten

@@ -1,5 +1,4 @@
-import { defineConfig, type UserConfig } from 'vite';
-import type { InlineConfig } from 'vitest/node';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
@@ -31,6 +30,6 @@ export default defineConfig({
   // features/.features-gen/, which match Vitest's default `*.spec.js` glob —
   // keep the unit suite out of them.
   test: {
-    exclude: ['**/node_modules/**', '**/dist/**', 'features/.features-gen/**', 'bench/**'],
+    exclude: [...configDefaults.exclude, 'features/.features-gen/**', 'bench/**'],
   },
-} as UserConfig & { test: InlineConfig });
+});

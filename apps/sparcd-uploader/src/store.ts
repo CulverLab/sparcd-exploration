@@ -26,6 +26,8 @@ import {
 import { clearClientCache } from './lib/s3';
 import { localTimeZone, type NaiveDateTime } from './lib/exifTime';
 import type { ElevationUnit } from './lib/coords';
+import { loadSession } from './lib/db';
+import { resumeUpload } from './lib/upload';
 
 export type { ElevationUnit };
 export type Section = 'new' | 'history' | 'settings';
@@ -116,6 +118,11 @@ type UploaderState = {
     sessionId: string;
     progress: { done: number; total: number } | null;
   } | null;
+  // Files reattached by a History handoff. Cleared alongside activeRun so a
+  // completed or cancelled run doesn't hold stale File references. Used by
+  // retryPartialRun so the App-level auto-resume effect can reach them without
+  // needing Upload to be mounted.
+  attachedFiles: Map<string, File> | null;
 
   connect: (config: S3Config, remember: boolean) => void;
   disconnect: () => void;
@@ -162,6 +169,8 @@ type UploaderState = {
   setConcurrencyMode: (value: ConcurrencyMode) => void;
   setUploadConcurrency: (value: number) => void;
   setPendingResume: (value: PendingResume | null) => void;
+  setAttachedFiles: (files: Map<string, File> | null) => void;
+  retryPartialRun: () => Promise<void>;
   nextBatch: () => void;
 };
 
@@ -192,6 +201,7 @@ function disconnectedState(s: UploaderState): Partial<UploaderState> {
     activeRunReserved: false,
     activeRunSource: null,
     historyResumePreparation: null,
+    attachedFiles: null,
   };
 }
 
@@ -215,6 +225,13 @@ const toEntry = (f: ScannedFile): FileEntry => ({ ...f, processState: 'queued' }
 // invalidates it; applyProgress/setThumbnail only overwrite existing slots, so
 // they never need to.
 let fileIndexById: Map<string, number> | null = null;
+let retryPartialRunGeneration = 0;
+let retryPartialRunPending: number | null = null;
+
+function invalidateRetryPartialRun(): void {
+  retryPartialRunGeneration++;
+  retryPartialRunPending = null;
+}
 
 function invalidateFileIndex(): void {
   fileIndexById = null;
@@ -308,8 +325,10 @@ export const useStore = create<UploaderState>()(
       activeRunReserved: false,
       activeRunSource: null,
       historyResumePreparation: null,
+      attachedFiles: null,
 
       connect: (config, remember) => {
+        invalidateRetryPartialRun();
         clearClientCache();
         saveSharedConnection(config, remember);
         set((s) => ({
@@ -321,6 +340,7 @@ export const useStore = create<UploaderState>()(
         }));
       },
       disconnect: () => {
+        invalidateRetryPartialRun();
         const run = get().activeRun;
         set((s) => disconnectedState(s));
         run?.cancel();
@@ -402,6 +422,7 @@ export const useStore = create<UploaderState>()(
           activeRunGeneration: s.activeRunGeneration + 1,
           activeRunReserved: false,
           activeRunSource: null,
+          attachedFiles: null,
         }));
         run?.cancel();
       },
@@ -414,6 +435,7 @@ export const useStore = create<UploaderState>()(
           activeRunGeneration: s.activeRunGeneration + 1,
           activeRunReserved: false,
           activeRunSource: null,
+          attachedFiles: null,
         })),
       beginHistoryResumePreparation: (sessionId) =>
         set({ historyResumePreparation: { sessionId, progress: null } }),
@@ -560,6 +582,7 @@ export const useStore = create<UploaderState>()(
         }),
 
       resetBatch: () => {
+        invalidateRetryPartialRun();
         invalidateFileIndex();
         set((s) => ({
           files: [],
@@ -577,6 +600,7 @@ export const useStore = create<UploaderState>()(
           activeRunReserved: false,
           activeRunSource: null,
           historyResumePreparation: null,
+          attachedFiles: null,
         }));
       },
 
@@ -590,11 +614,52 @@ export const useStore = create<UploaderState>()(
       setConcurrencyMode: (value) => set({ concurrencyMode: value }),
       setUploadConcurrency: (value) => set({ uploadConcurrency: value }),
       setPendingResume: (value) => set({ pendingResume: value }),
+      setAttachedFiles: (files) => set({ attachedFiles: files }),
+      retryPartialRun: async () => {
+        if (retryPartialRunPending !== null) return;
+        const { s3Config, connectionId, activeSnap, attachedFiles, files } = get();
+        if (!s3Config || activeSnap?.phase !== 'partial' || activeSnap.dryRun) return;
+        const attempt = ++retryPartialRunGeneration;
+        retryPartialRunPending = attempt;
+        try {
+          const session = await loadSession(activeSnap.sessionId);
+          const current = get();
+          if (
+            retryPartialRunGeneration !== attempt ||
+            current.connectionId !== connectionId ||
+            current.s3Config !== s3Config ||
+            current.activeSnap !== activeSnap
+          ) return;
+          // Guard: no bundle means a systemic-abort run that needs ensureBundle;
+          // that path requires the files still in memory and lives in Upload.tsx.
+          if (!session?.bundle) return;
+          const attached = attachedFiles ?? new Map(files.map((f) => [f.relPath, f.file]));
+          const concurrency =
+            get().concurrencyMode === 'manual'
+              ? { mode: 'manual' as const, get: () => get().uploadConcurrency }
+              : { mode: 'adaptive' as const };
+          const generation = get().beginActiveRun();
+          if (generation === null) return;
+          const run = resumeUpload(
+            { config: s3Config, session, attached, concurrency },
+            (next) => get().setActiveSnap(next, generation),
+          );
+          get().setActiveRun(run, generation);
+        } catch {
+          // Transient IDB or resume error — leave phase as 'partial' so the
+          // next visibility or online event can try again. Permanent failures
+          // are surfaced by the manual Retry button in Upload.tsx, which has
+          // its own error display.
+        } finally {
+          if (retryPartialRunPending === attempt) retryPartialRunPending = null;
+        }
+      },
 
       // Start a fresh batch after a completed upload, keeping the deployment,
       // uploader, target collection, and description so a researcher can chain
       // batches for the same site without re-entering everything.
       nextBatch: () => {
+        invalidateRetryPartialRun();
         invalidateFileIndex();
         set((s) => ({
           files: [],
@@ -612,6 +677,7 @@ export const useStore = create<UploaderState>()(
           activeRunReserved: false,
           activeRunSource: null,
           historyResumePreparation: null,
+          attachedFiles: null,
         }));
       },
     }),

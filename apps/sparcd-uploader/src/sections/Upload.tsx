@@ -13,6 +13,7 @@ import {
   runStreamingUpload,
   type ConcurrencyControl,
 } from '../lib/upload';
+import { probeShardClients } from '../lib/s3';
 import type { ProcessResponse } from '../lib/processPool';
 import { ensureBundle } from '../lib/resume';
 import { Note, RunMonitor } from '../components/RunMonitor';
@@ -94,6 +95,28 @@ export function Upload() {
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
+
+  // One browser connection per origin the blob lanes are built from: the main
+  // endpoint plus each shard proxy port that answered. Asking here also warms
+  // the probe, so a run started now already has the shards that are up. The set
+  // grows as they answer and there is no event for a join, so poll it until the
+  // slowest probe times out.
+  const [connections, setConnections] = useState(1);
+  useEffect(() => {
+    setConnections(1);
+    if (!s3Config || effectiveDryRun) return;
+    const shards = probeShardClients(s3Config);
+    let mounted = true;
+    const joins = setInterval(() => setConnections(shards.live.length), 250);
+    void shards.settled.then((clients) => {
+      clearInterval(joins);
+      if (mounted) setConnections(clients.length);
+    });
+    return () => {
+      mounted = false;
+      clearInterval(joins);
+    };
+  }, [s3Config, effectiveDryRun]);
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
@@ -134,6 +157,7 @@ export function Upload() {
     setCompleteDismissed(false);
     attachedRef.current = pending.attached;
     const generation = pending.generation;
+    useStore.getState().setAttachedFiles(pending.attached);
     const run = resumeUpload(
       {
         config: s3Config,
@@ -277,34 +301,6 @@ export function Upload() {
     }
   }, [snap, s3Config, connectionId, files, beginActiveRun, setActiveRun, setActiveSnap]);
 
-  // Self-heal after an interruption the user might not notice — a run that
-  // landed on 'partial' (some files failed after exhausting their own
-  // retries) resumes automatically instead of waiting for them to notice and
-  // click Retry. Only 'partial' — not the fatal 'error' phase, which usually
-  // means credentials/CORS/policy, not a transient blip a blind retry would
-  // fix.
-  //
-  // "Wakes up" on either of two edge-triggered signals, whichever comes
-  // first: the tab regaining visibility (covers minimize/lid-close/sleep —
-  // the OS resumes and the visibilitychange fires), or the browser's `online`
-  // event (covers a network drop that resolves while the tab stayed visible
-  // the whole time, e.g. wifi flapping). Both conditions (visible AND online)
-  // are re-checked at the moment either fires, so a machine that wakes with
-  // wifi still reconnecting won't retry until `online` actually follows.
-  useEffect(() => {
-    const tryAutoResume = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine && snap?.phase === 'partial' && !snap.dryRun) {
-        void retryFailed();
-      }
-    };
-    document.addEventListener('visibilitychange', tryAutoResume);
-    window.addEventListener('online', tryAutoResume);
-    return () => {
-      document.removeEventListener('visibilitychange', tryAutoResume);
-      window.removeEventListener('online', tryAutoResume);
-    };
-  }, [snap, retryFailed]);
-
   // A resumed run replays a persisted bundle and needs nothing from Assign, so
   // these guards stand down once a run is in flight or handed off.
   if ((!location || !collection || !slug) && !snap && !pendingResume) {
@@ -357,10 +353,10 @@ export function Upload() {
               Test the upload, nothing is written
             </label>
 
-            {!effectiveDryRun && (
+            {snap && (snap.phase === 'error' || snap.phase === 'partial') && !snap.dryRun && (
               <Note
                 tone="warn"
-                message={`If not testing the upload and it fails right away, that's usually a setup issue on the storage side, not something you did wrong. Contact your administrator and give them this collection ID: ${collection.uuid}.`}
+                message={`Upload failed. If it keeps happening, ask your administrator to check: the bucket's CORS policy must allow this web origin for PUT, HEAD, and OPTIONS requests, and the credentials need PUT, HEAD, and LIST permissions on the upload prefix. Collection ID: ${collection.uuid}.`}
               />
             )}
           </>
@@ -405,6 +401,14 @@ export function Upload() {
                 Changes apply immediately, mid-run. Switch to adaptive tuning in Settings.
               </p>
             )}
+            <div className="flex items-center gap-3">
+              <span className="font-body text-[13px] text-inkSoft w-28">Endpoints</span>
+              <span className="font-mono text-[13px] text-ink">
+                {connections} connection{connections === 1 ? '' : 's'}
+                {connections > 1 &&
+                  ` (main + ${connections - 1} shard${connections === 2 ? '' : 's'})`}
+              </span>
+            </div>
           </div>
         )}
       </section>

@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
 import { FOLDER, manyJpegs, publishableBatch, sameNameSubfolderBatch, slowPublishableBatch, standardBatch } from './batches';
-import { rescanFromUpload, writtenCsvRows } from './helpers';
+import { FAILING_FILE, rescanFromUpload, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
@@ -152,19 +152,16 @@ Then('the run is not recorded in History', async ({ app }) => {
   await expect(app.page.getByText('No uploads yet')).toBeVisible();
 });
 
-Then(
-  "the tool states that a setup issue on the storage side is not the user's fault",
-  async ({ app }) => {
-    await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
-      "not something you did wrong",
-    );
-  },
-);
+Then('the admin setup guidance note is not visible', async ({ app }) => {
+  await expect(app.page.getByText(/Upload failed.*administrator/)).toHaveCount(0);
+});
 
-Then('that the collection ID is given to contact an administrator with', async ({ app }) => {
-  await expect(app.page.getByText(/that's usually a setup issue on the storage side/)).toContainText(
-    `this collection ID: ${UUID_A}`,
-  );
+Then('the admin setup guidance note is shown with the collection ID', async ({ app }) => {
+  const note = app.page.getByText(/Upload failed.*administrator/);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText('CORS policy');
+  await expect(note).toContainText('PUT, HEAD');
+  await expect(note).toContainText(`Collection ID: ${UUID_A}`);
 });
 
 // --- a complete real upload ------------------------------------------------
@@ -591,6 +588,130 @@ Then('the retry is recorded in the activity log', async ({ app }) => {
   expect(await app.logText()).toMatch(/failed [^\s]*IMG_0002\.JPG/);
 });
 
+Given(
+  'a resumed run is verifying files already stored in a previous session',
+  async ({ app }) => {
+    app.s3.putDelayMs = 150;
+    app.s3.putHooks.push((_bucket, key) =>
+      key.endsWith(FAILING_FILE)
+        ? { status: 400, code: 'InvalidRequest', message: 'refused' }
+        : undefined,
+    );
+    await app.dryRunCheckbox().uncheck();
+    await app.startRun();
+    await app.waitForRunPhase('partial', 120_000);
+    app.s3.putHooks.length = 0;
+    await app.gotoSection('History');
+  },
+);
+
+When(
+  'the storage service returns a transient error for a verify HEAD request',
+  async ({ app }) => {
+    const attempts = new Map<string, number>();
+    app.notes.verifyHeadAttempts = attempts;
+    app.s3.headHooks.push((_bucket, key) => {
+      if (METADATA_NAMES.some((name) => key.endsWith(name))) return undefined;
+      const count = (attempts.get(key) ?? 0) + 1;
+      attempts.set(key, count);
+      // The AWS SDK consumes its own three-attempt retry budget before the
+      // application-level verify retry sees the transient failure.
+      return count <= 3
+        ? { status: 503, code: 'ServiceUnavailable', message: 'try later' }
+        : undefined;
+    });
+    await app.page.getByRole('button', { name: 'Resume' }).first().click();
+    await app.waitForRunPhase('done', 120_000);
+  },
+);
+
+Then('the verify is retried with the same backoff as a failed upload', async ({ app }) => {
+  const attempts = app.notes.verifyHeadAttempts as Map<string, number>;
+  expect([...attempts.values()].some((count) => count >= 4)).toBe(true);
+  expect(await app.logText()).toMatch(/verify retry .* \(attempt 2\) after \d+ms/);
+});
+
+Then('the error is not counted toward the per-run file failure limit', async ({ app }) => {
+  await expect(app.runPhase()).toHaveText('done');
+  expect(await app.logText()).not.toContain('problem looks systemic');
+});
+
+Given('a run pauses because the network is reported offline', async ({ app }) => {
+  await rescanFromUpload(app, manyJpegs(1));
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+  });
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await expect.poll(() => app.logText(), { timeout: 30_000 }).toContain('waiting for network');
+});
+
+Then('the activity log records the offline wait exactly once', async ({ app }) => {
+  const log = await app.logText();
+  expect(log.match(/waiting for network/g) ?? []).toHaveLength(1);
+});
+
+When('the network returns', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+  });
+  await app.waitForRunPhase('done', 120_000);
+});
+
+Then('the activity log records the recovery exactly once', async ({ app }) => {
+  const log = await app.logText();
+  expect(log.match(/network back/g) ?? []).toHaveLength(1);
+});
+
+Then('no further offline entries appear for that outage', async ({ app }) => {
+  const before = await app.logText();
+  await app.page.waitForTimeout(250);
+  const after = await app.logText();
+  expect(after.match(/waiting for network/g) ?? []).toHaveLength(1);
+  expect(after).toBe(before);
+});
+
+Given("the browser's navigator.onLine flag is stuck reporting offline", async ({ app }) => {
+  await app.page.evaluate(() => {
+    const state = window as unknown as { offlineClockOffset: number; actualDateNow: () => number };
+    state.offlineClockOffset = 0;
+    state.actualDateNow = Date.now.bind(Date);
+    Date.now = () => state.actualDateNow() + state.offlineClockOffset;
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+  });
+});
+
+Given('ordinary focus events do not correct the stuck flag', async ({ app }) => {
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(false);
+});
+
+When(
+  'the run has waited through several poll intervals with no change to the flag',
+  async ({ app }) => {
+    await app.dryRunCheckbox().uncheck();
+    await app.startRun();
+    await expect.poll(() => app.logText()).toContain('waiting for network');
+    for (let elapsed = 30_000; elapsed <= 90_000; elapsed += 30_000) {
+      await app.page.evaluate(() => {
+        const state = window as unknown as { offlineClockOffset: number };
+        state.offlineClockOffset += 30_000;
+        window.dispatchEvent(new Event('focus'));
+      });
+    }
+  },
+);
+
+Then('it lets one upload attempt proceed anyway', async ({ app }) => {
+  await expect.poll(() => mediaPuts(app).length, { timeout: 10_000 }).toBeGreaterThan(0);
+  expect(await app.logText()).toContain('navigator.onLine stuck false');
+});
+
+Then('if that attempt succeeds the run completes normally', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(false);
+});
+
 Given("a file's upload is refused for lack of permission", async ({ app }) => {
   await rescanFromUpload(app, manyJpegs(24));
   // Pin the lanes so the abort has files left to skip — adaptive would be free
@@ -631,6 +752,54 @@ Then(
     await expect(
       app.page.getByText(/aborted after 10 file failures — the problem looks systemic, not per-file/).first(),
     ).toBeVisible();
+  },
+);
+
+Given(
+  'a run aborts systemically while some lanes are waiting for the network',
+  async ({ app }) => {
+    await rescanFromUpload(app, manyJpegs(4));
+    await app.pinConcurrency(4);
+    await app.page.evaluate(() => {
+      Math.random = () => 1;
+    });
+
+    let markOffline!: () => void;
+    const offline = new Promise<void>((resolve) => { markOffline = resolve; });
+    app.s3.putHooks.push(async (_bucket, key) => {
+      if (key.endsWith('IMG_0000.JPG')) {
+        await app.page.evaluate(() => {
+          Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+        });
+        markOffline();
+        return { status: 503, code: 'ServiceUnavailable', message: 'try later' };
+      }
+      if (key.endsWith('IMG_0001.JPG')) {
+        await offline;
+        // Let the sibling enter retry backoff before this fatal response makes
+        // the supervisor abort every lane.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return { status: 403, code: 'AccessDenied', message: 'Access Denied' };
+      }
+      return undefined;
+    });
+
+    app.notes.systemicAbortStartedAt = Date.now();
+    await app.dryRunCheckbox().uncheck();
+    await app.startRun();
+  },
+);
+
+Then('the error screen is shown immediately', async ({ app }) => {
+  await app.waitForRunPhase('error', 10_000);
+  await expect(app.page.getByText(/Access Denied|AccessDenied|Forbidden|403/).first()).toBeVisible();
+});
+
+Then(
+  'the run does not wait for the network to return before reporting the failure',
+  async ({ app }) => {
+    expect(Date.now() - (app.notes.systemicAbortStartedAt as number)).toBeLessThan(10_000);
+    expect(await app.page.evaluate(() => navigator.onLine)).toBe(false);
   },
 );
 
