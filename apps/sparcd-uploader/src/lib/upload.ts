@@ -1181,7 +1181,7 @@ export function runStreamingUpload(
   // a single update instead of one per file.
   const enqueue = (f: FileEntry, opts: { silent?: boolean } = {}): boolean => {
     if (f.processState !== 'ready' || !f.sha256 || enqueuedIds.has(f.id)) return false;
-    if (!estimates && !f.exifNaive && !f.manualNaive) return false;
+    if (!f.exifNaive && !f.manualNaive && !estimates?.has(f.id)) return false;
     enqueuedIds.add(f.id);
     const item = planItemFor(f, naming, build.timeZone, estimates ?? new Map());
     queue.push({ ...item, doneAlready: false });

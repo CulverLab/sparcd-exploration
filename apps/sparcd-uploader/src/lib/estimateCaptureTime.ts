@@ -16,7 +16,7 @@ export type CaptureEstimate = {
   offsetMinutes?: number;
 };
 
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 export const naturalPathCompare = (a: string, b: string): number => collator.compare(a, b);
 
 export const naiveMillis = (n: NaiveDateTime): number =>
@@ -31,6 +31,7 @@ export function naiveFromMillis(ms: number): NaiveDateTime {
 }
 
 export function estimateCaptureTimes(files: EstimateInput[], timeZone: string): Map<string, CaptureEstimate> {
+  if (!files.some((f) => f.processState === 'ready' && !f.exifNaive)) return new Map();
   const ordered = files.filter((f) => f.processState === 'ready')
     .sort((a, b) => naturalPathCompare(a.relPath, b.relPath));
   const estimates = new Map<string, CaptureEstimate>();

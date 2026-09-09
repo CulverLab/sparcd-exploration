@@ -314,7 +314,15 @@ export async function ensureBundle(
   const inspected = new Map<string, ProcessResponse>();
 
   for (const rec of session.files) {
-    if (rec.state !== 'awaiting-processing') continue;
+    if (rec.state !== 'awaiting-processing') {
+      // Finished the original run without a hash or a time (Inspect failed it):
+      // there is nothing to plan against, so say so instead of publishing a
+      // blank row.
+      if (!rec.sha256 || !rec.captureTimestamp) {
+        problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be recovered from the interrupted run' });
+      }
+      continue;
+    }
     const r = resolved.get(rec.localPath);
     if (!r || !r.sha256) {
       problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be inspected' });

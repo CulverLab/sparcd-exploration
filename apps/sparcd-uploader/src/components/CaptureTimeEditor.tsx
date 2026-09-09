@@ -98,6 +98,7 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
   const [scope, setScope] = useState<string | null>(null); // null = every file without a camera time
   const [tab, setTab] = useState<'interpolate' | 'spread'>('interpolate');
   const [startText, setStartText] = useState('');
+  const [startTouched, setStartTouched] = useState(false);
   const [spacing, setSpacing] = useState('30');
   const [useModified, setUseModified] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -132,15 +133,18 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
   const gapsFilled = selected.filter((f) => !f.manualNaive).length;
 
   // Spread preview — recomputed live, applied only on the button. The start
-  // field is seeded from the selection's earliest time and then owned by the
-  // user; re-seeding on a scope change is the only thing that overwrites it.
+  // field tracks the selection's earliest time until the user types in it;
+  // estimates keep shifting while Inspect runs, so only a scope change may
+  // re-seed it after that.
   let earliest: NaiveDateTime | undefined;
   for (const f of selected) {
     const { naive } = effectiveTime(f, estimates);
     if (naive && (!earliest || naiveMillis(naive) < naiveMillis(earliest))) earliest = naive;
   }
   const earliestValue = earliest ? naiveToInputValue(earliest) : '';
-  useEffect(() => setStartText(earliestValue), [earliestValue]);
+  useEffect(() => {
+    if (!startTouched) setStartText(earliestValue);
+  }, [earliestValue, startTouched]);
   if (missing.length === 0) return null;
 
   const spreadOptions: SpreadOptions | undefined = useModified
@@ -224,7 +228,10 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                 role="radio"
                 aria-checked={scope === key}
                 tabIndex={scope === key ? 0 : -1}
-                onClick={() => setScope(key)}
+                onClick={() => {
+                  setScope(key);
+                  setStartTouched(false);
+                }}
                 className={`w-full flex justify-between items-baseline gap-2 text-left font-body text-[12.5px] px-1.5 py-1.5 min-h-11 sm:min-h-0 border-l-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
                   scope === key
                     ? 'bg-paperHover border-ink text-ink'
@@ -310,7 +317,10 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                       step={1}
                       disabled={useModified}
                       value={startText}
-                      onChange={(e) => setStartText(e.target.value)}
+                      onChange={(e) => {
+                        setStartText(e.target.value);
+                        setStartTouched(true);
+                      }}
                       aria-label="First image capture time"
                       className={`${inputClass} w-full disabled:opacity-40`}
                     />
