@@ -20,6 +20,8 @@ import {
   PARTIAL_SNAPSHOT_PREFIX,
   SNAPSHOT_STAMP,
   SNAPSHOT_USER,
+  COLLECTION_NAME,
+  STAMP_A,
 } from './support/data';
 import { readStore, settingsDryRunCheckbox, waitForDirtyDrafts } from './support/flows';
 
@@ -102,10 +104,8 @@ Then('the files it would rewrite are listed', async ({ page }) => {
   await expect(page.getByText(/Would restore/)).toContainText('observations, uploadMeta');
 });
 
-Then('where the pre-restore snapshot would be filed is shown', async ({ page }) => {
-  await expect(page.getByText(/current state snapshotted →/)).toContainText(
-    `${PREFIX_A}.sparcd-tagger-snapshots/jgonzalez/`,
-  );
+Then('which collection and upload it would write to', async ({ page }) => {
+  await expect(page.getByText(`${COLLECTION_NAME} / ${STAMP_A}`)).toBeVisible();
 });
 
 // --- Restore gating ---------------------------------------------------------

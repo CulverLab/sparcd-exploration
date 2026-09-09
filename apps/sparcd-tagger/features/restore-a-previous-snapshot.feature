@@ -37,7 +37,7 @@ Feature: Recover a previous state of an upload
     When a snapshot is chosen for restore
     Then it is compared against the currently stored files without writing anything
     And the files it would rewrite are listed
-    And where the pre-restore snapshot would be filed is shown
+    And which collection and upload it would write to
 
   @unmapped
   Scenario: A restore is gated exactly like a sync
