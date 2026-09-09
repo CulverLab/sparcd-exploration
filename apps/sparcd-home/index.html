@@ -331,79 +331,6 @@
         transform: translateX(4px);
       }
 
-      /* ── Session chip ──────────────────────────────────────────────── */
-      .session {
-        margin-top: clamp(1.6rem, 4vw, 2.4rem);
-        padding-top: clamp(1rem, 2.5vw, 1.4rem);
-        border-top: 1px solid var(--rule);
-        display: flex;
-        align-items: center;
-        gap: 0.7rem;
-        flex-wrap: wrap;
-        font-size: 0.85rem;
-      }
-
-      .session .dot-led {
-        width: 8px;
-        height: 8px;
-        flex-shrink: 0;
-        background-color: var(--inkMute);
-        border-radius: 50%;
-      }
-      .session.live .dot-led {
-        background-color: var(--ok);
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
-        animation: pulse 2.4s ease-out infinite;
-      }
-
-      @keyframes pulse {
-        0% {
-          box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
-        }
-        70% {
-          box-shadow: 0 0 0 7px transparent;
-        }
-        100% {
-          box-shadow: 0 0 0 0 transparent;
-        }
-      }
-
-      .session .label {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.73rem;
-        letter-spacing: 0.04em;
-        color: var(--inkSoft);
-      }
-      .session .label .muted {
-        color: var(--inkMute);
-      }
-      .session .label .host {
-        color: var(--ink);
-      }
-
-      .session button {
-        margin-left: auto;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.7rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--warn);
-        background: transparent;
-        border: 1px solid var(--rule);
-        padding: 0.34rem 0.7rem;
-        cursor: pointer;
-        transition:
-          border-color 0.16s ease,
-          background-color 0.16s ease;
-      }
-      .session button:hover {
-        border-color: var(--warn);
-        background-color: var(--panel);
-      }
-      .session[hidden] {
-        display: none;
-      }
-
       /* ── Colophon ──────────────────────────────────────────────────── */
       .colophon {
         margin-top: clamp(1.8rem, 5vw, 3rem);
@@ -453,18 +380,12 @@
       .deck .card:nth-child(3) {
         animation-delay: 0.5s;
       }
-      .d6 {
-        animation-delay: 0.62s;
-      }
       .d7 {
         animation-delay: 0.72s;
       }
 
       @media (prefers-reduced-motion: reduce) {
         .reveal {
-          animation: none;
-        }
-        .session.live .dot-led {
           animation: none;
         }
       }
@@ -517,107 +438,12 @@
         </a>
       </nav>
 
-      <div class="session reveal d6" id="session" hidden>
-        <span class="dot-led" aria-hidden="true"></span>
-        <span class="label" id="session-label"></span>
-        <button type="button" id="disconnect" hidden>Disconnect</button>
-      </div>
-
       <footer class="colophon reveal d7">
         Open source ·
         <a href="https://github.com/CulverLab/sparcd-exploration">view on GitHub</a> ·
         <a href="https://www.wildcatresearch.arizona.edu/">Wildcat Research</a>
       </footer>
     </main>
-
-    <script>
-      (function () {
-        var KEY = 'sparcd-connection';
-        var el = document.getElementById('session');
-        var label = document.getElementById('session-label');
-        var btn = document.getElementById('disconnect');
-
-        function host(endpoint) {
-          if (!endpoint) return 'unknown host';
-          var s = String(endpoint).trim();
-          try {
-            return new URL(/^https?:\/\//.test(s) ? s : 'https://' + s).host;
-          } catch (e) {
-            return s.replace(/^https?:\/\//, '').split('/')[0];
-          }
-        }
-
-        function maskKey(k) {
-          if (!k) return '••••';
-          k = String(k);
-          if (k.length <= 6) return k.slice(0, 1) + '…' + k.slice(-1);
-          return k.slice(0, 4) + '…' + k.slice(-2);
-        }
-
-        function render() {
-          var raw = null;
-          try {
-            raw = localStorage.getItem(KEY);
-          } catch (e) {
-            raw = null;
-          }
-
-          el.hidden = false;
-
-          if (!raw) {
-            el.classList.remove('live');
-            btn.hidden = true;
-            label.innerHTML =
-              '<span class="muted">Not signed in · open a tool to connect</span>';
-            return;
-          }
-
-          var cfg = {};
-          try {
-            cfg = JSON.parse(raw) || {};
-          } catch (e) {
-            cfg = {};
-          }
-
-          el.classList.add('live');
-          btn.hidden = false;
-          // Build with text nodes, never innerHTML: endpoint/accessKey are
-          // untrusted strings from a sibling tool's shared-session write.
-          function sep() {
-            var s = document.createElement('span');
-            s.className = 'muted';
-            s.textContent = '·';
-            return s;
-          }
-          var hostEl = document.createElement('span');
-          hostEl.className = 'host';
-          hostEl.textContent = host(cfg.endpoint);
-          label.replaceChildren(
-            document.createTextNode('Connected '),
-            sep(),
-            document.createTextNode(' '),
-            hostEl,
-            document.createTextNode(' '),
-            sep(),
-            document.createTextNode(' ' + maskKey(cfg.accessKey)),
-          );
-        }
-
-        btn.addEventListener('click', function () {
-          try {
-            localStorage.removeItem(KEY);
-          } catch (e) {}
-          render();
-        });
-
-        // Live cross-tab: a login/logout in another tool updates this chip.
-        window.addEventListener('storage', function (ev) {
-          if (ev.key === KEY || ev.key === null) render();
-        });
-
-        render();
-      })();
-    </script>
 
     <script>
       (function () {
