@@ -567,7 +567,7 @@ Then(
       ['Snapshots…', 'Close'],
       ['Time shift', 'Cancel'],
     ] as const) {
-      await page.getByRole('button', { name: open }).click();
+      await page.getByRole('button', { name: open, exact: true }).click();
       await page.keyboard.press('d');
       await page.keyboard.press('ArrowDown');
       await expect(page.getByText(/unsaved · discard/)).toHaveCount(0);

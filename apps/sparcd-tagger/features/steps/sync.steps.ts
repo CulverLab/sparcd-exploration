@@ -354,7 +354,7 @@ Then('columns the tagger does not use are carried through unchanged', async ({ s
 // --- Post-sync consistency --------------------------------------------------
 
 Given('a sync completed and wrote the changes', async ({ page }) => {
-  await page.getByRole('button', { name: 'Time shift' }).click();
+  await page.getByRole('button', { name: 'Time shift', exact: true }).click();
   await page.getByRole('button', { name: 'Increase Hour' }).click();
   await page.getByRole('button', { name: /^Apply to all/ }).click();
   await expect(page.getByText(/clock \+1h/)).toBeVisible();
@@ -374,7 +374,7 @@ Then(
   'any whole-upload time shift is cleared, because it is now part of the stored capture times',
   async ({ page }) => {
     await expect(page.getByText(/clock \+1h/)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Time shift' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Time shift', exact: true })).toBeVisible();
     const uploads = (await readStore(page, 'uploads')) as { timeOffset: unknown }[];
     expect(uploads.every((u) => u.timeOffset === null)).toBe(true);
   },

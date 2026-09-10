@@ -5,9 +5,10 @@ Feature: Correct capture times on an upload whose camera clock was wrong
 
   """
   As-built flow: camera clocks drift — wrong timezone, daylight saving, a dead
-  clock battery. The tagger can shift the capture time of a whole upload, of a
-  selection of frames, or of a single frame. The correction is held alongside
-  the original until a sync writes it; the original is never rewritten locally.
+  clock battery. The tagger can shift the capture time of a whole upload or a
+  selection of frames. An exact per-image correction can also be entered. The
+  correction is held alongside the original until a sync writes it; the original
+  is never rewritten locally.
   """
 
   Background:
@@ -33,29 +34,23 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then the images show their original capture times again
 
   @unmapped
-  Scenario: A single focused frame can be shifted with no selection needed
+  Scenario: Time shift selection requires an explicit selection
     Given a single image is focused with no selection
-    When the focused frame's time shift is applied
-    Then only that frame moves by the offset
-    And the unselected frames are unchanged
-
-  @unmapped
-  Scenario: A frame without a capture time cannot be shifted
-    Given a timestamp-less image is focused with no selection
-    Then its focused-frame shift is unavailable with an explanation
-
-  @unmapped
-  Scenario: A focused-frame shift composes with corrections already shown
-    Given a whole-upload shift is in effect
-    And a single image is focused with no selection
-    When the focused frame is shifted twice by one hour
-    Then its final time includes the upload shift and both frame shifts
+    Then time shift selection is disabled with an explanation
 
   @unmapped
   Scenario: A selection containing exactly one frame can be shifted
     Given exactly one image is selected
     When that one-frame selection is shifted
     Then exactly that selected image receives a time override
+
+  @unmapped
+  Scenario: Time shift selection works from the Focus view
+    Given several images are selected
+    When the selected images are shown in Focus
+    Then time shift selection is enabled
+    And the selection time-shift dialog opens
+    And the selection time-shift dialog confines focus and closes with Escape
 
   @unmapped
   Scenario: Only the selected frames can be shifted when one camera was wrong
@@ -71,6 +66,11 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     When a selection shift is applied
     Then those frames are skipped
     And the dialog states that they are
+
+  @unmapped
+  Scenario: A selection with no capture times cannot be shifted
+    Given only timestamp-less images are selected
+    Then time shift selection is disabled because no selected frame has a capture time
 
   @unmapped
   Scenario: A single frame's time can be set outright
