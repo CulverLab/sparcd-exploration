@@ -22,7 +22,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
       { keys: ['Space'], action: 'Open species filter' },
       { keys: ['Enter'], action: 'Add top filter match (add-only)' },
       { keys: ['key'], action: 'Add the species bound to that key' },
-      { keys: ['✕'], action: 'Chip ✕ removes one; Detag clears all' },
+      { keys: ['✕'], action: 'Chip ✕ removes one; Clear Species clears all' },
       { keys: ['⇧Space'], action: 'Mark questionable' },
     ],
   },

@@ -73,7 +73,7 @@ export function AppliedSpecies(props: AppliedSpeciesProps) {
         className="text-[11px] font-mono text-inkMute hover:text-warn underline decoration-dotted focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
         title="Remove all species from this image"
       >
-        Detag all
+        Clear Species
       </button>
     </div>
   );

@@ -1061,7 +1061,7 @@ function FocusPane({
               </span>
             )}
             {/* The applied species themselves render in the SpeciesPanel header
-                strip on the right; the footer keeps only questionable + Detag. */}
+                strip on the right; the footer keeps only questionable + Clear Species. */}
             {/* Touch toggle mirrors Shift+Space; desktop relies on the hotkey
                 and the display-only badge above. */}
             <button
@@ -1079,7 +1079,7 @@ function FocusPane({
               className="text-[13px] border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               title="Remove every species from this image"
             >
-              Detag
+              Clear Species
             </button>
           </div>
         </div>

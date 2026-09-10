@@ -50,10 +50,10 @@ Feature: Review, correct and remove identifications that already exist
   @H3
   Scenario: Every identification on an image can be cleared at once
     Given the focused image carries at least one species
-    When "Detag" is used
+    When Clear Species is used
     Then the image is left with no species
     And it reads as untagged again
-    And the Detag control is unavailable on an image that has none
+    And the Clear Species control is unavailable on an image that has none
 
   @H3
   Scenario: Clearing identifications can be applied across a selection

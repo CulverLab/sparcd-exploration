@@ -145,16 +145,21 @@ Then('the remaining species and their counts are preserved', async ({ page }) =>
   await expect(gridCell(page, 'IMG004.JPG')).not.toContainText('+1');
 });
 
-// --- Detag ------------------------------------------------------------------
+// --- Clear Species ------------------------------------------------------------------
+
+// The Focus footer's own control and the applied-species strip's control
+// (AppliedSpecies.tsx) both say "Clear Species" now and do the same thing —
+// disambiguate by title, since the two accessible names collide.
+const focusClearSpecies = (page: Page) => page.getByTitle('Remove every species from this image');
 
 Given('the focused image carries at least one species', async ({ page }) => {
   await focusFrame(page, 'IMG001.JPG');
   await enterFocusView(page);
-  await expect(page.getByRole('button', { name: 'Detag', exact: true })).toBeEnabled();
+  await expect(focusClearSpecies(page)).toBeEnabled();
 });
 
-When('{string} is used', async ({ page }, label: string) => {
-  await page.getByRole('button', { name: label, exact: true }).click();
+When('Clear Species is used', async ({ page }) => {
+  await focusClearSpecies(page).click();
 });
 
 Then('the image is left with no species', async ({ page }) => {
@@ -165,15 +170,15 @@ Then('it reads as untagged again', async ({ page }) => {
   await expect(listRow(page, 'IMG001.JPG')).toContainText('untagged');
 });
 
-Then('the Detag control is unavailable on an image that has none', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Detag', exact: true })).toBeDisabled();
+Then('the Clear Species control is unavailable on an image that has none', async ({ page }) => {
+  await expect(focusClearSpecies(page)).toBeDisabled();
   await listRow(page, 'IMG004.JPG').click();
-  await expect(page.getByRole('button', { name: 'Detag', exact: true })).toBeEnabled();
+  await expect(focusClearSpecies(page)).toBeEnabled();
 });
 
 When('identifications are cleared', async ({ page }) => {
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
-  await page.getByRole('button', { name: 'Detag', exact: true }).click();
+  await focusClearSpecies(page).click();
 });
 
 Then('every selected image is left with no species', async ({ page }) => {
