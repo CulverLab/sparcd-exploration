@@ -33,6 +33,10 @@ Feature: Move through an upload and choose which images an action applies to
     And the Focus strip keeps filename and species but omits the detail columns
 
   @unmapped
+  Scenario: The workspace reminds the tagger which collection and upload they're viewing
+    Then the collection name and upload name are shown
+
+  @unmapped
   Scenario: Images can be stepped through from the keyboard
     When the next-image or previous-image key is pressed
     Then focus moves one image in that direction

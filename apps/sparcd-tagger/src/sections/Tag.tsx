@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { useStore } from '../store';
-import { useTagImages, useSpecies } from '../lib/queries';
+import { useTagImages, useSpecies, useCollections, uploadNameOf } from '../lib/queries';
 import { useMediaUrl } from '../lib/useMediaUrl';
 import { parseCollectionKey } from '../lib/s3';
 import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
@@ -80,6 +80,8 @@ export function Tag() {
 
   const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
   const species = useSpecies(cfg, connectionId);
+  const collections = useCollections(cfg, connectionId);
+  const collection = collections.data?.find((c) => c.key === collectionKey);
 
   const localImages = useMemo(
     () => (localRecord ? localTagImages(localRecord) : EMPTY),
@@ -87,6 +89,8 @@ export function Tag() {
   );
 
   const { bucket } = collectionKey ? parseCollectionKey(collectionKey) : { bucket: '' };
+  const collectionName = collection?.name ?? collection?.bucket ?? bucket;
+  const uploadName = uploadPrefix ? uploadNameOf(uploadPrefix) : '';
   // Drafts are scoped by bucket + upload, and a local batch has neither — its
   // own id stands in, so re-entering the same hand-off resumes where it left off
   // and two batches never share draft rows.
@@ -563,6 +567,13 @@ export function Tag() {
 
   return (
     <div className="h-[100dvh] lg:h-full flex flex-col min-h-0">
+      {/* Reminds the user which collection and upload they're tagging — lost
+          otherwise once Browse's own "Uploads in X" heading is left behind. */}
+      {!localRecord && (
+        <div className="shrink-0 px-3 py-1 border-b border-ruleSoft bg-paper font-mono text-[11px] text-inkMute truncate">
+          {collectionName} / {uploadName}
+        </div>
+      )}
       {/* Workspace toolbar: mode + view switches, position, selection, save */}
       <div className="shrink-0 min-h-10 border-b border-rule bg-panel flex flex-wrap items-center gap-3 gap-y-2 px-3">
         <Segmented

@@ -30,6 +30,13 @@ import {
 } from './db';
 import { useDraftStore, dirtyCount } from './drafts';
 
+/** Upload prefixes are stamped `YYYY.MM.DD.HH.MM.SS_user` — the folder name
+ *  under Uploads/ is the closest thing this data model has to an upload name. */
+export function uploadNameOf(uploadPrefix: string): string {
+  const segments = uploadPrefix.split('/').filter(Boolean);
+  return segments[segments.length - 1] ?? uploadPrefix;
+}
+
 export function useCollections(cfg: S3Config | null, connectionId: number) {
   return useQuery<CollectionRef[]>({
     queryKey: ['collections', connectionId, cfg?.endpoint],

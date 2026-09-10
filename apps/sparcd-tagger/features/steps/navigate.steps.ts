@@ -16,6 +16,7 @@ import {
   focusFrame,
   enterFocusView,
 } from './support/world';
+import { COLLECTION_NAME, STAMP_A } from './support/data';
 
 const TOUCH = { width: 900, height: 860 };
 const DESKTOP = { width: 1440, height: 950 };
@@ -32,6 +33,10 @@ Then('the Overview can be switched between a grid of tiles and a list of rows', 
   await expect(gridCell(page, 'IMG001.JPG')).toHaveCount(0);
   await page.getByRole('button', { name: '▦ Grid' }).click();
   await expect(gridCell(page, 'IMG001.JPG')).toBeVisible();
+});
+
+Then('the collection name and upload name are shown', async ({ page }) => {
+  await expect(page.getByText(`${COLLECTION_NAME} / ${STAMP_A}`)).toBeVisible();
 });
 
 Then('the workspace shows the position of the focused image within the upload', async ({ page }) => {
