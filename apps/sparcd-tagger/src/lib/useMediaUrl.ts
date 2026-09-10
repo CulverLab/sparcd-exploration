@@ -4,11 +4,14 @@
 // the thumbnail until the folder opens, the original after. Every <img>/<video>
 // goes through here, so neither mode touches a single call site.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useStore } from '../store';
 import { parseCollectionKey, presignImage } from './s3';
 import { useLocalBatch } from './localBatch';
+import { mediaRequestScheduler, type MediaPriority } from './mediaRequestScheduler';
+
+export type { MediaPriority } from './mediaRequestScheduler';
 
 /**
  * An object URL for the blob currently on screen, minted after commit and
@@ -33,7 +36,10 @@ function useObjectUrl(blob: Blob | undefined): string | undefined {
   return url;
 }
 
-export function useMediaUrl(objectKey: string): { url: string | undefined; isError: boolean } {
+export function useMediaUrl(
+  objectKey: string,
+  priority: MediaPriority = 'low',
+): { url: string | undefined; isError: boolean; markLoaded: () => void } {
   const cfg = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const collectionKey = useStore((s) => s.selectedCollectionKey);
@@ -51,6 +57,34 @@ export function useMediaUrl(objectKey: string): { url: string | undefined; isErr
     retry: 1,
   });
 
-  if (isLocal) return { url: localUrl, isError: false };
-  return { url: data, isError };
+  const [admittedUrl, setAdmittedUrl] = useState<string>();
+  const releaseRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    setAdmittedUrl(undefined);
+    if (isLocal || !data) return;
+    const lease = mediaRequestScheduler.acquire(priority);
+    let cancelled = false;
+    void lease.admitted.then(() => {
+      if (cancelled) {
+        lease.release();
+        return;
+      }
+      releaseRef.current = lease.release;
+      setAdmittedUrl(data);
+    });
+    return () => {
+      cancelled = true;
+      lease.cancel();
+      if (releaseRef.current === lease.release) releaseRef.current = null;
+    };
+  }, [data, isLocal, objectKey, priority]);
+
+  const markLoaded = useCallback(() => {
+    releaseRef.current?.();
+    releaseRef.current = null;
+  }, []);
+
+  if (isLocal) return { url: localUrl, isError: false, markLoaded };
+  return { url: admittedUrl, isError, markLoaded };
 }

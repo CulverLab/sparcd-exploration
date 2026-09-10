@@ -286,7 +286,12 @@ function ListCell({
       }`}
     >
       <span className="w-12 shrink-0">
-        <Thumb objectKey={img.key} alt={img.fileName} isVideo={isVideo} />
+        <Thumb
+          objectKey={img.key}
+          alt={img.fileName}
+          isVideo={isVideo}
+          priority={active ? 'high' : 'low'}
+        />
       </span>
       <span
         data-column="filename"
@@ -398,7 +403,12 @@ function GridCell({
       } focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2`}
     >
       <span className="relative block flex-1 min-h-0">
-        <Thumb objectKey={img.key} alt={img.fileName} isVideo={isVideoImage(img)} />
+        <Thumb
+          objectKey={img.key}
+          alt={img.fileName}
+          isVideo={isVideoImage(img)}
+          priority={active ? 'high' : 'low'}
+        />
         {isVideoImage(img) && (
           <span className="absolute top-1 left-1 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
             VIDEO

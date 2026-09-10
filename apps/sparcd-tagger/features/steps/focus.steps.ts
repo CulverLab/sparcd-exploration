@@ -8,6 +8,7 @@ import {
   focusFrame,
   gridCell,
   connect,
+  openWorkspace,
   selectCollection,
   sectionTab,
 } from './support/world';
@@ -66,6 +67,25 @@ const lightbox = (page: Page): Locator =>
 Given('an image is shown in the Focus view', async ({ page }) => {
   await enterFocusView(page);
   await expect(page.locator('.react-transform-component img')).toBeVisible();
+});
+
+Given('filmstrip thumbnail downloads are delayed', async ({ page, s3 }) => {
+  for (const image of MEDIA_A.slice(1)) s3.delay(mediaKey(PREFIX_A, image.file), 2_000);
+  await page.reload();
+  await openWorkspace(page);
+  await enterFocusView(page);
+});
+
+Then('the Focus image is requested at high priority', async ({ page }) => {
+  const image = page.locator('.react-transform-component img');
+  await expect(image).toHaveAttribute('fetchpriority', 'high');
+  await expect.poll(() => image.evaluate((el) => el.complete && el.naturalWidth > 0)).toBe(true);
+});
+
+Then('the filmstrip thumbnails are requested at low priority', async ({ page }) => {
+  const thumbs = page.locator('img[fetchpriority="low"]');
+  await expect(thumbs.first()).toBeVisible();
+  await expect.poll(() => thumbs.evaluateAll((images) => images.some((image) => !image.complete))).toBe(true);
 });
 
 // --- Zoom -------------------------------------------------------------------
@@ -411,4 +431,3 @@ Then('leaving the Focus view returns the adjustments to neutral', async ({ page 
   const style = await page.locator('.react-transform-component img').first().getAttribute('style');
   expect(style ?? '').toContain('brightness(100%) contrast(100%) hue-rotate(0deg) saturate(100%)');
 });
-

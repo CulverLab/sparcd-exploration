@@ -31,3 +31,6 @@ apps/sparcd-shard-proxy/deploy/cloudflare-worker/package-lock.json
 # Editor / OS
 .idea/
 .vscode/
+
+# Local Codex preferences; durable on this machine, never committed.
+.codex/

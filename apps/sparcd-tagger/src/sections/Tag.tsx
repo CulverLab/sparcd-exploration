@@ -1167,19 +1167,47 @@ function FocusImage({
   isVideo: boolean;
   filter?: string;
 }) {
-  const { url, isError } = useMediaUrl(objectKey);
+  const { url, isError, markLoaded } = useMediaUrl(objectKey, 'high');
   if (isError)
     return <div className="text-[13px] font-mono text-warn">Could not load this image.</div>;
-  if (!url) return <div className="text-[13px] font-mono text-inkMute">…</div>;
-  if (isVideo) return <FocusVideo src={url} alt={alt} resetKey={objectKey} />;
-  return <ZoomableImage src={url} alt={alt} resetKey={objectKey} filter={filter} />;
+  if (!url)
+    return (
+      <div className="w-full h-full grid place-items-center">
+        <img
+          src={`${import.meta.env.BASE_URL}loading.gif`}
+          alt="Loading focused image"
+          className="w-48 h-48 object-contain"
+        />
+      </div>
+    );
+  if (isVideo)
+    return <FocusVideo src={url} alt={alt} resetKey={objectKey} onLoaded={markLoaded} />;
+  return (
+    <ZoomableImage
+      src={url}
+      alt={alt}
+      resetKey={objectKey}
+      filter={filter}
+      onLoaded={markLoaded}
+    />
+  );
 }
 
 // Video media plays with native controls. No zoom/pan/Lightbox: the
 // react-zoom-pan-pinch wrapper captures wheel/pointer events and would fight
 // native scrubbing. `key={resetKey}` recreates the element on navigation so the
 // prior clip's playback/seek state never bleeds into the next one.
-function FocusVideo({ src, alt, resetKey }: { src: string; alt: string; resetKey: string }) {
+function FocusVideo({
+  src,
+  alt,
+  resetKey,
+  onLoaded,
+}: {
+  src: string;
+  alt: string;
+  resetKey: string;
+  onLoaded: () => void;
+}) {
   return (
     <video
       key={resetKey}
@@ -1188,6 +1216,8 @@ function FocusVideo({ src, alt, resetKey }: { src: string; alt: string; resetKey
       controls
       playsInline
       preload="metadata"
+      onLoadedMetadata={onLoaded}
+      onError={onLoaded}
       className="w-full h-full object-contain"
     />
   );
@@ -1209,11 +1239,13 @@ function ZoomableImage({
   alt,
   resetKey,
   filter,
+  onLoaded,
 }: {
   src: string;
   alt: string;
   resetKey: string;
   filter?: string;
+  onLoaded: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [zoomed, setZoomed] = useState(false);
@@ -1234,7 +1266,10 @@ function ZoomableImage({
               <img
                 src={src}
                 alt={alt}
+                fetchPriority="high"
                 draggable={false}
+                onLoad={onLoaded}
+                onError={onLoaded}
                 style={filter ? { filter } : undefined}
                 className="w-full h-full object-contain select-none"
               />

@@ -59,6 +59,12 @@ Feature: Examine an image closely enough to catch every species
     And no zoom or pan state carries over from the previous image
 
   @H1
+  Scenario: The focused image is prioritized over delayed filmstrip thumbnails
+    Given filmstrip thumbnail downloads are delayed
+    Then the Focus image is requested at high priority
+    And the filmstrip thumbnails are requested at low priority
+
+  @H1
   Scenario: Only the images on screen are rendered while scrolling a large upload
     Given an upload with thousands of images is open
     When the Overview is scrolled
