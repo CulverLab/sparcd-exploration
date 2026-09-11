@@ -24,6 +24,8 @@ export function Settings() {
   const setTimeFormat = useStore((s) => s.setTimeFormat);
   const distanceUnit = useStore((s) => s.distanceUnit);
   const setDistanceUnit = useStore((s) => s.setDistanceUnit);
+  const autoAdvance = useStore((s) => s.autoAdvanceOnTag);
+  const setAutoAdvance = useStore((s) => s.setAutoAdvanceOnTag);
   const cfg = useStore((s) => s.s3Config);
   const disconnect = useStore((s) => s.disconnect);
   const setSection = useStore((s) => s.setSection);
@@ -120,6 +122,23 @@ export function Settings() {
             </p>
           </div>
         )}
+      </section>
+
+      <section>
+        <span className={kicker}>Auto-advance</span>
+        <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
+          <input
+            type="checkbox"
+            className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+            checked={autoAdvance}
+            onChange={(e) => setAutoAdvance(e.target.checked)}
+          />
+          Move to the next image after assigning a species
+        </label>
+        <p className="mt-1.5 text-[13px] text-inkMute font-body">
+          On by default. When on, an assignment advances the focused image in the current list
+          order. An assignment across a selection still advances Focus only once.
+        </p>
       </section>
 
       <section className="border-t border-ruleSoft pt-6">

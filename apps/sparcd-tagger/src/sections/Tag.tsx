@@ -69,6 +69,7 @@ export function Tag() {
   const uploadPrefix = useStore((s) => s.selectedUploadPrefix);
   const burstGroupingEnabled = useStore((s) => s.burstGroupingEnabled);
   const burstThreshold = useStore((s) => s.burstThresholdSec);
+  const autoAdvanceOnTag = useStore((s) => s.autoAdvanceOnTag);
   const pendingSnapshots = useStore((s) => s.pendingSnapshots);
   const clearPendingSnapshots = useStore((s) => s.clearPendingSnapshots);
 
@@ -357,11 +358,31 @@ export function Tag() {
       }));
   };
 
+  // Whether `sci` is already among an image's effective observations — the
+  // gate for auto-advance, which fires on a genuine new add, never on a
+  // re-click (add-only, no-op) or a count increment of an existing species.
+  const carriesSpecies = (img: TagImage, sci: string) =>
+    effectiveOf(img, drafts[img.key]).observations.some((o) => o.scientificName === sci);
+
+  // Move focus to the next image, clearing selection — mirrors the keyboard
+  // handler's `focusMove`, scoped to this component's own focus/anchor/selected
+  // state (the handler's copy lives in a separate closure keyed off HandlerState).
+  const advanceFocus = () => {
+    const next = Math.max(0, Math.min(focus + 1, list.length - 1));
+    setFocus(next);
+    setAnchor(next);
+    setSelected(new Set());
+  };
+
   const apply = (tag: AppliedTag) => {
     const targets = targetsOf();
     if (!targets.length) return;
+    // Only a single-image, no-selection apply has an unambiguous "next" image.
+    const shouldAdvance =
+      autoAdvanceOnTag && selected.size === 0 && !!current && !carriesSpecies(current, tag.scientificName);
     addSpeciesFn(ctx, targets, tag);
     if (tag.scientificName) pushRecent(tag.scientificName);
+    if (shouldAdvance) advanceFocus();
   };
 
   const applyIncrementAt = (index: number, tag: AppliedTag) => {
@@ -369,6 +390,9 @@ export function Tag() {
     // if a multi-image selection still exists.
     const image = list[index];
     if (!image) return;
+    // Advance only when the drop landed on the focused image — a drop
+    // elsewhere shouldn't yank focus away from what the user is looking at.
+    const shouldAdvance = autoAdvanceOnTag && index === focus && !carriesSpecies(image, tag.scientificName);
     incrementSpeciesFn(
       ctx,
       [
@@ -381,6 +405,7 @@ export function Tag() {
       tag,
     );
     if (tag.scientificName) pushRecent(tag.scientificName);
+    if (shouldAdvance) advanceFocus();
   };
 
   const applyIncrement = (tag: AppliedTag) => {
@@ -388,8 +413,11 @@ export function Tag() {
     // control. Keep this separate from spatial drag/drop targeting.
     const targets = targetsOf();
     if (!targets.length) return;
+    const shouldAdvance =
+      autoAdvanceOnTag && selected.size === 0 && !!current && !carriesSpecies(current, tag.scientificName);
     incrementSpeciesFn(ctx, targets, tag);
     if (tag.scientificName) pushRecent(tag.scientificName);
+    if (shouldAdvance) advanceFocus();
   };
 
   // Selection-scoped bulk time shift: each target carries its currently-displayed
