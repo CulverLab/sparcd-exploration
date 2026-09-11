@@ -9,6 +9,7 @@ import {
   Then,
   expect,
   APP_URL,
+  ENDPOINT,
   gridCell,
   speciesApply,
   speciesFilter,
@@ -232,7 +233,7 @@ Then("the browser goes back to the Uploader carrying the batch's id", async ({ p
 
 Then("the browser goes to this site's Uploader anyway", async ({ page }) => {
   const url = new URL(page.url());
-  expect(url.host).toBe('localhost:5312');
+  expect(url.host).toBe(new URL(ENDPOINT).host);
   expect(url.pathname).toBe('/sparcd-exploration/uploader/');
 });
 

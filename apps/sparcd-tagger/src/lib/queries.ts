@@ -174,13 +174,16 @@ export function useCollectionSnapshots(
   });
 }
 
-/** The species vocabulary, loaded once per connection from the settings bucket. */
+/** The species vocabulary from the settings bucket. It refreshes when a stale
+ * tab regains focus so researchers returning to a long-lived session see the
+ * current server vocabulary before continuing. */
 export function useSpecies(cfg: S3Config | null, connectionId: number) {
   return useQuery<SpeciesResult>({
     queryKey: ['species', connectionId, cfg?.endpoint],
     queryFn: () => fetchSpecies(cfg!),
     enabled: !!cfg,
-    staleTime: Infinity, // vocabulary is stable for a session
+    staleTime: 15 * 60 * 1000,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 }

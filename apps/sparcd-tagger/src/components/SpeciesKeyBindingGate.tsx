@@ -1,5 +1,4 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
-import { shouldReconcileSpeciesProfile } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { useLocalBatch } from '../lib/localBatch';
 import { useSpecies } from '../lib/queries';
@@ -67,9 +66,8 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   }, [activateProfile, profileId]);
 
   useEffect(() => {
-    if (!shouldReconcileSpeciesProfile(connectionId, !!localRecord)) return;
     if (profileId === activeProfileId && currentSpecies) stageSpecies(currentSpecies);
-  }, [activeProfileId, connectionId, currentSpecies, localRecord, profileId, stageSpecies]);
+  }, [activeProfileId, currentSpecies, profileId, stageSpecies]);
 
   return (
     <>

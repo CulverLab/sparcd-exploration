@@ -10,6 +10,8 @@ const testDir = defineBddConfig({
   steps: 'features/steps/**/*.ts',
   tags: 'not @manual',
 });
+const port = Number(process.env.SPARCD_E2E_PORT ?? '5312');
+const origin = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir,
@@ -20,10 +22,8 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: [['list']],
   webServer: {
-    // pnpm 10 forwards trailing args as-is, so a literal `--` would reach Vite's
-    // CLI and turn `--port` into a positional. Same effect, without the sentinel.
-    command: 'pnpm dev --port 5312 --strictPort',
-    url: 'http://localhost:5312/sparcd-exploration/tagger/',
+    command: `./node_modules/.bin/vite --port ${port} --strictPort`,
+    url: `${origin}/sparcd-exploration/tagger/`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'ignore',
@@ -33,7 +33,7 @@ export default defineConfig({
     env: { VITE_SPARCD_S3_ENDPOINT: '' },
   },
   use: {
-    baseURL: 'http://localhost:5312',
+    baseURL: origin,
     headless: true,
     viewport: { width: 1440, height: 950 },
     trace: 'off',

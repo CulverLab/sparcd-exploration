@@ -80,6 +80,16 @@ describe('per-user keybinding profiles', () => {
     expect(profile.overrides.removed).toBe('!');
   });
 
+  it('does not revise a profile when the vocabulary is unchanged', () => {
+    useKeyBindings.getState().activateProfile('server\u0000alice');
+    useKeyBindings.getState().stageSpecies(original);
+    const before = localStorage.getItem('sparcd-tagger-keybindings');
+
+    useKeyBindings.getState().stageSpecies([...original]);
+
+    expect(localStorage.getItem('sparcd-tagger-keybindings')).toBe(before);
+  });
+
   it('restores a default key when the server removes and re-adds a species', () => {
     useKeyBindings.getState().activateProfile('server\u0000alice');
     useKeyBindings.getState().stageSpecies(original);

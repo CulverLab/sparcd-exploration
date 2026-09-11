@@ -186,12 +186,31 @@ Feature: Assign species to images in an upload
   Scenario: Server vocabulary changes require durable acknowledgement
     Given the saved user profile contains an older species configuration
     When the tagger is refreshed with its restored session
-    Then no vocabulary reconciliation is performed
-    When the user explicitly logs in with the current server vocabulary
     Then a blocking message lists added, removed and updated species
     And reopening again does not bypass the required acknowledgement
     When the vocabulary change is acknowledged
     Then the binding the user set for the removed species is kept and the message stays acknowledged
+
+  @H2
+  Scenario: A stale vocabulary refresh reports a server change when the tab regains focus
+    Given the server vocabulary gains Ringtail
+    When the stale tagger tab regains focus
+    Then Ringtail is available in the refreshed species vocabulary
+    And a blocking message lists Ringtail as added
+
+  @H2
+  Scenario: A stale vocabulary refresh makes no change when the server vocabulary is unchanged
+    Given the current species profile is recorded
+    When the stale tagger tab regains focus
+    Then no vocabulary-change message is shown
+    And the recorded species profile is unchanged
+
+  @H2
+  Scenario: A failed stale vocabulary refresh keeps the current vocabulary usable
+    Given the server rejects species vocabulary reads
+    When the stale tagger tab regains focus
+    Then the existing species vocabulary remains available
+    And no vocabulary-change message is shown
 
   @H2
   Scenario: A species reference image can be enlarged before deciding
