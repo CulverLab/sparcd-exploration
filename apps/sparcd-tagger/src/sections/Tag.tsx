@@ -23,10 +23,11 @@ import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
-import { rangeSet, toggleIndex, burstIndexSet } from '../lib/selection';
+import { rangeSet, toggleIndex, burstIndexSet, visibleRangeSet } from '../lib/selection';
 import { effectiveOf, type Effective } from '../lib/effective';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
+import { EMPTY_IMAGE_FILTER, matchesImageFilter, type ImageFilter } from '../lib/imageFilter';
 import { parseSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
 import {
   useDraftStore,
@@ -206,6 +207,53 @@ export function Tag() {
   const [matchPos, setMatchPos] = useState(0);
   const imgSearchRef = useRef<HTMLInputElement>(null);
   const matches = useMemo(() => findFilenameMatches(list, imgQuery), [list, imgQuery]);
+  const [imageFilter, setImageFilter] = useState<ImageFilter>(EMPTY_IMAGE_FILTER);
+  const [showImageFilter, setShowImageFilter] = useState(false);
+  const imageFilterButtonRef = useRef<HTMLButtonElement>(null);
+  const imageFilterTextRef = useRef<HTMLInputElement>(null);
+  const visibleIndices = useMemo(
+    () =>
+      list.flatMap((image, index) => {
+        const draft = drafts[image.key];
+        return matchesImageFilter(
+          {
+            fileName: image.fileName,
+            timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null),
+            observations: effectiveOf(image, draft).observations,
+          },
+          imageFilter,
+        )
+          ? [index]
+          : [];
+      }),
+    [drafts, imageFilter, list, timeOffset],
+  );
+  const imageFilterActive =
+    imageFilter.text !== '' ||
+    imageFilter.scope !== 'all' ||
+    imageFilter.tagged !== 'all' ||
+    imageFilter.year !== '' ||
+    imageFilter.month !== '' ||
+    imageFilter.day !== '' ||
+    imageFilter.hour !== '' ||
+    imageFilter.minute !== '';
+
+  const closeImageFilter = () => {
+    setShowImageFilter(false);
+    requestAnimationFrame(() => imageFilterButtonRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (showImageFilter) imageFilterTextRef.current?.focus();
+  }, [showImageFilter]);
+
+  // Focus navigation always has a visible current item while a filter has
+  // matches. Selection retains canonical indexes and is deliberately untouched.
+  useEffect(() => {
+    if (!imageFilterActive || visibleIndices.length === 0 || visibleIndices.includes(focus)) return;
+    setFocus(visibleIndices[0]);
+    setAnchor(visibleIndices[0]);
+  }, [focus, imageFilterActive, visibleIndices]);
 
   const jumpToMatch = (pos: number) => {
     if (!matches.length) return;
@@ -419,7 +467,7 @@ export function Tag() {
   // --- Mouse selection gestures (single / Shift-range / Cmd-additive). --------
   const pick = (i: number, mods: PickMods) => {
     if (mods.shift) {
-      setSelected(rangeSet(anchor, i));
+      setSelected(imageFilterActive ? visibleRangeSet(visibleIndices, anchor, i) : rangeSet(anchor, i));
       setFocus(i);
     } else if (mods.meta) {
       // Seed from the focused image so the first Cmd-click yields a two-image
@@ -456,6 +504,13 @@ export function Tag() {
     setSelected(new Set());
   };
 
+  const gotoFilteredImage = (direction: -1 | 1) => {
+    if (!imageFilterActive) return gotoImage(focus + direction);
+    const position = visibleIndices.indexOf(focus);
+    const target = visibleIndices[position + direction];
+    if (target != null) gotoImage(target);
+  };
+
   // On-screen questionable toggle mirrors Shift+Space: act on the selection
   // (or the focused image), flipping off the focused image's current state.
   const toggleQuestionable = () => {
@@ -471,6 +526,8 @@ export function Tag() {
   stateRef.current = {
     list,
     focus,
+    visibleIndices,
+    imageFilterActive,
     setFocus,
     setAnchor,
     grouping,
@@ -714,6 +771,107 @@ export function Tag() {
             </>
           )}
         </div>
+        <div className="relative">
+          <button
+            ref={imageFilterButtonRef}
+            type="button"
+            onClick={() => setShowImageFilter((shown) => !shown)}
+            aria-expanded={showImageFilter}
+            aria-controls="image-filter-panel"
+            className={`inline-flex min-h-11 items-center gap-1 border px-2 py-1 text-[12px] font-mono focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent sm:min-h-0 ${
+              imageFilterActive ? 'border-ink bg-mark text-ink' : 'border-rule text-inkSoft hover:text-ink hover:border-ink'
+            }`}
+          >
+            Filter {imageFilterActive ? `${visibleIndices.length}/${list.length}` : ''}
+          </button>
+          {showImageFilter && (
+            <div
+              id="image-filter-panel"
+              role="region"
+              aria-label="Image filters"
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape') return;
+                e.preventDefault();
+                e.stopPropagation();
+                closeImageFilter();
+              }}
+              className="absolute left-0 top-full z-40 mt-1 w-80 max-w-[calc(100vw-2rem)] space-y-3 border border-rule bg-panel p-3 shadow-lg"
+            >
+              <label className="block text-[11px] font-mono text-inkSoft">
+                Match text
+                <input
+                  ref={imageFilterTextRef}
+                  value={imageFilter.text}
+                  onChange={(e) => setImageFilter((f) => ({ ...f, text: e.target.value }))}
+                  placeholder="Filename, species, or date"
+                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                />
+              </label>
+              <label className="block text-[11px] font-mono text-inkSoft">
+                Search in
+                <select
+                  value={imageFilter.scope}
+                  onChange={(e) =>
+                    setImageFilter((f) => ({ ...f, scope: e.target.value as ImageFilter['scope'] }))
+                  }
+                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink"
+                >
+                  <option value="all">All fields</option>
+                  <option value="filename">Filename</option>
+                  <option value="species">Species</option>
+                  <option value="date">Date</option>
+                </select>
+              </label>
+              <label className="block text-[11px] font-mono text-inkSoft">
+                Tag state
+                <select
+                  value={imageFilter.tagged}
+                  onChange={(e) =>
+                    setImageFilter((f) => ({
+                      ...f,
+                      tagged: e.target.value as ImageFilter['tagged'],
+                    }))
+                  }
+                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink"
+                >
+                  <option value="all">All images</option>
+                  <option value="tagged">Tagged only</option>
+                  <option value="untagged">Untagged only</option>
+                </select>
+              </label>
+              <fieldset>
+                <legend className="text-[11px] font-mono text-inkSoft">Capture date</legend>
+                <div className="mt-1 grid grid-cols-5 gap-1">
+                  {(['year', 'month', 'day', 'hour', 'minute'] as const).map((part) => (
+                    <input
+                      key={part}
+                      aria-label={`Capture ${part}`}
+                      value={imageFilter[part]}
+                      onChange={(e) =>
+                        setImageFilter((f) => ({ ...f, [part]: e.target.value }))
+                      }
+                      placeholder={{ year: 'YYYY', month: 'MM', day: 'DD', hour: 'HH', minute: 'MM' }[part]}
+                      inputMode="numeric"
+                      className="min-w-0 border border-rule bg-paper px-1 py-1 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    />
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex items-center justify-between">
+                <span aria-live="polite" className="text-[11px] font-mono text-inkSoft">
+                  {visibleIndices.length} of {list.length} images
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setImageFilter(EMPTY_IMAGE_FILTER)}
+                  className="text-[12px] font-mono text-inkSoft underline decoration-dotted hover:text-ink"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-3">
           {savedAt > 0 && <span className="text-[12px] font-mono text-accent">saved ✓</span>}
@@ -788,17 +946,24 @@ export function Tag() {
             <div className="flex flex-col min-h-[60svh] lg:min-h-0">
               <SortBar field={sortField} dir={sortDir} onSort={handleSort} />
               <div className="flex-1 min-h-0">
-                <Overview
-                  list={list}
-                  grouping={grouping}
-                  focus={focus}
-                  selected={selected}
-                  kind={overviewKind}
-                  onPick={pick}
-                  onSelectBurst={selectBurst}
-                  onDrill={drill}
-                  onDropSpecies={applyIncrementAt}
-                />
+                {imageFilterActive && visibleIndices.length === 0 ? (
+                  <p className="p-5 text-[13px] font-mono text-inkSoft" role="status">
+                    No images match these filters.
+                  </p>
+                ) : (
+                  <Overview
+                    list={list}
+                    visibleIndices={imageFilterActive ? visibleIndices : undefined}
+                    grouping={grouping}
+                    focus={focus}
+                    selected={selected}
+                    kind={overviewKind}
+                    onPick={pick}
+                    onSelectBurst={selectBurst}
+                    onDrill={drill}
+                    onDropSpecies={applyIncrementAt}
+                  />
+                )}
               </div>
             </div>
             <SpeciesPanel {...speciesPanelProps()} />
@@ -811,6 +976,7 @@ export function Tag() {
             <div className="h-[30svh] overflow-y-auto lg:h-auto lg:overflow-visible lg:contents">
               <Overview
                 list={list}
+                visibleIndices={imageFilterActive ? visibleIndices : undefined}
                 grouping={grouping}
                 focus={focus}
                 selected={selected}
@@ -833,8 +999,8 @@ export function Tag() {
                 current && setTimeOverrideFn(ctx, current.key, current.deploymentId, currentBase, null)
               }
               onDetag={() => detagFn(ctx, targetsOf())}
-              onPrev={() => gotoImage(focus - 1)}
-              onNext={() => gotoImage(focus + 1)}
+              onPrev={() => gotoFilteredImage(-1)}
+              onNext={() => gotoFilteredImage(1)}
               onToggleQuestionable={toggleQuestionable}
               onDropSpecies={(tag) => applyIncrementAt(focus, tag)}
             />
@@ -1396,6 +1562,8 @@ function speciesJsonKey(list: Species[], sci: string): string | null {
 type HandlerState = {
   list: TagImage[];
   focus: number;
+  visibleIndices: number[];
+  imageFilterActive: boolean;
   setFocus: (n: number) => void;
   setAnchor: (n: number) => void;
   grouping: BurstGrouping;
@@ -1444,13 +1612,22 @@ function focusMove(s: HandlerState, i: number): void {
   s.setSelected(new Set());
 }
 
+function filteredFocusMove(s: HandlerState, direction: 1 | -1): void {
+  if (s.view !== 'focus' || !s.imageFilterActive) return focusMove(s, s.focus + direction);
+  const target = s.visibleIndices[s.visibleIndices.indexOf(s.focus) + direction];
+  if (target != null) focusMove(s, target);
+}
+
 /** Move focus to the start of the burst `dir` away, clearing selection. */
 function gotoBurst(s: HandlerState, dir: 1 | -1): void {
   const curBurst = s.grouping.burstOf[s.focus] ?? 0;
-  const target = Math.max(0, Math.min(curBurst + dir, s.grouping.bursts.length - 1));
-  const b = s.grouping.bursts[target];
-  if (!b) return;
-  focusMove(s, b.start);
+  for (let target = curBurst + dir; target >= 0 && target < s.grouping.bursts.length; target += dir) {
+    const b = s.grouping.bursts[target];
+    if (!b) continue;
+    if (!s.imageFilterActive) return focusMove(s, b.start);
+    const matches = s.visibleIndices.filter((i) => i >= b.start && i <= b.end);
+    if (matches.length) return focusMove(s, dir === 1 ? matches[0] : matches[matches.length - 1]);
+  }
 }
 
 function handleKey(e: KeyboardEvent, s: HandlerState): void {
@@ -1561,11 +1738,11 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   switch (e.key) {
     case 'ArrowDown':
       e.preventDefault();
-      focusMove(s, s.focus + 1);
+      filteredFocusMove(s, 1);
       return;
     case 'ArrowUp':
       e.preventDefault();
-      focusMove(s, s.focus - 1);
+      filteredFocusMove(s, -1);
       return;
     case 'PageDown':
       e.preventDefault();

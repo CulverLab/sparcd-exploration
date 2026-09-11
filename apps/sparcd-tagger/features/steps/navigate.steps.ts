@@ -34,6 +34,99 @@ Then('the Overview can be switched between a grid of tiles and a list of rows', 
   await expect(gridCell(page, 'IMG001.JPG')).toBeVisible();
 });
 
+When('the image filter is opened and searches species for {string}', async ({ page }, query: string) => {
+  await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Match text').fill(query);
+  await page.getByLabel('Search in').selectOption('species');
+});
+
+Then('only the matching image remains in the Overview', async ({ page }) => {
+  await expect(gridCell(page, 'IMG004.JPG')).toBeVisible();
+  await expect(gridCell(page, 'IMG001.JPG')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveCount(0);
+});
+
+When(
+  'the image filter limits capture time to 2024-01-11 06 and untagged images',
+  async ({ page }) => {
+    await page.getByRole('button', { name: 'Filter' }).click();
+    await page.getByLabel('Capture year').fill('2024');
+    await page.getByLabel('Capture month').fill('01');
+    await page.getByLabel('Capture day').fill('11');
+    await page.getByLabel('Capture hour').fill('06');
+    await page.getByLabel('Tag state').selectOption('untagged');
+  },
+);
+
+Then('only IMG005.JPG remains in the Overview', async ({ page }) => {
+  await expect(gridCell(page, 'IMG005.JPG')).toBeVisible();
+  await expect(gridCell(page, 'IMG004.JPG')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG001.JPG')).toHaveCount(0);
+});
+
+When('the image filter searches all fields for {string}', async ({ page }, query: string) => {
+  if (!(await page.getByLabel('Match text').isVisible()))
+    await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Match text').fill(query);
+});
+
+When('the image filter searches filenames only for {string}', async ({ page }, query: string) => {
+  await page.getByLabel('Match text').fill(query);
+  await page.getByLabel('Search in').selectOption('filename');
+});
+
+Then('only {string} remains in the Overview', async ({ page }, fileName: string) => {
+  await expect.poll(() => tileOrder(page)).toEqual([fileName]);
+});
+
+Then('no images match the image filter', async ({ page }) => {
+  await expect(page.getByText('No images match these filters.', { exact: true })).toBeVisible();
+});
+
+When('the image filter is opened and dismissed with Escape', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Match text').press('Escape');
+});
+
+Then('the Filter control is collapsed and focused', async ({ page }) => {
+  const control = page.getByRole('button', { name: 'Filter', exact: true });
+  await expect(control).toHaveAttribute('aria-expanded', 'false');
+  await expect(control).toBeFocused();
+});
+
+When('the image filter limits Focus to the 2024-01-11 06 images', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Capture year').fill('2024');
+  await page.getByLabel('Capture month').fill('01');
+  await page.getByLabel('Capture day').fill('11');
+  await page.getByLabel('Capture hour').fill('06');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+});
+
+When('the next filtered image key is pressed in Focus', async ({ page }) => {
+  await page.keyboard.press('ArrowDown');
+});
+
+Then('IMG005.JPG is the focused filtered image', async ({ page }) => {
+  await expect(page.locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG005.JPG');
+  await expect(listRow(page, 'IMG001.JPG')).toHaveCount(0);
+});
+
+When('the image filter is opened in a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 860 });
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+});
+
+Then('the image filter panel stays within the viewport', async ({ page }) => {
+  const panel = page.getByRole('region', { name: 'Image filters' });
+  await expect(panel).toBeVisible();
+  const box = await panel.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+});
+
 Then('the workspace shows the position of the focused image within the upload', async ({ page }) => {
   await expect(positionReadout(page)).toHaveText('1 / 6');
   await gridCell(page, 'IMG003.JPG').click();

@@ -16,6 +16,12 @@ export function rangeSet(a: number, b: number): Set<number> {
   return s;
 }
 
+export function visibleRangeSet(indices: number[], a: number, b: number): Set<number> {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  return new Set(indices.filter((i) => i >= lo && i <= hi));
+}
+
 /** Add `i` if absent, remove it if present (Cmd/Ctrl-click additive toggle). */
 export function toggleIndex(set: Set<number>, i: number): Set<number> {
   const next = new Set(set);

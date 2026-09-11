@@ -40,6 +40,41 @@ Feature: Move through an upload and choose which images an action applies to
     And any selection is cleared by the move
 
   @unmapped
+  Scenario: The image filter narrows the Overview by species text
+    When the image filter is opened and searches species for "Coyote"
+    Then only the matching image remains in the Overview
+
+  @unmapped
+  Scenario: The image filter combines capture date and untagged status
+    When the image filter limits capture time to 2024-01-11 06 and untagged images
+    Then only IMG005.JPG remains in the Overview
+
+  @unmapped
+  Scenario: Text filtering covers filenames and timestamps and can be restricted
+    When the image filter searches all fields for "IMG002"
+    Then only "IMG002.JPG" remains in the Overview
+    When the image filter searches all fields for "2024-01-10T22:15"
+    Then only "IMG003.JPG" remains in the Overview
+    When the image filter searches filenames only for "Coyote"
+    Then no images match the image filter
+
+  @unmapped
+  Scenario: The image filter closes with Escape and returns focus to its control
+    When the image filter is opened and dismissed with Escape
+    Then the Filter control is collapsed and focused
+
+  @unmapped
+  Scenario: Focus navigation stays inside filtered images
+    When the image filter limits Focus to the 2024-01-11 06 images
+    And the next filtered image key is pressed in Focus
+    Then IMG005.JPG is the focused filtered image
+
+  @unmapped
+  Scenario: The image filter panel fits a narrow viewport
+    When the image filter is opened in a narrow viewport
+    Then the image filter panel stays within the viewport
+
+  @unmapped
   Scenario: An image can be opened from the Overview and paged from the Focus view
     Given the Overview is shown
     When the focused image is opened
