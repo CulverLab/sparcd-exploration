@@ -42,10 +42,6 @@ Then('auto-advance is checked in Settings', async ({ page }) => {
   await expect(autoAdvanceCheckbox(page)).toBeChecked();
 });
 
-When('the browser is reloaded', async ({ page }) => {
-  await page.reload();
-});
-
 Then('auto-advance is unchecked in Settings', async ({ page }) => {
   await expect(autoAdvanceCheckbox(page)).not.toBeChecked();
 });
