@@ -12,6 +12,7 @@ import {
   sectionTab,
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
+import { adjustmentPopupPosition } from '../../src/lib/adjustmentPopupPosition';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
 
@@ -72,7 +73,7 @@ Given('an image is shown in the Focus view', async ({ page }) => {
 
 // Used as both the action and the precondition ("Given the image is zoomed in").
 When('the image is zoomed in', async ({ page }) => {
-  await zoomIn(page.locator('body'), 4);
+  await zoomIn(page.locator('body'), 1);
   expect((await readTransform(page.locator('body'))).scale).toBeGreaterThan(1);
 });
 
@@ -331,6 +332,100 @@ When('the adjustment panel is opened', async ({ page }) => {
   await expect(page.getByLabel('Brightness')).toBeVisible();
 });
 
+const adjustmentPanel = (page: Page): Locator => page.getByRole('dialog', { name: 'Image adjustments' });
+const focusedImage = (page: Page): Locator => page.locator('.react-transform-component img');
+
+Then('the adjustment panel leaves the Focus navigation usable', async ({ page }) => {
+  const [panel, navigation] = await Promise.all([
+    adjustmentPanel(page).boundingBox(),
+    page.locator('button').filter({ hasText: 'IMG002.JPG' }).first().boundingBox(),
+  ]);
+  expect(panel).not.toBeNull();
+  expect(navigation).not.toBeNull();
+  expect(panel!.x + panel!.width <= navigation!.x || navigation!.x + navigation!.width <= panel!.x).toBe(true);
+  const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label'), {
+    x: navigation!.x + navigation!.width / 2,
+    y: navigation!.y + navigation!.height / 2,
+  });
+  expect(hit).toContain('IMG002.JPG');
+});
+
+Then('it stays in the viewport when neither side fits', async ({ page }) => {
+  try {
+    await page.setViewportSize({ width: 320, height: 150 });
+    await expect(adjustmentPanel(page)).toBeVisible();
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    await expect.poll(async () => {
+      const panel = await adjustmentPanel(page).boundingBox();
+      return panel ? panel.y + panel.height : Infinity;
+    }).toBeLessThanOrEqual(viewport.height - 8);
+    const panel = await adjustmentPanel(page).boundingBox();
+    expect(panel).not.toBeNull();
+    expect(panel!.x).toBeGreaterThanOrEqual(8);
+    expect(panel!.x + panel!.width).toBeLessThanOrEqual(viewport.width - 8);
+    expect(panel!.y).toBeGreaterThanOrEqual(8);
+    expect(panel!.y + panel!.height).toBeLessThanOrEqual(viewport.height - 8);
+  } finally {
+    await page.keyboard.press('Escape');
+    await expect(adjustmentPanel(page)).toHaveCount(0);
+    await page.setViewportSize({ width: 1440, height: 950 });
+  }
+});
+
+Then('clicking outside the adjustment panel dismisses it', async ({ page }) => {
+  await page.mouse.click(2, 2);
+  await expect(adjustmentPanel(page)).toHaveCount(0);
+  await adjustToggle(page).click();
+  await expect(adjustmentPanel(page)).toBeVisible();
+});
+
+Then('focusing another control dismisses it', async ({ page }) => {
+  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  await expect(adjustmentPanel(page)).toHaveCount(0);
+});
+
+When('the focused image moves while the adjustment panel is open', async ({ page, scratch }) => {
+  scratch.adjustmentBeforeMove = await adjustmentPanel(page).boundingBox();
+  await transformContent(page.locator('body')).first().evaluate((element) => {
+    (element as HTMLElement).style.transform = 'translate(40px, 0px) scale(1)';
+  });
+});
+
+Then('the adjustment panel follows the focused image', async ({ page, scratch }) => {
+  const before = scratch.adjustmentBeforeMove as { x: number; y: number };
+  await expect.poll(async () => {
+    const [panel, media, focus, viewport] = await Promise.all([
+      adjustmentPanel(page).boundingBox(),
+      focusedImage(page).boundingBox(),
+      page.locator('[data-testid="focus-drop-zone"]').boundingBox(),
+      page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
+    ]);
+    if (!panel || !media) return Infinity;
+    const blocked = focus && focus.x > 0
+      ? [{ left: 0, right: focus.x, top: focus.y, width: focus.x, height: focus.height }]
+      : [];
+    const expected = adjustmentPopupPosition(
+      { left: media.x, right: media.x + media.width, top: media.y, width: media.width, height: media.height },
+      { left: 0, right: panel.width, top: 0, width: panel.width, height: panel.height },
+      viewport,
+      blocked,
+    );
+    return Math.abs(panel.x - expected.left) + Math.abs(panel.y - expected.top);
+  }).toBeLessThanOrEqual(1);
+  const after = await adjustmentPanel(page).boundingBox();
+  expect(Math.abs(after!.x - before.x) + Math.abs(after!.y - before.y)).toBeGreaterThan(5);
+});
+
+Then('keyboard focus enters the adjustment panel', async ({ page }) => {
+  await expect(page.getByLabel('Brightness')).toBeFocused();
+});
+
+Then('Escape closes the adjustment panel and returns focus to Adjust', async ({ page }) => {
+  await page.keyboard.press('Escape');
+  await expect(adjustmentPanel(page)).toHaveCount(0);
+  await expect(adjustToggle(page)).toBeFocused();
+});
+
 Then(
   'brightness, contrast, hue and saturation can each be moved across their range',
   async ({ page }) => {
@@ -392,6 +487,8 @@ When('another image is opened in the Focus view', async ({ page, scratch }) => {
     .locator('.react-transform-component img')
     .first()
     .getAttribute('style');
+  await page.keyboard.press('Escape');
+  await expect(adjustmentPanel(page)).toHaveCount(0);
   await page.locator('button').filter({ hasText: 'IMG002.JPG' }).first().click();
   await expect(page.locator('.react-transform-component img')).toBeVisible();
 });
@@ -411,4 +508,3 @@ Then('leaving the Focus view returns the adjustments to neutral', async ({ page 
   const style = await page.locator('.react-transform-component img').first().getAttribute('style');
   expect(style ?? '').toContain('brightness(100%) contrast(100%) hue-rotate(0deg) saturate(100%)');
 });
-

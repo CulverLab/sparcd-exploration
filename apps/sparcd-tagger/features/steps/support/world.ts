@@ -6,7 +6,8 @@ import { MockS3, installS3Mock } from './s3mock';
 import { seedFixtures, COLLECTION_NAME } from './data';
 
 export const APP_URL = '/sparcd-exploration/tagger/';
-export const ENDPOINT = 'http://localhost:5312';
+export const TEST_ORIGIN = `http://localhost:${process.env.TAGGER_TEST_PORT ?? 5312}`;
+export const ENDPOINT = TEST_ORIGIN;
 
 /** Scratch state a scenario carries between its own steps. */
 export type Scratch = {

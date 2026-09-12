@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 
+const port = Number(process.env.TAGGER_TEST_PORT ?? 5312);
+
 // As-built verification harness: the .feature files under `features/` describe
 // what this app does today. `bddgen` turns them into Playwright specs against
 // the step definitions in `features/steps/`, which drive the real app with all
@@ -22,8 +24,8 @@ export default defineConfig({
   webServer: {
     // pnpm 10 forwards trailing args as-is, so a literal `--` would reach Vite's
     // CLI and turn `--port` into a positional. Same effect, without the sentinel.
-    command: 'pnpm dev --port 5312 --strictPort',
-    url: 'http://localhost:5312/sparcd-exploration/tagger/',
+    command: `./node_modules/.bin/vite --port ${port} --strictPort`,
+    url: `http://localhost:${port}/sparcd-exploration/tagger/`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'ignore',
@@ -33,7 +35,7 @@ export default defineConfig({
     env: { VITE_SPARCD_S3_ENDPOINT: '' },
   },
   use: {
-    baseURL: 'http://localhost:5312',
+    baseURL: `http://localhost:${port}`,
     headless: true,
     viewport: { width: 1440, height: 950 },
     trace: 'off',

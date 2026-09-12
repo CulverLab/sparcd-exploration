@@ -94,6 +94,34 @@ Feature: Examine an image closely enough to catch every species
     And the displayed image changes to match
     And a marker shows that the adjustments are no longer neutral
 
+  @unmapped
+  Scenario: Adjustment controls avoid covering the focused image
+    Given the focused item is a still image
+    When the adjustment panel is opened
+    Then the adjustment panel leaves the Focus navigation usable
+    And it stays in the viewport when neither side fits
+
+  @H1
+  Scenario: Adjustment controls follow the focused image
+    Given the focused item is a still image
+    When the adjustment panel is opened
+    And the focused image moves while the adjustment panel is open
+    Then the adjustment panel follows the focused image
+
+  @H1
+  Scenario: Adjustment controls dismiss when attention moves away
+    Given the focused item is a still image
+    When the adjustment panel is opened
+    Then clicking outside the adjustment panel dismisses it
+    And focusing another control dismisses it
+
+  @H1
+  Scenario: Adjustment controls work from the keyboard
+    Given the focused item is a still image
+    When the adjustment panel is opened
+    Then keyboard focus enters the adjustment panel
+    And Escape closes the adjustment panel and returns focus to Adjust
+
   @H1
   Scenario: Display adjustments never change the stored image
     Given the display adjustments have been changed
