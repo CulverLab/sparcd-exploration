@@ -9,6 +9,8 @@ import { useState } from 'react';
 import { shiftTimestamp } from '@sparcd/camtrap';
 import type { TimeOffsetRecord } from '../lib/db';
 import { ZERO_OFFSET_RECORD, formatOffsetDelta, offsetActive } from '../lib/timeshift';
+import { formatDateTime } from '../lib/formatting';
+import { useStore } from '../store';
 
 type Field = keyof TimeOffsetRecord;
 
@@ -34,6 +36,8 @@ export function TimeShiftModal({
   onApply: (offset: TimeOffsetRecord | null) => void;
   onClose: () => void;
 }) {
+  const dateFormat = useStore((s) => s.dateFormat);
+  const timeFormat = useStore((s) => s.timeFormat);
   const [draft, setDraft] = useState<TimeOffsetRecord>(offset ?? ZERO_OFFSET_RECORD);
   const active = offsetActive(draft);
   const corrected = sampleTimestamp ? shiftTimestamp(sampleTimestamp, draft) : '';
@@ -113,7 +117,7 @@ export function TimeShiftModal({
                     Original
                   </div>
                   <div className="font-mono text-[15px] text-inkSoft line-through decoration-rule break-all">
-                    {sampleTimestamp}
+                    {formatDateTime(sampleTimestamp, dateFormat, timeFormat)}
                   </div>
                 </div>
                 <div className="text-center font-mono text-[16px] text-accent">→</div>
@@ -121,7 +125,9 @@ export function TimeShiftModal({
                   <div className="text-[10px] font-[600] tracking-[0.12em] uppercase text-accent mb-1">
                     Corrected
                   </div>
-                  <div className="font-mono text-[15px] font-[600] text-ink break-all">{corrected}</div>
+                  <div className="font-mono text-[15px] font-[600] text-ink break-all">
+                    {formatDateTime(corrected, dateFormat, timeFormat)}
+                  </div>
                 </div>
               </div>
             ) : (

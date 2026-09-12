@@ -6,6 +6,8 @@
 
 import { useState } from 'react';
 import { normalizeTimestampInput } from '../lib/timeshift';
+import { formatDateTime } from '../lib/formatting';
+import { useStore } from '../store';
 
 export function PerImageTime({
   original,
@@ -22,6 +24,8 @@ export function PerImageTime({
   onSet: (iso: string) => void;
   onClear: () => void;
 }) {
+  const dateFormat = useStore((s) => s.dateFormat);
+  const timeFormat = useStore((s) => s.timeFormat);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(corrected);
   const [invalid, setInvalid] = useState(false);
@@ -87,7 +91,9 @@ export function PerImageTime({
     <span className="inline-flex flex-wrap items-center gap-2.5 min-w-0">
       <span className="flex flex-col leading-tight">
         <span className="font-mono text-[13.5px] font-[600] text-ink">
-          {corrected || '— no timestamp —'}
+          {corrected
+            ? formatDateTime(corrected, dateFormat, timeFormat)
+            : '— no timestamp —'}
           {overridden ? (
             <span className="ml-2 font-body text-[10px] font-[600] tracking-[0.08em] uppercase text-accent border border-accent px-1">
               image override
@@ -102,7 +108,7 @@ export function PerImageTime({
         </span>
         {corrected !== original && original && (
           <span className="font-mono text-[11px] text-inkMute line-through decoration-ruleSoft">
-            was {original}
+            was {formatDateTime(original, dateFormat, timeFormat)}
           </span>
         )}
       </span>

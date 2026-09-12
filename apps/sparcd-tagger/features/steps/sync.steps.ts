@@ -385,7 +385,7 @@ Then('the workspace reloads the upload from the newly stored files', async ({ pa
   const shifted = media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!;
   expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000Z');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
-  await expect(page.getByText('2024-01-10T09:00:00')).toBeVisible();
+  await expect(page.getByText('2024-1-10 09:00')).toBeVisible();
 });
 
 // --- Busy dialog ------------------------------------------------------------

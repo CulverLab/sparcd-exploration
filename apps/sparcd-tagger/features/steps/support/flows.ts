@@ -19,6 +19,11 @@ export const settingsDryRunCheckbox = (page: Page) =>
 export const burstCheckbox = (page: Page) =>
   page.locator('label').filter({ hasText: 'Group rapid sequences into bursts' }).locator('input[type="checkbox"]');
 
+/** A Settings radio button identified by its visible label text (date format,
+ *  time format, distance units — all rendered as `<label><input type="radio">…`). */
+export const settingsRadio = (page: Page, label: string) =>
+  page.getByRole('radio', { name: label, exact: true });
+
 export async function setSyncDryRun(page: Page, on: boolean): Promise<void> {
   const cb = syncDryRunCheckbox(page);
   if ((await cb.isChecked()) !== on) await cb.setChecked(on);

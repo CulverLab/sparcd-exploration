@@ -16,7 +16,8 @@ Nothing under `src/` was changed. Every entry below is a change to the
 pnpm --filter sparcd-tagger test:bdd     # bddgen && playwright test
 ```
 
-The suite starts its own Vite dev server on port 5312, points the app's S3
+The suite starts its own Vite dev server on port 5312 by default (or the
+`TAGGER_TEST_PORT` value), points the app's S3
 endpoint at that same origin, and answers ListBuckets / ListObjectsV2 / GET /
 HEAD / PUT from an in-process mock seeded with a two-collection fixture
 (`features/steps/support/data.ts`). No real bucket is touched.

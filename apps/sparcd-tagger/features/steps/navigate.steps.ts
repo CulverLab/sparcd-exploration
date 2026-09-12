@@ -402,8 +402,8 @@ Then(
 );
 
 Then('each band states how many images it holds and the time it spans', async ({ page }) => {
-  await expect(page.getByText(/^Burst 1 ·/)).toHaveText('Burst 1 · 2 img · 08:00:00–08:00:30');
-  await expect(page.getByText(/^Burst 2 ·/)).toHaveText('Burst 2 · 1 img · 22:15:00');
+  await expect(page.getByText(/^Burst 1 ·/)).toHaveText('Burst 1 · 2 img · 08:00–08:00');
+  await expect(page.getByText(/^Burst 2 ·/)).toHaveText('Burst 2 · 1 img · 22:15');
 });
 
 Then('the whole band can be selected in one action', async ({ page }) => {

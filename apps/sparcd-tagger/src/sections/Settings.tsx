@@ -18,6 +18,12 @@ export function Settings() {
   const setBurstOn = useStore((s) => s.setBurstGrouping);
   const burst = useStore((s) => s.burstThresholdSec);
   const setBurst = useStore((s) => s.setBurstThreshold);
+  const dateFormat = useStore((s) => s.dateFormat);
+  const setDateFormat = useStore((s) => s.setDateFormat);
+  const timeFormat = useStore((s) => s.timeFormat);
+  const setTimeFormat = useStore((s) => s.setTimeFormat);
+  const distanceUnit = useStore((s) => s.distanceUnit);
+  const setDistanceUnit = useStore((s) => s.setDistanceUnit);
   const cfg = useStore((s) => s.s3Config);
   const disconnect = useStore((s) => s.disconnect);
   const setSection = useStore((s) => s.setSection);
@@ -114,6 +120,91 @@ export function Settings() {
             </p>
           </div>
         )}
+      </section>
+
+      <section className="border-t border-ruleSoft pt-6">
+        <span className={kicker}>Date format</span>
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          {(
+            [
+              { value: 'long', label: 'Month Day Year' },
+              { value: 'short', label: 'Month Day Short Year' },
+              { value: 'numeric', label: 'Numeric date' },
+              { value: 'iso-local', label: 'ISO local date' },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+            >
+              <input
+                type="radio"
+                name="dateFormat"
+                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                checked={dateFormat === opt.value}
+                onChange={() => setDateFormat(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <span className={kicker}>Time format</span>
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          {(
+            [
+              { value: '24h', label: '24-hour' },
+              { value: '24h-seconds', label: '24-hour with seconds' },
+              { value: '12h', label: '12-hour (AM/PM)' },
+              { value: '12h-seconds', label: '12-hour with seconds (AM/PM)' },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+            >
+              <input
+                type="radio"
+                name="timeFormat"
+                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                checked={timeFormat === opt.value}
+                onChange={() => setTimeFormat(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <span className={kicker}>Distance units</span>
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          {(
+            [
+              { value: 'meters', label: 'Meters' },
+              { value: 'feet', label: 'Feet' },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+            >
+              <input
+                type="radio"
+                name="distanceUnit"
+                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                checked={distanceUnit === opt.value}
+                onChange={() => setDistanceUnit(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[13px] text-inkMute font-body">
+          Not shown anywhere yet — this sets the unit ahead of an upcoming location display.
+        </p>
       </section>
 
       <section className="border-t border-ruleSoft pt-6">
