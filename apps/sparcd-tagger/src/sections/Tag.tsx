@@ -368,12 +368,18 @@ export function Tag() {
     setSelected(new Set());
   };
 
+  const carriesSpecies = (img: TagImage, sci: string) =>
+    effectiveOf(img, drafts[img.key]).observations.some((o) => o.scientificName === sci);
+
   const apply = (tag: AppliedTag) => {
     const targets = targetsOf();
     if (!targets.length) return;
     // A bulk operation changes every selected image, but only the focused
     // image moves once so the researcher keeps their place in list order.
-    const shouldAdvance = autoAdvanceOnTag && !!current;
+    // A panel re-click on one image is a no-op. A selection can still add the
+    // species to other frames, so it advances its focused image once.
+    const shouldAdvance =
+      autoAdvanceOnTag && !!current && (selected.size > 0 || !carriesSpecies(current, tag.scientificName));
     addSpeciesFn(ctx, targets, tag);
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();

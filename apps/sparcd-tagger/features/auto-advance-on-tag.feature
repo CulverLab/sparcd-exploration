@@ -28,12 +28,12 @@ Feature: Advance to the next image automatically after tagging
     Then focus moves to the next image in the list
 
   @unmapped
-  Scenario: Re-applying an already-present species advances
+  Scenario: Re-applying an already-present species from the panel does not advance
     Given auto-advance is switched on in Settings
     And the focused image already carries a species
     And the current focus is noted
     When that species is applied again from the panel
-    Then focus moves to the next image in the list
+    Then focus stays on the same image
 
   @unmapped
   Scenario: Incrementing an existing species by keystroke advances
@@ -60,6 +60,13 @@ Feature: Advance to the next image automatically after tagging
     And the current focus and its next image are noted
     When a species is applied to the selection
     Then focus moves exactly to the noted next image
+
+  @unmapped
+  Scenario: Auto-advance stays off after a browser reload
+    Given auto-advance is switched off in Settings
+    When the browser is reloaded
+    And Settings is opened
+    Then auto-advance is unchecked in Settings
 
   @unmapped
   Scenario: Dropping a new species onto the focused image advances

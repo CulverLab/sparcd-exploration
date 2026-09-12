@@ -21,6 +21,12 @@ Given('auto-advance is switched on in Settings', async ({ page }) => {
   await sectionTab(page, 'Tag').click();
 });
 
+Given('auto-advance is switched off in Settings', async ({ page }) => {
+  await openSettings(page);
+  await autoAdvanceCheckbox(page).uncheck();
+  await sectionTab(page, 'Tag').click();
+});
+
 Given('the current focus is noted', async ({ page, scratch }) => {
   scratch.focusedBefore = await focusedName(page);
 });
@@ -34,6 +40,14 @@ Given('the current focus and its next image are noted', async ({ page, scratch }
 
 Then('auto-advance is checked in Settings', async ({ page }) => {
   await expect(autoAdvanceCheckbox(page)).toBeChecked();
+});
+
+When('the browser is reloaded', async ({ page }) => {
+  await page.reload();
+});
+
+Then('auto-advance is unchecked in Settings', async ({ page }) => {
+  await expect(autoAdvanceCheckbox(page)).not.toBeChecked();
 });
 
 When('a species not already on that image is applied from the panel', async ({ page }) => {
