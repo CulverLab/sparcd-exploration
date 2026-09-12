@@ -358,12 +358,6 @@ export function Tag() {
       }));
   };
 
-  // Whether `sci` is already among an image's effective observations — the
-  // gate for auto-advance, which fires on a genuine new add, never on a
-  // re-click (add-only, no-op) or a count increment of an existing species.
-  const carriesSpecies = (img: TagImage, sci: string) =>
-    effectiveOf(img, drafts[img.key]).observations.some((o) => o.scientificName === sci);
-
   // Move focus to the next image, clearing selection — mirrors the keyboard
   // handler's `focusMove`, scoped to this component's own focus/anchor/selected
   // state (the handler's copy lives in a separate closure keyed off HandlerState).
@@ -377,9 +371,9 @@ export function Tag() {
   const apply = (tag: AppliedTag) => {
     const targets = targetsOf();
     if (!targets.length) return;
-    // Only a single-image, no-selection apply has an unambiguous "next" image.
-    const shouldAdvance =
-      autoAdvanceOnTag && selected.size === 0 && !!current && !carriesSpecies(current, tag.scientificName);
+    // A bulk operation changes every selected image, but only the focused
+    // image moves once so the researcher keeps their place in list order.
+    const shouldAdvance = autoAdvanceOnTag && !!current;
     addSpeciesFn(ctx, targets, tag);
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();
@@ -392,7 +386,7 @@ export function Tag() {
     if (!image) return;
     // Advance only when the drop landed on the focused image — a drop
     // elsewhere shouldn't yank focus away from what the user is looking at.
-    const shouldAdvance = autoAdvanceOnTag && index === focus && !carriesSpecies(image, tag.scientificName);
+    const shouldAdvance = autoAdvanceOnTag && index === focus;
     incrementSpeciesFn(
       ctx,
       [
@@ -413,8 +407,7 @@ export function Tag() {
     // control. Keep this separate from spatial drag/drop targeting.
     const targets = targetsOf();
     if (!targets.length) return;
-    const shouldAdvance =
-      autoAdvanceOnTag && selected.size === 0 && !!current && !carriesSpecies(current, tag.scientificName);
+    const shouldAdvance = autoAdvanceOnTag && !!current;
     incrementSpeciesFn(ctx, targets, tag);
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();

@@ -4,12 +4,10 @@
 Feature: Advance to the next image automatically after tagging
 
   """
-  As-built: an opt-in Settings toggle moves focus to the next image whenever
-  a species is newly recorded on the focused image — by panel click, by a
-  keyboard shortcut, or by dragging a species tile onto the focused image.
-  It never fires for a re-click or keypress that only changes an
-  already-recorded species' count, for a multi-image selection, or for a
-  drop onto an image other than the one in focus.
+  By default, Settings advances Focus to the next image in the current list
+  order after assigning a species — by panel click, keyboard shortcut, or a
+  drop onto the focused image. A multi-image assignment advances Focus once;
+  a drop onto a different Overview image does not move it.
   """
 
   Background:
@@ -17,9 +15,9 @@ Feature: Advance to the next image automatically after tagging
     And the species vocabulary has loaded
 
   @unmapped
-  Scenario: Auto-advance is off by default
+  Scenario: Auto-advance is on by default
     When Settings is opened
-    Then auto-advance is unchecked in Settings
+    Then auto-advance is checked in Settings
 
   @unmapped
   Scenario: Adding a new species by panel click advances to the next image
@@ -30,21 +28,21 @@ Feature: Advance to the next image automatically after tagging
     Then focus moves to the next image in the list
 
   @unmapped
-  Scenario: Re-applying an already-present species does not advance
+  Scenario: Re-applying an already-present species advances
     Given auto-advance is switched on in Settings
     And the focused image already carries a species
     And the current focus is noted
     When that species is applied again from the panel
-    Then focus stays on the same image
+    Then focus moves to the next image in the list
 
   @unmapped
-  Scenario: Incrementing an existing species by keystroke does not advance
+  Scenario: Incrementing an existing species by keystroke advances
     Given auto-advance is switched on in Settings
     And the species vocabulary carries a key binding for a species
     And the focused image already carries a species
     And the current focus is noted
     When the bound key is pressed once
-    Then focus stays on the same image
+    Then focus moves to the next image in the list
 
   @unmapped
   Scenario: Adding a new species by keystroke advances to the next image
@@ -56,12 +54,12 @@ Feature: Advance to the next image automatically after tagging
     Then focus moves to the next image in the list
 
   @unmapped
-  Scenario: Applying a species to a multi-image selection never advances
+  Scenario: Applying a species to a multi-image selection advances only Focus
     Given auto-advance is switched on in Settings
     And several images are selected
-    And the current focus is noted
+    And the current focus and its next image are noted
     When a species is applied to the selection
-    Then focus stays on the same image
+    Then focus moves exactly to the noted next image
 
   @unmapped
   Scenario: Dropping a new species onto the focused image advances
