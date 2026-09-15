@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            printf '# /// script\n# requires-python = ">=3.11"\n# dependencies = ["marimo","minio","python-dotenv","polars","plotly"]\n# ///\n\n'
+            printf '# /// script\n# requires-python = ">=3.11"\n# dependencies = ["marimo","minio","python-dotenv","polars","plotly","anywidget"]\n# ///\n\n'
             cat notebooks/hello.py
           } > notebooks/hello_wasm.py
 
@@ -63,6 +63,11 @@ jobs:
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
+
+      - name: Verify Explorer remembered connection in WASM
+        run: |
+          pnpm --filter @sparcd/sparcd-explorer exec playwright install --with-deps chromium
+          pnpm --filter @sparcd/sparcd-explorer exec node tests/remember_connection_wasm.mjs dist
 
       - name: Build uploader
         run: pnpm --filter sparcd-uploader build
