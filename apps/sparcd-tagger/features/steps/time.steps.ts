@@ -10,12 +10,17 @@ import {
   focusFrame,
   sectionTab,
   positionReadout,
+  openUpload,
 } from './support/world';
 import { BUCKET, PREFIX_A, MEDIA_A, mediaCsv } from './support/data';
 import { openSyncDialog, setSyncDryRun, readStore, waitForDirtyDrafts } from './support/flows';
 
 const timeShiftButton = (page: Page) =>
-  page.locator('button[title$="by a signed offset"], button[title^="Upload time shift is active"]').first();
+  page
+    .locator(
+      'button[title$="by a signed offset"], button[title^="Upload time shift is active"], button[title^="No image in this upload"]',
+    )
+    .first();
 
 const uploadShiftModal = (page: Page) =>
   page.locator('div[role="dialog"][aria-label="Time shift"]');
@@ -125,6 +130,19 @@ Then('the images show their original capture times again', async ({ page }) => {
   await openFocus(page);
   await expect.poll(async () => shownTime(page)).toBe('2024-01-10 08:00');
   await expect(page.getByText('shifted')).toHaveCount(0);
+});
+
+// --- Whole-upload shift is unavailable with nothing to shift (issue #302) --
+
+Given('an upload with no capture times is open in the tagging workspace', async ({ page }) => {
+  await sectionTab(page, 'Browse').click();
+  await openUpload(page, 'camerauser');
+});
+
+Then('the whole-upload time shift is disabled with an explanation', async ({ page }) => {
+  const button = timeShiftButton(page);
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute('title', 'No image in this upload has a capture time to shift');
 });
 
 // --- Selection-scoped shift -------------------------------------------------

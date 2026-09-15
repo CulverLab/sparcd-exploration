@@ -34,6 +34,11 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then the images show their original capture times again
 
   @unmapped
+  Scenario: The whole-upload time shift is unavailable with nothing to shift
+    Given an upload with no capture times is open in the tagging workspace
+    Then the whole-upload time shift is disabled with an explanation
+
+  @unmapped
   Scenario: Time shift selection requires an explicit selection
     Given a single image is focused with no selection
     Then time shift selection is disabled with an explanation
