@@ -398,6 +398,7 @@ export const DEPLOY_COL = {
   longitude: 3,
   latitude: 4,
   cameraHeight: 12,
+  timestampIssues: 15,
 } as const;
 
 export const OBS_COLUMN_COUNT = 20;
@@ -415,6 +416,7 @@ export function parseDeployments(csv: string): Deployment[] {
     longitude: Number(r[DEPLOY_COL.longitude]),
     latitude: Number(r[DEPLOY_COL.latitude]),
     elevation: Number(r[DEPLOY_COL.cameraHeight]),
+    timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
   }));
 }
 
@@ -662,6 +664,28 @@ export function mergeObservations(
     }
   }
   return serializeCsvRows(out);
+}
+
+// --- Whole-upload location change -------------------------------------------
+
+/**
+ * Rewrite every row's deployment id in `media.csv` — a whole-upload location
+ * correction. Unlike `mergeMedia`, which only touches media ids present in an
+ * edit list, this touches every row unconditionally, since the wrong location
+ * was recorded for the whole upload, not just specific images.
+ */
+export function rewriteMediaDeploymentId(canonicalMediaCsv: string, newDeploymentId: string): string {
+  const rows = parseCsvRows(canonicalMediaCsv);
+  for (const row of rows) row[MEDIA_COL.deploymentId] = newDeploymentId;
+  return serializeCsvRows(rows);
+}
+
+/** Rewrite every row's deployment id in `observations.csv` — the observation
+ *  half of a whole-upload location correction (see `rewriteMediaDeploymentId`). */
+export function rewriteObservationsDeploymentId(canonicalObsCsv: string, newDeploymentId: string): string {
+  const rows = parseCsvRows(canonicalObsCsv);
+  for (const row of rows) row[OBS_COL.deploymentId] = newDeploymentId;
+  return serializeCsvRows(rows);
 }
 
 // --- UploadMeta.json delta -------------------------------------------------

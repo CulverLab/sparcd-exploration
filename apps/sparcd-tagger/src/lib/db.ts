@@ -9,6 +9,7 @@
 // edit fields. They live in the v1 shape now so P4 adds no schema bump.
 
 import Dexie, { type Table } from 'dexie';
+import type { Deployment } from '@sparcd/camtrap';
 import type { CanonicalState } from './sync';
 import type { SyncJournal } from './syncJournal';
 
@@ -58,12 +59,15 @@ export interface UploadRecord {
   uploadPrefix: string;
   loadedAt: string; // ISO
   timeOffset: TimeOffsetRecord | null; // signed Δ applied to every image; null when unset
+  pendingLocation: Deployment | null; // whole-upload location correction; null when unset
 
   // P4 grounding, undefined until sync.
   mediaETag?: string;
   mediaHash?: string;
   observationsETag?: string;
   observationsHash?: string;
+  deploymentsETag?: string;
+  deploymentsHash?: string;
   uploadMetaETag?: string;
   uploadMetaHash?: string;
 }
@@ -226,10 +230,13 @@ export async function groundUpload(
     uploadPrefix,
     loadedAt: new Date().toISOString(),
     timeOffset: existing?.timeOffset ?? null,
+    pendingLocation: existing?.pendingLocation ?? null,
     mediaETag: base.media.etag,
     mediaHash: base.media.hash,
     observationsETag: base.observations.etag,
     observationsHash: base.observations.hash,
+    deploymentsETag: base.deployments.etag,
+    deploymentsHash: base.deployments.hash,
     uploadMetaETag: base.uploadMeta.etag,
     uploadMetaHash: base.uploadMeta.hash,
   });
@@ -255,8 +262,23 @@ export async function setUploadTimeOffset(
   const id = uploadId(bucket, uploadPrefix);
   const existing = await db.uploads.get(id);
   await db.uploads.put({
-    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString() }),
+    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), pendingLocation: null }),
     timeOffset: offset,
+  });
+}
+
+/** Set (or clear) the upload-level pending location correction — mirrors
+ *  `setUploadTimeOffset` exactly; see its doc comment. */
+export async function setUploadPendingLocation(
+  bucket: string,
+  uploadPrefix: string,
+  location: Deployment | null,
+): Promise<void> {
+  const id = uploadId(bucket, uploadPrefix);
+  const existing = await db.uploads.get(id);
+  await db.uploads.put({
+    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), timeOffset: null }),
+    pendingLocation: location,
   });
 }
 

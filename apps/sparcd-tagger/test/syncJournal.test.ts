@@ -38,6 +38,7 @@ const journal = (objects: JournalObject[]): SyncJournal => ({
 const clean = (): Record<CanonicalRole, RemoteState> => ({
   media: { etag: '"base-media"', hash: 'hash-media' },
   observations: { etag: '"base-observations"', hash: 'hash-observations' },
+  deployments: { etag: '"base-deployments"', hash: 'hash-deployments' },
   uploadMeta: { etag: '"base-uploadMeta"', hash: 'hash-uploadMeta' },
 });
 

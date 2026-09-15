@@ -2,7 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { useStore } from '../store';
-import { useTagImages, useSpecies, useCollections, uploadNameOf, useUploadSnapshots } from '../lib/queries';
+import {
+  useTagImages,
+  useSpecies,
+  useCollections,
+  uploadNameOf,
+  useUploadSnapshots,
+  useLocations,
+  useCurrentDeployment,
+} from '../lib/queries';
 import { useMediaUrl } from '../lib/useMediaUrl';
 import { parseCollectionKey } from '../lib/s3';
 import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
@@ -14,6 +22,7 @@ import { SnapshotsDialog } from '../components/SnapshotsDialog';
 import { DiscardConfirmDialog } from '../components/DiscardConfirmDialog';
 import { buildDiscardSummaries } from '../lib/discardSummary';
 import { TimeShiftModal } from '../components/TimeShiftModal';
+import { ChangeLocationModal } from '../components/ChangeLocationModal';
 import { BulkTimeShiftModal } from '../components/BulkTimeShiftModal';
 import { PerImageTime } from '../components/PerImageTime';
 import { SpeciesLoupe } from '../components/SpeciesLoupe';
@@ -87,6 +96,8 @@ export function Tag() {
 
   const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
   const species = useSpecies(cfg, connectionId);
+  const locations = useLocations(cfg, connectionId);
+  const currentDeployment = useCurrentDeployment(cfg, connectionId, collectionKey, uploadPrefix);
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
   const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
@@ -97,7 +108,9 @@ export function Tag() {
     [localRecord],
   );
 
-  const { bucket } = collectionKey ? parseCollectionKey(collectionKey) : { bucket: '' };
+  const { bucket, uuid: collectionUuid } = collectionKey
+    ? parseCollectionKey(collectionKey)
+    : { bucket: '', uuid: '' };
   const collectionName = collection?.name ?? collection?.bucket ?? bucket;
   const uploadName = uploadPrefix ? uploadNameOf(uploadPrefix) : '';
   // Drafts are scoped by bucket + upload, and a local batch has neither — its
@@ -113,6 +126,7 @@ export function Tag() {
 
   const drafts = useDraftStore((s) => s.drafts);
   const timeOffset = useDraftStore((s) => s.timeOffset);
+  const pendingLocation = useDraftStore((s) => s.pendingLocation);
   const loadUpload = useDraftStore((s) => s.loadUpload);
   const addSpeciesFn = useDraftStore((s) => s.addSpecies);
   const incrementSpeciesFn = useDraftStore((s) => s.incrementSpecies);
@@ -121,6 +135,7 @@ export function Tag() {
   const detagFn = useDraftStore((s) => s.detag);
   const setQuestionableManyFn = useDraftStore((s) => s.setQuestionableMany);
   const setTimeOffsetFn = useDraftStore((s) => s.setTimeOffset);
+  const setPendingLocationFn = useDraftStore((s) => s.setPendingLocation);
   const setTimeOverrideFn = useDraftStore((s) => s.setTimeOverride);
   const applyTimeOffsetToSelectionFn = useDraftStore((s) => s.applyTimeOffsetToSelection);
   const flushSaves = useDraftStore((s) => s.flushSaves);
@@ -145,6 +160,7 @@ export function Tag() {
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [showTimeShift, setShowTimeShift] = useState(false);
+  const [showChangeLocation, setShowChangeLocation] = useState(false);
   // Snapshot the bulk targets + preview anchor once when the modal opens — both
   // derive from the SAME corrected baseline, so the before→after preview always
   // matches what apply persists, and re-renders (spinner clicks) don't recompute.
@@ -673,6 +689,28 @@ export function Tag() {
           {selected.has(focus) ? '✓ In selection' : '＋ Select'}
         </button>
 
+        {/* Change location entry (issue #279) — corrects the whole upload's
+            recorded camera location. Not available for a local (offline) batch,
+            which has no connection to fetch the shared location registry. */}
+        {!localRecord && (
+          <button
+            onClick={() => setShowChangeLocation(true)}
+            className={`inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+              pendingLocation
+                ? 'bg-mark border border-ink text-ink font-[600]'
+                : 'border border-rule text-inkSoft hover:text-ink hover:border-ink'
+            }`}
+            title={
+              pendingLocation
+                ? `Pending location change to ${pendingLocation.locationName} — click to edit`
+                : 'Correct the recorded camera location for this whole upload'
+            }
+          >
+            <span aria-hidden>⚲</span>
+            {pendingLocation ? `location → ${pendingLocation.locationName}` : 'Change location'}
+          </button>
+        )}
+
         {/* Upload time-shift entry + persistent active-offset indicator (§08). */}
         <button
           onClick={() => setShowTimeShift(true)}
@@ -944,6 +982,17 @@ export function Tag() {
           totalFrames={list.length}
           onApply={(o) => setTimeOffsetFn(ctx, o)}
           onClose={() => setShowTimeShift(false)}
+        />
+      )}
+      {showChangeLocation && (
+        <ChangeLocationModal
+          canonicalCurrent={currentDeployment.data ?? null}
+          pending={pendingLocation}
+          locations={locations.data?.locations ?? []}
+          collectionUuid={collectionUuid}
+          totalFrames={list.length}
+          onApply={(loc) => setPendingLocationFn(ctx, loc)}
+          onClose={() => setShowChangeLocation(false)}
         />
       )}
       {bulkTime && (
