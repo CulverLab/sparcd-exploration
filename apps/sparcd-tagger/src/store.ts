@@ -80,6 +80,7 @@ const initialSession = loadSessionConnection();
 const LEGACY_THEME_KEY = 'sparcd-tagger-session';
 const DISPLAY_PREFERENCES_KEY = 'sparcd-tagger-display-preferences';
 const AUTO_ADVANCE_KEY = 'sparcd-tagger-auto-advance-on-tag';
+const TAGGER_IDENTITY_KEY = 'sparcd-tagger-identity';
 
 type DisplayPreferences = Pick<TaggerState, 'dateFormat' | 'timeFormat' | 'distanceUnit'>;
 
@@ -147,6 +148,36 @@ function clearAutoAdvance() {
   }
 }
 
+// The identity typed in Settings — stamps the audit-snapshot path and edit
+// comment of every sync. Persisted like the display preferences (issue #305:
+// it used to reset to empty on every reload); cleared on an explicit
+// disconnect (not a sibling tab's), since it is a "who is at this keyboard"
+// attribution rather than a connection detail — a stale identity surviving a
+// logout risks misattributing the next person's edits on a shared machine.
+function loadTaggerUser(): string {
+  try {
+    return localStorage.getItem(TAGGER_IDENTITY_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveTaggerUser(value: string) {
+  try {
+    localStorage.setItem(TAGGER_IDENTITY_KEY, value);
+  } catch {
+    // Storage can be unavailable or full; the in-memory choice still applies.
+  }
+}
+
+function clearTaggerUser() {
+  try {
+    localStorage.removeItem(TAGGER_IDENTITY_KEY);
+  } catch {
+    // Disconnect still clears the active connection and in-memory identity.
+  }
+}
+
 const initialDisplayPreferences = loadDisplayPreferences();
 
 /** The choice this tool persisted for itself before the shared home existed. */
@@ -176,10 +207,11 @@ export const useStore = create<TaggerState>()(
   // this tab's own sessionStorage session, so switching tools or reloading
   // keeps the user in; failing that, a sibling tab's live relay
   // (`subscribeSharedConnection`) supplies one within a message round-trip of
-  // mount, and otherwise the user enters the secret. Nothing else here is
-  // written to disk by this store: the theme lives in the shared home every
-  // SPARC'd tool reads, and transient state (selection, sync, pendingSnapshots)
-  // is dropped on reload by design.
+  // mount, and otherwise the user enters the secret. The theme lives in the
+  // shared home every SPARC'd tool reads; date/time/distance display prefs,
+  // auto-advance, and the tagger identity persist to their own localStorage
+  // keys (see the loaders above); everything else — selection, sync state,
+  // pendingSnapshots, dryRun — is transient and dropped on reload by design.
   (set) => ({
     s3Config: initialSession,
     connectionId: 0,
@@ -189,7 +221,7 @@ export const useStore = create<TaggerState>()(
     selectedCollectionKey: null,
     selectedUploadPrefix: null,
     pendingSnapshots: false,
-    taggerUser: '',
+    taggerUser: loadTaggerUser(),
     dryRun: false,
     burstGroupingEnabled: false,
     burstThresholdSec: 60,
@@ -211,6 +243,7 @@ export const useStore = create<TaggerState>()(
       clearSharedConnection();
       clearDisplayPreferences();
       clearAutoAdvance();
+      clearTaggerUser();
       set((s) => ({
         s3Config: null,
         connectionId: s.connectionId + 1,
@@ -247,7 +280,10 @@ export const useStore = create<TaggerState>()(
       }),
     clearPendingSnapshots: () => set({ pendingSnapshots: false }),
     setSyncState: (state) => set({ syncState: state }),
-    setTaggerUser: (value) => set({ taggerUser: value }),
+    setTaggerUser: (value) => {
+      saveTaggerUser(value);
+      set({ taggerUser: value });
+    },
     setDryRun: (value) => set({ dryRun: value }),
     setBurstGrouping: (value) => set({ burstGroupingEnabled: value }),
     setBurstThreshold: (value) => set({ burstThresholdSec: value }),

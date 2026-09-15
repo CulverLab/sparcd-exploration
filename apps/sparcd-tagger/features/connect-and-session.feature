@@ -77,6 +77,21 @@ Feature: Connect the tagger to a collection store and manage the session
     # against the credentials it connected with.
 
   @unmapped
+  Scenario: The tagger identity survives a reload
+    Given the tagger is connected
+    When a tagger identity is entered in Settings
+    And the browser is reloaded
+    And Settings is opened
+    Then that identity is retained in Settings
+
+  @unmapped
+  Scenario: The tagger identity is forgotten on disconnect
+    Given the tagger is connected
+    When a tagger identity is entered in Settings
+    And Disconnect is chosen
+    Then a fresh connection starts with no identity carried over
+
+  @unmapped
   Scenario: Real writes are the default; dry-run is opt-in
     Given the tagger is connected
     When Settings is opened for the first time in a session

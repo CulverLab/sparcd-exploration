@@ -11,6 +11,7 @@ import {
   collectionRail,
   collectionButton,
   visibleNav,
+  connect,
   ENDPOINT,
   APP_URL,
 } from './support/world';
@@ -200,6 +201,18 @@ When('a tagger identity is entered in Settings', async ({ page }) => {
   await openSettings(page);
   await page.locator('#user').fill('jgonzalez');
   await expect(page.locator('#user')).toHaveValue('jgonzalez');
+});
+
+Then('that identity is retained in Settings', async ({ page }) => {
+  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+});
+
+Then('a fresh connection starts with no identity carried over', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
+  await connect(page);
+  await openSettings(page);
+  await expect(page.locator('#user')).toHaveValue('');
 });
 
 Then(
