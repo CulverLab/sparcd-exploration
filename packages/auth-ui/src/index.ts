@@ -25,7 +25,6 @@ export {
   mergeRevisionedProfiles,
   nextKeyProfileRevision,
   readRevisionedProfiles,
-  shouldReconcileSpeciesProfile,
 } from './speciesKeyProfiles';
 export type {
   RevisionedKeyProfile,

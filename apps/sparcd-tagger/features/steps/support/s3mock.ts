@@ -2,7 +2,7 @@
 //
 // The tagger talks to storage only through `@sparcd/s3-safe`, i.e. the AWS SDK
 // v3 against `cfg.endpoint`. The tests point the endpoint at the app's OWN
-// origin (selected with `TAGGER_TEST_PORT`) so every request is same-origin — no CORS,
+// origin (`http://localhost:5312`) so every request is same-origin — no CORS,
 // no preflight — and this handler answers the five verbs the app can reach:
 // ListBuckets, ListObjectsV2, GetObject, HeadObject and PutObject (both the
 // `IfNoneMatch: "*"` immutable write and the `IfMatch` conditional replace).
@@ -43,9 +43,21 @@ export class MockS3 {
 
   /** Artificial latency per object key — lets a test observe loading states. */
   readonly delays = new Map<string, number>();
+  /** Object reads to make refresh assertions independent of timing. */
+  private readonly reads = new Map<string, number>();
+  /** Persistent GET failures for error-state coverage. */
+  private readonly failedReads = new Set<string>();
 
   delay(key: string, ms: number): void {
     this.delays.set(key, ms);
+  }
+
+  failRead(key: string): void {
+    this.failedReads.add(key);
+  }
+
+  readCount(key: string): number {
+    return this.reads.get(key) ?? 0;
   }
 
   addBucket(name: string): void {
@@ -144,7 +156,6 @@ function errorXml(code: string, message: string): string {
 }
 
 const XML = { 'content-type': 'application/xml' } as const;
-const testOrigin = `http://localhost:${process.env.TAGGER_TEST_PORT ?? '5312'}`;
 
 // --- The route handler ------------------------------------------------------
 
@@ -157,6 +168,7 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
   await page.route('**/*', async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const testOrigin = `http://localhost:${process.env.TAGGER_TEST_PORT ?? '5312'}`;
     const sameOrigin = url.origin === testOrigin;
 
     // Species reference images point at example.org; serve a placeholder so the
@@ -232,6 +244,15 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     }
 
     if (request.method() === 'GET') {
+      s3.reads.set(key, s3.readCount(key) + 1);
+      if (s3.failedReads.has(key)) {
+        await route.fulfill({
+          status: 500,
+          headers: XML,
+          body: errorXml('InternalError', `temporary read failure for ${key}`),
+        });
+        return;
+      }
       if (!existing) {
         await route.fulfill({
           status: 404,
