@@ -149,6 +149,38 @@ Then('a file between two timestamped files sits midway between them', async ({ a
   await expect(app.page.getByText('10 min after IMG_0003.JPG (last file)')).toBeVisible();
 });
 
+Given('filename-order neighbours have descending camera times with missing files between them', async ({ app }) => {
+  await rescanFromAssign(app, [
+    jpegAt('IMG_0001.JPG', '2026:07:01 12:20:00'),
+    jpegNoTime('IMG_0002.JPG'),
+    jpegNoTime('IMG_0003.JPG'),
+    jpegAt('IMG_0004.JPG', '2026:07:01 12:00:00'),
+  ]);
+  await app.chooseDeployment('Bear Canyon');
+});
+
+Then('the missing files show descending interpolated estimates', async ({ app }) => {
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 12:13:20');
+  await expect(card(app, 'IMG_0003.JPG')).toContainText('2026-07-01 12:06:40');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+  await expect(card(app, 'IMG_0003.JPG')).toContainText('EST.');
+  await expect(app.page.getByText('between IMG_0001.JPG and IMG_0004.JPG')).toHaveCount(2);
+});
+
+When('one descending estimate is overridden by hand', async ({ app }) => {
+  await card(app, 'IMG_0002.JPG').click();
+  await overrideInput(app).fill('2026-05-05T05:05:05');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('MANUAL');
+});
+
+Then('clearing the override returns it to its descending estimate', async ({ app }) => {
+  await app.page
+    .getByRole('button', { name: '✕ back to estimate (2026-07-01 12:13:20)' })
+    .click();
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 12:13:20');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+});
+
 Given('the batch begins and ends with a file carrying no camera time', async ({ app }) => {
   await rescanFromAssign(app, [
     jpegNoTime('IMG_0000.JPG'),
