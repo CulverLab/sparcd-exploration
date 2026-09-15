@@ -96,13 +96,19 @@ export function SyncDialog({
       setResult(r);
       setSyncState(syncStateFor(r, dryRun));
       if (r.status === 'synced' && !dryRun) {
+        // Ground the display on the freshly-written canonical files BEFORE
+        // clearing drafts/offset (#306). A clean (non-dirty) draft defers to
+        // `img.baseObservations`/the base timestamp for display — clearing
+        // dirty first would open a window where the query cache still holds
+        // the pre-sync base, so the species/time just written would briefly
+        // (or, on a slow backend, not-so-briefly) vanish from the tile.
+        await queryClient.invalidateQueries({ queryKey: ['tagImages', connectionId] });
         // Clear dirty only on the drafts actually written — questionable-only
         // drafts (no canonical target) stay surfaced as unsaved.
         await markUploadSynced(ctx, r.syncedMediaIds ?? []);
         // The offset was baked into media.csv (performSync cleared it in Dexie);
         // reset the in-memory value too so the active-offset indicator clears.
         setTimeOffset(ctx, null);
-        await queryClient.invalidateQueries({ queryKey: ['tagImages', connectionId] });
       }
     } catch (e) {
       setError((e as Error).message);
