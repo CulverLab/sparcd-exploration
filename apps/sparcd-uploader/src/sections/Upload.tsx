@@ -256,6 +256,7 @@ export function Upload() {
                 id: f.relPath,
                 sha256: f.sha256,
                 exifNaive: f.exifNaive,
+                exifTimestampSource: f.exifTimestampSource,
                 exifCamera: f.exifCamera,
                 gps: f.gps,
                 width: f.width,
@@ -322,7 +323,9 @@ export function Upload() {
 
   // Estimating and overriding belongs to Assign; this step only states what
   // the batch will publish so nobody is surprised by the deployment flag.
-  const noCameraTime = files.filter((f) => f.processState === 'ready' && !f.exifNaive).length;
+  const noCameraTime = files.filter(
+    (f) => f.processState === 'ready' && (!f.exifNaive || f.exifTimestampSource === 'exif-modify'),
+  ).length;
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
@@ -431,7 +434,7 @@ export function Upload() {
 
       {noCameraTime > 0 && (
         <p className="font-mono text-[12px] text-inkSoft">
-          {noCameraTime} files without camera time · estimated in Assign · timestamp_issues → true
+          {noCameraTime} files without a camera capture time · reviewed in Assign · timestamp_issues → true
         </p>
       )}
 

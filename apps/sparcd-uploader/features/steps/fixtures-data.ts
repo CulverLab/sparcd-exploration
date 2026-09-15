@@ -217,6 +217,22 @@ export function jpegWithExifDate(date: string, salt = ''): Buffer {
   return salt ? Buffer.concat([buf, Buffer.from(salt, 'utf8')]) : buf;
 }
 
+/** The same JPEG, with DateTimeOriginal replaced by TIFF DateTime/ModifyDate. */
+export function jpegWithExifModifyDate(date: string, salt = ''): Buffer {
+  const buf = jpegWithExifDate(date, salt);
+  const tiff = buf.indexOf(Buffer.from('Exif\0\0', 'latin1')) + 6;
+  if (tiff < 6) throw new Error('EXIF TIFF header not found');
+  // The fixture's only IFD0 entry is the pointer to its DateTimeOriginal
+  // sub-IFD. Turn it into a DateTime (called ModifyDate by exifr) entry while
+  // preserving the existing string at TIFF offset 0x28.
+  const entry = tiff + 10;
+  buf.writeUInt16BE(0x0132, entry);
+  buf.writeUInt16BE(2, entry + 2);
+  buf.writeUInt32BE(BASE_JPEG_EXIF_DATE.length + 1, entry + 4);
+  buf.writeUInt32BE(0x28, entry + 8);
+  return buf;
+}
+
 /** The same JPEG with its whole APP1 EXIF segment removed — no capture time. */
 export function jpegWithoutExif(salt = ''): Buffer {
   const buf = baseJpeg();

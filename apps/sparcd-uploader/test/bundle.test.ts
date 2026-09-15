@@ -64,6 +64,7 @@ function ready(
   relPath: string,
   opts: {
     exifNaive?: NaiveDateTime;
+    exifTimestampSource?: 'exif-modify';
     manualNaive?: NaiveDateTime;
     mediaKind?: FileEntry['mediaKind'];
   } = {},
@@ -83,6 +84,7 @@ function ready(
     processState: 'ready',
     sha256: `sha-${relPath}`,
     exifNaive: 'exifNaive' in opts ? opts.exifNaive : naive(),
+    exifTimestampSource: opts.exifTimestampSource,
     manualNaive: opts.manualNaive,
   };
 }
@@ -146,6 +148,17 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     const b = await build([ready('a/CLIP.MP4', { mediaKind: 'video', exifNaive: undefined })]);
     expect(parseMedia(b.mediaCsv)[0].timestamp).toBe(b.items[0].captureTimestamp);
     expect(parseMedia(b.mediaCsv)[0].comments).toBe('[TIMESTAMP:file-modified]');
+  });
+
+  it('marks a ModifyDate-only EXIF time and lets a manual correction replace it', async () => {
+    const modified = ready('a/MODIFIED.JPG', { exifTimestampSource: 'exif-modify' });
+    let bundle = await build([modified]);
+    expect(parseMedia(bundle.mediaCsv)[0].comments).toBe('[TIMESTAMP:exif-modify]');
+    expect(parseCsvRows(bundle.deploymentsCsv)[0][15]).toBe('true');
+
+    bundle = await build([{ ...modified, manualNaive: naive({ hour: 9 }), manualSource: 'manual' }]);
+    expect(parseMedia(bundle.mediaCsv)[0].comments).toBe('[TIMESTAMP:manual]');
+    expect(parseMedia(bundle.mediaCsv)[0].timestamp).toBe('2024-01-10T16:00:00.000Z');
   });
 
   it('a manual capture time fills col 4 (DST-corrected) when EXIF is absent', async () => {

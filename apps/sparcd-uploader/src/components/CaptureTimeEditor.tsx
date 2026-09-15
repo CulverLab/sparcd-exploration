@@ -119,8 +119,8 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
   };
 
   const ready = files.filter((f) => f.processState === 'ready');
-  const missing = ready.filter((f) => !f.exifNaive);
-  const timed = ready.filter((f) => f.exifNaive);
+  const missing = ready.filter((f) => !f.exifNaive || f.exifTimestampSource === 'exif-modify');
+  const timed = ready.filter((f) => f.exifNaive && f.exifTimestampSource !== 'exif-modify');
   const spreadStart = spreadStartOf(files);
 
   const folderCounts = new Map<string, number>();
@@ -208,7 +208,7 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
       <div className="border border-ruleSoft text-inkSoft bg-paper px-3 py-2.5 font-body text-[12.5px] leading-relaxed">
         {timed.length === 0
           ? `No file in this batch has a camera capture time. File modified times were used for all ${missing.length} files, and the upload will be marked as having a known timestamp issue. Use Spread if the file dates are wrong too.`
-          : `${missing.length} files have no camera capture time. Times were estimated from neighbouring files, and this upload will be marked as having a known timestamp issue.`}
+          : `${missing.length} files need review because they have no camera capture time or only EXIF ModifyDate. Times are estimated from neighbouring files where needed, and this upload will be marked as having a known timestamp issue.`}
       </div>
 
       <div className="border border-ruleSoft bg-paper grid grid-cols-1 sm:grid-cols-[170px_minmax(0,1fr)]">
@@ -454,7 +454,7 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                     {source && (
                       <span
                         className={`inline-block font-body text-[10px] font-[600] tracking-[0.08em] uppercase px-1 ${
-                          source === 'interpolated' || source === 'offset' || source === 'file-modified'
+                          source === 'interpolated' || source === 'offset' || source === 'file-modified' || source === 'exif-modify'
                             ? 'border border-dashed border-rule text-inkMute'
                             : 'border border-accent text-accent'
                         }`}
@@ -471,19 +471,25 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                       step={1}
                       autoFocus
                       aria-label={`Capture time for ${f.fileName}`}
-                      value={f.manualNaive ? naiveToInputValue(f.manualNaive) : ''}
+                      value={f.manualNaive
+                        ? naiveToInputValue(f.manualNaive)
+                        : f.exifTimestampSource === 'exif-modify' && f.exifNaive
+                          ? naiveToInputValue(f.exifNaive)
+                          : ''}
                       onChange={(e) => setManualNaive(f.id, inputValueToNaive(e.target.value))}
                       className={inputClass}
                     />
                   )}
                   <span className="font-body text-[11px] leading-snug text-inkMute min-w-0">
-                    {f.manualNaive && estimate ? (
+                    {f.manualNaive && (estimate || f.exifTimestampSource === 'exif-modify') ? (
                       <button
                         type="button"
                         onClick={() => setManualNaive(f.id, null)}
                         className="text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                       >
-                        ✕ back to estimate ({shortNaive(estimate.naive)})
+                        {f.exifTimestampSource === 'exif-modify'
+                          ? `✕ back to EXIF ModifyDate (${shortNaive(f.exifNaive!)})`
+                          : `✕ back to estimate (${shortNaive(estimate!.naive)})`}
                       </button>
                     ) : (
                       methodLine(f, estimate, uploadTimeZone, spreadStart)

@@ -177,7 +177,7 @@ export function Assign() {
   }, [location?.key]);
 
   const needsCaptureTime = files.some(
-    (f) => f.processState === 'ready' && !f.exifNaive,
+    (f) => f.processState === 'ready' && (!f.exifNaive || f.exifTimestampSource === 'exif-modify'),
   );
   // Gate is everything the USER needs to supply — deployment, collection,
   // identity, and a capture time for whatever's finished Inspect so far.

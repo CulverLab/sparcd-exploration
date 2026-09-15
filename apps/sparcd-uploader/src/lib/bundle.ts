@@ -190,7 +190,8 @@ const mimeFor = (f: FileEntry): string =>
  */
 export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string, estimates: Map<string, CaptureEstimate>): UploadItem {
   const estimate = estimates.get(f.id);
-  const naive = f.exifNaive ?? f.manualNaive ?? estimate!.naive;
+  const modifiedOnly = f.exifTimestampSource === 'exif-modify';
+  const naive = modifiedOnly && f.manualNaive ? f.manualNaive : f.exifNaive ?? f.manualNaive ?? estimate!.naive;
   const { objectName, key } = objectKeyFor(f.id, f.sha256!, naming);
   return {
     id: f.id,
@@ -202,7 +203,9 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
     size: f.size,
     sha256: f.sha256!,
     captureTimestamp: naiveInZoneToUtcIso(naive, timeZone),
-    timestampSource: f.exifNaive ? undefined : f.manualNaive ? f.manualSource ?? 'manual' : estimate!.method,
+    timestampSource: modifiedOnly && !f.manualNaive
+      ? 'exif-modify'
+      : f.manualNaive ? f.manualSource ?? 'manual' : f.exifNaive ? undefined : estimate!.method,
     mediaKind: f.mediaKind,
     mimeType: mimeFor(f),
     preTags: f.preTags,

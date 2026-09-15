@@ -451,19 +451,7 @@ export class App {
   }
 
   async readBundleRecords(): Promise<Record<string, unknown>[]> {
-    return this.page.evaluate(async () => {
-      const dbs = await indexedDB.databases();
-      if (!dbs.some((d) => d.name === 'sparcd-uploader')) return [];
-      const open = indexedDB.open('sparcd-uploader');
-      const db: IDBDatabase = await new Promise((resolve) => {
-        open.onsuccess = () => resolve(open.result);
-      });
-      if (!db.objectStoreNames.contains('bundles')) return [];
-      const req = db.transaction('bundles', 'readonly').objectStore('bundles').getAll();
-      return new Promise((resolve) => {
-        req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
-      });
-    });
+    return this.readStoreRecords('bundles');
   }
 
   /** Choose individual files through the plain (non-directory) file input. */
@@ -624,9 +612,9 @@ export class App {
     return m ? Number(m[1]) : 0;
   }
 
-  /** Read the persisted resume ledger straight out of IndexedDB. */
-  async readBatchRecords(): Promise<Record<string, unknown>[]> {
-    return this.page.evaluate(async () => {
+  /** Read one IndexedDB store, retrying the Settings logout reload once. */
+  private async readStoreRecords(store: 'batches' | 'files' | 'bundles'): Promise<Record<string, unknown>[]> {
+    const read = () => this.page.evaluate(async (storeName) => {
       const dbs = await indexedDB.databases();
       if (!dbs.some((d) => d.name === 'sparcd-uploader')) return [];
       const open = indexedDB.open('sparcd-uploader');
@@ -634,33 +622,34 @@ export class App {
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(open.error);
       });
-      if (!db.objectStoreNames.contains('batches')) return [];
-      const tx = db.transaction('batches', 'readonly');
-      const req = tx.objectStore('batches').getAll();
+      if (!db.objectStoreNames.contains(storeName)) return [];
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).getAll();
       return new Promise((resolve, reject) => {
         req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
         req.onerror = () => reject(req.error);
       });
-    });
+    }, store);
+
+    try {
+      return await read();
+    } catch (error) {
+      // Settings disconnect renders the connection gate, then deliberately
+      // reloads after IndexedDB is cleared. A reader begun in that narrow gap
+      // loses its execution context; wait for the new document and read it.
+      if (!(error instanceof Error) || !error.message.includes('Execution context was destroyed')) throw error;
+      await this.page.waitForLoadState('domcontentloaded');
+      return read();
+    }
+  }
+
+  /** Read the persisted resume ledger straight out of IndexedDB. */
+  async readBatchRecords(): Promise<Record<string, unknown>[]> {
+    return this.readStoreRecords('batches');
   }
 
   async readFileRecords(): Promise<Record<string, unknown>[]> {
-    return this.page.evaluate(async () => {
-      const dbs = await indexedDB.databases();
-      if (!dbs.some((d) => d.name === 'sparcd-uploader')) return [];
-      const open = indexedDB.open('sparcd-uploader');
-      const db: IDBDatabase = await new Promise((resolve, reject) => {
-        open.onsuccess = () => resolve(open.result);
-        open.onerror = () => reject(open.error);
-      });
-      if (!db.objectStoreNames.contains('files')) return [];
-      const tx = db.transaction('files', 'readonly');
-      const req = tx.objectStore('files').getAll();
-      return new Promise((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
-        req.onerror = () => reject(req.error);
-      });
-    });
+    return this.readStoreRecords('files');
   }
 
   async continueToAssign(): Promise<void> {

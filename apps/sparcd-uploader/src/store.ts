@@ -49,6 +49,7 @@ export type FileEntry = ScannedFile & {
   processState: ProcessState;
   sha256?: string;
   exifNaive?: NaiveDateTime; // naive wall-clock components, no zone
+  exifTimestampSource?: 'exif-modify';
   manualSource?: 'manual' | 'spread';
   manualNaive?: NaiveDateTime; // user-entered wall-clock for files with no EXIF/container time
   exifCamera?: string;
@@ -535,6 +536,7 @@ export const useStore = create<UploaderState>()(
                   processState: 'ready' as const,
                   sha256: result.sha256,
                   exifNaive: result.exifNaive,
+                  exifTimestampSource: result.exifTimestampSource,
                   exifCamera: result.exifCamera,
                   gps: result.gps,
                   width: result.width,

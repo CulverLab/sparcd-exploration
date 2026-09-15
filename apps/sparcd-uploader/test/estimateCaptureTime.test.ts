@@ -43,6 +43,16 @@ describe('estimateCaptureTimes', () => {
   it('renders modification times in Phoenix when there are no references', () => {
     expect(values([file('1')], 'America/Phoenix')).toEqual(['2024-01-10T00:30:45']);
   });
+  it('does not use EXIF ModifyDate as an interpolation anchor', () => {
+    const files = [
+      file('1', time('00')),
+      file('2', time('10'), { exifTimestampSource: 'exif-modify' }),
+      file('3', time('20')),
+    ];
+    expect(estimateCaptureTimes(files, 'UTC').get('2')).toMatchObject({
+      method: 'interpolated', naive: inputValueToNaive(time('10')),
+    });
+  });
   it('uses natural order and leaves input order untouched', () => {
     const files = [file('IMG_10'), file('IMG_9', time('00')), file('IMG_11', time('20'))];
     expect(values(files)).toEqual([time('10')]);

@@ -9,7 +9,7 @@
 // leaves a trailing newline — matched here so a round-trip is byte-stable.
 
 /** One row of `deployments.csv` — a camera location for one upload. */
-export type TimestampSource = 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified';
+export type TimestampSource = 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified' | 'exif-modify';
 
 export type Deployment = {
   timestampIssues?: boolean;
@@ -460,7 +460,7 @@ export function buildMediaComments(input: { timestampSource?: TimestampSource })
 
 export function timestampSourceFromComments(comments: string): TimestampSource | null {
   const value = parseTagMarkers(comments).find((m) => m.prefix === TIMESTAMP_PREFIX)?.value;
-  return value === 'manual' || value === 'spread' || value === 'interpolated' || value === 'offset' || value === 'file-modified' ? value : null;
+  return value === 'manual' || value === 'spread' || value === 'interpolated' || value === 'offset' || value === 'file-modified' || value === 'exif-modify' ? value : null;
 }
 
 export const COMMONNAME_PREFIX = 'COMMONNAME';

@@ -235,8 +235,12 @@ describe('ensureBundle capture times', () => {
     attempt: 0,
   });
 
-  const inspected = (localPath: string, exifNaive?: NaiveDateTime): ProcessResponse =>
-    ({ id: localPath, sha256: `sha-${localPath}`, exifNaive, mediaKind: 'image', mimeType: 'image/jpeg' }) as ProcessResponse;
+  const inspected = (
+    localPath: string,
+    exifNaive?: NaiveDateTime,
+    exifTimestampSource?: 'exif-modify',
+  ): ProcessResponse =>
+    ({ id: localPath, sha256: `sha-${localPath}`, exifNaive, exifTimestampSource, mediaKind: 'image', mimeType: 'image/jpeg' }) as ProcessResponse;
 
   const attachedFor = (paths: string[]) =>
     new Map(paths.map((p) => [p, new File([new Uint8Array(64)], p.split('/').pop()!)]));
@@ -296,5 +300,23 @@ describe('ensureBundle capture times', () => {
     const gap = persisted.find((r) => r.localPath === 't/IMG_0002.JPG')!;
     expect(gap.timestampSource).toBe('interpolated');
     expect(gap.captureTimestamp).toBe('2024-01-10T15:05:00.000Z');
+  });
+
+  it('retains ModifyDate provenance when rebuilding a bundle after interrupted inspection', async () => {
+    const files = [awaiting('t/MODIFIED.JPG')];
+    const resolved = new Map([
+      ['t/MODIFIED.JPG', inspected('t/MODIFIED.JPG', {
+        year: 2024, month: 1, day: 10, hour: 8, minute: 0, second: 0,
+      }, 'exif-modify')],
+    ]);
+
+    const res = await ensureBundle(batch, { bundle: null, files }, resolved, attachedFor(['t/MODIFIED.JPG']));
+    expect(res.ok).toBe(true);
+    const csv = attachBundle.mock.calls[0][0].mediaCsv as string;
+    expect(csv).toContain('[TIMESTAMP:exif-modify]');
+    const deployments = attachBundle.mock.calls[0][0].deploymentsCsv as string;
+    expect(deployments.split(',')[15]).toBe('"true"');
+    const [persisted] = updateFileRecords.mock.calls[0][0] as FileRecord[];
+    expect(persisted.timestampSource).toBe('exif-modify');
   });
 });

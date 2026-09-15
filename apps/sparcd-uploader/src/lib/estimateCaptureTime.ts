@@ -4,7 +4,7 @@ import { partsInZone, type NaiveDateTime } from './exifTime';
 export type EstimateMethod = 'interpolated' | 'offset' | 'file-modified';
 /** What estimation reads off a file — a `FileEntry`, or a resumed ledger row
  *  paired with its reattached source file. */
-export type EstimateInput = Pick<FileEntry, 'id' | 'relPath' | 'processState' | 'exifNaive'> & {
+export type EstimateInput = Pick<FileEntry, 'id' | 'relPath' | 'processState' | 'exifNaive' | 'exifTimestampSource'> & {
   file: { lastModified: number };
 };
 export type CaptureEstimate = {
@@ -31,19 +31,20 @@ export function naiveFromMillis(ms: number): NaiveDateTime {
 }
 
 export function estimateCaptureTimes(files: EstimateInput[], timeZone: string): Map<string, CaptureEstimate> {
-  if (!files.some((f) => f.processState === 'ready' && !f.exifNaive)) return new Map();
+  const hasCameraTime = (f: EstimateInput) => !!f.exifNaive && f.exifTimestampSource !== 'exif-modify';
+  if (!files.some((f) => f.processState === 'ready' && !hasCameraTime(f))) return new Map();
   const ordered = files.filter((f) => f.processState === 'ready')
     .sort((a, b) => naturalPathCompare(a.relPath, b.relPath));
   const estimates = new Map<string, CaptureEstimate>();
   let previous: EstimateInput | undefined;
   let start = 0;
   while (start < ordered.length) {
-    if (ordered[start].exifNaive) {
+    if (hasCameraTime(ordered[start])) {
       previous = ordered[start++];
       continue;
     }
     let end = start;
-    while (end < ordered.length && !ordered[end].exifNaive) end++;
+    while (end < ordered.length && !hasCameraTime(ordered[end])) end++;
     const next = ordered[end];
     const p = previous?.exifNaive ? naiveMillis(previous.exifNaive) : undefined;
     const n = next?.exifNaive ? naiveMillis(next.exifNaive) : undefined;

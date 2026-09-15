@@ -91,6 +91,17 @@ Feature: Establish the true capture time of every file
     And each file whose time the camera did not write carries a marker saying where it came from
     And files the camera did time carry no marker
 
+  Scenario: EXIF ModifyDate is warned and can be overridden
+    Given a file whose only EXIF time is ModifyDate
+    Then it is shown as modified metadata that needs review
+    When that modified metadata time is overridden by hand
+    Then the modified metadata time is shown as a manual override
+
+  Scenario: An EXIF ModifyDate override travels in the uploader's Tagger hand-off
+    Given a file whose only EXIF time is ModifyDate
+    When that modified metadata time is overridden by hand
+    Then the hand-off gives the Tagger the overridden time
+
   @unmapped
   Scenario: Upload is never blocked by a missing capture time
     Given some examined files carry no camera capture time

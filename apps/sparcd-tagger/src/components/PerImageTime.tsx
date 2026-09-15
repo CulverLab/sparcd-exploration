@@ -108,10 +108,16 @@ export function PerImageTime({
               title={
                 timestampSource === 'manual'
                   ? 'Entered by hand in the uploader.'
+                  : timestampSource === 'exif-modify'
+                    ? 'Read from EXIF ModifyDate. This can be metadata-edit time rather than the camera capture time; adjust it if needed.'
                   : 'Estimated by the uploader — the camera wrote no time. Set the real time here if you know it.'
               }
             >
-              {timestampSource === 'manual' ? 'entered by hand' : 'estimated'}
+              {timestampSource === 'manual'
+                ? 'entered by hand'
+                : timestampSource === 'exif-modify'
+                  ? 'EXIF Modified'
+                  : 'estimated'}
             </span>
           )}
         </span>
