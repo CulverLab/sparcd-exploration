@@ -278,7 +278,7 @@ function UploadRow({
         {loading ? <Skeleton w="w-12" /> : query?.isError ? '—' : s!.imageCount.toLocaleString()}
       </span>
 
-      <span data-column="tagged" className="browse-upload-tagged items-center gap-2.5">
+      <span data-column="tagged" className="browse-upload-tagged flex items-center gap-2.5">
         {loading || query?.isError || !s ? (
           <Skeleton w="w-full" />
         ) : (

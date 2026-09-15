@@ -91,7 +91,8 @@ body {
   }
 }
 
-@container browse-upload (min-width: 900px) {
+/* Tagged needs room for its 72px count, gap, and a useful progress bar. */
+@container browse-upload (min-width: 988px) {
   .browse-upload-grid {
     grid-template-columns: 120px minmax(16rem, 1fr) 160px minmax(0, 1.2fr) 140px 70px;
   }
@@ -105,7 +106,7 @@ body {
   }
 }
 
-@container browse-upload (min-width: 964px) {
+@container browse-upload (min-width: 1100px) {
   .browse-upload-grid {
     grid-template-columns: 120px minmax(16rem, 1fr) 160px 90px minmax(0, 1.2fr) 140px 70px;
   }
