@@ -15,7 +15,7 @@ import {
   openUpload,
 } from './support/world';
 import { BUCKET, PREFIX_A, MEDIA_A } from './support/data';
-import { openSyncDialog, setSyncDryRun, readStore } from './support/flows';
+import { openSyncDialog, setSyncDryRun, readStore, waitForSyncDialogClosed } from './support/flows';
 
 const appliedChip = (page: Page, label: string) =>
   page.locator('span.inline-flex:not([data-testid="applied-species-summary"])').filter({ hasText: label }).first();
@@ -290,7 +290,7 @@ Then('the marker is cleared for that image once its change has been synced', asy
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await waitForSyncDialogClosed(page);
   await expect(gridCell(page, 'IMG002.JPG').locator('[title="unsaved edit"]')).toHaveCount(0);
 });
 

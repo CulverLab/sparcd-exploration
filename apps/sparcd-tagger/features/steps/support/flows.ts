@@ -42,11 +42,19 @@ export async function makeLocalEdit(page: Page, file = 'IMG002.JPG'): Promise<vo
   await expect(gridCell(page, file)).toContainText('Coyote');
 }
 
+/** A completed live sync closes its own dialog shortly after (#304) — wait for
+ *  that instead of clicking Close, which may already be gone by the time a
+ *  later step gets around to it. */
+export async function waitForSyncDialogClosed(page: Page): Promise<void> {
+  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toHaveCount(0, { timeout: 3000 });
+}
+
 export async function runLiveSync(page: Page): Promise<void> {
   await openSyncDialog(page);
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
+  await waitForSyncDialogClosed(page);
 }
 
 export async function closeDialog(page: Page): Promise<void> {

@@ -30,6 +30,7 @@ import {
   readStore,
   writeStore,
   waitForDirtyDrafts,
+  waitForSyncDialogClosed,
 } from './support/flows';
 
 const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
@@ -103,6 +104,24 @@ Then(
     expect(obs.some((o) => o.scientificName === 'Puma concolor')).toBe(true);
   },
 );
+
+// --- Auto-close after a live sync (#304) ------------------------------------
+
+Then('the Sync dialog closes on its own, with no Close click needed', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+});
+
+When('the dry-run is run', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run dry-run' }).click();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
+
+Then('the Sync dialog stays open showing the dry-run result', async ({ page }) => {
+  // A dry-run schedules no auto-close at all (not merely "hasn't fired yet") —
+  // this holds immediately, with nothing to wait out.
+  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
 
 Then(
   "the detagged image's slot in observations.csv is a blank placeholder, not absent",
@@ -364,7 +383,7 @@ Given('a sync completed and wrote the changes', async ({ page }) => {
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await dialogClose(page).click();
+  await waitForSyncDialogClosed(page);
 });
 
 Then('the images whose changes were written are no longer listed as unsaved', async ({ page }) => {
@@ -525,7 +544,7 @@ Then(
     expect(await readStore(page, 'syncJournals')).toHaveLength(0);
     const drafts = (await readStore(page, 'drafts')) as { dirty: boolean }[];
     expect(drafts.some((d) => d.dirty)).toBe(true);
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
     await openSyncDialog(page);
     await expect(page.getByText(/Would write|No local edits/)).toBeVisible();
     expect(s3.puts.length).toBeGreaterThan(0);
@@ -595,7 +614,7 @@ Then(
     await page.getByRole('button', { name: 'Sync now' }).click();
     await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced');
     await record();
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
 
     // conflict — someone else rewrites a canonical file.
     await focusFrame(page, 'IMG005.JPG');

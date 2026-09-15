@@ -307,7 +307,6 @@ Then('an upload whose local edits have all been synced is marked as synced', asy
   await page.locator('#user').fill('jgonzalez');
   await sectionTab(page, 'Tag').click();
   await runLiveSync(page);
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
   await sectionTab(page, 'Browse').click();
   await expectRowPill(page, 'priortagger', 'synced');
 });

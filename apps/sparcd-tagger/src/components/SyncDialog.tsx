@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useStore } from '../store';
 import { useDraftStore, type UploadCtx } from '../lib/drafts';
@@ -53,6 +53,11 @@ export function SyncDialog({
   const [phase, setPhase] = useState<Phase>('previewing');
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Pending auto-close timer after a successful live sync (#304) — cleared on
+  // unmount so an early manual close can't leave a stale timer to fire later
+  // against whatever dialog happens to be open by then.
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   const args = () => ({
     cfg: cfg!,
@@ -91,11 +96,13 @@ export function SyncDialog({
     setPhase('running');
     setError(null);
     setSyncState('syncing');
+    let synced = false;
     try {
       const r = await performSync({ ...args(), dryRun });
       setResult(r);
       setSyncState(syncStateFor(r, dryRun));
       if (r.status === 'synced' && !dryRun) {
+        synced = true;
         // Clear dirty only on the drafts actually written — questionable-only
         // drafts (no canonical target) stay surfaced as unsaved.
         await markUploadSynced(ctx, r.syncedMediaIds ?? []);
@@ -109,6 +116,13 @@ export function SyncDialog({
       setSyncState('error');
     } finally {
       setPhase('done');
+    }
+    if (synced) {
+      // A completed live sync needs no further confirmation here — the
+      // toolbar's sync-state pill already shows "synced" outside this dialog.
+      // Give the success message a beat to register, then get out of the way
+      // (#304) rather than leaving a finished dialog for the user to dismiss.
+      closeTimer.current = setTimeout(onClose, 900);
     }
   };
 
