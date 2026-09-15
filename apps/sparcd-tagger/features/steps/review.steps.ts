@@ -43,6 +43,12 @@ Given('an upload with existing identifications is open in the tagging workspace'
   await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer');
 });
 
+Given('an upload from a producer that never populates observation_type is open in the tagging workspace', async ({ page }) => {
+  await sectionTab(page, 'Browse').click();
+  await selectCollection(page);
+  await openUpload(page, 'videoproducer');
+});
+
 // --- What existing identifications look like --------------------------------
 
 Then("each image's tile shows the species already recorded for it", async ({ page }) => {

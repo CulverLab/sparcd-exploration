@@ -33,3 +33,22 @@ describe('typed readers map fixed v016 columns', () => {
     });
   }
 });
+
+describe('a producer that never populates observation_type (col 5)', () => {
+  // e.g. video ingestion for a real upload observed leaving col 5 blank on
+  // every row, including rows that plainly name a species (#306).
+  const row = (scientificName: string, count: string) =>
+    ['id1', 'dep1:WHE12', '', 'media1.MP4', '2026-03-28T03:31:15.920Z', '', 'FALSE', '', scientificName, count, '0', '', '', '', '', '', '', '', '1.0000', ''].join(',');
+
+  it('infers "animal" from a non-empty scientificName despite the blank column', () => {
+    const [obs] = parseObservations(row('Aves', '2'));
+    expect(obs.observationType).toBe('animal');
+    expect(obs.scientificName).toBe('Aves');
+    expect(obs.count).toBe(2);
+  });
+
+  it('still treats a row with no scientificName as blank', () => {
+    const [obs] = parseObservations(row('', ''));
+    expect(obs.observationType).toBe('blank');
+  });
+});

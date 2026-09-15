@@ -19,9 +19,11 @@ export const SETTINGS_BUCKET = 'sparcd-settings-test';
 export const STAMP_A = '2024.01.15.10.00.00_priortagger';
 export const STAMP_B = '2023.06.01.09.30.00_fielduser';
 export const STAMP_C = '2025.03.10.14.00.00_newuploader';
+export const STAMP_D = '2026.03.27.15.19.44_videoproducer';
 export const PREFIX_A = `Collections/${UUID}/Uploads/${STAMP_A}/`;
 export const PREFIX_B = `Collections/${UUID}/Uploads/${STAMP_B}/`;
 export const PREFIX_C = `Collections/${UUID}/Uploads/${STAMP_C}/`;
+export const PREFIX_D = `Collections/${UUID}/Uploads/${STAMP_D}/`;
 
 export const DEPLOYMENT = `${UUID}:SAN15`;
 export const LOCATION_NAME = 'San Pedro 15';
@@ -173,6 +175,33 @@ export function observationsCsv(prefix: string, specs: ObsSpec[]): string {
       cells[10] = '0';
       cells[19] = o.comments;
       for (const [i, v] of Object.entries(o.extras ?? {})) cells[Number(i)] = v;
+      return row(cells, OBS_WIDTH);
+    })
+    .join('\n');
+}
+
+/**
+ * A producer that never populates observation_type (col 5) at all — a
+ * real-world video-ingestion upload observed leaving it blank on every row,
+ * including rows that plainly name a species (#306). `parseObservations`
+ * must infer "animal" from a non-empty scientificName in this shape.
+ */
+export function untypedObservationsCsv(prefix: string, specs: ObsSpec[]): string {
+  return specs
+    .map((o) => {
+      const cells: string[] = [];
+      cells[0] = o.id;
+      cells[1] = DEPLOYMENT;
+      cells[2] = '';
+      cells[3] = mediaKey(prefix, o.file);
+      cells[4] = o.timestamp;
+      // cells[5] (observation_type) intentionally left blank.
+      cells[6] = 'false';
+      cells[7] = '';
+      cells[8] = o.scientificName;
+      cells[9] = String(o.count);
+      cells[10] = '0';
+      cells[19] = o.comments;
       return row(cells, OBS_WIDTH);
     })
     .join('\n');
@@ -377,6 +406,32 @@ export function seedFixtures(s3: MockS3): void {
       BUCKET,
       mediaKey(PREFIX_C, m.file),
       makePng(240, 180, i + 40),
+      m.mime === 'video/mp4' ? 'video/mp4' : 'image/png',
+    );
+  });
+
+  // --- Upload D: identified, but the producer never wrote observation_type (#306) ----
+  s3.put(BUCKET, `${PREFIX_D}media.csv`, mediaCsv(PREFIX_D, MEDIA_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_D}observations.csv`, untypedObservationsCsv(PREFIX_D, OBS_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_D}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(
+    BUCKET,
+    `${PREFIX_D}UploadMeta.json`,
+    uploadMetaJson({
+      bucket: BUCKET,
+      prefix: PREFIX_D,
+      user: 'videoproducer',
+      imageCount: MEDIA_A.length,
+      imagesWithSpecies: 3,
+      description: 'Video ingestion — observation_type never populated',
+    }),
+    'application/json',
+  );
+  MEDIA_A.forEach((m, i) => {
+    s3.put(
+      BUCKET,
+      mediaKey(PREFIX_D, m.file),
+      makePng(240, 180, i + 60),
       m.mime === 'video/mp4' ? 'video/mp4' : 'image/png',
     );
   });

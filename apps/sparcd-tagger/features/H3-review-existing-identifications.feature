@@ -98,6 +98,14 @@ Feature: Review, correct and remove identifications that already exist
     And the marker is cleared for that image once its change has been synced
 
   @H3
+  Scenario: Identifications are shown even when the producer never wrote observation_type
+    Given an upload from a producer that never populates observation_type is open in the tagging workspace
+    Then each image's tile shows the species already recorded for it
+    # A real-world video-ingestion upload leaves the observation_type column
+    # blank on every row, including ones that plainly name a species (#306).
+    # A row naming a species must display regardless of that column's content.
+
+  @H3
   Scenario: Uploader-written blank rows are shown as untagged, not as identified images
     Given an upload with only uploader-written blank rows is open in the tagging workspace
     Then every image tile is shown as untagged
