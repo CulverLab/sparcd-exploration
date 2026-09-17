@@ -22,7 +22,7 @@ Feature: Examine an image closely enough to catch every species
     Then it can be enlarged up to six times its fitted size
     And detail beyond the fitted view becomes legible
 
-  @H1
+  @H1 @H1-2
   Scenario: The enlarged image can be moved around
     Given the image is zoomed in
     When it is dragged
@@ -34,7 +34,7 @@ Feature: Examine an image closely enough to catch every species
     Then on-screen zoom-in and zoom-out controls are available over the image
     And double-clicking the image zooms in a step
 
-  @H1
+  @H1 @H1-3
   Scenario: Returning to the fitted view is one action away once zoomed
     Given the image is zoomed in
     Then a "Reset" control is offered
@@ -51,7 +51,7 @@ Feature: Examine an image closely enough to catch every species
     # The zoom surface is stretched to the full pane, so a backdrop click never
     # reaches the element that carries the dismiss handler. See CORRECTIONS.md.
 
-  @H1
+  @H1 @H1-5
   Scenario: Moving to another image starts it fitted to the pane
     Given the current image is zoomed in and panned
     When another image is opened

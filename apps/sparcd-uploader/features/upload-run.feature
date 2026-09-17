@@ -52,7 +52,7 @@ Feature: Upload and publish a batch
     When a real upload is started and completes
     Then the admin setup guidance note is not visible
 
-  @F1
+  @F1 @F1-1
   Scenario: Every file in the batch is stored under one upload folder in the collection
     When a real upload is started and completes
     Then every media file of the batch is stored under a single upload folder in the chosen collection
@@ -65,7 +65,7 @@ Feature: Upload and publish a batch
     Then the completion dialog states the file count and collection ID
     And dismissing it closes the dialog
 
-  @F1
+  @F1 @F1-1
   Scenario: Every stored object is confirmed once the batch is written
     When a file has been uploaded
     Then the tool lists the upload folder and confirms every object is stored at its recorded size
@@ -95,7 +95,7 @@ Feature: Upload and publish a batch
     And the user returns to the New upload section
     Then the run completes successfully
 
-  @F1 @F3
+  @F1 @F3 @F1-3
   Scenario: The upload is only published once every file has landed
     Given a real upload is running
     Then the metadata files are written only after every file in the batch has been stored and verified
@@ -104,7 +104,7 @@ Feature: Upload and publish a batch
     # signal that the folder is complete, which is why it is written after the
     # media and the tables.
 
-  @F1
+  @F1 @F1-3
   Scenario: A batch where some files failed is left unpublished and shown as partial
     Given a real upload in which some files failed after their retries
     Then no metadata files are written
@@ -112,7 +112,7 @@ Feature: Upload and publish a batch
     And the tool states that the upload is not yet visible and can be completed by retrying the failed files
     And the admin setup guidance note is shown with the collection ID
 
-  @F3
+  @F3 @F1 @F1-7
   Scenario: An upload that fails or is abandoned announces nothing
     Given a real upload that was cancelled or ended in failure
     Then no upload metadata file was written for it
@@ -120,7 +120,7 @@ Feature: Upload and publish a batch
     # There is no notification mechanism as-built; publishing the metadata is the
     # only thing that makes an upload discoverable.
 
-  @A1
+  @A1 @A1-4
   Scenario: A batch with no species identifications is accepted and recorded as untagged
     When a batch is published
     Then a placeholder observations table is written alongside the media table

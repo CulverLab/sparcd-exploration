@@ -38,7 +38,7 @@ Feature: Assign species to images in an upload
     Then that species tile remains highlighted
     And selecting the species has not changed the focused image
 
-  @H2
+  @H2 @H2-2
   Scenario: An image can carry more than one species
     Given the focused image already carries one species
     When a second species is applied to it
@@ -300,7 +300,7 @@ Feature: Assign species to images in an upload
     # defaults to the first image and every path clamps it into range), and an
     # upload with no taggable images never renders the panel. See CORRECTIONS.md.
 
-  @H2
+  @H2 @H2-5
   Scenario: Dragging a species tile onto the focused image adds it at count one
     Given an image is focused
     When a species tile is dragged onto the image area in the Focus view

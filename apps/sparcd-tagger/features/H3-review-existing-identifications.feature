@@ -26,7 +26,7 @@ Feature: Review, correct and remove identifications that already exist
     # Corrected against the app: only the LIST view writes "untagged". A grid
     # tile with no species shows its file name instead. See CORRECTIONS.md.
 
-  @H3
+  @H3 @H3-1
   Scenario: The focused image's identifications and counts are listed in full
     Given an image with existing identifications is focused
     Then each recorded species is shown with its count

@@ -25,7 +25,7 @@ Feature: Resume an interrupted upload and retry a failed one
     Then nothing about it appears in History
     # Nothing was written, so there is nothing to resume.
 
-  @AL1
+  @AL1 @AL1-6
   Scenario: An interrupted upload is listed as open, never as complete
     Given an upload was interrupted before its metadata was published
     When History is opened
@@ -33,7 +33,7 @@ Feature: Resume an interrupted upload and retry a failed one
     And it shows how many of its files are done and how many failed
     And only uploads whose metadata was published are marked complete
 
-  @AL1
+  @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History
     When it is resumed
@@ -42,14 +42,14 @@ Feature: Resume an interrupted upload and retry a failed one
     # As-built continuation is manual: the user clicks Resume. The tool does not
     # detect connectivity returning and does not restart on its own.
 
-  @AL1
+  @AL1 @F1 @AL1-2 @F1-5
   Scenario: Files already stored and verified are not sent again
     Given a resumed upload has files recorded as already stored
     Then each of those objects is re-checked for its size and recorded fingerprint
     And matching objects are skipped rather than uploaded again
     And an object that is missing or does not match is uploaded again
 
-  @AL2
+  @AL2 @AL2-1 @AL2-6
   Scenario: A resumed upload lands in the same place as the original attempt
     When an interrupted upload is resumed
     Then it writes to the same collection, the same upload folder and the same object paths as the original attempt
@@ -67,7 +67,7 @@ Feature: Resume an interrupted upload and retry a failed one
     # so navigating away unmounted it and killed the retry. The effect now lives
     # in App so it survives section navigation.
 
-  @AL2
+  @AL2 @AL2-2
   Scenario: Retrying the failed files of a partial run completes that same upload
     Given a real upload finished as partial with some files failed
     When "Retry failed files" is chosen
@@ -76,7 +76,7 @@ Feature: Resume an interrupted upload and retry a failed one
     And when they all land, the metadata for that same upload folder is published
     And exactly one upload exists in the destination
 
-  @AL2
+  @AL2 @AL2-4
   Scenario: Retrying does not require choosing the location again
     When a failed upload is retried or resumed
     Then the collection, deployment, uploader identity and timezone are not asked for again
