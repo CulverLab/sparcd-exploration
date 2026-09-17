@@ -204,13 +204,11 @@ export function useUploadSnapshots(
   });
 }
 
-/** The species vocabulary from the settings bucket. It refreshes when a stale
- * tab regains focus so researchers returning to a long-lived session see the
- * current server vocabulary before continuing. */
-export function useSpecies(cfg: S3Config | null, connectionId: number) {
+/** The selected collection vocabulary, falling back to the settings registry. */
+export function useSpecies(cfg: S3Config | null, connectionId: number, collectionKey: string | null = null) {
   return useQuery<SpeciesResult>({
-    queryKey: ['species', connectionId, cfg?.endpoint],
-    queryFn: () => fetchSpecies(cfg!),
+    queryKey: ['species', connectionId, cfg?.endpoint, collectionKey],
+    queryFn: () => fetchSpecies(cfg!, collectionKey),
     enabled: !!cfg,
     staleTime: 15 * 60 * 1000,
     refetchOnWindowFocus: true,

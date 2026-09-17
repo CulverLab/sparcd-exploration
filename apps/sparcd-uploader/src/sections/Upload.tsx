@@ -87,7 +87,7 @@ export function Upload() {
   const dirHandle = useStore((s) => s.dirHandle);
   const pendingResume = useStore((s) => s.pendingResume);
 
-  const { data: locData } = useLocations(s3Config, connectionId);
+  const { data: locData } = useLocations(s3Config, connectionId, selectedBucket);
   const collections = useCollections(s3Config, connectionId);
 
   const slug = sanitizeUploaderUser(uploaderUser);

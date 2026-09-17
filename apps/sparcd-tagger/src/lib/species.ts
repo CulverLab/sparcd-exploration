@@ -1,6 +1,6 @@
-// The species vocabulary — `Settings/species.json` in the SPARC'd settings
-// bucket (the same settings bucket that holds `locations.json`, NOT the
-// per-collection bucket). Pure parsing/validation; the S3 read lives below.
+// The species vocabulary is read from the selected collection's
+// `Collections/<UUID>/species.json` when that file is non-empty, with the
+// SPARC'd settings bucket's `Settings/species.json` as the fallback.
 //
 // Shape confirmed against the upstream Java writer (`model/species/Species.java`
 // + `resources/species.json`): a flat JSON array of
@@ -13,7 +13,7 @@
 // pinned here from the tool that writes the file.
 
 import type { S3Config } from '@sparcd/types';
-import { getClient, translateReadError } from './s3';
+import { getClient, parseCollectionKey, translateReadError } from './s3';
 
 export const SPECIES_KEY = 'Settings/species.json';
 
@@ -110,8 +110,7 @@ export function parseSpecies(text: string): SpeciesParse {
 }
 
 /** Discover the settings bucket by probing visible buckets for `species.json`. */
-async function discoverSettingsBucket(cfg: S3Config): Promise<string> {
-  const client = getClient(cfg);
+async function discoverSettingsBucket(cfg: S3Config, client = getClient(cfg)): Promise<string> {
   const buckets = await client.listBuckets();
   const found: string[] = [];
   await Promise.all(
@@ -141,17 +140,46 @@ function settingsRank(bucket: string): number {
   return 2;
 }
 
-export type SpeciesResult = SpeciesParse & { settingsBucket: string };
+export type SpeciesResult = SpeciesParse & {
+  /** Settings bucket when the fallback registry was used; null for collection data. */
+  settingsBucket: string | null;
+  sourceBucket: string;
+  sourceKey: string;
+};
+
+function isMissingObjectError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  return e.$metadata?.httpStatusCode === 404 || e.name === 'NoSuchKey' || e.name === 'NotFound' || /NoSuchKey|not found/i.test(e.message ?? '');
+}
 
 /** Read + parse the species registry from the discovered settings bucket. */
-export async function fetchSpecies(cfg: S3Config): Promise<SpeciesResult> {
-  const client = getClient(cfg);
-  const settingsBucket = await discoverSettingsBucket(cfg);
+export async function fetchSpecies(
+  cfg: S3Config,
+  collectionKey?: string | null,
+  client = getClient(cfg),
+): Promise<SpeciesResult> {
+  if (collectionKey) {
+    const { bucket, uuid } = parseCollectionKey(collectionKey);
+    const collectionKeyPath = `Collections/${uuid}/species.json`;
+    try {
+      const collectionBytes = await client.getObject(bucket, collectionKeyPath);
+      const collectionParsed = parseSpecies(new TextDecoder().decode(collectionBytes));
+      if (collectionParsed.species.length > 0) {
+        return { ...collectionParsed, settingsBucket: null, sourceBucket: bucket, sourceKey: collectionKeyPath };
+      }
+    } catch (err) {
+      if (!isMissingObjectError(err)) {
+        throw translateReadError(err, `"${collectionKeyPath}" in bucket "${bucket}"`);
+      }
+      // A missing collection assignment falls back to settings.
+    }
+  }
+  const settingsBucket = await discoverSettingsBucket(cfg, client);
   let bytes: Uint8Array;
   try {
     bytes = await client.getObject(settingsBucket, SPECIES_KEY);
   } catch (err) {
     throw translateReadError(err, `"${SPECIES_KEY}"`);
   }
-  return { ...parseSpecies(new TextDecoder().decode(bytes)), settingsBucket };
+  return { ...parseSpecies(new TextDecoder().decode(bytes)), settingsBucket, sourceBucket: settingsBucket, sourceKey: SPECIES_KEY };
 }

@@ -44,7 +44,7 @@ export function Browse() {
 
   const collections = useCollections(cfg, connectionId);
   const uploads = useUploads(cfg, connectionId, collectionKey);
-  const species = useSpecies(cfg, connectionId); // loaded once; surfaced as a status line
+  const species = useSpecies(cfg, connectionId, collectionKey); // loaded for the selected collection
   const summaries = useUploadSummaries(cfg, connectionId, collectionKey, uploads.data);
   const draftStates = useUploadDraftStates(connectionId, collectionKey);
 
@@ -128,7 +128,7 @@ export function Browse() {
           {species.isLoading && 'Loading species vocabulary…'}
           {species.isError && `Species vocabulary unavailable: ${(species.error as Error).message}`}
           {species.data &&
-            `${species.data.species.length} species loaded from ${species.data.settingsBucket}` +
+            `${species.data.species.length} species loaded from ${species.data.sourceBucket}/${species.data.sourceKey}` +
               (species.data.skipped.length ? ` (${species.data.skipped.length} skipped)` : '')}
         </p>
       </aside>

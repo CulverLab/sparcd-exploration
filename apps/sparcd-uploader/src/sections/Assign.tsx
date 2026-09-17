@@ -86,7 +86,7 @@ export function Assign() {
     error,
     isFetching,
     refetch: refetchLocations,
-  } = useLocations(s3Config, connectionId);
+  } = useLocations(s3Config, connectionId, selectedBucket);
   const collections = useCollections(s3Config, connectionId);
   const slug = sanitizeUploaderUser(uploaderUser);
 
