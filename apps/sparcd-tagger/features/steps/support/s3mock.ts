@@ -48,6 +48,9 @@ export class MockS3 {
   /** Persistent GET failures for error-state coverage. */
   private readonly failedReads = new Set<string>();
 
+  /** Fail GETs after a fixed number of successful reads of an object. */
+  readonly getFailures = new Map<string, { successfulReadsRemaining: number }>();
+
   delay(key: string, ms: number): void {
     this.delays.set(key, ms);
   }
@@ -58,6 +61,20 @@ export class MockS3 {
 
   readCount(key: string): number {
     return this.reads.get(key) ?? 0;
+  }
+
+  failGetsAfter(key: string, successfulReads: number): void {
+    this.getFailures.set(key, { successfulReadsRemaining: successfulReads });
+  }
+
+  shouldFailGet(key: string): boolean {
+    const failure = this.getFailures.get(key);
+    if (!failure) return false;
+    if (failure.successfulReadsRemaining > 0) {
+      failure.successfulReadsRemaining -= 1;
+      return false;
+    }
+    return true;
   }
 
   addBucket(name: string): void {
@@ -168,7 +185,7 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
   await page.route('**/*', async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const testOrigin = `http://localhost:${process.env.TAGGER_TEST_PORT ?? '5312'}`;
+    const testOrigin = `http://localhost:${process.env.SPARCD_E2E_PORT ?? '5312'}`;
     const sameOrigin = url.origin === testOrigin;
 
     // Species reference images point at example.org; serve a placeholder so the
@@ -250,6 +267,14 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
           status: 500,
           headers: XML,
           body: errorXml('InternalError', `temporary read failure for ${key}`),
+        });
+        return;
+      }
+      if (s3.shouldFailGet(key)) {
+        await route.fulfill({
+          status: 503,
+          headers: XML,
+          body: errorXml('ServiceUnavailable', `temporary read failure for ${key}`),
         });
         return;
       }
