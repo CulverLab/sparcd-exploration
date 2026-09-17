@@ -673,10 +673,14 @@ export function Tag() {
           {selected.has(focus) ? '✓ In selection' : '＋ Select'}
         </button>
 
-        {/* Upload time-shift entry + persistent active-offset indicator (§08). */}
+        {/* Upload time-shift entry + persistent active-offset indicator (§08).
+            Disabled when no image in the upload has a capture time to shift —
+            unless a shift is already in effect, so it stays reachable to clear. */}
         <button
           onClick={() => setShowTimeShift(true)}
-          className={`inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+          disabled={!sampleTimestamp && !hasUploadShift}
+          aria-describedby={!sampleTimestamp && !hasUploadShift ? 'upload-time-unavailable' : undefined}
+          className={`inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 ${
             hasUploadShift
               ? 'bg-mark border border-ink text-ink font-[600]'
               : 'border border-rule text-inkSoft hover:text-ink hover:border-ink'
@@ -684,12 +688,24 @@ export function Tag() {
           title={
             hasUploadShift
               ? 'Upload time shift is active — click to edit'
-              : 'Shift every frame in this upload by a signed offset'
+              : sampleTimestamp
+                ? 'Shift every frame in this upload by a signed offset'
+                : 'No image in this upload has a capture time to shift'
           }
         >
           <span aria-hidden>◷</span>
           {hasUploadShift ? `clock ${formatOffsetDelta(timeOffset)}` : 'Time shift'}
         </button>
+        {!sampleTimestamp && !hasUploadShift && (
+          <span
+            id="upload-time-unavailable"
+            role="status"
+            aria-live="polite"
+            className="text-[11px] font-mono text-inkSoft"
+          >
+            No image in this upload has a capture time to shift
+          </span>
+        )}
 
         {/* Shift only explicitly selected frames — e.g. one mis-set camera in a
             mixed upload. Stored as per-image corrections, so it stacks on the
