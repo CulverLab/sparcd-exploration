@@ -25,6 +25,9 @@ export const PREFIX_C = `Collections/${UUID}/Uploads/${STAMP_C}/`;
 
 export const DEPLOYMENT = `${UUID}:SAN15`;
 export const LOCATION_NAME = 'San Pedro 15';
+export const NEW_LOCATION_ID = 'SAN22';
+export const NEW_LOCATION_NAME = 'San Pedro 22';
+export const SAME_ID_LOCATION_NAME = 'San Pedro 15 alternate';
 
 const q = (v: string): string => `"${v.replace(/"/g, '""')}"`;
 const row = (cells: string[], width: number): string =>
@@ -272,6 +275,37 @@ export const SPECIES_JSON = JSON.stringify(
   2,
 );
 
+// The shared camera-location registry (issue #279's Change Location picker
+// reads this — same shape as the uploader's `Settings/locations.json`). SAN15
+// matches upload A's recorded deployment exactly, so it preselects.
+export const LOCATIONS_JSON = JSON.stringify(
+  [
+    {
+      nameProperty: LOCATION_NAME,
+      idProperty: 'SAN15',
+      latProperty: 31.5,
+      lngProperty: -110.2,
+      elevationProperty: 1200,
+    },
+    {
+      nameProperty: NEW_LOCATION_NAME,
+      idProperty: NEW_LOCATION_ID,
+      latProperty: 31.7,
+      lngProperty: -110.4,
+      elevationProperty: 1300,
+    },
+    {
+      nameProperty: SAME_ID_LOCATION_NAME,
+      idProperty: 'SAN15',
+      latProperty: 31.6,
+      lngProperty: -110.3,
+      elevationProperty: 1250,
+    },
+  ],
+  null,
+  2,
+);
+
 export const SNAPSHOT_STAMP = '2024-02-01T12-00-00';
 export const SNAPSHOT_USER = 'priortagger';
 export const SNAPSHOT_PREFIX = `${PREFIX_A}.sparcd-tagger-snapshots/${SNAPSHOT_USER}/${SNAPSHOT_STAMP}/`;
@@ -308,6 +342,7 @@ export function seedFixtures(s3: MockS3): void {
   );
 
   s3.put(SETTINGS_BUCKET, 'Settings/species.json', SPECIES_JSON, 'application/json');
+  s3.put(SETTINGS_BUCKET, 'Settings/locations.json', LOCATIONS_JSON, 'application/json');
 
   // --- Upload A: partially tagged, has a deployment file and a snapshot ------
   s3.put(BUCKET, `${PREFIX_A}media.csv`, mediaCsv(PREFIX_A, MEDIA_A), 'text/csv');

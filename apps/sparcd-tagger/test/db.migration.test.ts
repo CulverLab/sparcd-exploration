@@ -28,7 +28,7 @@ type LegacyDraft = {
 const DB_NAME = 'sparcd-tagger';
 
 /** Seed `drafts` at the legacy v2 schema (no `observations`), then close. */
-async function seedLegacy(rows: LegacyDraft[]): Promise<void> {
+async function seedLegacy(rows: LegacyDraft[], uploads: Record<string, unknown>[] = []): Promise<void> {
   const legacy = new Dexie(DB_NAME);
   legacy.version(1).stores({
     drafts: 'id, [bucket+uploadPrefix]',
@@ -38,6 +38,7 @@ async function seedLegacy(rows: LegacyDraft[]): Promise<void> {
   legacy.version(2).stores({ syncJournals: 'id' });
   await legacy.open();
   await legacy.table('drafts').bulkPut(rows);
+  await legacy.table('uploads').bulkPut(uploads);
   legacy.close();
 }
 
@@ -124,5 +125,21 @@ describe('Dexie v3 migration — single label → observations array', () => {
     expect(rec.questionable).toBe(true);
     expect(rec.timeOverride).toBe('2024-01-10T09:00:00');
     expect(rec.dirty).toBe(true);
+  });
+
+  it('does not mark a pre-location upload record as unsynced', async () => {
+    // This is the on-disk shape before the location-correction field existed:
+    // `pendingLocation` is absent, not explicitly null.
+    await seedLegacy([], [{
+      id: 'b::p/',
+      bucket: 'b',
+      uploadPrefix: 'p/',
+      loadedAt: '2024-01-01T00:00:00Z',
+      timeOffset: null,
+    }]);
+    const mod = await import('../src/lib/db');
+    await mod.db.open();
+
+    expect((await mod.uploadDraftStates('b')).has('p/')).toBe(false);
   });
 });

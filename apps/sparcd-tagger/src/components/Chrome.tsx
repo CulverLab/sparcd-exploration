@@ -85,7 +85,9 @@ function CollectionChrome({ children }: { children: ReactNode }) {
   const disconnect = useStore((s) => s.disconnect);
   // Local-only in P1: surface unsaved edits so the pill is honest before the P4
   // write path exists. `syncState` stays the source of truth once sync ships.
-  const hasDirty = useDraftStore((s) => dirtyCount(s.drafts) > 0);
+  // A pending whole-upload location correction is unsaved too, even when no
+  // per-image draft is dirty (#301 review).
+  const hasDirty = useDraftStore((s) => dirtyCount(s.drafts) > 0 || s.pendingLocation !== null);
   const displayState = syncState === 'local-only' && hasDirty ? 'unsynced' : syncState;
 
   return (

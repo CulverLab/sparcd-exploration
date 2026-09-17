@@ -270,6 +270,7 @@ Then(
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
+      'deployments.csv',
       'UploadMeta.json',
       'manifest.json',
     ]);
@@ -293,6 +294,7 @@ Then('the snapshot is only counted as recoverable once its manifest is written',
   expect(manifest.files.map((f) => f.name)).toEqual([
     'media.csv',
     'observations.csv',
+    'deployments.csv',
     'UploadMeta.json',
   ]);
 });

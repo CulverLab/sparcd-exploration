@@ -4,12 +4,14 @@ import {
   parseCsvRows,
   serializeUploadMeta,
   buildUploadMeta,
+  serializeDeployments,
   MEDIA_COL,
   OBS_COL,
   MEDIA_COLUMN_COUNT,
   OBS_COLUMN_COUNT,
+  type Deployment,
 } from '@sparcd/camtrap';
-import { mergeObservations, parseObservations, mergeMedia } from '@sparcd/camtrap';
+import { mergeObservations, parseObservations, mergeMedia, parseDeployments } from '@sparcd/camtrap';
 import {
   buildSyncPlan,
   runSync,
@@ -67,6 +69,23 @@ const MEDIA_CSV = serializeCsvRows([
   mediaRow(K2, '2024-01-10T08:00:30'),
 ]);
 const OBS_CSV = serializeCsvRows([obsRow(K1, '2024-01-10T08:00:00', 'Puma concolor')]);
+const CURRENT_DEPLOYMENT: Deployment = {
+  deploymentId: DEP,
+  locationId: 'SAN15',
+  locationName: 'San Pedro 15',
+  latitude: 31.5,
+  longitude: -110.2,
+  elevation: 1200,
+};
+const DEPLOYMENTS_CSV = serializeDeployments([CURRENT_DEPLOYMENT]);
+const NEW_DEPLOYMENT: Deployment = {
+  deploymentId: 'uuid:SAN22',
+  locationId: 'SAN22',
+  locationName: 'San Pedro 22',
+  latitude: 31.7,
+  longitude: -110.4,
+  elevation: 1300,
+};
 const META_CSV = serializeUploadMeta(
   buildUploadMeta({
     uploadUser: 'orig',
@@ -83,6 +102,7 @@ async function canonical(): Promise<CanonicalState> {
   return {
     media: { text: MEDIA_CSV, etag: '"media-1"', hash: await sha256Hex(MEDIA_CSV) },
     observations: { text: OBS_CSV, etag: '"obs-1"', hash: await sha256Hex(OBS_CSV) },
+    deployments: { text: DEPLOYMENTS_CSV, etag: '"dep-1"', hash: await sha256Hex(DEPLOYMENTS_CSV) },
     uploadMeta: { text: META_CSV, etag: '"meta-1"', hash: await sha256Hex(META_CSV) },
   };
 }
@@ -145,6 +165,7 @@ function fakeIO(
 const baseFrom = (c: CanonicalState) => ({
   media: { etag: c.media.etag, hash: c.media.hash },
   observations: { etag: c.observations.etag, hash: c.observations.hash },
+  deployments: { etag: c.deployments.etag, hash: c.deployments.hash },
   uploadMeta: { etag: c.uploadMeta.etag, hash: c.uploadMeta.hash },
 });
 
@@ -250,6 +271,38 @@ describe('buildSyncPlan', () => {
     const deer = plan.tagEdits[0].observations.find((o) => o.scientificName === 'Odocoileus hemionus');
     expect(deer?.count).toBe(3);
     expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Canis latrans')).toBeTruthy();
+  });
+});
+
+describe('buildSyncPlan — location correction (issue #279)', () => {
+  it('carries the pending location as locationEdit with no images touched', () => {
+    const plan = buildSyncPlan(IMAGES, {}, null, NEW_DEPLOYMENT);
+    expect(plan.locationEdit).toEqual(NEW_DEPLOYMENT);
+    expect(plan.tagEdits).toHaveLength(0);
+    expect(plan.timeEdits).toHaveLength(0);
+  });
+
+  it('stamps the new deployment id on a tag edit made in the same sync', () => {
+    const plan = buildSyncPlan(IMAGES, ADD_DRAFTS, null, NEW_DEPLOYMENT);
+    expect(plan.tagEdits[0].deploymentId).toBe(NEW_DEPLOYMENT.deploymentId);
+  });
+
+  it('stamps the new deployment id on a time edit made in the same sync', () => {
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: [obs('Puma concolor', 1)],
+    });
+    const plan = buildSyncPlan(
+      IMAGES,
+      { [K1]: { ...seeded, timeOverride: '2024-01-10T09:00:00', dirty: true } },
+      null,
+      NEW_DEPLOYMENT,
+    );
+    expect(plan.timeEdits[0].deploymentId).toBe(NEW_DEPLOYMENT.deploymentId);
+  });
+
+  it('null pendingLocation leaves locationEdit null (no correction queued)', () => {
+    const plan = buildSyncPlan(IMAGES, ADD_DRAFTS, null);
+    expect(plan.locationEdit).toBeNull();
   });
 });
 
@@ -361,7 +414,7 @@ describe('runSync — dry-run default writes nothing', () => {
 });
 
 describe('runSync — live write path', () => {
-  it('snapshots all three files (+manifest last), replaces changed files in order, clears the journal', async () => {
+  it('snapshots all four files (+manifest last), replaces changed files in order, clears the journal', async () => {
     const cur = await canonical();
     const { io, rec } = fakeIO(cur);
     const plan = buildSyncPlan(IMAGES, ADD_DRAFTS, null);
@@ -373,7 +426,7 @@ describe('runSync — live write path', () => {
     expect(res.status).toBe('synced');
     // Snapshot set is the full pre-change canonical state, manifest written last.
     expect(rec.snapshots.map((s) => s.key.split('/').pop())).toEqual([
-      'media.csv', 'observations.csv', 'UploadMeta.json', 'manifest.json',
+      'media.csv', 'observations.csv', 'deployments.csv', 'UploadMeta.json', 'manifest.json',
     ]);
     // Only changed canonical files are replaced, media first then meta — here
     // media is unchanged so it's observations then UploadMeta.
@@ -437,6 +490,58 @@ describe('runSync — live write path', () => {
       io,
     );
     expect(res.status).toBe('unsupported');
+  });
+});
+
+describe('runSync — location correction (issue #279)', () => {
+  it('rewrites deployments.csv and every media/observation deployment id', async () => {
+    const cur = await canonical();
+    const { io, rec } = fakeIO(cur);
+    const plan = buildSyncPlan(IMAGES, {}, null, NEW_DEPLOYMENT);
+    const res = await runSync(
+      { bucket: 'sparcd-x', uploadPrefix: PREFIX, user: 'jg', base: baseFrom(cur), plan, dryRun: false },
+      io,
+    );
+    expect(res.status).toBe('synced');
+
+    // media, observations, and deployments all change; UploadMeta always does.
+    expect(rec.replaces.map((r) => r.key.split('/').pop()).sort()).toEqual([
+      'UploadMeta.json',
+      'deployments.csv',
+      'media.csv',
+      'observations.csv',
+    ]);
+
+    const writtenMedia = rec.replaces.find((r) => r.key.endsWith('media.csv'))!;
+    const mediaRows = parseCsvRows(writtenMedia.body);
+    expect(mediaRows.every((r) => r[MEDIA_COL.deploymentId] === NEW_DEPLOYMENT.deploymentId)).toBe(true);
+
+    const writtenObs = rec.replaces.find((r) => r.key.endsWith('observations.csv'))!;
+    const obsRows = parseCsvRows(writtenObs.body);
+    expect(obsRows.every((r) => r[OBS_COL.deploymentId] === NEW_DEPLOYMENT.deploymentId)).toBe(true);
+
+    const writtenDeployments = rec.replaces.find((r) => r.key.endsWith('deployments.csv'))!;
+    const depRows = parseDeployments(writtenDeployments.body);
+    expect(depRows).toHaveLength(1);
+    expect(depRows[0].deploymentId).toBe(NEW_DEPLOYMENT.deploymentId);
+    expect(depRows[0].locationName).toBe(NEW_DEPLOYMENT.locationName);
+  });
+
+  it('a species edit and a location correction in the same sync both land', async () => {
+    const cur = await canonical();
+    const { io, rec } = fakeIO(cur);
+    const plan = buildSyncPlan(IMAGES, ADD_DRAFTS, null, NEW_DEPLOYMENT);
+    const res = await runSync(
+      { bucket: 'sparcd-x', uploadPrefix: PREFIX, user: 'jg', base: baseFrom(cur), plan, dryRun: false },
+      io,
+    );
+    expect(res.status).toBe('synced');
+
+    const writtenObs = rec.replaces.find((r) => r.key.endsWith('observations.csv'))!;
+    const rows = parseObservations(writtenObs.body);
+    expect(rows.every((r) => r.deploymentId === NEW_DEPLOYMENT.deploymentId)).toBe(true);
+    expect(rows.find((r) => r.scientificName === 'Canis latrans')).toBeTruthy();
+    expect(rows.find((r) => r.scientificName === 'Puma concolor')).toBeTruthy();
   });
 });
 
@@ -514,5 +619,10 @@ describe('runSync — resume a partial sync from the journal', () => {
 });
 
 function emptyPlan(): SyncPlan {
-  return { tagEdits: [], timeEdits: [], summary: { additions: 0, modifications: 0, removals: 0, timeCorrections: 0 } };
+  return {
+    tagEdits: [],
+    timeEdits: [],
+    locationEdit: null,
+    summary: { additions: 0, modifications: 0, removals: 0, timeCorrections: 0 },
+  };
 }
