@@ -41,26 +41,26 @@ const baseName = (relPath: string): string => relPath.split('/').pop() ?? relPat
 
 const shortNaive = (n: NaiveDateTime): string => formatNaive(n).replace('T', ' ');
 
-/** Earliest spread time in the batch — the start a Spread was applied from. */
-export function spreadStartOf(files: FileEntry[]): NaiveDateTime | undefined {
-  return files
-    .filter((f) => f.manualSource === 'spread' && f.manualNaive)
-    .map((f) => f.manualNaive!)
-    .sort((a, b) => formatNaive(a).localeCompare(formatNaive(b)))[0];
-}
-
-/** One line saying how this file's time was arrived at. */
+/** One line saying how this file's time was arrived at. A sequence spread's
+ * start lives on the file itself, rather than being re-derived from the batch,
+ * so two folders spread independently each retain their own provenance. */
 export function methodLine(
   f: FileEntry,
   estimate: CaptureEstimate | undefined,
   timeZone: string,
-  spreadStart?: NaiveDateTime,
 ): string {
   if (f.exifNaive) return 'camera time';
   if (f.manualNaive) {
-    return f.manualSource === 'spread' && spreadStart
-      ? `spread from ${shortNaive(spreadStart)}`
-      : 'set by hand';
+    if (f.manualSource === 'spread') {
+      if (f.manualSpreadMethod === 'sequence')
+        return f.manualSpreadStart
+          ? `spread from ${shortNaive(f.manualSpreadStart)}`
+          : 'spread from sequence (start unavailable)';
+      if (f.manualSpreadMethod === 'file-modified')
+        return `spread from file modified times (${f.manualSpreadTimeZone ?? 'timezone unavailable'})`;
+      return 'spread (provenance unavailable)';
+    }
+    return 'set by hand';
   }
   if (!estimate) return '';
   if (estimate.method === 'interpolated')

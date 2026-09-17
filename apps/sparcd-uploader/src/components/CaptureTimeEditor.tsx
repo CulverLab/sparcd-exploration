@@ -3,13 +3,7 @@ import { useStore, type FileEntry } from '../store';
 import { formatNaive, naiveToInputValue, inputValueToNaive, type NaiveDateTime } from '../lib/exifTime';
 import { naiveFromMillis, naiveMillis, naturalPathCompare } from '../lib/estimateCaptureTime';
 import { spreadCaptureTimes, type SpreadOptions } from '../lib/spreadCaptureTimes';
-import {
-  useCaptureEstimates,
-  effectiveTime,
-  methodLine,
-  sourceTag,
-  spreadStartOf,
-} from '../lib/useCaptureEstimates';
+import { useCaptureEstimates, effectiveTime, methodLine, sourceTag } from '../lib/useCaptureEstimates';
 
 // Review surface for files the camera gave no capture time. Every one of them
 // already HAS a time — the interpolation rule ran the moment the batch was
@@ -74,6 +68,13 @@ export function sequenceSpread(startText: string, spacingText: string): SpreadOp
   return start && valid ? { kind: 'sequence', start, spacingSeconds } : undefined;
 }
 
+/** The literal start to remember for display, or nothing for a file-modified
+ *  spread — each of its files gets its own mtime independently, so there is
+ *  no single start to report (#256). */
+export function spreadStartFor(options: SpreadOptions | undefined): NaiveDateTime | undefined {
+  return options?.kind === 'sequence' ? options.start : undefined;
+}
+
 function Thumb({ blob }: { blob?: Blob }) {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
@@ -121,7 +122,6 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
   const ready = files.filter((f) => f.processState === 'ready');
   const missing = ready.filter((f) => !f.exifNaive);
   const timed = ready.filter((f) => f.exifNaive);
-  const spreadStart = spreadStartOf(files);
 
   const folderCounts = new Map<string, number>();
   for (const f of missing) {
@@ -162,6 +162,9 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
     setManualNaiveMany(
       [...spread].map(([id, naive]) => ({ id, naive })),
       'spread',
+      useModified
+        ? { method: 'file-modified', timeZone: uploadTimeZone }
+        : { method: 'sequence', start: spreadStartFor(spreadOptions)! },
     );
   };
 
@@ -478,15 +481,18 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                   )}
                   <span className="font-body text-[11px] leading-snug text-inkMute min-w-0">
                     {f.manualNaive && estimate ? (
-                      <button
-                        type="button"
-                        onClick={() => setManualNaive(f.id, null)}
-                        className="text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                      >
-                        ✕ back to estimate ({shortNaive(estimate.naive)})
-                      </button>
+                      <>
+                        {methodLine(f, estimate, uploadTimeZone)}{' '}
+                        <button
+                          type="button"
+                          onClick={() => setManualNaive(f.id, null)}
+                          className="text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                        >
+                          · ✕ back to estimate ({shortNaive(estimate.naive)})
+                        </button>
+                      </>
                     ) : (
-                      methodLine(f, estimate, uploadTimeZone, spreadStart)
+                      methodLine(f, estimate, uploadTimeZone)
                     )}
                   </span>
                 </div>

@@ -39,12 +39,13 @@ vi.mock('../src/lib/processPool', () => ({ processBatch: vi.fn() }));
 let useStore: typeof import('../src/store')['useStore'];
 let handOffToTagger: typeof import('../src/lib/flip')['handOffToTagger'];
 let resumeFromFlip: typeof import('../src/lib/flip')['resumeFromFlip'];
+let adoptReselected: typeof import('../src/lib/flip')['adoptReselected'];
 let buildBundle: typeof import('../src/lib/bundle')['buildBundle'];
 let captureTimestampOf: typeof import('@sparcd/flip')['captureTimestampOf'];
 
 beforeAll(async () => {
   ({ useStore } = await import('../src/store'));
-  ({ handOffToTagger, resumeFromFlip } = await import('../src/lib/flip'));
+  ({ handOffToTagger, resumeFromFlip, adoptReselected } = await import('../src/lib/flip'));
   ({ buildBundle } = await import('../src/lib/bundle'));
   ({ captureTimestampOf } = await import('@sparcd/flip'));
 });
@@ -106,7 +107,12 @@ it('carries every kind of capture time out to the tagger and home into media.csv
     files: [
       entry('1-camera.jpg', { exifNaive: at(12, 0) }),
       entry('2-manual.jpg', { manualNaive: at(12, 5), manualSource: 'manual' }),
-      entry('3-spread.jpg', { manualNaive: at(12, 6), manualSource: 'spread' }),
+      entry('3-spread.jpg', {
+        manualNaive: at(12, 6),
+        manualSource: 'spread',
+        manualSpreadStart: at(12, 5),
+        manualSpreadMethod: 'sequence',
+      }),
       entry('4-none.jpg', {}),
     ],
   });
@@ -114,12 +120,20 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   await handOffToTagger();
   const record = stored.record!;
   expect(record.files.map((f) => f.relPath)).toEqual(NAMES.map((n) => `trip/${n}`));
+  expect(record.files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadStart)
+    .toBe('2026-07-01T12:05:00');
+  expect(record.files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadMethod)
+    .toBe('sequence');
   // Only file with no time of its own: 30 minutes past the one camera time,
   // three ten-minute steps down the gap it opens.
   expect(captureTimestampOf(record.files[3])).toBe('2026-07-01T12:30:00');
 
   useStore.setState({ files: [], dirHandle: null });
   expect(await resumeFromFlip(record.id)).toEqual({ kind: 'restored' });
+  expect(useStore.getState().files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadStart)
+    .toEqual(at(12, 5));
+  expect(useStore.getState().files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadMethod)
+    .toBe('sequence');
 
   const bundle = await buildBundle({
     location: { key: 'SAN15|31.5,-110.2', id: 'SAN15', name: 'San Pedro 15', latitude: 31.5, longitude: -110.2, elevation: 1200 },
@@ -138,4 +152,62 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   expect(commentsFor(bundle.mediaCsv, '4-none.jpg')).toBe('[TIMESTAMP:offset]');
   expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000Z');
   expect(bundle.deploymentsCsv.split(',')[15]).toBe('"true"'); // timestamp_issues
+});
+
+it('round-trips file-modified spread provenance, including its applied timezone', async () => {
+  useStore.setState({
+    uploadTimeZone: 'Europe/London',
+    dirHandle: dirHandle(),
+    files: [entry('1-camera.jpg', {
+      manualNaive: at(11, 0),
+      manualSource: 'spread',
+      manualSpreadMethod: 'file-modified',
+      manualSpreadTimeZone: 'America/Phoenix',
+    })],
+  });
+
+  await handOffToTagger();
+  const record = stored.record!;
+  expect(record.files[0]).toMatchObject({
+    manualSpreadMethod: 'file-modified',
+    manualSpreadTimeZone: 'America/Phoenix',
+  });
+
+  useStore.setState({ files: [], dirHandle: null });
+  expect(await resumeFromFlip(record.id)).toEqual({ kind: 'restored' });
+  expect(useStore.getState().files[0]).toMatchObject({
+    manualSpreadMethod: 'file-modified',
+    manualSpreadTimeZone: 'America/Phoenix',
+  });
+});
+
+it('does not classify a legacy Flip spread as file-modified', () => {
+  const legacy: FlipRecord = {
+    id: 'legacy-spread',
+    v: 1,
+    createdAt: '2026-07-01T12:00:00.000Z',
+    returnUrl: '/uploader/',
+    files: [{
+      relPath: 'trip/1-camera.jpg',
+      fileName: '1-camera.jpg',
+      size: SIZE,
+      sha256: 'legacy-sha',
+      mediaKind: 'image',
+      manualTimestamp: '2026-07-01T11:00:00',
+      timestampSource: 'spread',
+    }],
+    tags: {},
+  };
+
+  adoptReselected(legacy, [{
+    relPath: 'trip/1-camera.jpg',
+    size: SIZE,
+    file: new File([new Uint8Array(SIZE)], '1-camera.jpg', { type: 'image/jpeg' }),
+  }]);
+
+  expect(useStore.getState().files[0]).toMatchObject({
+    manualSource: 'spread',
+    manualSpreadMethod: undefined,
+    manualSpreadTimeZone: undefined,
+  });
 });

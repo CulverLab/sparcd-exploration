@@ -54,6 +54,13 @@ export interface FlipFile {
   exifTimestamp?: string;
   /** A capture time entered by hand for a file the camera left blank. */
   manualTimestamp?: string;
+  /** The sequence start entered when `timestampSource` is `spread`. Absent
+   * for a spread based on each file's modified time. */
+  manualSpreadStart?: string;
+  /** Whether a spread used a typed sequence start or each file's modified time. */
+  manualSpreadMethod?: 'sequence' | 'file-modified';
+  /** Upload timezone used to convert file modified times when the spread ran. */
+  manualSpreadTimeZone?: string;
   estimatedTimestamp?: string;
   timestampSource?: 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified';
 

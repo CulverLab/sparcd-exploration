@@ -35,6 +35,7 @@ export type WizardStep = 'drop' | 'inspect' | 'assign' | 'upload';
 export type { Theme };
 export type ConcurrencyMode = 'adaptive' | 'manual';
 export type ProcessState = 'queued' | 'processing' | 'ready' | 'error';
+export type ManualSpreadMethod = 'sequence' | 'file-modified';
 
 /** A resume prepared in History, handed off to the wizard's Upload step to run. */
 export type PendingResume = {
@@ -51,6 +52,18 @@ export type FileEntry = ScannedFile & {
   exifNaive?: NaiveDateTime; // naive wall-clock components, no zone
   manualSource?: 'manual' | 'spread';
   manualNaive?: NaiveDateTime; // user-entered wall-clock for files with no EXIF/container time
+  // The literal start typed for the Spread that set `manualNaive`, stamped at
+  // application time so display never has to re-derive "spread from X" after
+  // the fact — a derivation that can't tell two folders' spreads apart, or
+  // handle one spread applied across several folders in a single action.
+  // Unset for a `file-modified` spread, which has no single start to report.
+  manualSpreadStart?: NaiveDateTime;
+  // Kept separately from the optional start so older restored spreads with no
+  // provenance cannot be mistaken for file-modified spreads.
+  manualSpreadMethod?: ManualSpreadMethod;
+  // File modified times are converted in the upload zone when the spread is
+  // applied. Keep that zone with the result, even if settings later change.
+  manualSpreadTimeZone?: string;
   exifCamera?: string;
   gps?: { lat: number; lon: number };
   width?: number;
@@ -163,7 +176,11 @@ type UploaderState = {
   setThumbnail: (id: string, thumbnail: Blob) => void;
   removeFile: (id: string) => void;
   setManualNaive: (id: string, naive: NaiveDateTime | null, source?: 'manual' | 'spread') => void;
-  setManualNaiveMany: (entries: { id: string; naive: NaiveDateTime }[], source: 'manual' | 'spread') => void;
+  setManualNaiveMany: (
+    entries: { id: string; naive: NaiveDateTime }[],
+    source: 'manual' | 'spread',
+    spread?: { method: 'sequence'; start: NaiveDateTime } | { method: 'file-modified'; timeZone: string },
+  ) => void;
   resetBatch: () => void;
   setUploaderUser: (value: string) => void;
   setSelectedLocationKey: (key: string | null) => void;
@@ -577,16 +594,32 @@ export const useStore = create<UploaderState>()(
       setManualNaive: (id, naive, source = 'manual') =>
         set((s) => {
           const files = s.files.map((f) =>
-            f.id === id ? { ...f, manualNaive: naive ?? undefined, manualSource: naive ? source : undefined } : f,
+            f.id === id
+              ? {
+                  ...f,
+                  manualNaive: naive ?? undefined,
+                  manualSource: naive ? source : undefined,
+                  manualSpreadStart: undefined,
+                  manualSpreadMethod: undefined,
+                  manualSpreadTimeZone: undefined,
+                }
+              : f,
           );
           return { files, validations: validateBatch(files) };
         }),
 
-      setManualNaiveMany: (entries, source) =>
+      setManualNaiveMany: (entries, source, spread) =>
         set((s) => {
           const byId = new Map(entries.map((e) => [e.id, e.naive]));
           const files = s.files.map((f) => byId.has(f.id)
-            ? { ...f, manualNaive: byId.get(f.id)!, manualSource: source } : f);
+            ? {
+                ...f,
+                manualNaive: byId.get(f.id)!,
+                manualSource: source,
+                manualSpreadStart: source === 'spread' && spread?.method === 'sequence' ? spread.start : undefined,
+                manualSpreadMethod: source === 'spread' ? spread?.method : undefined,
+                manualSpreadTimeZone: source === 'spread' && spread?.method === 'file-modified' ? spread.timeZone : undefined,
+              } : f);
           return { files, validations: validateBatch(files) };
         }),
 
