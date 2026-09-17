@@ -24,6 +24,7 @@ import {
   setSyncDryRun,
   readStore,
   waitForDirtyDrafts,
+  waitForSyncDialogClosed,
 } from './support/flows';
 
 // --- Background / shared givens ---------------------------------------------
@@ -223,7 +224,7 @@ Then(
 );
 
 Then('a live sync or restore cannot be run while the identity is empty', async ({ page }) => {
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await waitForSyncDialogClosed(page);
   await openSettings(page);
   await page.locator('#user').fill('');
   await sectionTab(page, 'Tag').click();

@@ -22,6 +22,32 @@ Feature: Publish local identifications back to the collection
     And the identifications are then readable by the other SPARC'd tools that read the same files
 
   @unmapped
+  Scenario: The Sync dialog closes itself once a live sync succeeds
+    Given the dry-run setting has been switched off
+    When the sync is run
+    Then the Sync dialog closes on its own, with no Close click needed
+    And focus returns to the Sync opener
+
+  @unmapped
+  Scenario: A delayed post-sync refresh does not add another close delay
+    Given the canonical refresh after a sync is delayed
+    When the live sync begins
+    Then the Sync dialog waits for the delayed refresh and closes without another delay
+
+  @unmapped
+  Scenario: A failed post-sync refresh keeps its error available
+    Given the post-sync canonical refresh will fail
+    When the live sync begins
+    Then the refresh error remains available after the success close window
+
+  @unmapped
+  Scenario: A dry-run's result stays on screen rather than closing
+    Given the dry-run setting is on
+    When the sync preview finishes
+    And the dry-run is run
+    Then the Sync dialog stays open showing the dry-run result
+
+  @unmapped
   Scenario: Opening the sync dialog previews the change without writing anything
     When the Sync dialog is opened
     Then the pending change is computed against the currently stored files

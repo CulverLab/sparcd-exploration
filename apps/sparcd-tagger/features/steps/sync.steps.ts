@@ -30,6 +30,7 @@ import {
   readStore,
   writeStore,
   waitForDirtyDrafts,
+  waitForSyncDialogClosed,
 } from './support/flows';
 
 const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
@@ -103,6 +104,70 @@ Then(
     expect(obs.some((o) => o.scientificName === 'Puma concolor')).toBe(true);
   },
 );
+
+// --- Auto-close after a live sync (#304) ------------------------------------
+
+Then('the Sync dialog closes on its own, with no Close click needed', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+});
+
+Then('focus returns to the Sync opener', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Sync…', exact: true })).toBeFocused();
+});
+
+const POST_SYNC_REFRESH_DELAY_MS = 1_500;
+
+Given('the canonical refresh after a sync is delayed', async ({ s3 }) => {
+  // Preview, live planning, and post-write re-grounding read first. Delay only
+  // the fourth read: the invalidated TagImage refresh that determines when
+  // auto-close is safe.
+  s3.delayGetAfter(`${PREFIX_A}observations.csv`, 4, POST_SYNC_REFRESH_DELAY_MS);
+});
+
+Given('the post-sync canonical refresh will fail', async ({ s3 }) => {
+  // The preview, live sync plan, and post-write re-grounding each read this
+  // object before the invalidated TagImage query. Fail that fourth read.
+  s3.failGetsAfter(`${PREFIX_A}observations.csv`, 4);
+});
+
+When('the live sync begins', async ({ page }) => {
+  await openSyncDialog(page);
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+});
+
+Then(
+  'the Sync dialog waits for the delayed refresh and closes without another delay',
+  async ({ page, s3 }) => {
+    // The post-sync refresh is held for 1.5 seconds. Allow it to finish, then
+    // require a prompt close. A second 900ms timer would leave the completed
+    // dialog present during this short assertion window.
+    await page.waitForTimeout(2_200);
+    await expect(page.getByRole('heading', { name: 'Sync to S3' })).toHaveCount(0, {
+      timeout: 500,
+    });
+  },
+);
+
+Then('the refresh error remains available after the success close window', async ({ page, s3 }) => {
+  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: error');
+  expect(canonicalPuts(s3.puts).map((put) => put.key)).toContain(`${PREFIX_A}observations.csv`);
+  await page.waitForTimeout(1_100);
+  await expect(page.getByText('Failed to read observations.csv (HTTP 503).')).toBeVisible();
+});
+
+When('the dry-run is run', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run dry-run' }).click();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
+
+Then('the Sync dialog stays open showing the dry-run result', async ({ page }) => {
+  // Wait past the live-sync close interval. This proves a dry-run does not
+  // merely have a delayed close scheduled.
+  await page.waitForTimeout(1_100);
+  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
 
 Then(
   "the detagged image's slot in observations.csv is a blank placeholder, not absent",
@@ -364,7 +429,7 @@ Given('a sync completed and wrote the changes', async ({ page }) => {
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await dialogClose(page).click();
+  await waitForSyncDialogClosed(page);
 });
 
 Then('the images whose changes were written are no longer listed as unsaved', async ({ page }) => {
@@ -434,8 +499,13 @@ Then('the close and cancel controls are unavailable until it finishes', async ({
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible({
     timeout: 30000,
   });
-  await expect(dialogClose(page)).toBeEnabled();
+  // The delayed write has completed. Release the test-only latency before the
+  // post-sync refresh so this scenario exercises the busy controls, not the
+  // separate delayed-cleanup behavior covered above.
   s3.delays.clear();
+  // A successful live sync now closes the dialog itself; it must never offer
+  // an enabled dismissal control while the delayed write is still in flight.
+  await waitForSyncDialogClosed(page);
 });
 
 // --- Resume an interrupted sync ---------------------------------------------
@@ -525,7 +595,7 @@ Then(
     expect(await readStore(page, 'syncJournals')).toHaveLength(0);
     const drafts = (await readStore(page, 'drafts')) as { dirty: boolean }[];
     expect(drafts.some((d) => d.dirty)).toBe(true);
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
     await openSyncDialog(page);
     await expect(page.getByText(/Would write|No local edits/)).toBeVisible();
     expect(s3.puts.length).toBeGreaterThan(0);
@@ -595,7 +665,7 @@ Then(
     await page.getByRole('button', { name: 'Sync now' }).click();
     await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced');
     await record();
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
 
     // conflict — someone else rewrites a canonical file.
     await focusFrame(page, 'IMG005.JPG');

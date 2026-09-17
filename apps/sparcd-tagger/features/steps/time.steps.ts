@@ -12,7 +12,13 @@ import {
   positionReadout,
 } from './support/world';
 import { BUCKET, PREFIX_A, MEDIA_A, mediaCsv } from './support/data';
-import { openSyncDialog, setSyncDryRun, readStore, waitForDirtyDrafts } from './support/flows';
+import {
+  openSyncDialog,
+  setSyncDryRun,
+  readStore,
+  waitForDirtyDrafts,
+  waitForSyncDialogClosed,
+} from './support/flows';
 
 const timeShiftButton = (page: Page) =>
   page.locator('button[title$="by a signed offset"], button[title^="Upload time shift is active"]').first();
@@ -431,7 +437,7 @@ Given('a whole-upload shift was written to the stored files by a sync', async ({
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await waitForSyncDialogClosed(page);
 });
 
 Then('the standing shift is cleared afterwards', async ({ page }) => {
