@@ -435,14 +435,24 @@ export function parseMedia(csv: string): Media[] {
 export function parseObservations(csv: string): Observation[] {
   return parseCsvRows(csv).map((r) => {
     const rawType = r[OBS_COL.observationType] ?? '';
+    const scientificName = r[OBS_COL.scientificName] ?? '';
+    const count = Number(r[OBS_COL.count] ?? '0');
+    // Some producers (e.g. video ingestion) never populate observationType at
+    // all, leaving it empty even on rows that name a real species — infer
+    // "animal" from scientificName in that case. An explicit non-'animal'
+    // value (e.g. "human", "vehicle") is trusted as-is and stays 'blank',
+    // since other producers do use it to mean something other than blank.
+    const observationType = rawType === 'animal' || (rawType === '' && scientificName !== '' && count > 0)
+      ? 'animal'
+      : 'blank';
     return {
       observationId: r[OBS_COL.observationId] ?? '',
       mediaId: r[OBS_COL.mediaId] ?? '',
       deploymentId: r[OBS_COL.deploymentId] ?? '',
       timestamp: r[OBS_COL.timestamp] ?? '',
-      observationType: rawType === 'animal' ? 'animal' : 'blank',
-      scientificName: r[OBS_COL.scientificName] ?? '',
-      count: Number(r[OBS_COL.count] ?? '0'),
+      observationType,
+      scientificName,
+      count,
       tags: r[OBS_COL.comments] ?? '',
     };
   });

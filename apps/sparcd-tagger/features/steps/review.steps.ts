@@ -43,12 +43,25 @@ Given('an upload with existing identifications is open in the tagging workspace'
   await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer');
 });
 
+Given('an upload from a producer that never populates observation_type is open in the tagging workspace', async ({ page }) => {
+  await sectionTab(page, 'Browse').click();
+  await selectCollection(page);
+  await openUpload(page, 'videoproducer');
+});
+
 // --- What existing identifications look like --------------------------------
 
 Then("each image's tile shows the species already recorded for it", async ({ page }) => {
   await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer ×2');
   await expect(gridCell(page, 'IMG003.JPG')).toContainText('Ghost');
   await expect(gridCell(page, 'IMG004.JPG')).toContainText('Mountain Lion');
+});
+
+Then('images without observations remain untagged', async ({ page }) => {
+  await showList(page);
+  for (const fileName of ['IMG002.JPG', 'IMG005.JPG', 'VID001.MP4']) {
+    await expect(listRow(page, fileName)).toContainText('untagged');
+  }
 });
 
 Then('an image with several species shows the first with a count of the rest', async ({ page }) => {
