@@ -21,7 +21,9 @@ export function effectiveTime(
   f: FileEntry,
   estimates: Map<string, CaptureEstimate>,
 ): { naive?: NaiveDateTime; source?: TimestampSource } {
-  if (f.exifNaive) return { naive: f.exifNaive };
+  if (f.exifTimestampSource === 'exif-modify' && f.manualNaive)
+    return { naive: f.manualNaive, source: f.manualSource ?? 'manual' };
+  if (f.exifNaive) return { naive: f.exifNaive, source: f.exifTimestampSource };
   if (f.manualNaive) return { naive: f.manualNaive, source: f.manualSource ?? 'manual' };
   const estimate = estimates.get(f.id);
   return { naive: estimate?.naive, source: estimate?.method };
@@ -31,6 +33,7 @@ const TAGS: Record<TimestampSource, string> = {
   interpolated: 'EST.',
   offset: 'EST.',
   'file-modified': 'EST.',
+  'exif-modify': 'MODIFIED',
   manual: 'MANUAL',
   spread: 'SPREAD',
 };
@@ -56,6 +59,8 @@ export function methodLine(
   timeZone: string,
   spreadStart?: NaiveDateTime,
 ): string {
+  if (f.exifTimestampSource === 'exif-modify')
+    return f.manualNaive ? 'overrides EXIF ModifyDate' : 'EXIF ModifyDate — review or override';
   if (f.exifNaive) return 'camera time';
   if (f.manualNaive) {
     return f.manualSource === 'spread' && spreadStart

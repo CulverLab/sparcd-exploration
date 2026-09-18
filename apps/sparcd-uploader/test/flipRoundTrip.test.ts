@@ -66,7 +66,7 @@ const entry = (name: string, over: Partial<FileEntry>): FileEntry =>
     ...over,
   }) as FileEntry;
 
-const NAMES = ['1-camera.jpg', '2-manual.jpg', '3-spread.jpg', '4-none.jpg'];
+const NAMES = ['1-camera.jpg', '2-manual.jpg', '3-spread.jpg', '4-none.jpg', '5-modified.jpg'];
 
 // A folder that still holds all four files, so the trusted restore reattaches
 // every one of them by path + size.
@@ -108,6 +108,12 @@ it('carries every kind of capture time out to the tagger and home into media.csv
       entry('2-manual.jpg', { manualNaive: at(12, 5), manualSource: 'manual' }),
       entry('3-spread.jpg', { manualNaive: at(12, 6), manualSource: 'spread' }),
       entry('4-none.jpg', {}),
+      entry('5-modified.jpg', {
+        exifNaive: at(12, 7),
+        exifTimestampSource: 'exif-modify',
+        manualNaive: at(12, 8),
+        manualSource: 'manual',
+      }),
     ],
   });
 
@@ -117,6 +123,13 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   // Only file with no time of its own: 30 minutes past the one camera time,
   // three ten-minute steps down the gap it opens.
   expect(captureTimestampOf(record.files[3])).toBe('2026-07-01T12:30:00');
+  expect(record.files[4]).toMatchObject({
+    exifTimestamp: '2026-07-01T12:07:00',
+    exifTimestampSource: 'exif-modify',
+    manualTimestamp: '2026-07-01T12:08:00',
+    timestampSource: 'manual',
+  });
+  expect(captureTimestampOf(record.files[4])).toBe('2026-07-01T12:08:00');
 
   useStore.setState({ files: [], dirHandle: null });
   expect(await resumeFromFlip(record.id)).toEqual({ kind: 'restored' });
@@ -136,6 +149,8 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   expect(commentsFor(bundle.mediaCsv, '2-manual.jpg')).toBe('[TIMESTAMP:manual]');
   expect(commentsFor(bundle.mediaCsv, '3-spread.jpg')).toBe('[TIMESTAMP:spread]');
   expect(commentsFor(bundle.mediaCsv, '4-none.jpg')).toBe('[TIMESTAMP:offset]');
+  expect(commentsFor(bundle.mediaCsv, '5-modified.jpg')).toBe('[TIMESTAMP:manual]');
+  expect(bundle.mediaCsv).toContain('2026-07-01T12:08:00.000Z');
   expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000Z');
   expect(bundle.deploymentsCsv.split(',')[15]).toBe('"true"'); // timestamp_issues
 });

@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
-import { clipVideo, jpegAt, jpegNoTime, standardBatch } from './batches';
+import { clipVideo, jpegAt, jpegModifyDateOnly, jpegNoTime, standardBatch } from './batches';
 import { rescanFromAssign, writtenCsvRows } from './helpers';
 import { LEGACY_ZONE } from './fixtures-data';
 
@@ -260,4 +260,40 @@ Then('files the camera did time carry no marker', async ({ app }) => {
 Then('the batch can be published without anyone entering a time', async ({ app }) => {
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
+});
+
+Given('a file whose only EXIF time is ModifyDate', async ({ app }) => {
+  await rescanFromAssign(app, [jpegModifyDateOnly('MODIFIED.JPG', '2026:07:01 12:00:00')]);
+  await app.chooseDeployment('Bear Canyon');
+});
+
+Then('it is shown as modified metadata that needs review', async ({ app }) => {
+  await expect(app.page.getByRole('heading', { name: 'Capture times' })).toBeVisible();
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('MODIFIED');
+  await card(app, 'MODIFIED.JPG').click();
+  await expect(app.page.getByText('EXIF ModifyDate — review or override')).toBeVisible();
+});
+
+When('that modified metadata time is overridden by hand', async ({ app }) => {
+  const input = app.page.getByLabel('Capture time for MODIFIED.JPG');
+  if (await input.count() === 0) await card(app, 'MODIFIED.JPG').click();
+  await input.fill('2026-07-02T03:04:05');
+});
+
+Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Inspect');
+  await app.stubTagger();
+  await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  const [record] = await app.readFlipRecords();
+  expect(record.files[0]).toMatchObject({
+    exifTimestamp: '2026-07-01T12:00:00',
+    manualTimestamp: '2026-07-02T03:04:05',
+    timestampSource: 'manual',
+  });
+});
+
+Then('the modified metadata time is shown as a manual override', async ({ app }) => {
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('2026-07-02 03:04:05');
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('MANUAL');
 });

@@ -29,6 +29,8 @@ export type ProcessResponse = {
   id: string;
   sha256?: string;
   exifNaive?: NaiveExif; // naive wall-clock components, no zone
+  /** ModifyDate is metadata-edit time, not a camera capture-time assertion. */
+  exifTimestampSource?: 'exif-modify';
   exifCamera?: string;
   gps?: { lat: number; lon: number };
   width?: number;
@@ -87,10 +89,11 @@ async function readExif(file: File): Promise<Partial<ProcessResponse>> {
       exifr.gps(file).catch(() => undefined),
     ]);
     if (!tags) return gpsToResult(gps);
-    const exifNaive =
-      parseNaive(tags.DateTimeOriginal) ?? parseNaive(tags.CreateDate) ?? parseNaive(tags.ModifyDate);
+    const primary = parseNaive(tags.DateTimeOriginal) ?? parseNaive(tags.CreateDate);
+    const modified = primary ? undefined : parseNaive(tags.ModifyDate);
+    const exifNaive = primary ?? modified;
     const exifCamera = [tags.Make, tags.Model].filter(Boolean).join(' ').trim() || undefined;
-    return { exifNaive, exifCamera, ...gpsToResult(gps) };
+    return { exifNaive, exifTimestampSource: modified ? 'exif-modify' : undefined, exifCamera, ...gpsToResult(gps) };
   } catch {
     return {}; // missing/corrupt EXIF is a validation concern, not a hard failure
   }
