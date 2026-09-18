@@ -598,3 +598,73 @@ Then(
     await expect(gridCell(page, 'IMG002.JPG')).not.toContainText('Mule Deer');
   },
 );
+
+Given('a slider in the Adjust popup is focused', async ({ page }) => {
+  await focusFrame(page, 'IMG002.JPG');
+  await enterFocusView(page);
+  await page.getByRole('button', { name: 'Adjust ▾' }).click();
+  await page.getByLabel('Brightness').focus();
+  await expect(page.getByLabel('Brightness')).toBeFocused();
+});
+
+Then('a species key still applies that species to the focused image', async ({ page }) => {
+  await page.keyboard.press('d');
+  await expect(listRow(page, 'IMG002.JPG')).toContainText('Mule Deer');
+});
+
+Then('Home, End, Page Up, Page Down, and arrow keys adjust the slider rather than navigating images', async ({ page }) => {
+  const position = await positionReadout(page).textContent();
+  const slider = page.getByLabel('Brightness');
+  const expectSameFocus = () => expect(positionReadout(page)).toHaveText(position!);
+  const expectSliderFocused = async () => {
+    await expect(slider).toBeVisible();
+    await expect(slider).toBeFocused();
+  };
+
+  await page.keyboard.press('Home');
+  await expectSliderFocused();
+  await expect(slider).toHaveValue('0');
+  await page.keyboard.press('End');
+  await expectSliderFocused();
+  await expect(slider).toHaveValue('100');
+
+  await page.keyboard.press('PageDown');
+  await expectSliderFocused();
+  const afterPageDown = Number(await slider.inputValue());
+  expect(afterPageDown).toBeLessThan(100);
+  await page.keyboard.press('PageUp');
+  await expectSliderFocused();
+  expect(Number(await slider.inputValue())).toBeGreaterThan(afterPageDown);
+
+  const beforeArrow = Number(await slider.inputValue());
+  // ArrowDown is also the next-image hotkey — proves the slider claims it
+  // instead of the tagger navigating away.
+  await page.keyboard.press('ArrowDown');
+  await expectSliderFocused();
+  const afterArrowDown = Number(await slider.inputValue());
+  expect(afterArrowDown).toBeLessThan(beforeArrow);
+  await expectSameFocus();
+
+  await page.keyboard.press('ArrowUp');
+  await expectSliderFocused();
+  const afterArrowUp = Number(await slider.inputValue());
+  expect(afterArrowUp).toBeGreaterThan(afterArrowDown);
+  await expectSameFocus();
+
+  await page.keyboard.press('ArrowLeft');
+  await expectSliderFocused();
+  const afterArrowLeft = Number(await slider.inputValue());
+  expect(afterArrowLeft).toBeLessThan(afterArrowUp);
+  await expectSameFocus();
+
+  await page.keyboard.press('ArrowRight');
+  await expectSliderFocused();
+  expect(Number(await slider.inputValue())).toBeGreaterThan(afterArrowLeft);
+  await expectSameFocus();
+});
+
+Then('command- or control-S still saves while the slider is focused', async ({ page }) => {
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByText('saved ✓').first()).toBeVisible();
+  await expect(page.getByLabel('Brightness')).toBeFocused();
+});

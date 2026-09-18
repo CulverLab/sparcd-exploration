@@ -122,6 +122,11 @@ export function ImageAdjustments({
                 step={1}
                 value={value[f.key]}
                 onChange={(e) => onChange({ ...value, [f.key]: Number(e.target.value) })}
+                onKeyDown={(e) => {
+                  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+                    e.stopPropagation();
+                  }
+                }}
                 className="w-full accent-accent py-2 sm:py-0"
                 aria-label={f.label}
               />
