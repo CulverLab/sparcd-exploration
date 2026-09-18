@@ -42,7 +42,10 @@ The sidebar holds the whole control surface, top to bottom:
 
 - **Connection** — S3/MinIO sign-in form. Fields prefill from a local `.env`
   for local dev; the deployed bundle has no `.env`, so users sign in through
-  the form. Submit **Connect** to build the client.
+  the form. Checking **Remember endpoint & access key on this device**
+  persists those two fields (never the secret key) to this browser's
+  localStorage and prefills them on a later visit. Submit **Connect** to
+  build the client.
 - **Collection** — pick a collection and press **Load selected collection**.
   Collections load on demand and are cached in memory, so re-selecting one is
   instant.
