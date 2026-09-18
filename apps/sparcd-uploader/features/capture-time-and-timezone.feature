@@ -53,6 +53,13 @@ Feature: Establish the true capture time of every file
     And a file between two timestamped files sits midway between them
 
   @unmapped
+  Scenario: Descending camera-time neighbours are still interpolated
+    Given filename-order neighbours have descending camera times with missing files between them
+    Then the missing files show descending interpolated estimates
+    When one descending estimate is overridden by hand
+    Then clearing the override returns it to its descending estimate
+
+  @unmapped
   Scenario: The first and last files are placed ten minutes past their only neighbour
     Given the batch begins and ends with a file carrying no camera time
     Then the first file sits ten minutes before the earliest camera time

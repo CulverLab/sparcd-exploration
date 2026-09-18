@@ -52,7 +52,7 @@ export function estimateCaptureTimes(files: EstimateInput[], timeZone: string): 
       const i = j - start + 1;
       const k = end - start;
       let estimate: CaptureEstimate;
-      if (p !== undefined && n !== undefined && p <= n) {
+      if (p !== undefined && n !== undefined) {
         estimate = { naive: naiveFromMillis(p + i * (n - p) / (k + 1)), method: 'interpolated', before: previous!.relPath, after: next.relPath };
       } else if (p !== undefined && n === undefined) {
         const delta = 600_000 * i;
