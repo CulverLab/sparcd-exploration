@@ -44,8 +44,10 @@ Feature: Find the upload that needs tagging
   @unmapped
   Scenario: Narrow Browse windows retain the upload column
     Given a collection is selected
-    Then at 1297px Browse hides image counts before it narrows upload names
-    And at 1017px Browse restores details when the upload table has room
+    Then at 1297px Browse retains upload names while supporting columns yield
+    And at 1017px Browse retains upload names while supporting columns yield
+    And wide Browse gives tagging progress usable space
+    And mobile Browse keeps tagging progress aligned
 
   @unmapped
   Scenario: An upload whose location file cannot be read still lists

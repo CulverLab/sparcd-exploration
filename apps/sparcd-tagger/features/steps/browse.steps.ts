@@ -132,7 +132,7 @@ Then(
   },
 );
 
-Then('at 1297px Browse hides image counts before it narrows upload names', async ({ page }) => {
+Then('at 1297px Browse retains upload names while supporting columns yield', async ({ page }) => {
   await page.setViewportSize({ width: 1297, height: 900 });
   const row = uploadRow(page, 'priortagger');
   const upload = row.locator('[data-column="upload"]');
@@ -140,13 +140,13 @@ Then('at 1297px Browse hides image counts before it narrows upload names', async
   await expect(upload).toBeVisible();
   await expect(upload).toContainText('priortagger');
   await expect(row.locator('[data-column="images"]')).toBeHidden();
-  await expect(row.locator('[data-column="tagged"]')).toBeVisible();
+  await expect(row.locator('[data-column="tagged"]')).toBeHidden();
   await expect(row.locator('[data-column="sync"]')).toBeVisible();
   await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
 });
 
 Then(
-  'at 1017px Browse restores details when the upload table has room',
+  'at 1017px Browse retains upload names while supporting columns yield',
   async ({ page }) => {
     await page.setViewportSize({ width: 1017, height: 900 });
     const row = uploadRow(page, 'priortagger');
@@ -154,12 +154,29 @@ Then(
 
     await expect(upload).toBeVisible();
     await expect(upload).toContainText('priortagger');
-    await expect(row.locator('[data-column="images"]')).toBeVisible();
-    await expect(row.locator('[data-column="tagged"]')).toBeVisible();
+    await expect(row.locator('[data-column="images"]')).toBeHidden();
+    await expect(row.locator('[data-column="tagged"]')).toBeHidden();
     await expect(row.locator('[data-column="sync"]')).toBeVisible();
     await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
   },
 );
+
+Then('wide Browse gives tagging progress usable space', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const tagged = uploadRow(page, 'priortagger').locator('[data-column="tagged"]');
+
+  await expect(tagged).toBeVisible();
+  await expect(tagged).toContainText('3 / 6');
+  await expect(tagged.locator('[style*="width"]')).toBeVisible();
+  await expect.poll(async () => (await tagged.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(130);
+});
+
+Then('mobile Browse keeps tagging progress aligned', async ({ page }) => {
+  await page.setViewportSize({ width: 767, height: 900 });
+  const tagged = uploadRow(page, 'priortagger').locator('[data-column="tagged"]');
+  await expect(tagged).toBeVisible();
+  await expect(tagged).toHaveCSS('display', 'flex');
+});
 
 Given('an upload has no readable deployment file', async ({ page, s3 }) => {
   expect(s3.has(BUCKET, `${PREFIX_B}deployments.csv`)).toBe(false);
