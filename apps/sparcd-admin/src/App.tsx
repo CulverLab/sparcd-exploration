@@ -64,7 +64,13 @@ export function App({
       const service = makeApi(nextConfig)
       const whoami = await identify(service)
       const who = sessionStorage.getItem(IDENTITY_KEY) || whoami?.name || ''
-      await probeWriteAccess(loaded.client, loaded.species.bucket, who.trim() || 'unnamed administrator')
+      // Someone who is not an administrator cannot write to the settings area
+      // by design, so probing first would turn "you can't manage SPARC'd" into
+      // a storage error on the sign-in screen. Storage with no access service
+      // still gets probed: there, the write is the only way to know.
+      if (!whoami || whoami.admin) {
+        await probeWriteAccess(loaded.client, loaded.species.bucket, who.trim() || 'unnamed administrator')
+      }
       if (run !== runId.current) return
       saveSharedConnection(nextConfig, remember)
       setIdentity(who)
