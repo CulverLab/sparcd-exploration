@@ -57,6 +57,36 @@ async function findSettingsArea(client: SafeS3Client) {
   throw Error('The shared species and location lists were not found in this storage.')
 }
 
+// One collection is three reads, so a site with forty of them spends most of a
+// login waiting. A few at a time keeps that short without burying the storage.
+const COLLECTIONS_AT_ONCE = 4
+
+/**
+ * Runs `work` over `items` a few at a time. Results keep the order of `items`,
+ * and the failure reported is the one the earliest item hit — the same error a
+ * one-at-a-time read would have stopped on.
+ */
+export async function inParallel<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const done: R[] = new Array<R>(items.length)
+  const failures: unknown[] = new Array<unknown>(items.length)
+  let failed = false
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const at = next++
+      try {
+        done[at] = await work(items[at])
+      } catch (cause) {
+        failures[at] = cause
+        failed = true
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  if (failed) throw failures.find((one) => one !== undefined)
+  return done
+}
+
 export async function loadAdminData(makeClient: ClientFactory): Promise<AdminData> {
   const discovery = makeClient(DISCOVERY_ALLOWLIST, [])
   const bucket = await findSettingsArea(discovery)
@@ -73,8 +103,7 @@ export async function loadAdminData(makeClient: ClientFactory): Promise<AdminDat
     }
   }
 
-  const collections: CollectionRecord[] = []
-  for (const collection of refs) {
+  const readCollection = async (collection: (typeof refs)[number]): Promise<CollectionRecord> => {
     const where = `“${collection.name ?? collection.bucket}”`
     const readAssignment = async (name: 'species' | 'locations'): Promise<CollectionAssignment> => {
       const assignmentKey = `Collections/${collection.uuid}/${name}.json`
@@ -100,9 +129,10 @@ export async function loadAdminData(makeClient: ClientFactory): Promise<AdminDat
       throw readProblem(cause, `the collection ${where}`)
     }
     const [speciesAssignment, locationsAssignment] = await Promise.all([readAssignment('species'), readAssignment('locations')])
-    collections.push({ ...collection, etag, document, speciesAssignment, locationsAssignment })
+    return { ...collection, etag, document, speciesAssignment, locationsAssignment }
   }
 
+  const collections = await inParallel(refs, COLLECTIONS_AT_ONCE, readCollection)
   return { client, species: await readShared(SPECIES_KEY), locations: await readShared(LOCATIONS_KEY), collections }
 }
 

@@ -23,10 +23,11 @@ import { CollectionMembers } from './CollectionMembers'
 
 const IDENTITY_KEY = 'sparcd-admin-identity'
 
+const sameConnection = (one: S3Config, other: S3Config | null) =>
+  other !== null && JSON.stringify(one) === JSON.stringify(other)
+
 export type MakeClient = (config: S3Config, readAllowlist: string[], writeAllowlist: string[]) => SafeS3Client
 export type MakeApi = (config: S3Config) => AccessApi
-
-type Scope = 'species' | 'locations' | 'collections' | 'all'
 
 export function App({
   makeClient = (config, read, write) => new SafeS3Client(config, read, write),
@@ -92,21 +93,17 @@ export function App({
 
   // Reloading reads the lists again and nothing else: the session stays put and
   // a failure leaves whatever is on screen alone rather than dropping drafts.
-  // Only the part that was just saved is taken from the result, so an untouched
-  // editor never has its draft pulled out from under it.
-  const refresh = async (scope: Scope = 'all') => {
+  // Every editor is handed the fresh read and each decides for itself what to
+  // do with it, on its own state at the moment it lands — holding parts of the
+  // result back here would only hand the untouched editors a stale version tag.
+  const refresh = async () => {
     const current = configRef.current
     if (!current) return
     const run = ++runId.current
     try {
       const loaded = await load(current)
       if (run !== runId.current) return
-      setData((previous) => (!previous || scope === 'all' ? loaded : {
-        client: loaded.client,
-        species: scope === 'species' ? loaded.species : previous.species,
-        locations: scope === 'locations' ? loaded.locations : previous.locations,
-        collections: scope === 'collections' ? loaded.collections : previous.collections,
-      }))
+      setData(loaded)
       setNotice('')
     } catch (cause) {
       if (run !== runId.current) return
@@ -126,11 +123,16 @@ export function App({
     }
     return subscribeSharedConnection(
       (sharedConfig) => {
-        if (sharedConfig) void authorize(sharedConfig)
-        else {
+        // A sibling tab relaying the connection this tab already has would
+        // start a whole reload, and its own relay would start one back: two
+        // tabs reloading each other for as long as they are both open.
+        if (!sharedConfig) {
           setConfig(null)
           setData(null)
+          return
         }
+        if (sameConnection(sharedConfig, configRef.current)) return
+        void authorize(sharedConfig)
       },
       () => configRef.current,
     )
@@ -212,10 +214,10 @@ export function App({
       <div className="max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         {notice && <p role="alert" className="mb-4 border border-warn px-3 py-2 text-sm text-warn">{notice}</p>}
         <div className={section === 'species' ? '' : 'hidden'}>
-          <RegistryEditor title="Species" registry={data.species} client={data.client} actor={actor} reload={() => void refresh('species')} />
+          <RegistryEditor title="Species" registry={data.species} client={data.client} actor={actor} reload={() => void refresh()} />
         </div>
         <div className={section === 'locations' ? '' : 'hidden'}>
-          <RegistryEditor title="Locations" registry={data.locations} client={data.client} actor={actor} reload={() => void refresh('locations')} />
+          <RegistryEditor title="Locations" registry={data.locations} client={data.client} actor={actor} reload={() => void refresh()} />
         </div>
         <div className={section === 'collections' ? '' : 'hidden'}>
           <CollectionEditor
@@ -224,7 +226,7 @@ export function App({
             actor={actor}
             speciesRegistry={data.species.value}
             locationsRegistry={data.locations.value}
-            reload={() => void refresh('collections')}
+            reload={() => void refresh()}
             membersFor={api ? (record) => <CollectionMembers api={api} bucket={record.bucket} people={people} /> : undefined}
           />
         </div>

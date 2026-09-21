@@ -105,15 +105,14 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   const [baseline, setBaseline] = useState(registry.value)
   const [stale, setStale] = useState(false)
   const [saving, setSaving] = useState(false)
-  const dirty = useRef(false)
   const searchId = useId()
   // The record a save left open, so the reload it triggers can re-select it
   // rather than dropping the person back to an empty pane.
   const keep = useRef<string | null>(null)
 
-  const adopt = (next: Registry) => {
+  const adopt = (next: Registry, open: string | null = keep.current) => {
     const list = next.value as Entry[]
-    const at = keep.current === null ? -1 : list.findIndex((record) => identityOf(title, record) === keep.current)
+    const at = open === null ? -1 : list.findIndex((record) => identityOf(title, record) === open)
     keep.current = null
     setItems(list)
     setBaseline(next.value)
@@ -124,15 +123,6 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
     setStale(false)
     setSaving(false)
   }
-
-  useEffect(() => {
-    if (registry.value === baseline) return
-    if (!dirty.current) { adopt(registry); return }
-    // Someone is mid-edit. Take the new version tag when the data behind the
-    // draft is unchanged; otherwise keep the draft and say what happened.
-    if (JSON.stringify(registry.value) === JSON.stringify(baseline)) setEtag(registry.etag)
-    else setStale(true)
-  }, [registry])
 
   const noun = title === 'Species' ? 'species' : 'location'
   const plural = title === 'Species' ? 'species' : 'locations'
@@ -162,7 +152,26 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
 
   const staged = normalizeNumbers(title, discardBlankDraft(items, draftIndex))
   const modifiedCount = changedRecordCount(staged, baseline)
-  dirty.current = modifiedCount > 0
+
+  // Data can arrive long after the request that asked for it, so what happens
+  // to it is decided here, against this editor's state at the moment it lands —
+  // never against what was true when the request went out.
+  useEffect(() => {
+    if (registry.value === baseline) return
+    const open = keep.current ?? (selected !== null && items[selected] ? identityOf(title, items[selected]) : null)
+    keep.current = null
+    // Someone is mid-edit. Take the new version tag when the data behind the
+    // draft is unchanged; otherwise keep the draft and say what happened.
+    if (modifiedCount > 0) {
+      if (JSON.stringify(registry.value) === JSON.stringify(baseline)) setEtag(registry.etag)
+      else setStale(true)
+      return
+    }
+    // Nothing is half-typed, so the fresh list is taken — but whatever record
+    // is open stays open, or a click aimed at it would land on nothing.
+    adopt(registry, open)
+  }, [registry])
+
   const visible = items
     .map((record, index) => ({ record, index }))
     .filter(({ record }) => {
