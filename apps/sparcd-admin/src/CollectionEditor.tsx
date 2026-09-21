@@ -1,36 +1,370 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ConditionalReplaceConflictError, type CollectionRef, type SafeS3Client } from '@sparcd/s3-safe'
+import { AssignmentChecklist, matchShared, sharedHasId, type Entry, type Kind } from './AssignmentChecklist'
 
 export type CollectionAssignment = { values: unknown[]; etag: string | null }
-export type CollectionRecord = CollectionRef & { etag: string; document: Record<string, unknown>; speciesAssignment: CollectionAssignment; locationsAssignment: CollectionAssignment }
-const fields = [['nameProperty', 'Name'], ['organizationProperty', 'Organization'], ['contactInfoProperty', 'Contact'], ['descriptionProperty', 'Description']] as const
-const requiredFields = new Set(['nameProperty', 'organizationProperty', 'descriptionProperty'])
-const keyOf = (kind: 'species' | 'locations', v: Record<string, unknown>) => String(v[kind === 'species' ? 'scientificName' : 'idProperty'] ?? '').trim().toLocaleLowerCase()
-const withoutKey = (kind: 'species' | 'locations', v: Record<string, unknown>) => { const c = { ...v }; delete c[kind === 'species' ? 'scientificName' : 'idProperty']; return c }
-const json = (v: unknown) => JSON.stringify(v, null, 2)
-export function makeAppliedAuditRetry(client: SafeS3Client, bucket: string, key: string, event: Record<string, unknown>, afterETag?: string) {
-  return () => client.writeImmutable(bucket, key, json({ ...event, appliedAt: new Date().toISOString(), afterETag }), { contentType: 'application/json' })
-}
-export function assignmentDiscrepancies(kind: 'species' | 'locations', assigned: unknown[], registry: unknown[]) { const truth = new Map(registry.map((e) => [keyOf(kind, e as Record<string, unknown>), e as Record<string, unknown>])); return assigned.flatMap((e, index) => { const current = e as Record<string, unknown>; const found = truth.get(keyOf(kind, current)); return !found || JSON.stringify(withoutKey(kind, current)) === JSON.stringify(withoutKey(kind, found)) ? [] : [{ index, current, truth: found }] }) }
-export function missingAssignments(kind: 'species' | 'locations', assigned: unknown[], registry: unknown[]) { const keys = new Set(registry.map((e) => keyOf(kind, e as Record<string, unknown>))); return assigned.filter((e) => !keys.has(keyOf(kind, e as Record<string, unknown>))) }
-export function assignmentLabel(kind: 'species' | 'locations', e: Record<string, unknown>) { const n = String(e[kind === 'species' ? 'name' : 'nameProperty'] ?? e[kind === 'species' ? 'scientificName' : 'idProperty'] ?? 'Unnamed'); return e.retired === true ? `${n} — Defunct` : n }
-export function assignmentHasMinimum(v: unknown[]) { return v.length > 0 }
-export function collectionValidationError(c: Record<string, unknown>) { const m = fields.find(([k]) => requiredFields.has(k) && String(c[k] ?? '').trim() === ''); return m ? `${m[1]} is required.` : null }
-export function collectionHasChanges(a: Record<string, unknown>, b: Record<string, unknown>) { return JSON.stringify(a) !== JSON.stringify(b) }
-
-function AssignmentArea({ kind, list, registry, search, setSearch, mutate, undo, setUndo, selected, save, discrepancy, missing }: any) {
-  const label = kind === 'species' ? 'species' : 'locations'; const filtered = registry.filter((e: any) => assignmentLabel(kind, e).toLocaleLowerCase().includes(search.toLocaleLowerCase())); const rows = list.map((entry: unknown, originalIndex: number) => ({ entry, originalIndex })).sort((a: any, b: any) => assignmentLabel(kind, a.entry).localeCompare(assignmentLabel(kind, b.entry))); const changed = JSON.stringify(list) !== JSON.stringify(selected[`${kind}Assignment`].values)
-  return <details className="mt-4 border border-rule" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open && (discrepancy.length || missing.length)) document.querySelector<HTMLDialogElement>('#assignment-updates')?.showModal() }}><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">Assign {label}</summary><div className="p-4"><p className="mb-3 text-sm text-inkSoft">Current collection {label}:</p>{rows.length === 0 ? <p className="border border-ruleSoft bg-paper p-3 text-sm text-inkSoft">No {label} are currently assigned to this collection.</p> : <ul className="mb-3 list-disc pl-5 text-sm text-ink">{rows.map(({ entry, originalIndex }: any) => <li key={originalIndex}>{assignmentLabel(kind, entry)}{!registry.some((r: any) => keyOf(kind, r) === keyOf(kind, entry)) && <span className="ml-2 text-warn">Missing</span>}<button type="button" className="ml-3 text-sm underline" onClick={() => mutate(kind, list.filter((_: unknown, i: number) => i !== originalIndex))}>Remove</button></li>)}</ul>}<label htmlFor={`${kind}-search`} className="block text-sm font-medium text-ink">Add existing {kind === 'species' ? 'species' : 'location'}</label><div className="mt-1 flex max-w-lg gap-1"><input id={`${kind}-search`} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Type to filter ${label}`} className="min-h-10 min-w-0 flex-1 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" /><button type="button" aria-label={`Clear ${label} search`} title={`Clear ${label} search`} onClick={() => setSearch('')} className="grid h-10 w-10 place-items-center border border-rule text-inkSoft">×</button></div>{search && <div className="mt-1 max-h-48 max-w-lg overflow-auto border border-rule bg-paper" role="listbox">{filtered.map((entry: any, i: number) => <button type="button" role="option" key={i} className="block w-full px-3 py-2 text-left text-sm hover:bg-paperHover" onClick={() => { if (!list.some((x: any) => keyOf(kind, x) === keyOf(kind, entry))) mutate(kind, [...list, entry]); setSearch('') }}>{assignmentLabel(kind, entry)}</button>)}</div>}<div className="mt-3 flex flex-wrap gap-2">{undo && <button type="button" onClick={() => { setUndo(null); mutate(kind, undo) }} className="border border-rule px-3 py-2 text-sm">Undo</button>}<button type="button" disabled={!list.length || !changed} onClick={() => void save(kind)} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-40">Save {label}</button></div>{!list.length && <p role="alert" className="mt-2 text-sm text-warn">At least one {kind === 'species' ? 'species' : 'location'} assignment is required.</p>}</div></details>
+export type CollectionRecord = CollectionRef & {
+  etag: string
+  document: Record<string, unknown>
+  speciesAssignment: CollectionAssignment
+  locationsAssignment: CollectionAssignment
 }
 
-export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry }: { collections: CollectionRecord[]; client: SafeS3Client; actor: string; reload: () => void; speciesRegistry: unknown[]; locationsRegistry: unknown[] }) {
-  const first = collections[0]; const [selectedKey, setSelectedKey] = useState(first?.key ?? ''); const [draft, setDraft] = useState(first?.document ?? {}); const [assignments, setAssignments] = useState({ species: first?.speciesAssignment.values ?? [], locations: first?.locationsAssignment.values ?? [] }); const [etags, setEtags] = useState({ species: first?.speciesAssignment.etag ?? null, locations: first?.locationsAssignment.etag ?? null }); const [search, setSearch] = useState({ species: '', locations: '' }); const [undo, setUndo] = useState<{ species: unknown[] | null; locations: unknown[] | null }>({ species: null, locations: null }); const [message, setMessage] = useState(''); const [retryApplied, setRetryApplied] = useState<(() => Promise<void>) | null>(null); const [collectionSearch, setCollectionSearch] = useState<string | null>(null); const dialogRef = useRef<HTMLDialogElement>(null)
-  const selected = useMemo(() => collections.find((c) => c.key === selectedKey) ?? null, [collections, selectedKey]); const discrepancy = useMemo(() => ({ species: assignmentDiscrepancies('species', assignments.species, speciesRegistry), locations: assignmentDiscrepancies('locations', assignments.locations, locationsRegistry) }), [assignments, speciesRegistry, locationsRegistry]); const missing = useMemo(() => ({ species: missingAssignments('species', assignments.species, speciesRegistry), locations: missingAssignments('locations', assignments.locations, locationsRegistry) }), [assignments, speciesRegistry, locationsRegistry])
-  useEffect(() => { const n = collections.find((c) => c.key === selectedKey) ?? collections[0]; setSelectedKey(n?.key ?? ''); setDraft(n?.document ?? {}); setAssignments({ species: n?.speciesAssignment.values ?? [], locations: n?.locationsAssignment.values ?? [] }); setEtags({ species: n?.speciesAssignment.etag ?? null, locations: n?.locationsAssignment.etag ?? null }); setUndo({ species: null, locations: null }) }, [collections])
-  useEffect(() => { const d = dialogRef.current; if (!d) return; const close = () => { if (d.open) d.close() }; d.addEventListener('cancel', close); return () => d.removeEventListener('cancel', close) }, [])
-  if (!selected) return <section className="border border-rule bg-panel p-4"><h1 className="m-0 text-lg font-semibold">Collections</h1><p>No collections are visible to these credentials.</p></section>
-  const mutate = (kind: 'species' | 'locations', next: unknown[]) => { setUndo((u) => ({ ...u, [kind]: assignments[kind] })); setAssignments((a) => ({ ...a, [kind]: next })) }; const save = async (kind: 'species' | 'locations') => { const values = assignments[kind]; if (!values.length) { setMessage(`At least one ${kind === 'species' ? 'species' : 'location'} assignment is required.`); return }; const key = `Collections/${selected.uuid}/${kind}.json`; const id = crypto.randomUUID(); const at = new Date().toISOString(); const base = `Settings/audit/config/${at.slice(0, 10)}/${id}`; const event = { schemaVersion: 1, eventId: id, occurredAt: at, actor, action: `${kind}.assignment.updated`, target: { collectionKey: selected.key, key }, before: selected[`${kind}Assignment`].values, after: values }; try { await client.writeImmutable(selected.bucket, `${base}.prepared.json`, json(event), { contentType: 'application/json' }); if (etags[kind]) await client.replaceIfUnchanged(selected.bucket, key, json(values), { etag: etags[kind]!, contentType: 'application/json' }); else await client.writeImmutable(selected.bucket, key, json(values), { contentType: 'application/json' }); await client.writeImmutable(selected.bucket, `${base}.applied.json`, json({ ...event, appliedAt: new Date().toISOString() }), { contentType: 'application/json' }); setMessage(`Saved ${kind} assignments and audited.`); reload() } catch (e) { setMessage(e instanceof ConditionalReplaceConflictError ? `The ${kind} assignments changed elsewhere.` : (e as Error).message) } }
-  const saveMetadata = async () => { const invalid = collectionValidationError(draft); if (invalid) { setMessage(invalid); return } const id = crypto.randomUUID(); const at = new Date().toISOString(); const base = "Settings/audit/config/" + at.slice(0, 10) + "/" + id; const event = { schemaVersion: 1, eventId: id, occurredAt: at, actor, action: "collection.updated", target: { collectionKey: selected.key }, before: selected.document, after: draft }; try { await client.writeImmutable(selected.bucket, base + ".prepared.json", json(event), { contentType: "application/json" }); const write = await client.replaceIfUnchanged(selected.bucket, "Collections/" + selected.uuid + "/collection.json", json(draft), { etag: selected.etag, contentType: "application/json" }); const applied = () => client.writeImmutable(selected.bucket, base + ".applied.json", json({ ...event, appliedAt: new Date().toISOString(), afterETag: write.etag }), { contentType: "application/json" }); try { await applied(); setRetryApplied(null); setMessage("Saved and audited."); reload() } catch { setRetryApplied(() => applied); setMessage("Saved, but its applied audit record needs retrying.") } } catch (e) { setMessage(e instanceof ConditionalReplaceConflictError ? "The collection changed elsewhere. Reload and review it before saving." : (e as Error).message) } }
-  const updateAll = (kind: 'species' | 'locations') => mutate(kind, assignments[kind].map((e, i) => discrepancy[kind].find((d) => d.index === i)?.truth ?? e)); const update = (kind: 'species' | 'locations', i: number) => mutate(kind, assignments[kind].map((e, n) => n === i ? discrepancy[kind].find((d) => d.index === i)?.truth ?? e : e)); const count = discrepancy.species.length + discrepancy.locations.length + missing.species.length + missing.locations.length
-  return <section className="border border-rule bg-panel" aria-labelledby="collections-heading"><div className="border-b border-rule px-4 py-3"><h1 id="collections-heading" className="m-0 text-lg font-semibold text-ink">Collections</h1><p className="mb-0 mt-1 text-sm text-inkSoft">Update collection metadata without changing its bucket or unique ID (UUID).</p></div><div className="p-4"><div className="mb-4 grid w-full max-w-4xl gap-1 text-sm font-medium text-ink"><label htmlFor="collection-selector">Select collection</label>{count > 0 && <p role="status" className="m-0 text-sm text-warn">Registry updates or Missing entries are available in the sections below.</p>}<div className="rounded-none border border-ruleSoft bg-paper px-3 py-2 text-sm font-normal"><span className="block">{selected.name ?? selected.bucket}</span><span className="block font-mono text-xs text-inkMute break-all">{selected.uuid}</span></div><input id="collection-selector" aria-label="Select collection" list="collection-records" value={collectionSearch ?? ''} onChange={(e) => { setCollectionSearch(e.target.value); const n = collections.find((c) => `${c.name ?? c.bucket} — ${c.uuid}` === e.target.value); if (n) { setSelectedKey(n.key); setDraft(n.document); setAssignments({ species: n.speciesAssignment.values, locations: n.locationsAssignment.values }) } }} onBlur={() => setCollectionSearch(null)} placeholder="Type to filter collections" className="min-h-10 w-full border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" /><datalist id="collection-records">{collections.map((c) => <option key={c.key} value={`${c.name ?? c.bucket} — ${c.uuid}`} />)}</datalist></div><fieldset className="grid gap-3 border border-rule p-4 sm:grid-cols-2"><legend className="px-1 text-sm font-semibold text-ink">Edit {selected.name ?? selected.uuid}</legend>{fields.map(([key, label]) => <label key={key} className="grid gap-1 text-sm font-medium text-ink"><span>{label}{requiredFields.has(key) && <span aria-hidden="true" className="ml-1 text-warn">*</span>}</span><input required={requiredFields.has(key)} aria-label={label} value={String(draft[key] ?? '')} onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))} className="min-h-10 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" /></label>)}</fieldset><button type="button" disabled={!collectionHasChanges(draft, selected.document)} onClick={() => void saveMetadata()} className="mt-4 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-40">Save collection</button>{retryApplied && <button type="button" onClick={() => void retryApplied().then(() => { setRetryApplied(null); setMessage("Applied audit record recovered."); reload() }).catch((e) => setMessage((e as Error).message))} className="ml-3 border border-warn px-3 py-2 text-sm text-warn">Retry audit record</button>}<AssignmentArea kind="species" list={assignments.species} registry={speciesRegistry} search={search.species} setSearch={(v: string) => setSearch((s) => ({ ...s, species: v }))} mutate={mutate} undo={undo.species} setUndo={(v: unknown[] | null) => setUndo((u) => ({ ...u, species: v }))} selected={selected} save={save} discrepancy={discrepancy.species} missing={missing.species} /><AssignmentArea kind="locations" list={assignments.locations} registry={locationsRegistry} search={search.locations} setSearch={(v: string) => setSearch((s) => ({ ...s, locations: v }))} mutate={mutate} undo={undo.locations} setUndo={(v: unknown[] | null) => setUndo((u) => ({ ...u, locations: v }))} selected={selected} save={save} discrepancy={discrepancy.locations} missing={missing.locations} /><dialog ref={dialogRef} id="assignment-updates" onClick={(e) => { if (e.target === e.currentTarget) e.currentTarget.close() }}><h2>Registry updates available</h2>{(['species', 'locations'] as const).map((kind) => discrepancy[kind].length > 0 && <section key={kind}><h3>{kind}</h3><button type="button" onClick={() => updateAll(kind)}>Update all</button><ul>{discrepancy[kind].map((d) => <li key={d.index}>{assignmentLabel(kind, d.current)} <button type="button" onClick={() => update(kind, d.index)}>Update</button></li>)}</ul></section>)}<button type="button" onClick={() => dialogRef.current?.close()}>Close</button></dialog>{message && <p role="status" className="mt-3 text-sm text-inkSoft">{message}</p>}</div></section>
+export type Discrepancy = { index: number; current: Entry; truth: Entry }
+
+const fields = [
+  ['nameProperty', 'Name'],
+  ['organizationProperty', 'Organization'],
+  ['contactInfoProperty', 'Contact'],
+  ['descriptionProperty', 'Description'],
+] as const
+const requiredFields = new Set<string>(['nameProperty', 'organizationProperty', 'descriptionProperty'])
+
+const json = (value: unknown) => JSON.stringify(value, null, 2)
+const asJson = { contentType: 'application/json' }
+
+const withoutId = (kind: Kind, entry: Entry) => {
+  const copy = { ...entry }
+  delete copy[kind === 'species' ? 'scientificName' : 'idProperty']
+  return copy
+}
+
+export function makeAppliedAuditRetry(
+  client: SafeS3Client,
+  bucket: string,
+  key: string,
+  event: Record<string, unknown>,
+  afterETag?: string,
+) {
+  return () =>
+    client.writeImmutable(bucket, key, json({ ...event, appliedAt: new Date().toISOString(), afterETag }), asJson)
+}
+
+/** Entries this collection uses whose shared-list record has since changed. */
+export function assignmentDiscrepancies(kind: Kind, used: unknown[], shared: unknown[]): Discrepancy[] {
+  return (used as Entry[]).flatMap((current, index) => {
+    const truth = matchShared(kind, current, shared as Entry[])
+    if (!truth || JSON.stringify(withoutId(kind, current)) === JSON.stringify(withoutId(kind, truth))) return []
+    return [{ index, current, truth }]
+  })
+}
+
+/** Entries this collection uses that the shared list no longer holds at all. */
+export function missingAssignments(kind: Kind, used: unknown[], shared: unknown[]) {
+  return (used as Entry[]).filter((entry) => !sharedHasId(kind, entry, shared as Entry[]))
+}
+
+export function assignmentLabel(kind: Kind, entry: Entry) {
+  return String(entry[kind === 'species' ? 'name' : 'nameProperty'] ?? entry[kind === 'species' ? 'scientificName' : 'idProperty'] ?? 'Unnamed')
+}
+
+export function assignmentHasMinimum(values: unknown[]) {
+  return values.length > 0
+}
+
+export function collectionValidationError(collection: Record<string, unknown>) {
+  const missing = fields.find(([key]) => requiredFields.has(key) && String(collection[key] ?? '').trim() === '')
+  return missing ? `${missing[1]} is required.` : null
+}
+
+export function collectionHasChanges(draft: Record<string, unknown>, saved: Record<string, unknown>) {
+  return JSON.stringify(draft) !== JSON.stringify(saved)
+}
+
+type Editing = {
+  key: string
+  draft: Record<string, unknown>
+  used: Record<Kind, unknown[]>
+  etags: { collection: string; species: string | null; locations: string | null }
+  undo: Record<Kind, unknown[] | null>
+}
+
+// Everything held about one collection resets together. Keeping the version
+// tags or the undo buffer across a switch would apply them to the next
+// collection's files.
+const editingFor = (record: CollectionRecord | undefined): Editing => ({
+  key: record?.key ?? '',
+  draft: record?.document ?? {},
+  used: { species: record?.speciesAssignment.values ?? [], locations: record?.locationsAssignment.values ?? [] },
+  etags: {
+    collection: record?.etag ?? '',
+    species: record?.speciesAssignment.etag ?? null,
+    locations: record?.locationsAssignment.etag ?? null,
+  },
+  undo: { species: null, locations: null },
+})
+
+export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry }: {
+  collections: CollectionRecord[]
+  client: SafeS3Client
+  actor: string
+  reload: () => void
+  speciesRegistry: unknown[]
+  locationsRegistry: unknown[]
+}) {
+  const [editing, setEditing] = useState<Editing>(() => editingFor(collections[0]))
+  const [search, setSearch] = useState({ species: '', locations: '', collections: '' })
+  const [message, setMessage] = useState('')
+  const [retryApplied, setRetryApplied] = useState<(() => Promise<void>) | null>(null)
+
+  useEffect(() => {
+    setEditing((current) => editingFor(collections.find((entry) => entry.key === current.key) ?? collections[0]))
+  }, [collections])
+
+  const selected = collections.find((entry) => entry.key === editing.key) ?? null
+  if (!selected) {
+    return (
+      <section className="border border-rule bg-panel p-4">
+        <h1 className="m-0 text-lg font-semibold text-ink">Collections</h1>
+        <p className="mb-0 mt-1 text-sm text-inkSoft">No collections are visible to this login.</p>
+      </section>
+    )
+  }
+
+  const sharedFor = (kind: Kind) => (kind === 'species' ? speciesRegistry : locationsRegistry)
+  const outdated = {
+    species: assignmentDiscrepancies('species', editing.used.species, speciesRegistry),
+    locations: assignmentDiscrepancies('locations', editing.used.locations, locationsRegistry),
+  }
+
+  const selectCollection = (record: CollectionRecord) => {
+    setEditing(editingFor(record))
+    setRetryApplied(null)
+    setMessage('')
+  }
+
+  const setUsed = (kind: Kind, next: unknown[]) =>
+    setEditing((current) => ({
+      ...current,
+      used: { ...current.used, [kind]: next },
+      undo: { ...current.undo, [kind]: current.used[kind] },
+    }))
+
+  // Undo restores without recording a new step, so the button disappears
+  // instead of turning into a redo.
+  const undoUsed = (kind: Kind) =>
+    setEditing((current) => ({
+      ...current,
+      used: { ...current.used, [kind]: current.undo[kind] ?? current.used[kind] },
+      undo: { ...current.undo, [kind]: null },
+    }))
+
+  const updateOne = (kind: Kind, at: number) =>
+    setUsed(kind, editing.used[kind].map((entry, index) =>
+      index === at ? outdated[kind].find((one) => one.index === at)?.truth ?? entry : entry))
+
+  const updateAll = (kind: Kind) =>
+    setUsed(kind, editing.used[kind].map((entry, index) =>
+      outdated[kind].find((one) => one.index === index)?.truth ?? entry))
+
+  const auditBase = () => {
+    const eventId = crypto.randomUUID()
+    const occurredAt = new Date().toISOString()
+    return { eventId, occurredAt, base: `Settings/audit/config/${occurredAt.slice(0, 10)}/${eventId}` }
+  }
+
+  const finish = async (applied: () => Promise<void>, savedMessage: string) => {
+    try {
+      await applied()
+      setRetryApplied(null)
+      setMessage(savedMessage)
+      reload()
+    } catch {
+      setRetryApplied(() => applied)
+      setMessage('Saved. Its history entry did not go through.')
+    }
+  }
+
+  const saveUsed = async (kind: Kind) => {
+    const values = editing.used[kind]
+    if (!values.length) {
+      setMessage(`Keep at least one ${kind === 'species' ? 'species' : 'location'} in this collection.`)
+      return
+    }
+    const key = `Collections/${selected.uuid}/${kind}.json`
+    const { eventId, occurredAt, base } = auditBase()
+    const event = {
+      schemaVersion: 1,
+      eventId,
+      occurredAt,
+      actor,
+      action: `${kind}.assignment.updated`,
+      target: { collectionKey: selected.key, key },
+      before: selected[`${kind}Assignment`].values,
+      after: values,
+    }
+    try {
+      await client.writeImmutable(selected.bucket, `${base}.prepared.json`, json(event), asJson)
+      const held = editing.etags[kind]
+      let written: { etag?: string }
+      if (held) {
+        written = await client.replaceIfUnchanged(selected.bucket, key, json(values), { etag: held, ...asJson })
+      } else {
+        await client.writeImmutable(selected.bucket, key, json(values), asJson)
+        written = await client.statObject(selected.bucket, key)
+      }
+      // The list is saved at this point. Hold its new version tag whatever the
+      // history entry does next, or the following save reads as a conflict.
+      setEditing((current) => ({ ...current, etags: { ...current.etags, [kind]: written.etag ?? null } }))
+      await finish(
+        makeAppliedAuditRetry(client, selected.bucket, `${base}.applied.json`, event, written.etag),
+        `Saved the ${kind === 'species' ? 'species' : 'locations'} used in this collection.`,
+      )
+    } catch (cause) {
+      setMessage(cause instanceof ConditionalReplaceConflictError
+        ? 'Someone else changed this while you were editing. Reload before saving again.'
+        : (cause as Error).message)
+    }
+  }
+
+  const saveMetadata = async () => {
+    const invalid = collectionValidationError(editing.draft)
+    if (invalid) {
+      setMessage(invalid)
+      return
+    }
+    const { eventId, occurredAt, base } = auditBase()
+    const event = {
+      schemaVersion: 1,
+      eventId,
+      occurredAt,
+      actor,
+      action: 'collection.updated',
+      target: { collectionKey: selected.key },
+      before: selected.document,
+      after: editing.draft,
+    }
+    try {
+      await client.writeImmutable(selected.bucket, `${base}.prepared.json`, json(event), asJson)
+      const written = await client.replaceIfUnchanged(
+        selected.bucket,
+        `Collections/${selected.uuid}/collection.json`,
+        json(editing.draft),
+        { etag: editing.etags.collection, ...asJson },
+      )
+      if (written.etag) {
+        const next = written.etag
+        setEditing((current) => ({ ...current, etags: { ...current.etags, collection: next } }))
+      }
+      await finish(
+        makeAppliedAuditRetry(client, selected.bucket, `${base}.applied.json`, event, written.etag),
+        'Saved.',
+      )
+    } catch (cause) {
+      setMessage(cause instanceof ConditionalReplaceConflictError
+        ? 'Someone else changed this collection while you were editing. Reload before saving again.'
+        : (cause as Error).message)
+    }
+  }
+
+  const needle = search.collections.trim().toLocaleLowerCase()
+  const visible = needle
+    ? collections.filter((entry) => `${entry.name ?? entry.bucket} ${entry.organization ?? ''}`.toLocaleLowerCase().includes(needle))
+    : collections
+
+  const inputClass = 'min-h-10 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent'
+
+  return (
+    <section className="border border-rule bg-panel" aria-labelledby="collections-heading">
+      <div className="border-b border-rule px-4 py-3">
+        <h1 id="collections-heading" className="m-0 text-lg font-semibold text-ink">Collections</h1>
+        <p className="mb-0 mt-1 text-sm text-inkSoft">Change a collection's details and the species and locations it uses. Its ID and where it is stored stay the same.</p>
+      </div>
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+        <div className="min-w-0">
+          <label className="sr-only" htmlFor="collection-search">Search collections</label>
+          <input
+            id="collection-search"
+            value={search.collections}
+            onChange={(event) => setSearch((current) => ({ ...current, collections: event.target.value }))}
+            placeholder="Search collections"
+            className={`${inputClass} w-full`}
+          />
+          <ul className="mt-2 max-h-[32rem] list-none overflow-y-auto border border-ruleSoft p-0">
+            {visible.map((entry) => (
+              <li key={entry.key} className="border-b border-ruleSoft last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => selectCollection(entry)}
+                  aria-current={entry.key === editing.key ? 'true' : undefined}
+                  className={`block w-full px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
+                    entry.key === editing.key ? 'bg-accentSoft' : 'hover:bg-paperHover'
+                  }`}
+                >
+                  <span className="block truncate text-ink">{entry.name ?? entry.bucket}</span>
+                  <span className="block truncate text-xs text-inkSoft">{entry.organization ?? 'No organization'}</span>
+                </button>
+              </li>
+            ))}
+            {visible.length === 0 && <li className="px-3 py-2 text-sm text-inkSoft">Nothing matches that search.</li>}
+          </ul>
+        </div>
+        <div className="min-w-0">
+          <fieldset className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
+            <legend className="px-1 text-sm font-semibold text-ink">{selected.name ?? selected.bucket}</legend>
+            {fields.map(([key, label]) => (
+              <label key={key} className="grid gap-1 text-sm font-medium text-ink">
+                <span>
+                  {label}
+                  {requiredFields.has(key) && <><span aria-hidden="true" className="ml-1 text-warn">*</span><span className="sr-only"> (required)</span></>}
+                </span>
+                <input
+                  required={requiredFields.has(key)}
+                  aria-label={label}
+                  value={String(editing.draft[key] ?? '')}
+                  onChange={(event) => setEditing((current) => ({ ...current, draft: { ...current.draft, [key]: event.target.value } }))}
+                  className={inputClass}
+                />
+              </label>
+            ))}
+            <p className="m-0 font-mono text-xs text-inkMute break-all sm:col-span-2">{selected.uuid}</p>
+          </fieldset>
+          <button
+            type="button"
+            disabled={!collectionHasChanges(editing.draft, selected.document)}
+            onClick={() => void saveMetadata()}
+            className="mt-3 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          >
+            Save collection
+          </button>
+          {(['species', 'locations'] as const).map((kind) => (
+            <AssignmentChecklist
+              key={kind}
+              kind={kind}
+              used={editing.used[kind]}
+              shared={sharedFor(kind)}
+              search={search[kind]}
+              onSearch={(value) => setSearch((current) => ({ ...current, [kind]: value }))}
+              onChange={(next) => setUsed(kind, next)}
+              onUndo={() => undoUsed(kind)}
+              canUndo={editing.undo[kind] !== null}
+              onSave={() => void saveUsed(kind)}
+              changed={JSON.stringify(editing.used[kind]) !== JSON.stringify(selected[`${kind}Assignment`].values)}
+              outdated={outdated[kind]}
+              onUpdateAll={() => updateAll(kind)}
+              onUpdateOne={(index) => updateOne(kind, index)}
+            />
+          ))}
+          {(message || retryApplied) && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              {message && <p role="status" className="m-0 text-sm text-inkSoft">{message}</p>}
+              {retryApplied && <button
+                type="button"
+                onClick={() => void retryApplied()
+                  .then(() => {
+                    setRetryApplied(null)
+                    setMessage('History entry saved.')
+                    reload()
+                  })
+                  .catch((cause: Error) => setMessage(`The history entry still did not go through: ${cause.message}`))}
+                className="border border-warn px-3 py-2 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                Retry history entry
+              </button>}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  )
 }
