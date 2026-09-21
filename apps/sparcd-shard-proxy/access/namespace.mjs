@@ -91,22 +91,84 @@ export function keyFromPath(pathname) {
   }
 }
 
-const BUCKET_BLOCK = /<Bucket>[\s\S]*?<\/Bucket>/g;
-const NAME_IN_BLOCK = /<Name>([\s\S]*?)<\/Name>/;
+const BUCKET_BLOCK = /<Bucket(?:\s[^>]*)?>[\s\S]*?<\/Bucket>/g;
+const NAME_IN_BLOCK = /<Name(?:\s[^>]*)?>([\s\S]*?)<\/Name>/;
 
 /**
- * Rewrite a ListBuckets body: drop every bucket outside the namespace or not
- * visible to this caller, and strip the namespace from the ones that stay.
+ * The bucket names in a ListAllMyBucketsResult, or null when the body is not
+ * one. Null matters: a filter that finds nothing to drop in a JSON body would
+ * pass the whole thing through, so the caller turns null into a 502 instead.
  */
-export function filterListBuckets(xml, ns, visible) {
-  return xml.replace(BUCKET_BLOCK, (block) => {
+export function parseBucketNames(xml) {
+  if (typeof xml !== 'string' || !/<ListAllMyBucketsResult[\s>]/.test(xml)) return null;
+  const names = [];
+  for (const block of xml.match(BUCKET_BLOCK) ?? []) {
     const match = NAME_IN_BLOCK.exec(block);
-    if (!match) return '';
-    const client = ns.toClient(match[1]);
-    if (client === null || !visible(client)) return '';
-    return block.replace(NAME_IN_BLOCK, `<Name>${client}</Name>`);
-  });
+    if (!match) return null;
+    names.push(decodeEntities(match[1]));
+  }
+  return names;
 }
+
+/**
+ * A ListAllMyBucketsResult built from scratch. Nothing of the upstream's body
+ * survives — not its owner, not its extra elements, not its namespaces — so
+ * there is no shape of upstream response that can carry something out.
+ */
+export function buildListBuckets(clientNames) {
+  const buckets = clientNames
+    .map((name) =>
+      `<Bucket><Name>${escapeXml(name)}</Name>`
+      + '<CreationDate>1970-01-01T00:00:00.000Z</CreationDate></Bucket>')
+    .join('');
+  return '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+    + '<Owner><ID>sparcd</ID><DisplayName>sparcd</DisplayName></Owner>'
+    + `<Buckets>${buckets}</Buckets></ListAllMyBucketsResult>`;
+}
+
+const NAMING_TAGS = /<(Name|Bucket|BucketName|Resource|HostId)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g;
+
+/**
+ * True when a response still names an upstream bucket. Only the elements that
+ * carry a bucket name are examined — an object key that happens to start with
+ * the namespace is a key, not a leak.
+ */
+export function leaksNamespace(text, namespace) {
+  if (!namespace) return false;
+  for (const [, , value] of text.matchAll(NAMING_TAGS)) {
+    if (value.startsWith(namespace) || value.startsWith(`/${namespace}`)) return true;
+  }
+  return false;
+}
+
+/** S3 error bodies name the upstream path and host. Neither is the caller's. */
+export function scrubErrorDetail(xml) {
+  return xml.replace(/<(Resource|HostId)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g, '');
+}
+
+/**
+ * Object keys the proxy will carry. `.` and `..` segments would let a key
+ * escape the prefix a rule just authorised; a backslash reads as a separator
+ * on some clients and not others; NUL and a leading slash are never meant.
+ */
+export function safeKeySegments(key) {
+  if (typeof key !== 'string') return false;
+  if (key === '') return true;
+  if (key.startsWith('/')) return false;
+  if (key.includes('\\') || key.includes('\u0000')) return false;
+  return key.split('/').every((segment) => segment !== '.' && segment !== '..');
+}
+
+function decodeEntities(s) {
+  return s
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+export const escapeXml = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
  * Replace an upstream bucket name wherever a response names it. ListObjectsV2

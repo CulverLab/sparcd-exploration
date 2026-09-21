@@ -3,7 +3,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { AwsClient } from 'aws4fetch';
@@ -82,7 +82,20 @@ export async function seed(endpoint) {
   return root;
 }
 
+/** A port nobody is on, reserved before ALLOWED_HOSTS has to name it. */
+export function freePort() {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
 export async function startProxy(endpoint, overrides = {}, { bootstrap = true } = {}) {
+  const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
   const config = {
     upstream: endpoint,
     region: 'us-east-1',
@@ -91,7 +104,8 @@ export async function startProxy(endpoint, overrides = {}, { bootstrap = true } 
     namespace: NAMESPACE,
     allow: 'sparcd,sparcd-*',
     masterKey: MASTER_KEY,
-    publicEndpoint: null,
+    publicEndpoint: origin,
+    allowedHosts: `127.0.0.1:${port}`,
     allowOrigins: '*',
     maxBodyBytes: 67108864,
     // Long enough that a deliberately stale cache stays stale for the
@@ -104,9 +118,8 @@ export async function startProxy(endpoint, overrides = {}, { bootstrap = true } 
     ? await init({ name: 'Root Admin', email: 'admin@example.org', config })
     : null;
   const proxy = await createAccessProxy(config);
-  const port = await proxy.listen(0);
-  const origin = `http://127.0.0.1:${port}`;
-  return { proxy, origin, admin: admin && { ...admin, endpoint: origin } };
+  await proxy.listen(port);
+  return { proxy, origin, config, admin: admin && { ...admin, endpoint: origin } };
 }
 
 /** A signing client for one person, for raw S3 and `/-/` calls alike. */
@@ -118,7 +131,7 @@ export function caller(origin, { accessKey, secretKey }) {
     accessKey,
     secretKey,
     /** The contract wants API bodies bound to the signature, so hash them. */
-    async api(method, path, body) {
+    async api(method, path, body, headers = {}) {
       const payload = body === undefined ? '' : JSON.stringify(body);
       const res = await aws.fetch(`${origin}${path}`, {
         method,
@@ -126,6 +139,7 @@ export function caller(origin, { accessKey, secretKey }) {
         headers: {
           'content-type': 'application/json',
           'x-amz-content-sha256': await sha256hex(payload),
+          ...headers,
         },
       });
       return { status: res.status, body: await res.json().catch(() => null) };
@@ -174,6 +188,8 @@ async function presignUrl(aws, origin, path, expires) {
  * `%2F` reach the socket intact. The whole point of the crafted-name cases.
  */
 export async function rawSignedRequest({ origin, key, secret, method = 'GET', path }) {
+  // Bodies are always empty here: these cases are about the request line, and
+  // an empty payload keeps the signature to one hash.
   const { port } = new URL(origin);
   const host = `127.0.0.1:${port}`;
   const amzDate = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
@@ -205,6 +221,25 @@ export async function rawSignedRequest({ origin, key, secret, method = 'GET', pa
           + 'SignedHeaders=host;x-amz-content-sha256;x-amz-date, '
           + `Signature=${signature}`,
       },
+    }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/**
+ * A request whose target line and Host are written literally — absolute-form,
+ * a foreign Host, whatever. `fetch` rewrites both, so it cannot ask these
+ * questions.
+ */
+export function rawTarget(port, path, host = `127.0.0.1:${port}`) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      host: '127.0.0.1', port, method: 'GET', path, headers: { host },
     }, (res) => {
       let text = '';
       res.on('data', (c) => { text += c; });

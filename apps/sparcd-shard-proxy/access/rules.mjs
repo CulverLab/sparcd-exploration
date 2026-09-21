@@ -218,22 +218,65 @@ function taggerMetadataLeaf(key) {
     || key.includes('/.sparcd-tagger-snapshots/');
 }
 
+/** The trees a listing may not enumerate, and who is entitled to each. */
+const PROTECTED_TREES = [
+  { prefix: ACCESS_PREFIX, entitled: () => false },
+  { prefix: ACTIVITY_PREFIX, entitled: (person) => !!person.admin },
+];
+
+// Where the protected trees hang. A prefix at or above this can straddle, and
+// is filtered rather than refused; anything longer that reaches only into a
+// protected tree is refused, because enumerating it is the whole request.
+const SETTINGS_ROOT = 'Settings/';
+
 /**
- * Drop listing entries the caller may not read. Listing leaks names only, so
- * filtering the names is the proportionate answer to a prefix that straddles a
- * protected tree.
+ * Whether a listing may run at all. A prefix that sits inside a protected
+ * tree, or that can only ever reach into protected trees the caller is not
+ * entitled to, is a 403 — filtering its results would answer "no such thing"
+ * to a question that was only ever about that tree.
  */
-export function filterListing(xml, person, { isSettings }) {
-  if (!isSettings) return xml;
-  const hidden = (k) =>
-    k.startsWith(ACCESS_PREFIX) || (!person.admin && k.startsWith(ACTIVITY_PREFIX));
-  return xml
-    .replace(/<Contents>[\s\S]*?<\/Contents>/g, (block) => {
-      const m = /<Key>([\s\S]*?)<\/Key>/.exec(block);
-      return m && hidden(m[1]) ? '' : block;
-    })
-    .replace(/<CommonPrefixes>[\s\S]*?<\/CommonPrefixes>/g, (block) => {
-      const m = /<Prefix>([\s\S]*?)<\/Prefix>/.exec(block);
-      return m && hidden(m[1]) ? '' : block;
-    });
+export function listingGuard({ prefix = '', person, isSettings }) {
+  if (!isSettings) return { allow: true };
+
+  for (const tree of PROTECTED_TREES) {
+    if (prefix.startsWith(tree.prefix) && !tree.entitled(person)) {
+      return { allow: false, reason: `${tree.prefix} is not listable` };
+    }
+  }
+
+  if (prefix.length > SETTINGS_ROOT.length) {
+    const reaches = PROTECTED_TREES.filter((t) => t.prefix.startsWith(prefix));
+    if (reaches.length > 0 && reaches.every((t) => !t.entitled(person))) {
+      return { allow: false, reason: `${prefix} reaches only into a protected tree` };
+    }
+  }
+  return { allow: true };
 }
+
+/**
+ * A ListBucketResult built from scratch, as one complete page. The proxy
+ * paginates the upstream itself for the settings bucket, because handing back
+ * a filtered page with the upstream's continuation token would let a caller
+ * count what was removed.
+ */
+export function buildListing({ bucket, prefix = '', delimiter = '', keys, commonPrefixes }) {
+  const contents = keys.map((k) =>
+    `<Contents><Key>${xml(k.key)}</Key>`
+    + `<LastModified>${xml(k.lastModified ?? '1970-01-01T00:00:00.000Z')}</LastModified>`
+    + `<ETag>${xml(k.etag ?? '""')}</ETag>`
+    + `<Size>${Number(k.size ?? 0)}</Size>`
+    + '<StorageClass>STANDARD</StorageClass></Contents>').join('');
+  const prefixes = commonPrefixes
+    .map((p) => `<CommonPrefixes><Prefix>${xml(p)}</Prefix></CommonPrefixes>`).join('');
+  return '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+    + `<Name>${xml(bucket)}</Name><Prefix>${xml(prefix)}</Prefix>`
+    + `<Delimiter>${xml(delimiter)}</Delimiter>`
+    + `<KeyCount>${keys.length}</KeyCount><MaxKeys>${keys.length}</MaxKeys>`
+    + '<IsTruncated>false</IsTruncated>'
+    + contents + prefixes
+    + '</ListBucketResult>';
+}
+
+const xml = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

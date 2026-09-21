@@ -6,10 +6,11 @@ import { AwsClient } from 'aws4fetch';
 
 import { verifySignature, canonicalQueryString, encodeRfc3986, sha256hex } from '../sigv4.mjs';
 import {
-  makeNamespace, bucketFromPath, keyFromPath, filterListBuckets, rewriteBucketName,
+  makeNamespace, bucketFromPath, keyFromPath, parseBucketNames, buildListBuckets,
+  rewriteBucketName,
 } from '../namespace.mjs';
 import {
-  classify, decide, eventKind, filterListing, taggerWriteKey, uploadsKey, runDocumentKey,
+  classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey,
 } from '../rules.mjs';
 import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
@@ -36,7 +37,10 @@ async function signed(url, init = {}) {
 describe('sigv4 header form', () => {
   test('a well-formed signature verifies', async () => {
     const input = await signed('https://shard.example.org/t-sparcd/Settings/x.json');
-    assert.deepEqual(await verifySignature(input), { accessKeyId: KEY.accessKeyId, presigned: false });
+    const out = await verifySignature(input);
+    assert.equal(out.error, undefined);
+    assert.equal(out.accessKeyId, KEY.accessKeyId);
+    assert.equal(out.presigned, false);
   });
 
   test('a tampered signature is rejected', async () => {
@@ -114,7 +118,10 @@ describe('sigv4 presigned form', () => {
 
   test('the happy path verifies', async () => {
     const input = await presign('https://shard.example.org/t-sparcd/a/b.jpg', 900);
-    assert.deepEqual(await verifySignature(input), { accessKeyId: KEY.accessKeyId, presigned: true });
+    const out = await verifySignature(input);
+    assert.equal(out.error, undefined);
+    assert.equal(out.accessKeyId, KEY.accessKeyId);
+    assert.equal(out.presigned, true);
   });
 
   test('an over-long expiry is rejected', async () => {
@@ -203,13 +210,16 @@ describe('namespace (invariant 1)', () => {
     assert.equal(keyFromPath('/b'), '');
   });
 
-  test('ListBuckets is filtered and stripped', () => {
+  test('ListBuckets is rebuilt from approved names only', () => {
     const xml = '<ListAllMyBucketsResult><Buckets>'
       + '<Bucket><Name>t-sparcd-settings-test</Name><CreationDate>x</CreationDate></Bucket>'
       + '<Bucket><Name>t-sparcd-aaa</Name><CreationDate>x</CreationDate></Bucket>'
       + '<Bucket><Name>canary-outside</Name><CreationDate>x</CreationDate></Bucket>'
       + '</Buckets></ListAllMyBucketsResult>';
-    const out = filterListBuckets(xml, ns, (c) => c !== 'sparcd-aaa');
+    const visible = parseBucketNames(xml)
+      .map((n) => ns.toClient(n))
+      .filter((c) => c !== null && c !== 'sparcd-aaa');
+    const out = buildListBuckets(visible);
     assert.match(out, /<Name>sparcd-settings-test<\/Name>/);
     assert.equal(out.includes('canary'), false);
     assert.equal(out.includes('sparcd-aaa'), false);
@@ -385,20 +395,6 @@ describe('activity shaping', () => {
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'upload');
     assert.equal(eventKind('PutObject', { isSettings: true, key: 'Settings/locations.json' }), 'list-change');
     assert.equal(eventKind('DeleteObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'collection-change');
-  });
-  test('a listing hides the protected tree from a non-admin', () => {
-    const xml = '<ListBucketResult>'
-      + '<Contents><Key>Settings/locations.json</Key></Contents>'
-      + '<Contents><Key>Settings/access/people/a.json</Key></Contents>'
-      + '<Contents><Key>Settings/activity/2026-01-01/x.ndjson</Key></Contents>'
-      + '</ListBucketResult>';
-    const member = filterListing(xml, { admin: false }, { isSettings: true });
-    assert.equal(member.includes('Settings/access/'), false);
-    assert.equal(member.includes('Settings/activity/'), false);
-    assert.match(member, /Settings\/locations\.json/);
-    const admin = filterListing(xml, { admin: true }, { isSettings: true });
-    assert.equal(admin.includes('Settings/access/'), false);
-    assert.match(admin, /Settings\/activity\//);
   });
 });
 

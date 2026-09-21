@@ -138,7 +138,10 @@ Admin only:
 - `PUT /-/admin/collections/:bucket/members/:personId` `{ access, exactLocations? }` and
   `DELETE /-/admin/collections/:bucket/members/:personId` → `{ members, membersVersion }`.
   The server does the read-modify-write and retries up to three times on a conflict, so
-  these need no `If-Match`. Same permission rule and same last-`run` rule.
+  these need no `If-Match`. Same permission rule. The last-`run` rule here protects an
+  existing runner rather than demanding one: an edit that would remove the collection's
+  last `run` member is 409 `last_runner`, while a collection that has no members yet can
+  receive its first at any level.
 - `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`
 - `GET /-/admin/activity/downloads?bucket=&key=` → `{ events: [...] }`
 

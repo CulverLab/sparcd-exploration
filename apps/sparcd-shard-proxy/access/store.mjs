@@ -26,10 +26,13 @@ export class Conflict extends Error {
   constructor(message) { super(message); this.name = 'Conflict'; }
 }
 
-export function makeStore({ upstream, namespace = '', allow, pollMs = 5000 }) {
+export function makeStore({
+  upstream, namespace = '', allow, pollMs = 5000, fullReloadMs = 60000,
+}) {
   const ns = makeNamespace({ namespace, allow });
   let state = emptyState();
   let timer = null;
+  let lastFullReload = 0;
 
   function emptyState() {
     return {
@@ -92,10 +95,18 @@ export function makeStore({ upstream, namespace = '', allow, pollMs = 5000 }) {
     }));
 
     state = next;
+    lastFullReload = Date.now();
     return state;
   }
 
+  // The generation counter is the fast path, not the only one. A bump that was
+  // lost — because the proxy that made the change could not write the counter —
+  // would otherwise never reach the other proxies at all.
   async function poll() {
+    if (Date.now() - lastFullReload >= fullReloadMs) {
+      await reload();
+      return;
+    }
     const gen = await upstream.getJson(settings(), GENERATION_KEY);
     const seen = gen.status === 404 ? 0 : (gen.value.generation ?? 0);
     if (seen !== state.generation) await reload();
@@ -149,8 +160,14 @@ export function makeStore({ upstream, namespace = '', allow, pollMs = 5000 }) {
         settings(), `${PEOPLE_PREFIX}${person.id}.json`, body, guard,
       );
       if (!ok) throw new Conflict('person changed underneath this edit');
-      await bumpGeneration();
-      await reload();
+      // The write landed, so this process must see it whatever happens next.
+      // Skipping the reload because the counter bump threw would leave a pause
+      // or a key retirement written but not in force here.
+      try {
+        await bumpGeneration();
+      } finally {
+        await reload();
+      }
       return state.people.get(person.id);
     },
 
@@ -163,9 +180,12 @@ export function makeStore({ upstream, namespace = '', allow, pollMs = 5000 }) {
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,
       );
       if (!ok) throw new Conflict('members changed underneath this edit');
-      await bumpGeneration();
-      await reload();
-      return state.collections.get(bucket).members;
+      try {
+        await bumpGeneration();
+      } finally {
+        await reload();
+      }
+      return state.collections.get(bucket);
     },
   };
 }
