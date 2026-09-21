@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { changedRecordCount, discardBlankDraft, retireItem, setRetired, updateItem } from '../src/RegistryEditor';
 import { changedRecordsValidationError, normalizeNumbers, numberFieldError, validationError } from '../src/validation';
-import { assignmentDiscrepancies, assignmentHasMinimum, assignmentLabel, collectionHasChanges, collectionValidationError, makeAppliedAuditRetry, missingAssignments } from '../src/CollectionEditor';
-import { activeCount, checklistRows, matchShared } from '../src/AssignmentChecklist';
+import { assignmentDiscrepancies, collectionHasChanges, collectionValidationError, makeAppliedAuditRetry } from '../src/CollectionEditor';
+import { activeCount, checklistRows, matchShared, sharedHasId } from '../src/AssignmentChecklist';
 import { settingsBucketCandidates } from '../src/settingsBucket';
 
 describe('registry mutation', () => {
@@ -152,14 +152,8 @@ it('matches collection assignments case-insensitively and detects non-key change
   const assigned = [{ scientificName: ' Puma concolor ', name: 'Old name' }];
   const registry = [{ scientificName: 'puma concolor', name: 'Mountain lion' }];
   expect(assignmentDiscrepancies('species', assigned, registry)).toHaveLength(1);
-  expect(missingAssignments('species', assigned, registry)).toHaveLength(0);
-});
-
-it('labels a record by its name and keeps unmatched records out of the shared list', () => {
-  expect(assignmentLabel('species', { name: 'Coyote', retired: true })).toBe('Coyote');
-  expect(missingAssignments('locations', [{ idProperty: 'old' }], [{ idProperty: 'new' }])).toHaveLength(1);
-  expect(assignmentHasMinimum([{ idProperty: 'old' }])).toBe(true);
-  expect(assignmentHasMinimum([])).toBe(false);
+  expect(sharedHasId('species', assigned[0], registry)).toBe(true);
+  expect(sharedHasId('locations', { idProperty: 'old' }, [{ idProperty: 'new' }])).toBe(false);
 });
 
 it('exposes an applied-audit retry that succeeds after a transient failure', async () => {

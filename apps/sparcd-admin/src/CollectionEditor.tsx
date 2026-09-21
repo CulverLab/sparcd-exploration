@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ConditionalReplaceConflictError, type CollectionRef, type SafeS3Client } from '@sparcd/s3-safe'
-import { AssignmentChecklist, matchShared, sharedHasId, type Entry, type Kind } from './AssignmentChecklist'
+import { AssignmentChecklist, matchShared, type Entry, type Kind } from './AssignmentChecklist'
 
 export type CollectionAssignment = { values: unknown[]; etag: string | null }
 export type CollectionRecord = CollectionRef & {
@@ -47,19 +47,6 @@ export function assignmentDiscrepancies(kind: Kind, used: unknown[], shared: unk
     if (!truth || JSON.stringify(withoutId(kind, current)) === JSON.stringify(withoutId(kind, truth))) return []
     return [{ index, current, truth }]
   })
-}
-
-/** Entries this collection uses that the shared list no longer holds at all. */
-export function missingAssignments(kind: Kind, used: unknown[], shared: unknown[]) {
-  return (used as Entry[]).filter((entry) => !sharedHasId(kind, entry, shared as Entry[]))
-}
-
-export function assignmentLabel(kind: Kind, entry: Entry) {
-  return String(entry[kind === 'species' ? 'name' : 'nameProperty'] ?? entry[kind === 'species' ? 'scientificName' : 'idProperty'] ?? 'Unnamed')
-}
-
-export function assignmentHasMinimum(values: unknown[]) {
-  return values.length > 0
 }
 
 export function collectionValidationError(collection: Record<string, unknown>) {
