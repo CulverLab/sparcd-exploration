@@ -34,6 +34,7 @@ export S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...
 export ACCESS_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
 export BUCKET_NAMESPACE=            # empty against a store you own outright
 export PUBLIC_ENDPOINT=https://proxy.example.org
+export ALLOWED_HOSTS='proxy.example.org, proxy.example.org:8443'
 
 node access/cli.mjs init --name "Your Name" --email you@example.org
 node access/server.mjs
@@ -48,6 +49,8 @@ an admin exists. Everyone after that is invited through
 | variable | default | meaning |
 |---|---|---|
 | `UPSTREAM` | — | the one S3 endpoint, fixed at start |
+| `PUBLIC_ENDPOINT` | **required** | what `/-/join` hands a new person |
+| `ALLOWED_HOSTS` | **required** | comma list of Hosts this process answers for, shard ports included |
 | `S3_REGION` | `us-east-1` | signing region for the upstream |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | the upstream credential |
 | `BUCKET_NAMESPACE` | `` | prefix every upstream bucket carries |
@@ -60,7 +63,15 @@ an admin exists. Everyone after that is invited through
 
 `BUCKET_NAMESPACE` plus `BUCKET_ALLOW` are the containment boundary. Nothing
 outside that set is read, written, listed, or named in a response, for anyone,
-admins included.
+admins included. Responses that could name a bucket — the service root, and any
+listing of the settings bucket — are rebuilt here rather than filtered, so
+there is no shape of upstream answer that carries a name out.
+
+`ALLOWED_HOSTS` is the other half of the signature check. SigV4 binds a
+signature to the Host the caller dialled, so this is the list of Hosts this
+process will answer for at all; a request arriving with anything else is
+refused before its signature is even read. It has to include every shard port
+Caddy publishes.
 
 ## Behind the Caddy shard front
 
@@ -98,6 +109,13 @@ No deployment automation ships here.
   body is not bound to the signature, so a captured PUT can be replayed with
   different contents until `x-amz-date` ages out. API calls under `/-/` do not
   get that latitude — their bodies must be hashed.
+- **`x-amz-*` is an allowlist.** `x-amz-meta-*`, `x-amz-checksum-*` and
+  `x-amz-sdk-checksum-algorithm` travel; `x-amz-content-sha256`, `x-amz-date`,
+  `x-amz-security-token` and `x-amz-user-agent` are consumed here; anything
+  else is a 403 rather than a silent strip, so a client that grows a header
+  finds out.
+- **Presigned URLs are GET and HEAD only**, capped at an hour, and never at the
+  service root.
 
 ## Tests
 

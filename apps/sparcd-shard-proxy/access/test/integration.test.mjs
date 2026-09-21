@@ -11,7 +11,8 @@ import {
 } from '@aws-sdk/client-s3';
 
 import {
-  startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest,
+  startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest, rawTarget,
+  stalledPut, chunked, spawnServer, MASTER_KEY,
   BUCKET_A, BUCKET_B, SETTINGS, CANARY, CANARY_KEY, CANARY_BODY,
   UUID_A, UUID_B, NAMESPACE,
 } from './harness.mjs';
@@ -26,6 +27,12 @@ const invites = {};
 
 const prefixA = `Collections/${UUID_A}/Uploads/2026.01.01.00.00.00_seed`;
 const prefixB = `Collections/${UUID_B}/Uploads/2026.01.01.00.00.00_seed`;
+
+/** The opaque version an admin has to echo back to edit a member list. */
+const membersVersion = async (bucket) => {
+  const res = await people.admin.api('GET', '/-/admin/collections');
+  return res.body.collections.find((c) => c.bucket === bucket).membersVersion;
+};
 
 const status = async (promise) => {
   try {
@@ -122,7 +129,9 @@ describe('invariant 1: nothing outside the namespace', () => {
         const res = await rawSignedRequest({
           origin, key: people[who].accessKey, secret: people[who].secretKey, path,
         });
-        assert.equal(res.status, 403, `${who} ${path} → ${res.status}`);
+        // 400 for the targets the request line itself refuses, 403 for the
+        // rest. Either way nothing of the canary comes back.
+        assert.ok([400, 403].includes(res.status), `${who} ${path} → ${res.status}`);
         assert.equal(res.text.includes(CANARY_BODY), false, path);
       }
     }
@@ -421,9 +430,9 @@ describe('conflicts', () => {
     const id = (name) => list.body.people.find((p) => p.name === name).id;
     const res = await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
       members: [{ personId: id('alice'), access: 'look' }, { personId: id('bob'), access: 'upload' }],
-    });
+    }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 409);
-    assert.match(res.body.error.message, /at least one member with run/);
+    assert.equal(res.body.error.code, 'last_runner');
   });
 
   test('a run member may edit the members of their own collection', async () => {
@@ -435,13 +444,15 @@ describe('conflicts', () => {
         { personId: id('bob'), access: 'upload' },
         { personId: id('carol'), access: 'identify' },
       ],
-    });
+    }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 200);
+    assert.ok(res.body.membersVersion, 'no membersVersion came back');
     // bob has no run on A, so he may not.
-    assert.equal(
-      (await people.bob.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, { members: res.body.members })).status,
-      403,
-    );
+    const bob = await people.bob.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
+      members: res.body.members,
+    }, { 'if-match': res.body.membersVersion });
+    assert.equal(bob.status, 403);
+    assert.equal(bob.body.error.code, 'forbidden');
   });
 
   test('a concurrent member edit loses on If-Match', async () => {
@@ -463,9 +474,24 @@ describe('conflicts', () => {
 
     const res = await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
       members: [{ personId: id('alice'), access: 'run' }],
-    });
+    }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 412);
+    assert.equal(res.body.error.code, 'changed_elsewhere');
     await proxy.store.reload();
+  });
+
+  test('a members edit without the version it read is refused', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const id = (name) => list.body.people.find((p) => p.name === name).id;
+    const members = [{ personId: id('alice'), access: 'run' }];
+    const naked = await people.admin.api(
+      'PUT', `/-/admin/collections/${BUCKET_A}/members`, { members });
+    assert.equal(naked.status, 412);
+    assert.equal(naked.body.error.code, 'changed_elsewhere');
+    const stale = await people.admin.api(
+      'PUT', `/-/admin/collections/${BUCKET_A}/members`, { members },
+      { 'if-match': '"not-the-version"' });
+    assert.equal(stale.status, 412);
   });
 });
 
@@ -566,7 +592,8 @@ describe('activity', () => {
     await people.alice.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: downloadKey }));
     await status(people.alice.s3().send(
       new PutObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/nope.jpg`, Body: 'x' })));
-    await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { name: 'Alice' });
+    await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'paused' });
+    await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'active' });
 
     const all = await people.admin.api('GET', '/-/admin/activity?limit=1000');
     assert.equal(all.status, 200);
@@ -584,8 +611,16 @@ describe('activity', () => {
     assert.equal(denied.status, 403);
     assert.ok(denied.detail);
 
-    const change = all.body.events.find((e) => e.kind === 'access-change' && e.detail?.after?.name === 'Alice');
-    assert.equal(change.detail.before.name, 'alice');
+    const paused = all.body.events.find(
+      (e) => e.kind === 'access-change' && e.detail?.change === 'paused'
+        && e.detail?.target?.personId === aliceId);
+    assert.equal(paused.detail.target.personName, 'alice');
+    assert.ok(all.body.events.some(
+      (e) => e.detail?.change === 'resumed' && e.detail?.target?.personId === aliceId));
+    // A membership grant says which collection and what it became.
+    const added = all.body.events.find((e) => e.detail?.change === 'added' && e.detail?.bucket);
+    assert.equal(typeof added.detail.collectionName, 'string');
+    assert.ok(['look', 'identify', 'upload', 'run'].includes(added.detail.after.access));
 
     // Newest first.
     const ts = all.body.events.map((e) => e.ts);
@@ -607,6 +642,26 @@ describe('activity', () => {
     assert.equal(res.body.events[0].kind, 'download');
     assert.equal(res.body.truncated, true);
     assert.equal((await people.alice.api('GET', '/-/admin/activity')).status, 403);
+  });
+
+  test('a list of kinds is allowed, an unknown one in it is not', async () => {
+    const ok = await people.admin.api(
+      'GET', '/-/admin/activity?kind=download,sign-in&limit=1000');
+    assert.equal(ok.status, 200);
+    assert.ok(ok.body.events.some((e) => e.kind === 'download'));
+    assert.ok(ok.body.events.every((e) => e.kind === 'download' || e.kind === 'sign-in'));
+
+    const bad = await people.admin.api('GET', '/-/admin/activity?kind=download,nonsense');
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'invalid');
+  });
+
+  test('the downloads query takes a bare file name', async () => {
+    const res = await people.admin.api(
+      'GET', `/-/admin/activity/downloads?bucket=${BUCKET_A}&key=a.jpg`);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.events.length > 0);
+    assert.ok(res.body.events.every((e) => e.key.endsWith('/a.jpg')));
   });
 
   test('listings and metadata reads are not logged', async () => {
@@ -642,6 +697,534 @@ describe('two proxies over one store', () => {
     } finally {
       await second.proxy.close();
     }
+  });
+});
+
+describe('hardening', () => {
+  const mediaA = `${prefixA}/a.jpg`;
+
+  // 1 — the service root
+  test('the service root takes no parameters', async () => {
+    for (const query of ['?usage', '?format=json', '?acl', '?versions']) {
+      const res = await rawSignedRequest({
+        origin, key: people.admin.accessKey, secret: people.admin.secretKey, path: `/${query}`,
+      });
+      assert.equal(res.status, 403, query);
+      assert.equal(res.text.includes(CANARY), false, query);
+    }
+  });
+
+  test('the ListBuckets body is built here, not passed through', async () => {
+    const res = await people.admin.raw('GET', '/');
+    assert.equal(res.status, 200);
+    assert.match(res.text, /<Owner><ID>sparcd<\/ID>/);
+    assert.equal(res.text.includes(NAMESPACE + 'sparcd'), false);
+    assert.equal(res.text.includes(CANARY), false);
+    assert.equal(res.text.includes('CreationDate>2'), false, 'an upstream date survived');
+  });
+
+  test('a presigned request cannot reach the service root', async () => {
+    const res = await fetch(await people.admin.presign('/', 900));
+    assert.equal(res.status, 403);
+  });
+
+  // 2 — the x-amz-* allowlist
+  test('an x-amz header outside the allowlist is refused, signed or not', async () => {
+    for (const header of [
+      'x-amz-acl', 'x-amz-grant-read', 'x-amz-storage-class', 'x-amz-tagging',
+      'x-amz-server-side-encryption', 'x-amz-server-side-encryption-customer-key',
+      'x-amz-website-redirect-location', 'x-amz-object-lock-mode', 'x-amz-trailer',
+    ]) {
+      const res = await people.alice.raw('PUT', `/${BUCKET_A}/${prefixA}/acl.jpg`, {
+        body: 'x', headers: { [header]: 'value' },
+      });
+      assert.equal(res.status, 403, header);
+      assert.match(res.text, /header not accepted|unsigned x-amz header/, header);
+    }
+  });
+
+  test('the allowlisted ones still work, and the metadata arrives', async () => {
+    const key = `${prefixA}/meta.jpg`;
+    const res = await people.alice.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'bytes',
+      headers: {
+        'x-amz-meta-sha256': 'abc123',
+        'x-amz-meta-anything': 'also-fine',
+        'x-amz-user-agent': 'aws-sdk-js/3.0.0',
+      },
+    });
+    assert.equal(res.status, 200);
+    const head = await people.alice.s3().send(
+      new HeadObjectCommand({ Bucket: BUCKET_A, Key: key }));
+    assert.equal(head.Metadata.sha256, 'abc123');
+    assert.equal(head.Metadata.anything, 'also-fine');
+    // Telemetry is accepted from the caller and dropped, not forwarded.
+    assert.equal(head.Metadata['user-agent'], undefined);
+  });
+
+  // 3 — anonymous cost
+  test('an unknown key is refused without the body being read', async () => {
+    const res = await rawSignedRequest({
+      origin, key: 'SPKZZZZZZZZZZZZZZZZ', secret: 'nope',
+      method: 'PUT', path: `/${BUCKET_A}/${prefixA}/anon.jpg`,
+    });
+    assert.equal(res.status, 403);
+    assert.match(res.text, /InvalidAccessKeyId/);
+  });
+
+  test('a body over the in-flight ceiling is 503, not heap', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 1024 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/big.jpg`, {
+        body: 'x'.repeat(4096),
+      });
+      assert.equal(res.status, 503);
+      assert.match(res.text, /SlowDown/);
+      // Still serving afterwards.
+      assert.equal((await who.raw('GET', `/${BUCKET_A}/${mediaA}`)).status, 200);
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  // 4 — a torn-down response does not take the process with it
+  test('a client that walks away mid-download leaves the proxy serving', async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    await fetch(await people.alice.presign(`/${BUCKET_A}/${mediaA}`, 900), { signal })
+      .then((r) => { controller.abort(); return r.text().catch(() => null); })
+      .catch(() => null);
+    assert.equal((await people.alice.raw('GET', `/${BUCKET_A}/${mediaA}`)).status, 200);
+  });
+
+  // 6 — the last-admin rule cannot be walked past with a falsy value
+  test('a non-boolean admin flag is invalid, not a quiet demotion', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const me = list.body.people.find((p) => p.admin && p.status === 'active');
+    for (const admin of [0, null, '', 'false']) {
+      const res = await people.admin.api('PATCH', `/-/admin/people/${me.id}`, { admin });
+      assert.equal(res.status, 400, JSON.stringify(admin));
+      assert.equal(res.body.error.code, 'invalid');
+    }
+    const bad = await people.admin.api('PATCH', `/-/admin/people/${me.id}`, { status: 'retired' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'invalid');
+    // Still an admin.
+    assert.equal((await people.admin.api('GET', '/-/admin/people')).status, 200);
+  });
+
+  // 7 — settings listings
+  test('a listing aimed at a protected tree is refused, not emptied', async () => {
+    for (const prefix of ['Settings/access/', 'Settings/acc', 'Settings/access/people/']) {
+      const res = await status(people.admin.s3().send(
+        new ListObjectsV2Command({ Bucket: SETTINGS, Prefix: prefix })));
+      assert.equal(res, 403, prefix);
+    }
+    assert.equal(
+      await status(people.alice.s3().send(
+        new ListObjectsV2Command({ Bucket: SETTINGS, Prefix: 'Settings/activ' }))),
+      403,
+    );
+    assert.equal(
+      await status(people.admin.s3().send(
+        new ListObjectsV2Command({ Bucket: SETTINGS, Prefix: 'Settings/activ' }))),
+      200,
+    );
+  });
+
+  test('a settings listing is one complete page with no continuation', async () => {
+    const res = await people.alice.raw('GET', `/${SETTINGS}?list-type=2&prefix=Settings/`);
+    assert.equal(res.status, 200);
+    assert.match(res.text, /<IsTruncated>false<\/IsTruncated>/);
+    assert.equal(res.text.includes('NextContinuationToken'), false);
+    assert.equal(res.text.includes('Settings/access/'), false);
+    assert.equal(res.text.includes('Settings/activity/'), false);
+    assert.match(res.text, /<Name>sparcd-settings-test<\/Name>/);
+  });
+
+  // 8 — presigned writes
+  test('a presigned PUT is refused', async () => {
+    const url = await people.alice.presign(`/${BUCKET_A}/${prefixA}/presigned.jpg`, 900);
+    const res = await fetch(url, { method: 'PUT', body: 'x' });
+    assert.equal(res.status, 403);
+    assert.match(await res.text(), /read-only/);
+  });
+
+  // 9 — host binding
+  test('a Host this process does not answer for is refused', async () => {
+    const { port } = new URL(origin);
+    const res = await rawTarget(port, '/-/health', 'evil.example.org');
+    assert.equal(res.status, 403);
+    assert.match(res.text, /unknown host/);
+    // The Host it does answer for still works.
+    assert.equal((await rawTarget(port, '/-/health')).status, 200);
+  });
+
+  test('an absolute-form target is refused', async () => {
+    const { port } = new URL(origin);
+    const res = await rawTarget(port, `http://127.0.0.1:${port}/-/health`);
+    assert.equal(res.status, 400);
+    const slashes = await rawTarget(port, '//127.0.0.1/-/health');
+    assert.equal(slashes.status, 400);
+  });
+
+  // 10 — preconditions travel only when signed
+  test('a signed precondition reaches the upstream and an unsigned one does not', async () => {
+    const key = `${prefixA}/precondition.jpg`;
+    await people.alice.raw('PUT', `/${BUCKET_A}/${key}`, { body: 'first' });
+
+    const signedGuard = await people.alice.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'second', headers: { 'if-none-match': '*' },
+    });
+    assert.equal(signedGuard.status, 412, 'the signed precondition did not reach the upstream');
+
+    const unsignedGuard = await people.alice.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'third', unsignedHeaders: { 'if-none-match': '*' },
+    });
+    assert.equal(unsignedGuard.status, 200, 'an unsigned precondition was honoured');
+  });
+
+  // 11 — what an error body says
+  test('an upstream error names no host or resource', async () => {
+    const res = await people.alice.raw('GET', `/${BUCKET_A}/${prefixA}/no-such-object.jpg`);
+    assert.equal(res.status, 404);
+    assert.equal(res.text.includes('<Resource>'), false);
+    assert.equal(res.text.includes('<HostId>'), false);
+    assert.equal(res.text.includes(NAMESPACE + BUCKET_A), false);
+  });
+
+  test('the process refuses to start without PUBLIC_ENDPOINT or ALLOWED_HOSTS', async () => {
+    await assert.rejects(
+      () => startProxy(endpoint, { publicEndpoint: null }, { bootstrap: false }),
+      /PUBLIC_ENDPOINT is required/,
+    );
+    await assert.rejects(
+      () => startProxy(endpoint, { allowedHosts: '' }, { bootstrap: false }),
+      /ALLOWED_HOSTS is required/,
+    );
+  });
+
+  // 12 — object keys
+  test('a key with a traversal, a backslash or a dot segment is refused', async () => {
+    // Sent raw: a URL parser would normalise `..` and `.` away long before the
+    // proxy saw them, which is exactly why the check has to be on the wire
+    // form and exactly why the test cannot use an SDK to ask.
+    for (const key of [
+      `Collections/${UUID_A}/Uploads/s/../../../etc`,
+      `Collections/${UUID_A}/Uploads/./s/a.jpg`,
+      `Collections/${UUID_A}/Uploads/s/a%5Cb.jpg`,
+    ]) {
+      const res = await rawSignedRequest({
+        origin, key: people.alice.accessKey, secret: people.alice.secretKey,
+        method: 'PUT', path: `/${BUCKET_A}/${key}`,
+      });
+      assert.ok([400, 403].includes(res.status), `${key} → ${res.status}`);
+    }
+    // The same key without the dot segments is fine, so the refusal is about
+    // the shape and not about the prefix.
+    const ok = await rawSignedRequest({
+      origin, key: people.alice.accessKey, secret: people.alice.secretKey,
+      method: 'PUT', path: `/${BUCKET_A}/${prefixA}/plain.jpg`,
+    });
+    assert.equal(ok.status, 200);
+  });
+
+  // contract b — per-person membership
+  test('one membership at a time, with the read-modify-write on the server', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const id = (name) => list.body.people.find((p) => p.name === name).id;
+
+    const added = await people.admin.api(
+      'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('bob')}`,
+      { access: 'upload', exactLocations: true });
+    assert.equal(added.status, 200);
+    assert.ok(added.body.membersVersion);
+    const bobOnB = added.body.members.find((m) => m.personId === id('bob'));
+    assert.equal(bobOnB.access, 'upload');
+    assert.equal(bobOnB.exactLocations, true);
+    assert.equal(
+      await status(people.bob.s3().send(
+        new GetObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/a.jpg` }))),
+      200,
+    );
+
+    const removed = await people.admin.api(
+      'DELETE', `/-/admin/collections/${BUCKET_B}/members/${id('bob')}`);
+    assert.equal(removed.status, 200);
+    assert.equal(removed.body.members.some((m) => m.personId === id('bob')), false);
+    assert.equal(
+      await status(people.bob.s3().send(
+        new GetObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/a.jpg` }))),
+      403,
+    );
+  });
+
+  test('a per-person edit that would strand the collection is refused', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const carolId = list.body.people.find((p) => p.name === 'carol').id;
+    const res = await people.admin.api(
+      'DELETE', `/-/admin/collections/${BUCKET_B}/members/${carolId}`);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'last_runner');
+  });
+
+  test('a per-person edit survives a stale cache by retrying', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const id = (name) => list.body.people.find((p) => p.name === name).id;
+    const bucket = `${NAMESPACE}${BUCKET_B}`;
+    const key = `Collections/${UUID_B}/members.json`;
+
+    const current = await root.getJson(bucket, key);
+    assert.equal(await root.put(bucket, key, JSON.stringify({
+      ...current.value,
+      members: current.value.members.map((m) => ({ ...m, grantedAt: new Date().toISOString() })),
+    }), { ifMatch: current.etag }), true);
+
+    const res = await people.admin.api(
+      'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('alice')}`, { access: 'look' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+  });
+
+  // contract c and d
+  test('every error code the suite provokes is one the contract publishes', async () => {
+    const published = new Set([
+      'invalid', 'forbidden', 'not_found', 'last_admin', 'last_runner',
+      'changed_elsewhere', 'too_large', 'busy', 'upstream',
+    ]);
+    const provoked = [
+      await people.alice.api('GET', '/-/admin/people'),
+      await people.admin.api('GET', '/-/admin/people/nope'),
+      await people.admin.api('PATCH', '/-/admin/people/nope', { name: 'x' }),
+      await people.admin.api('POST', '/-/admin/people', { name: 'x' }),
+      await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, { members: [] }),
+    ];
+    for (const res of provoked) {
+      assert.ok(res.body?.error, JSON.stringify(res));
+      assert.ok(published.has(res.body.error.code), res.body.error.code);
+    }
+  });
+
+  test('lastActiveAt is an instant or null, and collections carry uuid', async () => {
+    const res = await people.admin.api('GET', '/-/admin/people');
+    for (const p of res.body.people) {
+      assert.ok(p.lastActiveAt === null || !Number.isNaN(Date.parse(p.lastActiveAt)), p.name);
+      for (const c of p.collections) {
+        assert.equal(typeof c.uuid, 'string');
+        assert.equal(typeof c.bucket, 'string');
+      }
+    }
+    const me = res.body.people.find((p) => p.name === 'alice');
+    assert.match(me.lastActiveAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe('round 3 follow-ups', () => {
+  const mediaA = `${prefixA}/a.jpg`;
+
+  // N1 — a declared length is a claim, not a reservation
+  test('connections that promise bytes and send none do not hold the budget', async () => {
+    const small = await startProxy(
+      endpoint, { maxBufferedBytes: 64 * 1024, bodyIdleMs: 400 }, { bootstrap: false },
+    );
+    try {
+      const { port } = new URL(small.origin);
+      // Eight sockets, each declaring the whole budget, each sending nothing.
+      const stalled = Array.from({ length: 8 }, () =>
+        stalledPut(port, `/${BUCKET_A}/${prefixA}/stall.jpg`, 64 * 1024,
+          people.alice.accessKey));
+      await new Promise((r) => setTimeout(r, 150));
+
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const real = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/through.jpg`, { body: 'x' });
+      assert.equal(real.status, 200, 'a real upload was held out by stalled ones');
+
+      // And the stalled ones are timed out rather than parked for 300 s.
+      const outcomes = await Promise.all(stalled);
+      for (const out of outcomes) assert.ok([408, 0].includes(out.status), `got ${out.status}`);
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('one key cannot take more than a quarter of the budget', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 4096 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/share.jpg`, {
+        body: 'x'.repeat(2048),
+      });
+      assert.equal(res.status, 503);
+      assert.match(res.text, /SlowDown/);
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('a paused key is refused before its body is read', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const bobId = list.body.people.find((p) => p.name === 'bob').id;
+    await people.admin.api('PATCH', `/-/admin/people/${bobId}`, { status: 'paused' });
+    try {
+      const res = await people.bob.raw('PUT', `/${BUCKET_A}/${prefixA}/paused.jpg`, {
+        body: 'x'.repeat(1024),
+      });
+      assert.equal(res.status, 403);
+      assert.match(res.text, /person is paused|AccessDenied/);
+    } finally {
+      await people.admin.api('PATCH', `/-/admin/people/${bobId}`, { status: 'active' });
+    }
+  });
+
+  // N2 — a body with no declared length is still accounted
+  test('a chunked body is counted, not waved through', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 4096 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/chunked.jpg`, {
+        body: chunked('x'.repeat(2048)),
+      });
+      assert.equal(res.status, 503, 'an undeclared body escaped the budget');
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('the budget comes back after the response, so the next upload fits', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 64 * 1024 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      for (let i = 0; i < 6; i += 1) {
+        const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/again${i}.jpg`, {
+          body: 'x'.repeat(8 * 1024),
+        });
+        assert.equal(res.status, 200, `upload ${i}`);
+      }
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  // N3 — nothing names the upstream
+  test('a completed multipart upload names the client bucket and no host', async () => {
+    const key = `${prefixA}/n3-multi.bin`;
+    const s3 = people.alice.s3();
+    const created = await s3.send(new CreateMultipartUploadCommand({ Bucket: BUCKET_A, Key: key }));
+    const parts = [];
+    for (let n = 1; n <= 2; n += 1) {
+      const out = await s3.send(new UploadPartCommand({
+        Bucket: BUCKET_A, Key: key, UploadId: created.UploadId, PartNumber: n,
+        Body: Buffer.alloc(5 * 1024 * 1024, 64 + n),
+      }));
+      parts.push({ ETag: out.ETag, PartNumber: n });
+    }
+    const raw = await people.alice.raw(
+      'POST', `/${BUCKET_A}/${key}?uploadId=${encodeURIComponent(created.UploadId)}`,
+      {
+        body: `<CompleteMultipartUpload>${parts.map((p) =>
+          `<Part><PartNumber>${p.PartNumber}</PartNumber><ETag>${p.ETag}</ETag></Part>`).join('')}`
+          + '</CompleteMultipartUpload>',
+        headers: { 'content-type': 'application/xml' },
+      },
+    );
+    assert.equal(raw.status, 200, raw.text);
+    assert.equal(raw.text.includes('<Location>'), false, raw.text);
+    assert.equal(raw.text.includes('<Endpoint>'), false);
+    assert.equal(raw.text.includes(NAMESPACE + BUCKET_A), false);
+    assert.match(raw.text, /<Bucket>sparcd-/);
+  });
+
+  test('response headers are an allowlist', async () => {
+    const res = await people.alice.raw('GET', `/${BUCKET_A}/${mediaA}`);
+    assert.equal(res.status, 200);
+    for (const name of ['server', 'x-amz-id-2', 'x-xss-protection', 'vary-something']) {
+      assert.equal(res.headers.get(name), null, name);
+    }
+    assert.ok(res.headers.get('content-type'));
+    assert.ok(res.headers.get('etag'));
+  });
+
+  // N4 — listing around the protected trees
+  test('a settings listing stays honest as the activity tree grows', async () => {
+    // Enough activity objects that a page walk would bury the real files.
+    const bucket = `${NAMESPACE}${SETTINGS}`;
+    for (let i = 0; i < 40; i += 1) {
+      await root.put(bucket, `Settings/activity/2020-01-01/${1000 + i}-0000000${i % 10}.ndjson`,
+        '{"kind":"download"}\n', { contentType: 'application/x-ndjson' });
+    }
+    await root.put(bucket, 'Settings/species.json', '[]');
+
+    const res = await people.alice.raw('GET', `/${SETTINGS}?list-type=2&prefix=Settings/`);
+    assert.equal(res.status, 200);
+    assert.match(res.text, /Settings\/locations\.json/);
+    assert.match(res.text, /Settings\/species\.json/);
+    assert.equal(res.text.includes('Settings/activity/'), false);
+    assert.equal(res.text.includes('Settings/access/'), false);
+  });
+
+  test('a page that had to stop says so and can be resumed', async () => {
+    const first = await people.alice.raw('GET', `/${SETTINGS}?list-type=2&prefix=Settings/&max-keys=1`);
+    assert.equal(first.status, 200);
+    assert.match(first.text, /<IsTruncated>true<\/IsTruncated>/);
+    const token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(first.text)[1];
+    assert.equal(token.includes('Settings'), false, 'the token is not opaque');
+
+    const seen = new Set();
+    let next = token;
+    for (let page = 0; page < 10 && next; page += 1) {
+      const res = await people.alice.raw(
+        'GET', `/${SETTINGS}?list-type=2&prefix=Settings/&max-keys=1`
+          + `&continuation-token=${encodeURIComponent(next)}`);
+      assert.equal(res.status, 200);
+      for (const m of res.text.matchAll(/<Key>([\s\S]*?)<\/Key>/g)) seen.add(m[1]);
+      next = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(res.text)?.[1] ?? null;
+    }
+    assert.ok(seen.has('Settings/species.json'), [...seen].join(','));
+    for (const key of seen) assert.equal(key.startsWith('Settings/activity/'), false);
+  });
+
+  // N5 — the Host the signature is checked against
+  test('a backslash target cannot move the host the signature is checked against', async () => {
+    const { port } = new URL(origin);
+    const res = await rawTarget(port, '/\\evil.example/-/health');
+    assert.equal(res.status, 400);
+  });
+
+  // N6 — a process that cannot listen says so and stops
+  test('a second process on a taken port exits non-zero', async () => {
+    const out = await spawnServer({
+      UPSTREAM: endpoint,
+      S3_ACCESS_KEY_ID: 'accesstestkey',
+      S3_SECRET_ACCESS_KEY: 'accesstestsecret',
+      BUCKET_NAMESPACE: NAMESPACE,
+      ACCESS_MASTER_KEY: MASTER_KEY,
+      PUBLIC_ENDPOINT: origin,
+      ALLOWED_HOSTS: new URL(origin).host,
+      PORT: new URL(origin).port,
+    });
+    assert.notEqual(out.code, 0, `exited ${out.code}`);
+    assert.match(out.stderr, /EADDRINUSE|listen/i);
+  });
+
+  // 6 residue — reset is the other way to lose the last admin
+  test('resetting the last active admin is refused, before and after the write', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const me = list.body.people.find((p) => p.admin && p.status === 'active');
+    const res = await people.admin.api('POST', `/-/admin/people/${me.id}/reset`);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'last_admin');
+    // The key still works, so nothing half-happened.
+    assert.equal((await people.admin.api('GET', '/-/admin/people')).status, 200);
   });
 });
 

@@ -79,6 +79,19 @@ export function parseAuthorization(header) {
 }
 
 /**
+ * The access key id a request claims, without verifying anything. The point is
+ * to resolve the key before the body is read: an unknown key should cost a
+ * lookup, not a buffered upload.
+ */
+export function peekAccessKeyId({ headers, url }) {
+  const credential = url.searchParams.get('X-Amz-Credential')
+    ?? parseAuthorization(headers.get('authorization'))?.credential?.join('/');
+  if (!credential) return null;
+  const [accessKeyId] = credential.split('/');
+  return accessKeyId || null;
+}
+
+/**
  * The canonical query string, optionally without one parameter (presigned
  * requests exclude X-Amz-Signature from what they sign).
  */
@@ -150,6 +163,11 @@ export async function verifySignature({
   allowPresigned = false, requireSignedBody = false, now = Date.now(),
 }) {
   const presigned = allowPresigned && url.searchParams.has('X-Amz-Algorithm');
+  // A presigned URL is a bearer token that travels in logs, referrers and chat
+  // messages. One that can write is a different object from one that can read.
+  if (presigned && method !== 'GET' && method !== 'HEAD') {
+    return { error: 'presigned URLs are read-only' };
+  }
 
   let credential;
   let signedHeaders;
@@ -263,5 +281,5 @@ export async function verifySignature({
     canonicalRequest,
   });
   if (!constantTimeEqual(expected, signature)) return { error: 'signature mismatch' };
-  return { accessKeyId, presigned };
+  return { accessKeyId, presigned, signedHeaders: signed };
 }
