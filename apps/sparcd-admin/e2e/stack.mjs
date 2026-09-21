@@ -17,6 +17,7 @@ import { init } from '../../sparcd-shard-proxy/access/cli.mjs';
 import { makeUpstream } from '../../sparcd-shard-proxy/access/upstream.mjs';
 
 import { planTarget } from './target.mjs';
+import { startLatencyForwarder } from './latency.mjs';
 import {
   CANARY_BUCKET, CANARY_BODY, CANARY_KEY, COLLECTIONS, SETTINGS_BUCKET,
   namespacedBuckets, seedPlan,
@@ -87,9 +88,14 @@ export async function startStack(env = process.env) {
     await root.put(object.bucket, object.key, object.body, { contentType: object.contentType });
   }
 
+  // Seeding keeps the direct endpoint; only what the app does through the
+  // proxy is slowed down, which is the traffic a person waits on.
+  const latencyMs = Number(env.E2E_LATENCY_MS ?? 0);
+  const slow = latencyMs > 0 ? await startLatencyForwarder(upstream, latencyMs) : null;
+
   const origin = `http://127.0.0.1:${port}`;
   const config = {
-    upstream,
+    upstream: slow ? slow.origin : upstream,
     region: env.S3_REGION ?? 'us-east-1',
     accessKeyId: plan.accessKeyId,
     secretAccessKey: plan.secretAccessKey,
@@ -130,6 +136,7 @@ export async function startStack(env = process.env) {
     ...descriptor,
     async stop() {
       await proxy.close();
+      if (slow) await slow.stop();
       await rm(DESCRIPTOR, { force: true });
       if (plan.keep) return;
       if (plan.startMinio) {

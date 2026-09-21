@@ -53,6 +53,22 @@ Configuration is environment variables only; nothing here reads a `.env`.
 | `E2E_KEEP` | off | leave the data and the container in place afterwards |
 | `E2E_PROXY_PORT` | `8797` | where the access proxy listens |
 | `E2E_APP_PORT` | `5411` | where the built app is served |
+| `E2E_LATENCY_MS` | `0` | hold every proxy-to-storage request this many ms, plus up to 50% jitter |
+
+### Running it against slow storage
+
+```sh
+pnpm --filter sparcd-admin e2e:slow      # the same suite at 150 ms per request
+E2E_LATENCY_MS=400 pnpm --filter sparcd-admin e2e
+```
+
+Loopback MinIO answers in well under a millisecond; real storage takes 100–200
+ms per request, and that gap is where the app's races with its own reloads
+live. With `E2E_LATENCY_MS` set, `stack.mjs` starts a small forwarder on
+loopback (`latency.mjs`) and points the access proxy at it instead of straight
+at MinIO. It passes the host header and the body through byte for byte, so the
+signatures the proxy makes still verify upstream. Seeding keeps the direct
+endpoint: only the traffic a person waits on is slowed.
 
 Both ports differ from the ones the access proxy's own integration run and the
 other apps use, so two suites can run side by side.

@@ -26,7 +26,9 @@ export default defineConfig({
   webServer: {
     // The built bundle, not the dev server: the join page's relative links and
     // the app base path are only right once Vite has emitted them.
-    command: `pnpm exec vite build && pnpm exec vite preview --port ${PREVIEW_PORT} --strictPort`,
+    // `--host 127.0.0.1`, not vite's default: left to itself it binds `::1`
+    // only, and the browser and the wait below both dial the v4 loopback.
+    command: `pnpm exec vite build && pnpm exec vite preview --host 127.0.0.1 --port ${PREVIEW_PORT} --strictPort`,
     url: `http://127.0.0.1:${PREVIEW_PORT}/sparcd-exploration/admin/`,
     reuseExistingServer: false,
     timeout: 180_000,
