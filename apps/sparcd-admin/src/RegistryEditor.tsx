@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react'
 import { ConditionalReplaceConflictError, type SafeS3Client } from '@sparcd/s3-safe'
-import { changedRecordsValidationError } from './validation'
+import type { SharedList } from './load'
+import {
+  changedRecordsValidationError,
+  normalizeNumbers,
+  numberFieldError,
+  NUMERIC_LOCATION_FIELDS,
+  type Entry,
+  type ListKind,
+} from './validation'
 
-export type Registry = { key: string; value: unknown[]; etag: string; bucket: string }
+export type Registry = SharedList
 
 const json = (value: unknown) => JSON.stringify(value, null, 2)
 const id = () => crypto.randomUUID()
+
 const fields = {
   Species: ['name', 'scientificName', 'genus', 'species', 'keyBinding'],
   Locations: ['nameProperty', 'idProperty', 'latProperty', 'lngProperty', 'elevationProperty'],
@@ -13,95 +22,131 @@ const fields = {
 const labels: Record<string, string> = {
   name: 'Common name', scientificName: 'Scientific name', genus: 'Genus', species: 'Species', keyBinding: 'Shortcut key',
   nameProperty: 'Name', idProperty: 'Location ID', latProperty: 'Latitude', lngProperty: 'Longitude', elevationProperty: 'Elevation',
-  status: 'Status', sensitive: 'Sensitive',
 }
-const requiredFields: Record<'Species' | 'Locations', readonly string[]> = {
+const requiredFields: Record<ListKind, readonly string[]> = {
   Species: ['name', 'scientificName'],
   Locations: ['nameProperty', 'idProperty', 'latProperty', 'lngProperty', 'elevationProperty'],
 }
 
-export function updateItem(items: Record<string, unknown>[], at: number, next: Record<string, unknown>) {
+export function updateItem(items: Entry[], at: number, next: Entry) {
   return items.map((value, index) => (index === at ? next : value))
 }
 
-export function retireItem(items: Record<string, unknown>[], at: number) {
+export function retireItem(items: Entry[], at: number) {
   return updateItem(items, at, { ...items[at], retired: true })
 }
 
-export function hasRecordData(record: Record<string, unknown>) {
+/** Retiring is reversible: the same row carries the record back into use. */
+export function setRetired(items: Entry[], at: number, retired: boolean) {
+  return updateItem(items, at, { ...items[at], retired })
+}
+
+export function hasRecordData(record: Entry) {
   return Object.values(record).some((value) => value !== '' && value !== undefined && value !== null)
 }
 
-export function discardBlankDraft(items: Record<string, unknown>[], draftIndex: number | null) {
+export function discardBlankDraft(items: Entry[], draftIndex: number | null) {
   return draftIndex !== null && !hasRecordData(items[draftIndex])
     ? items.filter((_, index) => index !== draftIndex)
     : items
 }
 
-export function changedRecordCount(items: Record<string, unknown>[], initial: unknown[]) {
+export function changedRecordCount(items: Entry[], initial: unknown[]) {
   const count = Math.max(items.length, initial.length)
   return Array.from({ length: count }, (_, index) =>
     JSON.stringify(items[index]) !== JSON.stringify(initial[index]),
   ).filter(Boolean).length
 }
 
+const rowLabel = (kind: ListKind, record: Entry) =>
+  String((kind === 'Species' ? record.name : record.nameProperty) ?? '').trim() || 'Unnamed'
+const rowDetail = (kind: ListKind, record: Entry) =>
+  String((kind === 'Species' ? record.scientificName : record.idProperty) ?? '').trim()
+
+function StatusPill({ retired }: { retired: boolean }) {
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 text-xs ${retired ? 'border-ruleSoft text-inkMute' : 'border-ok text-ok'}`}>
+      <span aria-hidden className="text-[7px] leading-none">●</span>
+      {retired ? 'Retired' : 'Active'}
+    </span>
+  )
+}
+
+function Shield() {
+  return (
+    <>
+      <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4 shrink-0 text-inkSoft" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M8 1.6 13.4 3.4v4.1c0 3.1-2.2 5.4-5.4 6.9-3.2-1.5-5.4-3.8-5.4-6.9V3.4Z" />
+      </svg>
+      <span className="sr-only">Protected</span>
+    </>
+  )
+}
+
 export function RegistryEditor({ title, registry, client, reload, actor }: {
-  title: 'Species'
-  registry: Registry
-  client: SafeS3Client
-  reload: () => void
-  actor: string
-} | {
-  title: 'Locations'
+  title: ListKind
   registry: Registry
   client: SafeS3Client
   reload: () => void
   actor: string
 }) {
-  const [items, setItems] = useState(registry.value as Record<string, unknown>[])
-  const [selected, setSelected] = useState(0)
+  const [items, setItems] = useState(registry.value as Entry[])
+  const [selected, setSelected] = useState<number | null>(null)
+  const [search, setSearch] = useState('')
   const [message, setMessage] = useState('')
+  const [showErrors, setShowErrors] = useState(false)
   const [retryApplied, setRetryApplied] = useState<(() => Promise<void>) | null>(null)
   const [draftIndex, setDraftIndex] = useState<number | null>(null)
-  const [recordSearch, setRecordSearch] = useState<string | null>(null)
+  const [etag, setEtag] = useState(registry.etag)
 
   useEffect(() => {
-    setItems(registry.value as Record<string, unknown>[])
-    setSelected((current) => Math.min(current, Math.max(registry.value.length - 1, 0)))
+    setItems(registry.value as Entry[])
+    setEtag(registry.etag)
+    setSelected(null)
     setDraftIndex(null)
-    setRecordSearch(null)
+    setShowErrors(false)
   }, [registry])
 
-  const item = items[selected] ?? {}
   const noun = title === 'Species' ? 'species' : 'location'
-  const label = (value: Record<string, unknown>) =>
-    String(value.name ?? value.nameProperty ?? value.scientificName ?? 'New record')
-  const recordOption = (value: Record<string, unknown>) => {
-    const primary = label(value)
-    const detail = value.scientificName ?? value.idProperty
-    return detail && detail !== primary ? `${primary} — ${detail}` : primary
+  const plural = title === 'Species' ? 'species' : 'locations'
+  const item = selected === null ? null : items[selected] ?? null
+
+  const change = (key: string, value: string | boolean) => {
+    setItems(updateItem(items, selected!, { ...item, [key]: value }))
+    if (draftIndex === selected) setDraftIndex(null)
   }
-  const change = (key: string, value: string) => {
-    const next = {
-      ...item,
-      [key]: ['latProperty', 'lngProperty', 'elevationProperty'].includes(key) && value !== '' ? Number(value) : value,
-    }
-    setItems(updateItem(items, selected, next))
-    if (draftIndex === selected && hasRecordData(next)) setDraftIndex(null)
-  }
-  const selectRecord = (nextSelected: number) => {
-    const nextItems = discardBlankDraft(items, draftIndex)
-    setItems(nextItems)
+
+  // A new record is always appended, so dropping an untouched one never moves
+  // the index of anything else in the list.
+  const select = (next: number | null) => {
+    setItems(discardBlankDraft(items, draftIndex))
     setDraftIndex(null)
-    setSelected(nextSelected)
-    setRecordSearch(null)
+    setShowErrors(false)
+    setSelected(next)
   }
 
+  const addRecord = () => {
+    if (draftIndex !== null) { setSelected(draftIndex); return }
+    setItems([...items, {}])
+    setSelected(items.length)
+    setDraftIndex(items.length)
+    setShowErrors(false)
+  }
 
-  const modifiedCount = changedRecordCount(items, registry.value)
+  const staged = normalizeNumbers(title, discardBlankDraft(items, draftIndex))
+  const modifiedCount = changedRecordCount(staged, registry.value)
+  const visible = items
+    .map((record, index) => ({ record, index }))
+    .filter(({ record }) => {
+      const needle = search.trim().toLocaleLowerCase()
+      if (!needle) return true
+      return `${rowLabel(title, record)} ${rowDetail(title, record)}`.toLocaleLowerCase().includes(needle)
+    })
+
   const save = async () => {
-    const invalid = changedRecordsValidationError(title, items, registry.value)
+    const invalid = changedRecordsValidationError(title, staged, registry.value)
     if (invalid) {
+      setShowErrors(true)
       setMessage(invalid)
       return
     }
@@ -117,13 +162,16 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
         action: `${title.toLowerCase()}.updated`,
         target: { registryKey: registry.key },
         before: registry.value,
-        after: items,
+        after: staged,
       }
       await client.writeImmutable(registry.bucket, `${base}.prepared.json`, json(event), { contentType: 'application/json' })
-      const write = await client.replaceIfUnchanged(registry.bucket, registry.key, json(items), {
-        etag: registry.etag,
+      const write = await client.replaceIfUnchanged(registry.bucket, registry.key, json(staged), {
+        etag,
         contentType: 'application/json',
       })
+      // Hold the new version tag before the history entry is attempted: if that
+      // write fails the list is still saved, and a retry must not look stale.
+      if (write.etag) setEtag(write.etag)
       const applied = () => client.writeImmutable(registry.bucket, `${base}.applied.json`, json({
         ...event,
         appliedAt: new Date().toISOString(),
@@ -131,103 +179,170 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
       }), { contentType: 'application/json' })
       try {
         await applied()
-        setMessage('Saved and audited.')
+        setRetryApplied(null)
+        setMessage('Saved.')
         reload()
       } catch {
         setRetryApplied(() => applied)
-        setMessage('Saved, but its applied audit record needs retrying.')
+        setMessage('Saved. Its history entry did not go through.')
       }
     } catch (error) {
       setMessage(error instanceof ConditionalReplaceConflictError
-        ? 'The registry changed elsewhere. Reload and review it before saving.'
+        ? `Someone else changed this list while you were editing. Reload before saving again.`
         : (error as Error).message)
     }
   }
 
+  const inputClass = 'min-h-10 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent'
+
   return (
     <section className="border border-rule bg-panel" aria-labelledby={`${title}-heading`}>
-      <div className="border-b border-rule px-4 py-3">
-        <h2 id={`${title}-heading`} className="m-0 text-lg font-semibold text-ink">{title}</h2>
-        {title === 'Locations' && <p className="mb-0 mt-1 text-sm text-inkSoft">Locations with changed IDs will only affect new uploads. Previously assigned IDs remain intact</p>}
-      </div>
-      <div className="p-4">
-        <div className="mb-4 grid max-w-md gap-1 text-sm font-medium text-ink">
-          <label htmlFor={`${title.toLowerCase()}-selector`}>Select {noun}</label>
-          <div className="flex items-center gap-1">
-            <input
-              id={`${title.toLowerCase()}-selector`}
-            aria-label={`Select ${noun}`}
-            list={`${title.toLowerCase()}-records`}
-            value={recordSearch ?? recordOption(item)}
-            onChange={(event) => {
-              const value = event.target.value
-              setRecordSearch(value)
-              const found = items.findIndex((record) => recordOption(record) === value)
-              if (found >= 0) selectRecord(found)
-            }}
-            onBlur={() => setRecordSearch(null)}
-            placeholder={`Type to filter ${title.toLowerCase()}`}
-              className="min-h-10 min-w-0 flex-1 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            />
-            {recordSearch !== '' && <button
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-rule px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <h1 id={`${title}-heading`} className="m-0 text-lg font-semibold text-ink">{title}</h1>
+          <p className="mb-0 mt-1 text-sm text-inkSoft">
+            {title === 'Species'
+              ? 'The species everyone picks from when they identify photos.'
+              : 'The places everyone picks from when they upload. Changing a location ID only affects new uploads; IDs already recorded stay as they are.'}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {modifiedCount > 0 && <p className="m-0 text-sm text-inkSoft">{modifiedCount} {modifiedCount === 1 ? noun : plural} changed</p>}
+          <button
             type="button"
-            aria-label={`Clear ${title.toLowerCase()} search`}
-            title={`Clear ${title.toLowerCase()} search`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setRecordSearch('')}
-            className="grid h-10 w-10 shrink-0 place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            disabled={modifiedCount === 0}
+            className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            onClick={() => void save()}
           >
-            <span aria-hidden className="text-lg leading-none">×</span>
-            </button>}
-          </div>
-          <datalist id={`${title.toLowerCase()}-records`}>
-            {items.map((value, index) => <option value={recordOption(value)} key={index} />)}
-          </datalist>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" aria-describedby={`${title.toLowerCase()}-add-help`} className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => {
-            if (draftIndex !== null) {
-              setSelected(draftIndex)
-              return
-            }
-            setItems([...items, {}])
-            setSelected(items.length)
-            setDraftIndex(items.length)
-            setRecordSearch(null)
-          }}>
-            {title === 'Species' ? 'Add species' : 'Add location'}
+            Save
           </button>
-          <p id={`${title.toLowerCase()}-add-help`} className="m-0 text-sm text-inkSoft">Add a {noun} and complete the required fields, then save, select a {noun} to edit, or add another.</p>
         </div>
-        <fieldset className="mt-4 grid gap-3 border border-rule p-4 sm:grid-cols-2">
-          <legend className="px-1 text-sm font-semibold text-ink">Edit {label(item)}</legend>
-          {fields[title].map((key) => (
-            <label key={key} className="grid gap-1 text-sm font-medium text-ink">
-              <span>
-                {labels[key]}
-                {requiredFields[title].includes(key) && <><span aria-hidden="true" className="ml-1 text-warn">*</span><span className="sr-only"> (required)</span></>}
-              </span>
-              <input
-                aria-label={labels[key]}
-                required={requiredFields[title].includes(key)}
-                className="min-h-10 border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                value={String(item[key] ?? '')}
-                onChange={(event) => change(key, event.target.value)}
-              />
-            </label>
-          ))}
-        </fieldset>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {title === 'Species' && <button type="button" className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setItems(retireItem(items, selected))}>Retire species</button>}
-          <button type="button" disabled={modifiedCount === 0} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" onClick={() => void save()}>{modifiedCount === 0 ? `Save ${title.toLowerCase()}` : `Save ${modifiedCount} ${modifiedCount === 1 ? title.slice(0, -1).toLowerCase() : title.toLowerCase()}`}</button>
-          {retryApplied && <button type="button" className="border border-warn px-3 py-2 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => void retryApplied().then(() => {
-            setRetryApplied(null)
-            setMessage('Applied audit record recovered.')
-            reload()
-          })}>Retry audit record</button>}
-        </div>
-        {message && <p role="status" className="mb-0 mt-3 text-sm text-inkSoft">{message}</p>}
       </div>
+      <div className="grid gap-4 p-4 lg:grid-cols-2">
+        <div className="min-w-0">
+          <div className="flex gap-2">
+            <label className="sr-only" htmlFor={`${plural}-search`}>Search {plural}</label>
+            <input
+              id={`${plural}-search`}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={`Search ${plural}`}
+              className={`${inputClass} min-w-0 flex-1`}
+            />
+            <button
+              type="button"
+              onClick={addRecord}
+              className="shrink-0 border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              {title === 'Species' ? 'Add species' : 'Add location'}
+            </button>
+          </div>
+          <p className="mb-0 mt-2 text-sm text-inkSoft">{items.length} {items.length === 1 ? noun : plural} in the list</p>
+          <ul className="mt-2 max-h-[32rem] list-none overflow-y-auto border border-ruleSoft p-0">
+            {visible.map(({ record, index }) => (
+              <li key={index} className="border-b border-ruleSoft last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => select(index)}
+                  aria-current={selected === index ? 'true' : undefined}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
+                    selected === index ? 'bg-accentSoft' : 'hover:bg-paperHover'
+                  } ${record.retired === true ? 'opacity-60' : ''}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-ink">{rowLabel(title, record)}</span>
+                    <span className="block truncate text-xs text-inkSoft">{rowDetail(title, record)}</span>
+                  </span>
+                  {title === 'Locations' && record.sensitive === true && <Shield />}
+                  <StatusPill retired={record.retired === true} />
+                </button>
+              </li>
+            ))}
+            {visible.length === 0 && <li className="px-3 py-2 text-sm text-inkSoft">Nothing matches that search.</li>}
+          </ul>
+        </div>
+        <div className="min-w-0">
+          {item === null
+            ? <p className="m-0 border border-ruleSoft bg-paper p-3 text-sm text-inkSoft">Pick a {noun} from the list to change it, or add a new one.</p>
+            : (
+              <>
+                <fieldset className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
+                  <legend className="px-1 text-sm font-semibold text-ink">{rowLabel(title, item)}</legend>
+                  {fields[title].map((key) => {
+                    const numeric = (NUMERIC_LOCATION_FIELDS as readonly string[]).includes(key)
+                    const raw = String(item[key] ?? '')
+                    const error = numeric ? numberFieldError(key, raw) : null
+                    const shown = error && (showErrors || raw.trim() !== '')
+                    return (
+                      <label key={key} className="grid gap-1 text-sm font-medium text-ink">
+                        <span>
+                          {labels[key]}
+                          {requiredFields[title].includes(key) && <><span aria-hidden="true" className="ml-1 text-warn">*</span><span className="sr-only"> (required)</span></>}
+                        </span>
+                        <input
+                          aria-label={labels[key]}
+                          required={requiredFields[title].includes(key)}
+                          className={inputClass}
+                          value={raw}
+                          onChange={(event) => change(key, event.target.value)}
+                        />
+                        {shown && <span role="alert" className="text-xs font-normal text-warn">{error}</span>}
+                      </label>
+                    )
+                  })}
+                  {title === 'Locations' && (
+                    <label className="grid gap-1 text-sm font-medium text-ink sm:col-span-2">
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-accent"
+                          checked={item.sensitive === true}
+                          onChange={(event) => change('sensitive', event.target.checked)}
+                        />
+                        Protected location
+                      </span>
+                      <span className="font-normal text-inkSoft">Hides exact coordinates from people without access. Use for endangered species sites.</span>
+                    </label>
+                  )}
+                </fieldset>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    onClick={() => setItems(setRetired(items, selected!, item.retired !== true))}
+                  >
+                    {item.retired === true ? 'Bring back' : 'Retire'}
+                  </button>
+                  <button
+                    type="button"
+                    className="border border-rule px-3 py-2 text-sm text-inkSoft hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    onClick={() => select(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+        </div>
+      </div>
+      {(message || retryApplied) && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-rule px-4 py-3">
+          {message && <p role="status" className="m-0 text-sm text-inkSoft">{message}</p>}
+          {retryApplied && <button
+            type="button"
+            className="border border-warn px-3 py-2 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            onClick={() => void retryApplied()
+              .then(() => {
+                setRetryApplied(null)
+                setMessage('History entry saved.')
+                reload()
+              })
+              .catch((error: Error) => setMessage(`The history entry still did not go through: ${error.message}`))}
+          >
+            Retry history entry
+          </button>}
+        </div>
+      )}
     </section>
   )
 }
