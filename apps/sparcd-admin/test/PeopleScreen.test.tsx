@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PeopleScreen, collectionsText, lastActiveText } from '../src/PeopleScreen'
 import { inviteLink, inviteMailto } from '../src/InviteLink'
@@ -108,6 +109,38 @@ describe('one person at a time (contract 1.1)', () => {
     expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
       'sparcd-aaa', 'p1', { access: 'upload', exactLocations: false },
     ])
+  })
+
+  it('sends the change to the person it was opened for, even if the selection moved', async () => {
+    const { api, calls, data } = fakeApi({
+      people: [
+        person('p1', 'Ana Morales', {
+          collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: 'look' as const, exactLocations: false }],
+        }),
+        person('p2', 'Luis Park'),
+      ],
+    })
+    let release: (() => void) | null = null
+    const setMember = api.setMember.bind(api)
+    api.setMember = async (...args: Parameters<typeof setMember>) => {
+      await new Promise<void>((resolve) => { release = resolve })
+      return setMember(...args)
+    }
+    const view = render(<PeopleScreen api={api} endpoint="storage.test" collections={collections} from="Jorge Delgado" />)
+    await settle()
+
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Change'))
+    await click(view.host.querySelectorAll('input[type="radio"]')[2])
+    await click(button(view.host, 'Save access'))
+    await click(rowFor(view.host, 'Luis Park'))
+    await act(async () => { release!() })
+    await settle()
+
+    expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
+      'sparcd-aaa', 'p1', { access: 'upload', exactLocations: false },
+    ])
+    expect(data.people.find((one) => one.id === 'p2')!.collections).toEqual([])
   })
 
   it('removes one membership through the per-person call', async () => {

@@ -86,6 +86,22 @@ describe('picking a collection', () => {
     await click(collectionRows(host)[1])
     expect(hasButton(host, 'Undo')).toBe(false)
   })
+
+  it('drops the previous collection\'s metadata draft', async () => {
+    const { calls, client } = recordingClient({ existing: stored })
+    const { host } = editor(client)
+    await type(field(host, 'Name'), 'Alpha renamed')
+    await click(collectionRows(host)[1])
+    expect(field(host, 'Name').value).toBe('Beta')
+    expect((button(host, 'Save collection') as HTMLButtonElement).disabled).toBe(true)
+
+    await type(field(host, 'Name'), 'Beta renamed')
+    await click(button(host, 'Save collection'))
+    const written = lastOf(calls, 'replaceIfUnchanged')
+    expect(written.key).toBe('Collections/bbb/collection.json')
+    expect(written.etag).toBe('bbb-collection-etag')
+    expect(JSON.parse(written.body as string).nameProperty).toBe('Beta renamed')
+  })
 })
 
 describe('the checklist', () => {

@@ -5,6 +5,9 @@ import { moment } from './moment'
 
 type Row = { personId: string; name: string; access: Access; exactLocations: boolean }
 
+/** One collection's people. The rows carry the bucket they were read from. */
+type Table = { bucket: string; rows: Row[]; saved: Row[]; version: string | null }
+
 export const RUNNER_SENTENCE = 'A collection always needs at least one person running it.'
 
 export const hasRunner = (rows: { access: Access }[]) => rows.some((row) => row.access === 'run')
@@ -14,9 +17,7 @@ export function CollectionMembers({ api, bucket, people }: {
   bucket: string
   people: Person[]
 }) {
-  const [rows, setRows] = useState<Row[] | null>(null)
-  const [saved, setSaved] = useState<Row[]>([])
-  const [version, setVersion] = useState<string | null>(null)
+  const [table, setTable] = useState<Table | null>(null)
   const [search, setSearch] = useState('')
   const [problem, setProblem] = useState('')
   const [message, setMessage] = useState('')
@@ -24,35 +25,48 @@ export function CollectionMembers({ api, bucket, people }: {
   // When this table last wrote its people. A read taken before that moment is
   // older than what the write produced, however late it arrives.
   const wroteAt = useRef(0)
+  // The collection the table is meant to be showing, so an answer for the one
+  // it left can be dropped instead of landing on the current rows.
+  const wanted = useRef(bucket)
 
   const nameOf = (personId: string) => people.find((person) => person.id === personId)?.name ?? personId
 
-  const load = async () => {
+  const load = async (forBucket: string) => {
     const startedAt = moment()
     try {
       const all = await api.listCollectionAccess()
-      if (startedAt < wroteAt.current) return
-      const here = all.find((entry) => entry.bucket === bucket)
+      if (forBucket !== wanted.current || startedAt < wroteAt.current) return
+      const here = all.find((entry) => entry.bucket === forBucket)
       const loaded: Row[] = (here?.members ?? []).map((member) => ({
         personId: member.personId,
         name: member.name ?? nameOf(member.personId),
         access: member.access,
         exactLocations: member.exactLocations,
       }))
-      setRows(loaded)
-      setSaved(loaded)
-      setVersion(here?.membersVersion ?? null)
+      setTable({ bucket: forBucket, rows: loaded, saved: loaded, version: here?.membersVersion ?? null })
       setProblem('')
     } catch (cause) {
+      if (forBucket !== wanted.current) return
       setProblem(problemSentence(cause))
     }
   }
 
-  useEffect(() => { setMessage(''); void load() }, [bucket])
+  // A switch drops the whole table at once. Rows, version and draft belong to
+  // one collection; keeping any of them across a switch would write one
+  // collection's people over another's.
+  useEffect(() => {
+    wanted.current = bucket
+    setTable(null)
+    setProblem('')
+    setMessage('')
+    void load(bucket)
+  }, [bucket])
 
   if (problem) return <p role="alert" className="mt-4 text-sm text-warn">{problem}</p>
-  if (!rows) return <p className="mt-4 text-sm text-inkSoft">Loading people…</p>
+  if (!table || table.bucket !== bucket) return <p className="mt-4 text-sm text-inkSoft">Loading people…</p>
 
+  const { rows, saved, version } = table
+  const setRows = (next: Row[]) => setTable({ ...table, rows: next })
   const changed = JSON.stringify(rows) !== JSON.stringify(saved)
   const runners = rows.filter((row) => row.access === 'run')
 
@@ -60,6 +74,9 @@ export function CollectionMembers({ api, bucket, people }: {
     setRows(rows.map((row) => (row.personId === personId ? { ...row, ...patch } : row)))
 
   const save = async () => {
+    // The rows carry the collection they were read from. Writing them anywhere
+    // else would overwrite who can reach that other collection.
+    if (table.bucket !== bucket) return
     if (!hasRunner(rows)) {
       setMessage(RUNNER_SENTENCE)
       return
@@ -68,13 +85,15 @@ export function CollectionMembers({ api, bucket, people }: {
     setMessage('')
     try {
       const written = await api.setMembers(
-        bucket,
+        table.bucket,
         rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
         version,
       )
       wroteAt.current = moment()
-      setVersion(written.membersVersion)
-      setSaved(rows)
+      setTable((current) =>
+        current && current.bucket === table.bucket
+          ? { ...current, saved: rows, version: written.membersVersion }
+          : current)
       setMessage('Saved.')
     } catch (cause) {
       setMessage(problemSentence(cause))
