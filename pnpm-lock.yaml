@@ -14,6 +14,9 @@ importers:
 
   apps/sparcd-admin:
     dependencies:
+      '@smithy/signature-v4':
+        specifier: 5.4.6
+        version: 5.4.6
       '@sparcd/auth-ui':
         specifier: workspace:*
         version: link:../../packages/auth-ui
