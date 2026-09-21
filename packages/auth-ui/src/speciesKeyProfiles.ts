@@ -224,15 +224,6 @@ export function readRevisionedProfiles(storage: Storage): RevisionedKeyProfiles 
   return parseRevisionedProfiles(storage.getItem(KEYBINDING_STORAGE_KEY));
 }
 
-/** Restored sessions start at connection revision zero. Login events, including
- * a live login relayed from another tab, increment it before the gate mounts. */
-export function shouldReconcileSpeciesProfile(
-  connectionId: number,
-  isLocalBatch = false,
-): boolean {
-  return isLocalBatch || connectionId > 0;
-}
-
 export function mergeAndWriteRevisionedProfiles(
   storage: Storage,
   local: RevisionedKeyProfiles,

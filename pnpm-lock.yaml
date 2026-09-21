@@ -60,6 +60,8 @@ importers:
 
   apps/sparcd-explorer: {}
 
+  apps/sparcd-home: {}
+
   apps/sparcd-shard-proxy: {}
 
   apps/sparcd-tagger:

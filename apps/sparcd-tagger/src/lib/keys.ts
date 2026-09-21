@@ -224,6 +224,7 @@ export const useKeyBindings = create<KeyBindingState>()((set) => ({
           return profile;
         }
         const diff = diffSpecies(profile.acceptedSpecies, next);
+        if (!hasDiff(diff) && !profile.pendingSpeciesChange) return profile;
         return {
           ...profile,
           pendingSpeciesChange: hasDiff(diff) ? { next, diff } : undefined,
