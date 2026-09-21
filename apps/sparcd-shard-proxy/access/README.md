@@ -99,6 +99,14 @@ suites here never caught it. So every upstream request signs all its headers
 fetch attaches `content-type: text/plain;charset=UTF-8` to a string body after
 signing.
 
+RGW also answers 412 to any PUT whose `If-Match` carries the double quotes S3
+documents, current tag or not, while the same tag unquoted compares correctly —
+current 200, stale or bogus 412. The AWS SDK sends the quoted form, so the
+proxy strips the quotes off every `If-Match` it sends upstream (its own
+metadata writes, and proxied client traffic after the caller's signature has
+been verified); `If-None-Match` is left alone, and MinIO enforces the unquoted
+form the same way.
+
 No deployment automation ships here.
 
 ## Client notes

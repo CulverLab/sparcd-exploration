@@ -5,6 +5,23 @@
 
 import { AwsClient } from 'aws4fetch';
 
+/**
+ * Ceph RGW answers 412 to a PUT whose `If-Match` carries the double quotes S3
+ * documents, even when the tag is current; the same tag unquoted compares
+ * correctly (current 200, stale 412). The AWS SDK in the browser apps sends
+ * the quoted form, so every tag is reduced to its bare value on the way
+ * upstream. `*` is a wildcard rather than a tag and travels untouched, and the
+ * weak marker goes with the quotes since no upstream here mints weak tags.
+ */
+export function normalizeIfMatch(value) {
+  if (value === null || value === undefined) return value;
+  return value
+    .split(',')
+    .map((tag) => tag.trim().replace(/^W\//, '').replace(/^"([\s\S]*)"$/, '$1'))
+    .filter((tag) => tag !== '')
+    .join(', ');
+}
+
 export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secretAccessKey }) {
   const base = new URL(endpoint);
   const credentials = { accessKeyId, secretAccessKey, service: 's3', region };
@@ -57,7 +74,7 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
      */
     async put(bucket, key, body, { contentType = 'application/json', retry = true, ...guard } = {}) {
       const headers = { 'content-type': contentType };
-      if (guard.ifMatch) headers['if-match'] = guard.ifMatch;
+      if (guard.ifMatch) headers['if-match'] = normalizeIfMatch(guard.ifMatch);
       if (guard.ifNoneMatch) headers['if-none-match'] = guard.ifNoneMatch;
       const via = retry ? sendMeta : send;
       // Bytes, not a string: for a string body Node's fetch appends its own

@@ -25,7 +25,7 @@ import {
 import { makeStore, isSettingsBucket } from './store.mjs';
 import { makeActivity } from './activity.mjs';
 import { makeApi, ApiError } from './api.mjs';
-import { makeUpstream } from './upstream.mjs';
+import { makeUpstream, normalizeIfMatch } from './upstream.mjs';
 import { loadMasterKey, unwrapSecret } from './keys.mjs';
 
 const ALLOW_METHODS = 'GET, HEAD, PUT, POST, DELETE, PATCH';
@@ -637,7 +637,10 @@ export async function createAccessProxy(input) {
       // A header the caller did not sign is a header someone else added to a
       // captured request, so it does not travel even when it is on the list.
       if (!signedHeaders.has(name)) continue;
-      if (FORWARD_HEADERS.has(name) || forwardableAmz(name)) out.set(name, value);
+      if (!(FORWARD_HEADERS.has(name) || forwardableAmz(name))) continue;
+      // The caller's signature was verified against the value they sent; the
+      // quotes come off only here, after that check and before re-signing.
+      out.set(name, name === 'if-match' ? normalizeIfMatch(value) : value);
     }
     return upstream.send(target, { method: req.method, headers: out, body });
   }

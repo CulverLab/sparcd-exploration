@@ -583,6 +583,39 @@ describe('browser-shaped uploads', () => {
   });
 });
 
+// Ceph RGW enforces `If-Match` on a PUT only when the tag is unquoted, so the
+// proxy strips the quotes the AWS SDK sends. Both forms are exercised here
+// against MinIO to keep the rewrite portable across the two.
+describe('conditional writes', () => {
+  const put = (key, body, headers) =>
+    people.bob.raw('PUT', `/${BUCKET_A}/${key}`, { body, headers });
+
+  for (const [label, wrap] of [['quoted', (t) => t], ['unquoted', (t) => t.replaceAll('"', '')]]) {
+    test(`a ${label} If-Match: current tag writes, stale tag is 412`, async () => {
+      const key = `${prefixA}/conditional-${label}.jpg`;
+      const first = await put(key, 'v1');
+      assert.equal(first.status, 200);
+      const stale = first.headers.get('etag');
+      assert.match(stale, /^"[0-9a-f]+"$/, 'the ETag reaches the client as the upstream wrote it');
+
+      const current = await put(key, 'v2', { 'if-match': wrap(stale) });
+      assert.equal(current.status, 200, current.text);
+
+      const refused = await put(key, 'v3', { 'if-match': wrap(stale) });
+      assert.equal(refused.status, 412, refused.text);
+
+      const got = await root.get(`${NAMESPACE}${BUCKET_A}`, key);
+      assert.equal(got.text, 'v2');
+    });
+  }
+
+  test('If-None-Match: * still refuses a second create', async () => {
+    const key = `${prefixA}/create-once.jpg`;
+    assert.equal((await put(key, 'v1', { 'if-none-match': '*' })).status, 200);
+    assert.equal((await put(key, 'v2', { 'if-none-match': '*' })).status, 412);
+  });
+});
+
 describe('activity', () => {
   test('a download, a denial and an access change each leave a line', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
