@@ -38,9 +38,7 @@ async function tour(browser: Browser, folder: string, viewport: { width: number;
   await shot(page, folder, 'collections-members')
 
   await region(page, 'Collections').getByText('Species used in this collection').click()
-  // Not `getByLabel('Search species')`: the Species screen's own search box
-  // carries the same id and label, so the label points at the hidden one.
-  await expect(region(page, 'Collections').getByText(/\d+ of \d+ species used here/)).toBeVisible()
+  await expect(region(page, 'Collections').getByLabel('Search species')).toBeVisible()
   await shot(page, folder, 'collections-checklist')
 
   await openSection(page, 'People')

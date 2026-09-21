@@ -99,8 +99,10 @@ export function s3(connection: Connection) {
     region: connection.region,
     forcePathStyle: true,
     credentials: { accessKeyId: connection.accessKey, secretAccessKey: connection.secretKey },
-    // The flexible-checksum default frames bodies as aws-chunked with a
-    // streaming payload hash, which the proxy refuses by design.
+    // Contract 1.1 refuses any `x-amz-*` header outside its allowlist rather
+    // than stripping it, and the flexible-checksum default adds several while
+    // framing the body as aws-chunked. Asking for checksums only where the
+    // API needs them keeps a request to headers the proxy will forward.
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
   })
@@ -121,6 +123,13 @@ export const bytes = (label: string) => Buffer.from(`${label}\n`, 'utf8')
 export async function shot(page: Page, folder: string, name: string) {
   mkdirSync(`${SHOTS}/${folder}`, { recursive: true })
   await page.evaluate(() => document.fonts.ready)
+  // Nothing a phone can reach may push the page sideways. Every screen worth a
+  // picture goes through here, so this is where the rule is checked.
+  if (page.viewportSize()?.width === PHONE.width) {
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow, `${name} scrolls sideways at ${PHONE.width}px`).toBeLessThanOrEqual(0)
+  }
   // Let the last render settle, or the same screen photographs differently on
   // every run.
   await page.waitForTimeout(250)
@@ -133,8 +142,8 @@ export async function shot(page: Page, folder: string, name: string) {
 export const PHONE = { width: 390, height: 844 }
 
 /**
- * Wait out the reload a save kicks off. It re-reads every list and then closes
- * whatever record was open, so anything clicked before it lands is thrown away.
+ * Wait out the reload a save kicks off. The record stays open across it, but
+ * the controls are held until it lands.
  */
 export const settled = (page: Page) => page.waitForLoadState('networkidle')
 

@@ -30,7 +30,7 @@ this machine has not got one yet.
 | `specs/s7-activity.spec.ts` | activity as sentences, and who downloaded a given image |
 | `specs/s8-canary.spec.ts` | a bucket outside the namespace stays invisible and unchanged |
 | `specs/s9-not-an-admin.spec.ts` | a login that cannot manage gets one plain screen |
-| `specs/z-shots.spec.ts` | a full-page picture of every screen, desktop and phone |
+| `specs/z-shots.spec.ts` | a full-page picture of every screen, desktop and phone, and that none of them scrolls sideways at 390px |
 
 The scenarios build on one another — S5 rearranges the people S2 and S3
 invited — so they run in order on one worker, and a single spec cannot be run

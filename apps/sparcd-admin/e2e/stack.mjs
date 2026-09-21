@@ -97,6 +97,9 @@ export async function startStack(env = process.env) {
     allow: 'sparcd,sparcd-*',
     masterKey: MASTER_KEY,
     publicEndpoint: origin,
+    // Both required since contract 1.1. A signature is bound to the Host the
+    // caller dialled, so the proxy will only answer on the ones named here.
+    allowedHosts: `127.0.0.1:${port},localhost:${port}`,
     allowOrigins: '*',
     maxBodyBytes: 67108864,
     // The pause/resume scenario waits on this: a change made through the API

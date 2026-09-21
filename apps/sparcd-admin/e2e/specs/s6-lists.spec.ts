@@ -50,25 +50,15 @@ test('a species rename lands in storage with a history, and a bad latitude is re
   const row = locations(page).getByRole('button', { name: /Bear Canyon Upper/ })
   const save = locations(page).getByRole('button', { name: 'Save', exact: true })
 
-  // A save reloads every list and closes whatever record is open, and the
-  // reload lands whenever it lands — so each step is driven to the state it
-  // wants rather than assumed to have taken on the first click.
-  const drive = (want: 'Retired' | 'Active') => expect(async () => {
-    if (((await row.textContent()) ?? '').includes(want)) return
-    await row.click()
-    await locations(page)
-      .getByRole('button', { name: want === 'Retired' ? 'Retire' : 'Bring back', exact: true })
-      .click({ timeout: 2000 })
-    await expect(row).toContainText(want, { timeout: 2000 })
-  }).toPass({ timeout: 30000 })
-
-  await drive('Retired')
+  await row.click()
+  await locations(page).getByRole('button', { name: 'Retire', exact: true }).click()
   await save.click()
   await expect(locations(page).getByRole('status')).toHaveText('Saved.')
   await expect(row).toContainText('Retired')
   await settled(page)
 
-  await drive('Active')
+  // The save leaves the same record open, so bringing it back is one click.
+  await locations(page).getByRole('button', { name: 'Bring back', exact: true }).click()
   await save.click()
   await expect(locations(page).getByRole('status')).toHaveText('Saved.')
   await expect(row).toContainText('Active')
@@ -76,10 +66,7 @@ test('a species rename lands in storage with a history, and a bad latitude is re
 
   // Number() would happily read 0x20 as 32 and write back a latitude nobody
   // typed, so the text is refused before it is ever converted.
-  await expect(async () => {
-    await row.click()
-    await locations(page).getByLabel('Latitude').fill('0x20', { timeout: 2000 })
-  }).toPass({ timeout: 30000 })
+  await locations(page).getByLabel('Latitude').fill('0x20')
   await expect(locations(page).getByRole('alert').first())
     .toHaveText('Latitude must be a number, like 32.158.')
   await locations(page).getByRole('button', { name: 'Save', exact: true }).click()
