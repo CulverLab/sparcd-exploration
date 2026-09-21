@@ -17,6 +17,7 @@ import {
   newInvite, inviteMatches, hashToken,
 } from '../keys.mjs';
 import { makeUpstream, normalizeIfMatch } from '../upstream.mjs';
+import { makeStore, GENERATION_KEY, PEOPLE_PREFIX } from '../store.mjs';
 
 const KEY = { accessKeyId: 'SPKABCDEFGHIJKLMNOP', secretAccessKey: 'a'.repeat(40) };
 const lookup = (id) => (id === KEY.accessKeyId ? KEY.secretAccessKey : null);
@@ -528,5 +529,39 @@ describe('If-Match normalizing', () => {
   test('null and undefined pass through', () => {
     assert.equal(normalizeIfMatch(null), null);
     assert.equal(normalizeIfMatch(undefined), undefined);
+  });
+});
+
+describe('a reload against slow storage', () => {
+  /** Counts how many reads are in the air at once, and answers on a later turn. */
+  function slowUpstream(people) {
+    let live = 0;
+    const peak = { reads: 0 };
+    const later = async (value) => {
+      live += 1;
+      peak.reads = Math.max(peak.reads, live);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      live -= 1;
+      return value;
+    };
+    return {
+      peak,
+      listBuckets: () => later(['sparcd-settings-slow']),
+      listKeys: (_bucket, prefix) => later(
+        prefix === PEOPLE_PREFIX ? people.map((p) => `${PEOPLE_PREFIX}${p.id}.json`) : [],
+      ),
+      getJson: (_bucket, key) => later(key === GENERATION_KEY
+        ? { status: 200, value: { generation: 1 }, etag: 'g' }
+        : { status: 200, value: people.find((p) => key.endsWith(`${p.id}.json`)), etag: 'e' }),
+    };
+  }
+
+  test('reads every person at once, not one after another', async () => {
+    const people = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, name: `Person ${i}`, keys: [] }));
+    const upstream = slowUpstream(people);
+    const store = makeStore({ upstream, namespace: '', allow: 'sparcd,sparcd-*' });
+    await store.reload();
+    assert.equal(store.people().length, 5);
+    assert.ok(upstream.peak.reads >= 5, `only ${upstream.peak.reads} read in the air at once`);
   });
 });
