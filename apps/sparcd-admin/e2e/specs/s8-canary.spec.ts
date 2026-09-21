@@ -63,8 +63,12 @@ test('the canary is invisible, unreachable and unchanged', async ({ browser }) =
     accessKeyId: process.env.E2E_S3_ACCESS_KEY_ID ?? 'admine2ekey',
     secretAccessKey: process.env.E2E_S3_SECRET_ACCESS_KEY ?? 'admine2esecret',
   })
-  const stored = await root.get(canary.bucket, canary.key)
-  expect(stored.text).toBe(CANARY_BODY)
+  // On storage the run does not own there is no canary object to compare: the
+  // bucket is never created there, and the refusals above are the whole test.
+  if (canary.seeded) {
+    const stored = await root.get(canary.bucket, canary.key)
+    expect(stored.text).toBe(CANARY_BODY)
+  }
 
   await context.close()
 })

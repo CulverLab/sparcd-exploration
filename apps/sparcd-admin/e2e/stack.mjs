@@ -122,7 +122,7 @@ export async function startStack(env = process.env) {
     collections: COLLECTIONS.map(({ bucket, uuid, stamp, document }) => ({
       bucket, uuid, stamp, name: document.nameProperty,
     })),
-    canary: { bucket: CANARY_BUCKET, key: CANARY_KEY },
+    canary: { bucket: CANARY_BUCKET, key: CANARY_KEY, seeded: plan.createBuckets },
   };
   await writeFile(DESCRIPTOR, `${JSON.stringify(descriptor, null, 2)}\n`);
 
