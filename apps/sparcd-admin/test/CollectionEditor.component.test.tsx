@@ -38,8 +38,7 @@ const stored = {
   'Collections/bbb/locations.json': 'bbb-locations-etag',
 }
 
-const editor = (client: ReturnType<typeof recordingClient>['client'], records = collections) =>
-  render(
+const element = (client: ReturnType<typeof recordingClient>['client'], records: CollectionRecord[]) => (
     <CollectionEditor
       collections={records}
       client={client}
@@ -47,8 +46,11 @@ const editor = (client: ReturnType<typeof recordingClient>['client'], records = 
       reload={() => {}}
       speciesRegistry={shared.species}
       locationsRegistry={shared.locations}
-    />,
+    />
   )
+
+const editor = (client: ReturnType<typeof recordingClient>['client'], records = collections) =>
+  render(element(client, records))
 
 const collectionRows = (host: HTMLElement) => Array.from(host.querySelectorAll('ul')[0].querySelectorAll('button'))
 const checkboxes = (host: HTMLElement) => Array.from(host.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[]
@@ -159,6 +161,35 @@ describe('saving what a collection uses', () => {
     await click(checkboxes(host)[2])
     await click(button(host, 'Save species'))
     expect(lastOf(calls, 'replaceIfUnchanged').key).toBe('Collections/aaa/species.json')
+  })
+})
+
+describe('a reload landing on an open draft (fix 1)', () => {
+  it('keeps the draft and offers the change when the collection moved underneath', async () => {
+    const { client } = recordingClient({ existing: stored })
+    const view = editor(client)
+    await type(field(view.host, 'Description'), 'My unsaved study')
+
+    const theirs = collections.map((entry) => (entry.key === collections[0].key
+      ? { ...entry, etag: 'aaa-collection-v2', document: { ...entry.document, organizationProperty: 'Renamed Lab' } }
+      : entry))
+    view.rerender(element(client, theirs))
+    expect(field(view.host, 'Description').value).toBe('My unsaved study')
+    expect(view.host.textContent).toContain('Someone else changed this collection. Reload to see their changes.')
+
+    await click(button(view.host, 'Reload'))
+    expect(field(view.host, 'Organization').value).toBe('Renamed Lab')
+    expect(view.host.textContent).not.toContain('Reload to see their changes')
+  })
+
+  it('takes the new version tags quietly when only they moved', async () => {
+    const { calls, client } = recordingClient({ existing: { ...stored, 'Collections/aaa/collection.json': 'aaa-collection-v2' } })
+    const view = editor(client)
+    await type(field(view.host, 'Description'), 'My unsaved study')
+    view.rerender(element(client, collections.map((entry) => (entry.key === collections[0].key ? { ...entry, etag: 'aaa-collection-v2' } : entry))))
+    expect(view.host.textContent).not.toContain('Reload to see their changes')
+    await click(button(view.host, 'Save collection'))
+    expect(lastOf(calls, 'replaceIfUnchanged').etag).toBe('aaa-collection-v2')
   })
 })
 
