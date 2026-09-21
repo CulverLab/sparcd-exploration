@@ -1,0 +1,16 @@
+# MinIO as the upstream for the admin end-to-end run. Loopback only, on a host
+# port Docker picks, and under its own project name so it never collides with
+# the access-proxy integration stack or a dev stack.
+# The image comes from Quay: Docker Hub stopped serving minio/minio.
+
+name: sparcd-admin-e2e
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: admine2ekey
+      MINIO_ROOT_PASSWORD: admine2esecret
+    ports:
+      - "127.0.0.1::9000"

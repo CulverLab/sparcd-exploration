@@ -16,4 +16,6 @@ export default defineConfig({
     },
   },
   build: { rollupOptions: { input: { main: page('index.html'), join: page('join.html') } } },
+  // The browser suite under e2e/ is Playwright's, not Vitest's.
+  test: { include: ['test/**/*.test.{ts,tsx}'] },
 })
