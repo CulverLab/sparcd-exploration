@@ -5,6 +5,8 @@ import type { S3Config } from '@sparcd/types'
 import { App } from '../src/App'
 import { button, click, field, render, rowButtons, settle, type } from './dom'
 import { config, fakeStorage, httpError, settingsStore, type Store } from './storage'
+import { noService } from './fakeApi'
+import type { MakeApi } from '../src/App'
 
 type Message = { type: string; config?: S3Config }
 
@@ -28,10 +30,10 @@ class FakeChannel {
 
 const mounted: { unmount: () => void }[] = []
 
-const open = (store: Store, faults: Record<string, () => Error> = {}) => {
+const open = (store: Store, faults: Record<string, () => Error> = {}, makeApi: MakeApi = noService) => {
   const storage = fakeStorage(store, faults)
   sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
-  const view = render(<App makeClient={(_config, read, write) => storage.make(read, write)} />)
+  const view = render(<App makeClient={(_config, read, write) => storage.make(read, write)} makeApi={makeApi} />)
   mounted.push(view)
   return { storage, view }
 }
@@ -112,7 +114,7 @@ describe('a load that finishes late (fix 3)', () => {
     const fast = fakeStorage(fastStore)
 
     sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
-    const view = render(<App makeClient={(target, read, write) => (target.accessKey === config.accessKey ? slow : fast).make(read, write)} />)
+    const view = render(<App makeClient={(target, read, write) => (target.accessKey === config.accessKey ? slow : fast).make(read, write)} makeApi={noService} />)
     mounted.push(view)
     await settle()
 

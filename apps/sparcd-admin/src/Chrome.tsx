@@ -1,18 +1,21 @@
 import { type ReactNode } from 'react'
 import { BrandSwitcher, ConnectionChip, type Theme } from '@sparcd/auth-ui'
 
-export type AdminSection = 'species' | 'locations' | 'collections' | 'settings'
+export type AdminSection = 'species' | 'locations' | 'collections' | 'people' | 'activity' | 'settings'
 
-const sections: { id: AdminSection; label: string }[] = [
-  { id: 'species', label: 'Species' },
-  { id: 'locations', label: 'Locations' },
-  { id: 'collections', label: 'Collections' },
-  { id: 'settings', label: 'Settings' },
-]
+const labels: Record<AdminSection, string> = {
+  species: 'Species',
+  locations: 'Locations',
+  collections: 'Collections',
+  people: 'People',
+  activity: 'Activity',
+  settings: 'Settings',
+}
 
 export function Chrome({
   identity,
   theme,
+  sections,
   section,
   onSectionChange,
   onToggleTheme,
@@ -21,6 +24,7 @@ export function Chrome({
 }: {
   identity: string
   theme: Theme
+  sections: AdminSection[]
   section: AdminSection
   onSectionChange: (section: AdminSection) => void
   onToggleTheme: () => void
@@ -63,11 +67,11 @@ export function Chrome({
         </div>
       </header>
       <nav className="md:hidden shrink-0 bg-panel border-b border-rule flex items-stretch" aria-label="Sections">
-        {sections.map((entry) => item(entry.id, entry.label, true))}
+        {sections.map((entry) => item(entry, labels[entry], true))}
       </nav>
       <div className="flex-1 min-h-0 flex">
         <nav className="hidden md:block w-56 shrink-0 bg-panel border-r border-rule" aria-label="Sections">
-          {sections.map((entry) => item(entry.id, entry.label, false))}
+          {sections.map((entry) => item(entry, labels[entry], false))}
         </nav>
         <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
       </div>

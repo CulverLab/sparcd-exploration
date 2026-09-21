@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ConditionalReplaceConflictError, type CollectionRef, type SafeS3Client } from '@sparcd/s3-safe'
 import { AssignmentChecklist, matchShared, type Entry, type Kind } from './AssignmentChecklist'
 
@@ -92,13 +92,15 @@ const editingFor = (record: CollectionRecord): Editing => ({
 export const editingIsDirty = (editing: Editing) =>
   JSON.stringify([editing.draft, editing.used.species, editing.used.locations]) !== contentOf(editing.record)
 
-export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry }: {
+export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry, membersFor }: {
   collections: CollectionRecord[]
   client: SafeS3Client
   actor: string
   reload: () => void
   speciesRegistry: unknown[]
   locationsRegistry: unknown[]
+  /** People in this collection, when the storage manages people. */
+  membersFor?: (record: CollectionRecord) => ReactNode
 }) {
   const [editing, setEditing] = useState<Editing | null>(() => (collections[0] ? editingFor(collections[0]) : null))
   const [incoming, setIncoming] = useState<CollectionRecord | null>(null)
@@ -389,6 +391,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
             Save collection
           </button>
           {historyBlock('collection')}
+          {membersFor?.(selected)}
           {(['species', 'locations'] as const).map((kind) => (
             <AssignmentChecklist
               key={kind}
