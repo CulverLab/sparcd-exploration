@@ -1,5 +1,6 @@
 import { listCollections, translateReadError, type SafeS3Client } from '@sparcd/s3-safe'
 import { settingsBucketCandidates } from './settingsBucket'
+import { moment } from './moment'
 import type { CollectionAssignment, CollectionRecord } from './CollectionEditor'
 
 export const LOCATIONS_KEY = 'Settings/locations.json'
@@ -15,6 +16,8 @@ export type ClientFactory = (readAllowlist: string[], writeAllowlist: string[]) 
 export type SharedList = { key: string; value: unknown[]; etag: string; bucket: string }
 
 export type AdminData = {
+  /** When this read began, so an editor can tell it from its own later write. */
+  startedAt: number
   client: SafeS3Client
   species: SharedList
   locations: SharedList
@@ -88,6 +91,7 @@ export async function inParallel<T, R>(items: T[], limit: number, work: (item: T
 }
 
 export async function loadAdminData(makeClient: ClientFactory): Promise<AdminData> {
+  const startedAt = moment()
   const discovery = makeClient(DISCOVERY_ALLOWLIST, [])
   const bucket = await findSettingsArea(discovery)
   const refs = await listCollections(discovery)
@@ -133,7 +137,7 @@ export async function loadAdminData(makeClient: ClientFactory): Promise<AdminDat
   }
 
   const collections = await inParallel(refs, COLLECTIONS_AT_ONCE, readCollection)
-  return { client, species: await readShared(SPECIES_KEY), locations: await readShared(LOCATIONS_KEY), collections }
+  return { startedAt, client, species: await readShared(SPECIES_KEY), locations: await readShared(LOCATIONS_KEY), collections }
 }
 
 /**

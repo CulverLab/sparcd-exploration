@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { ConditionalReplaceConflictError, type SafeS3Client } from '@sparcd/s3-safe'
 import type { SharedList } from './load'
+import { moment } from './moment'
 import {
   changedRecordsValidationError,
   normalizeNumbers,
@@ -85,12 +86,14 @@ function Shield() {
   )
 }
 
-export function RegistryEditor({ title, registry, client, reload, actor }: {
+export function RegistryEditor({ title, registry, client, reload, actor, loadedAt }: {
   title: ListKind
   registry: Registry
   client: SafeS3Client
   reload: () => void | Promise<void>
   actor: string
+  /** When the read behind `registry` began. */
+  loadedAt: number
 }) {
   const [items, setItems] = useState(registry.value as Entry[])
   const [selected, setSelected] = useState<number | null>(null)
@@ -109,6 +112,9 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   // The record a save left open, so the reload it triggers can re-select it
   // rather than dropping the person back to an empty pane.
   const keep = useRef<string | null>(null)
+  // When this editor last wrote the list. Anything read before that moment is
+  // older than what the write produced, however late it arrives.
+  const wroteAt = useRef(0)
 
   const adopt = (next: Registry, open: string | null = keep.current) => {
     const list = next.value as Entry[]
@@ -157,6 +163,10 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   // to it is decided here, against this editor's state at the moment it lands —
   // never against what was true when the request went out.
   useEffect(() => {
+    // A read taken before this editor's own write never replaces it. Nothing
+    // newer may have been asked for yet, so the version guard upstream cannot
+    // see this one coming.
+    if (loadedAt < wroteAt.current) return
     if (registry.value === baseline) return
     const open = keep.current ?? (selected !== null && items[selected] ? identityOf(title, items[selected]) : null)
     keep.current = null
@@ -210,6 +220,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
       })
       // The list is saved from here on, whatever the history entry does: hold
       // its new version tag and take the saved list as the new baseline.
+      wroteAt.current = moment()
       if (write.etag) setEtag(write.etag)
       setItems(staged)
       setBaseline(staged)

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { CollectionEditor, type CollectionRecord } from '../src/CollectionEditor'
 import { button, click, field, hasButton, render, type } from './dom'
 import { lastOf, recordingClient } from './fake'
+import { moment } from '../src/moment'
 
 const shared = {
   species: [
@@ -40,6 +41,7 @@ const stored = {
 
 const element = (client: ReturnType<typeof recordingClient>['client'], records: CollectionRecord[]) => (
     <CollectionEditor
+      loadedAt={moment()}
       collections={records}
       client={client}
       actor="admin"

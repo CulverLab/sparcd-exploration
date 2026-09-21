@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { problemSentence, type Access, type AccessApi, type Person } from './api'
 import { ACCESS_CHOICES, EXACT_LOCATIONS } from './AccessChoices'
+import { moment } from './moment'
 
 type Row = { personId: string; name: string; access: Access; exactLocations: boolean }
 
@@ -20,12 +21,17 @@ export function CollectionMembers({ api, bucket, people }: {
   const [problem, setProblem] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  // When this table last wrote its people. A read taken before that moment is
+  // older than what the write produced, however late it arrives.
+  const wroteAt = useRef(0)
 
   const nameOf = (personId: string) => people.find((person) => person.id === personId)?.name ?? personId
 
   const load = async () => {
+    const startedAt = moment()
     try {
       const all = await api.listCollectionAccess()
+      if (startedAt < wroteAt.current) return
       const here = all.find((entry) => entry.bucket === bucket)
       const loaded: Row[] = (here?.members ?? []).map((member) => ({
         personId: member.personId,
@@ -66,6 +72,7 @@ export function CollectionMembers({ api, bucket, people }: {
         rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
         version,
       )
+      wroteAt.current = moment()
       setVersion(written.membersVersion)
       setSaved(rows)
       setMessage('Saved.')

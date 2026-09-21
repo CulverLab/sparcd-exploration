@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AssignmentChecklist, type Kind } from '../src/AssignmentChecklist'
 import { RegistryEditor, type Registry } from '../src/RegistryEditor'
 import { render } from './dom'
+import { moment } from '../src/moment'
 import { recordingClient } from './fake'
 
 const registry = (kind: 'Species' | 'Locations'): Registry => ({
@@ -38,8 +39,8 @@ describe('element ids on a page that repeats a component', () => {
     const { client } = recordingClient({ existing: {} })
     const { host } = render(
       <>
-        <RegistryEditor title="Species" registry={registry('Species')} client={client} actor="admin" reload={() => {}} />
-        <RegistryEditor title="Locations" registry={registry('Locations')} client={client} actor="admin" reload={() => {}} />
+        <RegistryEditor loadedAt={moment()} title="Species" registry={registry('Species')} client={client} actor="admin" reload={() => {}} />
+        <RegistryEditor loadedAt={moment()} title="Locations" registry={registry('Locations')} client={client} actor="admin" reload={() => {}} />
         {checklist('species')}
         {checklist('locations')}
       </>,
