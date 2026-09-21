@@ -9,7 +9,11 @@ export function render(element: ReactElement) {
   document.body.appendChild(host)
   const root = createRoot(host)
   act(() => root.render(element))
-  return { host, unmount: () => act(() => root.unmount()) }
+  return {
+    host,
+    rerender: (next: ReactElement) => act(() => root.render(next)),
+    unmount: () => act(() => root.unmount()),
+  }
 }
 
 export const settle = () => act(async () => {})

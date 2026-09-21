@@ -58,28 +58,39 @@ export function collectionHasChanges(draft: Record<string, unknown>, saved: Reco
   return JSON.stringify(draft) !== JSON.stringify(saved)
 }
 
+type Slot = 'collection' | 'species' | 'locations'
+
 type Editing = {
-  key: string
+  /** What the draft is measured against — never replaced under an open edit. */
+  record: CollectionRecord
   draft: Record<string, unknown>
   used: Record<Kind, unknown[]>
   etags: { collection: string; species: string | null; locations: string | null }
   undo: Record<Kind, unknown[] | null>
 }
 
+const tagsOf = (record: CollectionRecord) => ({
+  collection: record.etag,
+  species: record.speciesAssignment.etag,
+  locations: record.locationsAssignment.etag,
+})
+
+const contentOf = (record: CollectionRecord) =>
+  JSON.stringify([record.document, record.speciesAssignment.values, record.locationsAssignment.values])
+
 // Everything held about one collection resets together. Keeping the version
 // tags or the undo buffer across a switch would apply them to the next
 // collection's files.
-const editingFor = (record: CollectionRecord | undefined): Editing => ({
-  key: record?.key ?? '',
-  draft: record?.document ?? {},
-  used: { species: record?.speciesAssignment.values ?? [], locations: record?.locationsAssignment.values ?? [] },
-  etags: {
-    collection: record?.etag ?? '',
-    species: record?.speciesAssignment.etag ?? null,
-    locations: record?.locationsAssignment.etag ?? null,
-  },
+const editingFor = (record: CollectionRecord): Editing => ({
+  record,
+  draft: record.document,
+  used: { species: record.speciesAssignment.values, locations: record.locationsAssignment.values },
+  etags: tagsOf(record),
   undo: { species: null, locations: null },
 })
+
+export const editingIsDirty = (editing: Editing) =>
+  JSON.stringify([editing.draft, editing.used.species, editing.used.locations]) !== contentOf(editing.record)
 
 export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry }: {
   collections: CollectionRecord[]
@@ -89,17 +100,34 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
   speciesRegistry: unknown[]
   locationsRegistry: unknown[]
 }) {
-  const [editing, setEditing] = useState<Editing>(() => editingFor(collections[0]))
+  const [editing, setEditing] = useState<Editing | null>(() => (collections[0] ? editingFor(collections[0]) : null))
+  const [incoming, setIncoming] = useState<CollectionRecord | null>(null)
   const [search, setSearch] = useState({ species: '', locations: '', collections: '' })
   const [message, setMessage] = useState('')
-  const [retryApplied, setRetryApplied] = useState<(() => Promise<void>) | null>(null)
+  const blank = { collection: null, species: null, locations: null }
+  const [retry, setRetry] = useState<Record<Slot, (() => Promise<void>) | null>>(blank)
+  const [note, setNote] = useState<Record<Slot, string>>({ collection: '', species: '', locations: '' })
 
   useEffect(() => {
-    setEditing((current) => editingFor(collections.find((entry) => entry.key === current.key) ?? collections[0]))
+    if (!editing) {
+      if (collections[0]) setEditing(editingFor(collections[0]))
+      return
+    }
+    const next = collections.find((entry) => entry.key === editing.record.key)
+    if (!next) {
+      setEditing(collections[0] ? editingFor(collections[0]) : null)
+      return
+    }
+    if (next === editing.record) return
+    if (!editingIsDirty(editing)) { setEditing(editingFor(next)); return }
+    // A draft is open: take the new version tags when the stored collection is
+    // unchanged, otherwise keep the draft and offer the change instead.
+    if (contentOf(next) === contentOf(editing.record)) setEditing({ ...editing, record: next, etags: tagsOf(next) })
+    else setIncoming(next)
   }, [collections])
 
-  const selected = collections.find((entry) => entry.key === editing.key) ?? null
-  if (!selected) {
+  const selected = editing?.record ?? null
+  if (!editing || !selected) {
     return (
       <section className="border border-rule bg-panel p-4">
         <h1 className="m-0 text-lg font-semibold text-ink">Collections</h1>
@@ -116,24 +144,24 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
 
   const selectCollection = (record: CollectionRecord) => {
     setEditing(editingFor(record))
-    setRetryApplied(null)
+    setIncoming(null)
     setMessage('')
   }
 
   const setUsed = (kind: Kind, next: unknown[]) =>
     setEditing((current) => ({
-      ...current,
-      used: { ...current.used, [kind]: next },
-      undo: { ...current.undo, [kind]: current.used[kind] },
+      ...current!,
+      used: { ...current!.used, [kind]: next },
+      undo: { ...current!.undo, [kind]: current!.used[kind] },
     }))
 
   // Undo restores without recording a new step, so the button disappears
   // instead of turning into a redo.
   const undoUsed = (kind: Kind) =>
     setEditing((current) => ({
-      ...current,
-      used: { ...current.used, [kind]: current.undo[kind] ?? current.used[kind] },
-      undo: { ...current.undo, [kind]: null },
+      ...current!,
+      used: { ...current!.used, [kind]: current!.undo[kind] ?? current!.used[kind] },
+      undo: { ...current!.undo, [kind]: null },
     }))
 
   const updateOne = (kind: Kind, at: number) =>
@@ -150,17 +178,43 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
     return { eventId, occurredAt, base: `Settings/audit/config/${occurredAt.slice(0, 10)}/${eventId}` }
   }
 
-  const finish = async (applied: () => Promise<void>, savedMessage: string) => {
+  const where = selected.name ?? selected.bucket
+
+  // Each save owes its own history entry, so each keeps its own slot: one
+  // pending entry must never be dropped because another save came along.
+  const finish = async (slot: Slot, applied: () => Promise<void>, savedMessage: string) => {
     try {
       await applied()
-      setRetryApplied(null)
+      setRetry((current) => ({ ...current, [slot]: null }))
+      setNote((current) => ({ ...current, [slot]: '' }))
       setMessage(savedMessage)
       reload()
     } catch {
-      setRetryApplied(() => applied)
-      setMessage('Saved. Its history entry did not go through.')
+      setRetry((current) => ({ ...current, [slot]: applied }))
+      setNote((current) => ({ ...current, [slot]: `Saved. The history entry for “${where}” did not go through.` }))
+      setMessage('')
     }
   }
+
+  const historyBlock = (slot: Slot) => retry[slot] && (
+    <div className="mt-2 flex flex-wrap items-center gap-3">
+      <p role="status" className="m-0 text-sm text-warn">{note[slot]}</p>
+      <button
+        type="button"
+        onClick={() => void retry[slot]!()
+          .then(() => {
+            setRetry((current) => ({ ...current, [slot]: null }))
+            setNote((current) => ({ ...current, [slot]: '' }))
+            setMessage('History entry saved.')
+            reload()
+          })
+          .catch((cause: Error) => setNote((current) => ({ ...current, [slot]: `The history entry still did not go through: ${cause.message}` })))}
+        className="border border-warn px-3 py-2 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        Retry history entry
+      </button>
+    </div>
+  )
 
   const saveUsed = async (kind: Kind) => {
     const values = editing.used[kind]
@@ -192,8 +246,13 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       }
       // The list is saved at this point. Hold its new version tag whatever the
       // history entry does next, or the following save reads as a conflict.
-      setEditing((current) => ({ ...current, etags: { ...current.etags, [kind]: written.etag ?? null } }))
+      setEditing((current) => ({
+        ...current!,
+        record: { ...current!.record, [`${kind}Assignment`]: { values, etag: written.etag ?? null } },
+        etags: { ...current!.etags, [kind]: written.etag ?? null },
+      }))
       await finish(
+        kind,
         makeAppliedAuditRetry(client, selected.bucket, `${base}.applied.json`, event, written.etag),
         `Saved the ${kind === 'species' ? 'species' : 'locations'} used in this collection.`,
       )
@@ -229,11 +288,14 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
         json(editing.draft),
         { etag: editing.etags.collection, ...asJson },
       )
-      if (written.etag) {
-        const next = written.etag
-        setEditing((current) => ({ ...current, etags: { ...current.etags, collection: next } }))
-      }
+      const saved = editing.draft
+      setEditing((current) => ({
+        ...current!,
+        record: { ...current!.record, document: saved, etag: written.etag ?? current!.record.etag },
+        etags: { ...current!.etags, collection: written.etag ?? current!.etags.collection },
+      }))
       await finish(
+        'collection',
         makeAppliedAuditRetry(client, selected.bucket, `${base}.applied.json`, event, written.etag),
         'Saved.',
       )
@@ -257,6 +319,18 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
         <h1 id="collections-heading" className="m-0 text-lg font-semibold text-ink">Collections</h1>
         <p className="mb-0 mt-1 text-sm text-inkSoft">Change a collection's details and the species and locations it uses. Its ID and where it is stored stay the same.</p>
       </div>
+      {incoming && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-warn px-4 py-3">
+          <p className="m-0 text-sm text-warn">Someone else changed this collection. Reload to see their changes.</p>
+          <button
+            type="button"
+            onClick={() => { setEditing(editingFor(incoming)); setIncoming(null) }}
+            className="border border-warn px-3 py-1.5 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Reload
+          </button>
+        </div>
+      )}
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         <div className="min-w-0">
           <label className="sr-only" htmlFor="collection-search">Search collections</label>
@@ -273,9 +347,9 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
                 <button
                   type="button"
                   onClick={() => selectCollection(entry)}
-                  aria-current={entry.key === editing.key ? 'true' : undefined}
+                  aria-current={entry.key === editing.record.key ? 'true' : undefined}
                   className={`block w-full px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
-                    entry.key === editing.key ? 'bg-accentSoft' : 'hover:bg-paperHover'
+                    entry.key === editing.record.key ? 'bg-accentSoft' : 'hover:bg-paperHover'
                   }`}
                 >
                   <span className="block truncate text-ink">{entry.name ?? entry.bucket}</span>
@@ -299,7 +373,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
                   required={requiredFields.has(key)}
                   aria-label={label}
                   value={String(editing.draft[key] ?? '')}
-                  onChange={(event) => setEditing((current) => ({ ...current, draft: { ...current.draft, [key]: event.target.value } }))}
+                  onChange={(event) => setEditing((current) => ({ ...current!, draft: { ...current!.draft, [key]: event.target.value } }))}
                   className={inputClass}
                 />
               </label>
@@ -308,12 +382,13 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
           </fieldset>
           <button
             type="button"
-            disabled={!collectionHasChanges(editing.draft, selected.document)}
+            disabled={!collectionHasChanges(editing.draft, selected.document) || retry.collection !== null}
             onClick={() => void saveMetadata()}
             className="mt-3 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           >
             Save collection
           </button>
+          {historyBlock('collection')}
           {(['species', 'locations'] as const).map((kind) => (
             <AssignmentChecklist
               key={kind}
@@ -330,26 +405,11 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
               outdated={outdated[kind]}
               onUpdateAll={() => updateAll(kind)}
               onUpdateOne={(index) => updateOne(kind, index)}
+              blocked={retry[kind] !== null}
+              pending={historyBlock(kind)}
             />
           ))}
-          {(message || retryApplied) && (
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              {message && <p role="status" className="m-0 text-sm text-inkSoft">{message}</p>}
-              {retryApplied && <button
-                type="button"
-                onClick={() => void retryApplied()
-                  .then(() => {
-                    setRetryApplied(null)
-                    setMessage('History entry saved.')
-                    reload()
-                  })
-                  .catch((cause: Error) => setMessage(`The history entry still did not go through: ${cause.message}`))}
-                className="border border-warn px-3 py-2 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                Retry history entry
-              </button>}
-            </div>
-          )}
+          {message && <p role="status" className="mt-3 text-sm text-inkSoft">{message}</p>}
         </div>
       </div>
     </section>

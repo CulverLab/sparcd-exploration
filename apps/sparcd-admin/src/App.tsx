@@ -21,6 +21,8 @@ const IDENTITY_KEY = 'sparcd-admin-identity'
 
 export type MakeClient = (config: S3Config, readAllowlist: string[], writeAllowlist: string[]) => SafeS3Client
 
+type Scope = 'species' | 'locations' | 'collections' | 'all'
+
 export function App({ makeClient = (config, read, write) => new SafeS3Client(config, read, write) }: { makeClient?: MakeClient } = {}) {
   const [config, setConfig] = useState<S3Config | null>(null)
   const [data, setData] = useState<AdminData | null>(null)
@@ -32,6 +34,9 @@ export function App({ makeClient = (config, read, write) => new SafeS3Client(con
   const [section, setSection] = useState<AdminSection>('species')
   const configRef = useRef<S3Config | null>(null)
   const started = useRef(false)
+  // Every load carries a number. A login or reload that finishes after a newer
+  // one started is dropped rather than installing its client over the top.
+  const runId = useRef(0)
 
   useEffect(() => {
     configRef.current = config
@@ -40,35 +45,49 @@ export function App({ makeClient = (config, read, write) => new SafeS3Client(con
   const load = (target: S3Config) => loadAdminData((read, write) => makeClient(target, read, write))
 
   const authorize = async (nextConfig: S3Config, remember = true) => {
+    const run = ++runId.current
     setConnecting(true)
     setError('')
     try {
       const loaded = await load(nextConfig)
       const who = sessionStorage.getItem(IDENTITY_KEY) ?? ''
       await probeWriteAccess(loaded.client, loaded.species.bucket, who.trim() || 'unnamed administrator')
+      if (run !== runId.current) return
       saveSharedConnection(nextConfig, remember)
       setIdentity(who)
       setData(loaded)
       setConfig(nextConfig)
       setNotice('')
     } catch (cause) {
+      if (run !== runId.current) return
       setConfig(null)
       setData(null)
       setError((cause as Error).message)
     } finally {
-      setConnecting(false)
+      if (run === runId.current) setConnecting(false)
     }
   }
 
   // Reloading reads the lists again and nothing else: the session stays put and
   // a failure leaves whatever is on screen alone rather than dropping drafts.
-  const refresh = async () => {
+  // Only the part that was just saved is taken from the result, so an untouched
+  // editor never has its draft pulled out from under it.
+  const refresh = async (scope: Scope = 'all') => {
     const current = configRef.current
     if (!current) return
+    const run = ++runId.current
     try {
-      setData(await load(current))
+      const loaded = await load(current)
+      if (run !== runId.current) return
+      setData((previous) => (!previous || scope === 'all' ? loaded : {
+        client: loaded.client,
+        species: scope === 'species' ? loaded.species : previous.species,
+        locations: scope === 'locations' ? loaded.locations : previous.locations,
+        collections: scope === 'collections' ? loaded.collections : previous.collections,
+      }))
       setNotice('')
     } catch (cause) {
+      if (run !== runId.current) return
       setNotice(`The lists could not be reloaded. ${(cause as Error).message}`)
     }
   }
@@ -122,7 +141,6 @@ export function App({ makeClient = (config, read, write) => new SafeS3Client(con
     saveSharedTheme(nextTheme)
   }
 
-  const reload = () => void refresh()
 
   return (
     <Chrome
@@ -132,6 +150,7 @@ export function App({ makeClient = (config, read, write) => new SafeS3Client(con
       onSectionChange={setSection}
       onToggleTheme={toggleTheme}
       onDisconnect={() => {
+        runId.current += 1
         clearSharedConnection()
         setConfig(null)
         setData(null)
@@ -140,13 +159,13 @@ export function App({ makeClient = (config, read, write) => new SafeS3Client(con
       <div className="max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         {notice && <p role="alert" className="mb-4 border border-warn px-3 py-2 text-sm text-warn">{notice}</p>}
         <div className={section === 'species' ? '' : 'hidden'}>
-          <RegistryEditor title="Species" registry={data.species} client={data.client} actor={actor} reload={reload} />
+          <RegistryEditor title="Species" registry={data.species} client={data.client} actor={actor} reload={() => void refresh('species')} />
         </div>
         <div className={section === 'locations' ? '' : 'hidden'}>
-          <RegistryEditor title="Locations" registry={data.locations} client={data.client} actor={actor} reload={reload} />
+          <RegistryEditor title="Locations" registry={data.locations} client={data.client} actor={actor} reload={() => void refresh('locations')} />
         </div>
         <div className={section === 'collections' ? '' : 'hidden'}>
-          <CollectionEditor collections={data.collections} client={data.client} actor={actor} speciesRegistry={data.species.value} locationsRegistry={data.locations.value} reload={reload} />
+          <CollectionEditor collections={data.collections} client={data.client} actor={actor} speciesRegistry={data.species.value} locationsRegistry={data.locations.value} reload={() => void refresh('collections')} />
         </div>
         {section === 'settings' && <section className="max-w-2xl border border-rule bg-panel p-4" aria-labelledby="settings-heading">
           <h1 id="settings-heading" className="m-0 text-lg font-semibold text-ink">Settings</h1>

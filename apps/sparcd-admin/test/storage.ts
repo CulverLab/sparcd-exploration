@@ -16,9 +16,20 @@ export const config: S3Config = {
   secure: true,
 }
 
-export function fakeStorage(store: Store, faults: Record<string, () => Error> = {}) {
+export function fakeStorage(
+  store: Store,
+  faults: Record<string, () => Error> = {},
+  gate: (entry: string) => Promise<void> | void = () => {},
+) {
   const log: string[] = []
   const allowlists: { read: string[]; write: string[] }[] = []
+  const tags = new Map<string, string>()
+  let version = 0
+  const tagOf = (bucket: string, key: string) => {
+    const at = `${bucket}/${key}`
+    if (!tags.has(at)) tags.set(at, `${key}-etag`)
+    return tags.get(at)!
+  }
 
   const make = (read: string[], write: string[]) => {
     allowlists.push({ read, write })
@@ -39,21 +50,26 @@ export function fakeStorage(store: Store, faults: Record<string, () => Error> = 
       },
       async statObject(bucket: string, key: string) {
         log.push(`stat ${bucket}/${key}`)
+        await gate(`stat ${bucket}/${key}`)
         body(bucket, key)
-        return { size: 0, etag: `${key}-etag`, metadata: {} }
+        return { size: 0, etag: tagOf(bucket, key), metadata: {} }
       },
       async getObject(bucket: string, key: string) {
         log.push(`get ${bucket}/${key}`)
+        await gate(`get ${bucket}/${key}`)
         return new TextEncoder().encode(JSON.stringify(body(bucket, key)))
       },
       async writeImmutable(bucket: string, key: string, content: string) {
         log.push(`write ${bucket}/${key}`)
         store[bucket][key] = JSON.parse(content)
       },
-      async replaceIfUnchanged(bucket: string, key: string, content: string) {
+      async replaceIfUnchanged(bucket: string, key: string, content: string, opts: { etag: string }) {
         log.push(`replace ${bucket}/${key}`)
+        if (tagOf(bucket, key) !== opts.etag) throw Error(`stale version tag for ${key}`)
         store[bucket][key] = JSON.parse(content)
-        return { etag: `${key}-etag` }
+        const next = `${key}-etag-${++version}`
+        tags.set(`${bucket}/${key}`, next)
+        return { etag: next }
       },
     } as unknown as SafeS3Client
   }

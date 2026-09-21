@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { S3Config } from '@sparcd/types'
 import { App } from '../src/App'
@@ -37,6 +38,7 @@ const open = (store: Store, faults: Record<string, () => Error> = {}) => {
 
 const probes = (log: string[]) => log.filter((entry) => entry.includes('Settings/admin-sessions/')).length
 const speciesSection = (host: HTMLElement) => host.querySelector('section[aria-labelledby="Species-heading"]') as HTMLElement
+const locationsSection = (host: HTMLElement) => host.querySelector('section[aria-labelledby="Locations-heading"]') as HTMLElement
 
 beforeEach(() => { sessionStorage.clear() })
 afterEach(() => {
@@ -80,6 +82,46 @@ describe('opening and reloading (bug 9)', () => {
     expect(view.host.textContent).toContain('The lists could not be reloaded.')
     expect(speciesSection(view.host)).not.toBeNull()
     expect(probes(storage.log)).toBe(0)
+  })
+})
+
+describe('drafts while something else is saved (fix 1)', () => {
+  it('leaves an unsaved draft in another list alone', async () => {
+    const { view } = open(settingsStore())
+    await settle()
+    await click(rowButtons(locationsSection(view.host))[0])
+    await type(field(locationsSection(view.host), 'Name'), 'Apache Pass north')
+    await click(rowButtons(speciesSection(view.host))[0])
+    await type(field(speciesSection(view.host), 'Common name'), 'Coyote (plains)')
+    await click(button(speciesSection(view.host), 'Save'))
+    await settle()
+    expect(field(locationsSection(view.host), 'Name').value).toBe('Apache Pass north')
+    expect(view.host.textContent).not.toContain('Reload to see their changes')
+  })
+})
+
+describe('a load that finishes late (fix 3)', () => {
+  it('does not install an older login over a newer one', async () => {
+    const slowStore = settingsStore()
+    slowStore['sparcd-settings-a']['Settings/species.json'] = [{ name: 'Older', scientificName: 'Canis latrans' }]
+    const fastStore = settingsStore()
+    fastStore['sparcd-settings-a']['Settings/species.json'] = [{ name: 'Newer', scientificName: 'Puma concolor' }]
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const slow = fakeStorage(slowStore, {}, (entry) => (entry.endsWith('Settings/species.json') ? held : undefined))
+    const fast = fakeStorage(fastStore)
+
+    sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+    const view = render(<App makeClient={(target, read, write) => (target.accessKey === config.accessKey ? slow : fast).make(read, write)} />)
+    mounted.push(view)
+    await settle()
+
+    const sibling = new FakeChannel('sparcd-connection-live')
+    await act(async () => { sibling.postMessage({ type: 'connect', config: { ...config, accessKey: 'OTHERKEY' } }) })
+    await act(async () => { release() })
+
+    expect(speciesSection(view.host).textContent).toContain('Newer')
+    expect(speciesSection(view.host).textContent).not.toContain('Older')
   })
 })
 

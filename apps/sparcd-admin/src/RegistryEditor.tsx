@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ConditionalReplaceConflictError, type SafeS3Client } from '@sparcd/s3-safe'
 import type { SharedList } from './load'
 import {
@@ -94,13 +94,29 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   const [retryApplied, setRetryApplied] = useState<(() => Promise<void>) | null>(null)
   const [draftIndex, setDraftIndex] = useState<number | null>(null)
   const [etag, setEtag] = useState(registry.etag)
+  // What the draft is measured against. It only moves when the draft is taken
+  // over by fresh data, so a reload elsewhere cannot silently rebase an edit.
+  const [baseline, setBaseline] = useState(registry.value)
+  const [stale, setStale] = useState(false)
+  const dirty = useRef(false)
 
-  useEffect(() => {
-    setItems(registry.value as Entry[])
-    setEtag(registry.etag)
+  const adopt = (next: Registry) => {
+    setItems(next.value as Entry[])
+    setBaseline(next.value)
+    setEtag(next.etag)
     setSelected(null)
     setDraftIndex(null)
     setShowErrors(false)
+    setStale(false)
+  }
+
+  useEffect(() => {
+    if (registry.value === baseline) return
+    if (!dirty.current) { adopt(registry); return }
+    // Someone is mid-edit. Take the new version tag when the data behind the
+    // draft is unchanged; otherwise keep the draft and say what happened.
+    if (JSON.stringify(registry.value) === JSON.stringify(baseline)) setEtag(registry.etag)
+    else setStale(true)
   }, [registry])
 
   const noun = title === 'Species' ? 'species' : 'location'
@@ -130,7 +146,8 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   }
 
   const staged = normalizeNumbers(title, discardBlankDraft(items, draftIndex))
-  const modifiedCount = changedRecordCount(staged, registry.value)
+  const modifiedCount = changedRecordCount(staged, baseline)
+  dirty.current = modifiedCount > 0
   const visible = items
     .map((record, index) => ({ record, index }))
     .filter(({ record }) => {
@@ -140,7 +157,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
     })
 
   const save = async () => {
-    const invalid = changedRecordsValidationError(title, staged, registry.value)
+    const invalid = changedRecordsValidationError(title, staged, baseline)
     if (invalid) {
       setShowErrors(true)
       setMessage(invalid)
@@ -157,7 +174,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
         actor,
         action: `${title.toLowerCase()}.updated`,
         target: { registryKey: registry.key },
-        before: registry.value,
+        before: baseline,
         after: staged,
       }
       await client.writeImmutable(registry.bucket, `${base}.prepared.json`, json(event), { contentType: 'application/json' })
@@ -165,9 +182,11 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
         etag,
         contentType: 'application/json',
       })
-      // Hold the new version tag before the history entry is attempted: if that
-      // write fails the list is still saved, and a retry must not look stale.
+      // The list is saved from here on, whatever the history entry does: hold
+      // its new version tag and take the saved list as the new baseline.
       if (write.etag) setEtag(write.etag)
+      setItems(staged)
+      setBaseline(staged)
       const applied = () => client.writeImmutable(registry.bucket, `${base}.applied.json`, json({
         ...event,
         appliedAt: new Date().toISOString(),
@@ -206,7 +225,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
           {modifiedCount > 0 && <p className="m-0 text-sm text-inkSoft">{modifiedCount} {modifiedCount === 1 ? noun : plural} changed</p>}
           <button
             type="button"
-            disabled={modifiedCount === 0}
+            disabled={modifiedCount === 0 || retryApplied !== null}
             className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             onClick={() => void save()}
           >
@@ -214,6 +233,18 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
           </button>
         </div>
       </div>
+      {stale && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-warn px-4 py-3">
+          <p className="m-0 text-sm text-warn">Someone else changed this list. Reload to see their changes.</p>
+          <button
+            type="button"
+            onClick={() => adopt(registry)}
+            className="border border-warn px-3 py-1.5 text-sm text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Reload
+          </button>
+        </div>
+      )}
       <div className="grid gap-4 p-4 lg:grid-cols-2">
         <div className="min-w-0">
           <div className="flex gap-2">
