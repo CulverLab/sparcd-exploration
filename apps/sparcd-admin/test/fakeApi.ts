@@ -1,4 +1,4 @@
-import { ApiError, NoAccessServiceError, type AccessApi, type ActivityEvent, type CollectionAccess, type Person, type WhoAmI } from '../src/api'
+import { ApiError, NoAccessServiceError, type AccessApi, type AccessLevel, type ActivityEvent, type CollectionAccess, type Person, type WhoAmI } from '../src/api'
 
 export const noService = () => ({
   whoami: async () => { throw new NoAccessServiceError() },
@@ -34,12 +34,14 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       name: 'Sky Islands 2026',
       organization: 'Sky Island Alliance',
       members: [{ personId: 'p1', name: 'Ana Morales', access: 'upload', exactLocations: true }],
+      membersVersion: 'members-v1',
     }],
     events: [],
     downloads: [],
     ...state,
   }
   let nextToken = 0
+  let version = 1
   const record = (name: string, ...args: unknown[]) => calls.push({ name, args })
   const api = {
     async whoami() { record('whoami'); return data.me },
@@ -61,12 +63,39 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       return { token: `reset-${++nextToken}`, expiresAt: '2026-10-01T00:00:00Z' }
     },
     async listCollectionAccess() { record('listCollectionAccess'); return data.collections },
-    async setMembers(bucket: string, members: { personId: string; access: string; exactLocations: boolean }[]) {
-      record('setMembers', bucket, members)
-      if (!members.some((member) => member.access === 'run')) {
-        throw new ApiError(409, 'no_runner', 'At least one member with run is required')
+    async setMembers(
+      bucket: string,
+      members: { personId: string; access: string; exactLocations: boolean }[],
+      membersVersion: string | null,
+    ) {
+      record('setMembers', bucket, members, membersVersion)
+      const here = data.collections.find((entry) => entry.bucket === bucket)!
+      if (membersVersion !== here.membersVersion) {
+        throw new ApiError(412, 'changed_elsewhere', 'members changed elsewhere')
       }
-      return members
+      if (!members.some((member) => member.access === 'run')) {
+        throw new ApiError(409, 'last_runner', 'at least one member must run it')
+      }
+      here.members = members.map((member) => ({ ...member, access: member.access as never }))
+      here.membersVersion = `members-v${++version}`
+      return { members: here.members, membersVersion: here.membersVersion }
+    },
+    async setMember(bucket: string, personId: string, level: AccessLevel) {
+      record('setMember', bucket, personId, level)
+      const here = data.collections.find((entry) => entry.bucket === bucket)!
+      here.members = [
+        ...here.members.filter((member) => member.personId !== personId),
+        { personId, name: data.people.find((one) => one.id === personId)?.name, ...level },
+      ]
+      here.membersVersion = `members-v${++version}`
+      return { members: here.members, membersVersion: here.membersVersion }
+    },
+    async removeMember(bucket: string, personId: string) {
+      record('removeMember', bucket, personId)
+      const here = data.collections.find((entry) => entry.bucket === bucket)!
+      here.members = here.members.filter((member) => member.personId !== personId)
+      here.membersVersion = `members-v${++version}`
+      return { members: here.members, membersVersion: here.membersVersion }
     },
     async activity() { record('activity'); return { events: data.events } },
     async downloadsOf(bucket: string, key: string) { record('downloadsOf', bucket, key); return data.downloads },

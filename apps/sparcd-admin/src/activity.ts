@@ -1,4 +1,5 @@
-import type { ActivityEvent, ActivityKind } from './api'
+import type { AccessChangeDetail, ActivityEvent, ActivityKind } from './api'
+import { EXACT_LOCATIONS, accessLabel } from './AccessChoices'
 
 export type WhereName = (bucket?: string) => string
 
@@ -19,6 +20,42 @@ const listWord = (key?: string) => {
   return 'shared'
 }
 
+const accessChangeSentence = (event: ActivityEvent, whereName: WhereName): { who: string; text: string } | null => {
+  const detail = event.detail as AccessChangeDetail | undefined
+  if (!detail?.change || !detail.target) return null
+  const who = event.personName ?? 'Someone'
+  const target = detail.target.personName
+  const where = detail.collectionName ?? whereName(event.bucket)
+  switch (detail.change) {
+    case 'invited':
+      return { who, text: `invited ${target}` }
+    case 'joined':
+      return { who: target, text: 'joined' }
+    case 'paused':
+      return { who, text: `paused ${target}'s access` }
+    case 'resumed':
+      return { who, text: `let ${target} sign in again` }
+    case 'reset':
+      return { who, text: `reset ${target}'s access` }
+    case 'admin-granted':
+      return { who, text: `made ${target} an administrator` }
+    case 'admin-removed':
+      return { who, text: `took ${target}'s administrator access away` }
+    case 'added':
+      return { who, text: `added ${target} to ${where} as ${accessLabel(detail.after!.access)}` }
+    case 'removed':
+      return { who, text: `removed ${target} from ${where}` }
+    case 'changed': {
+      const { before, after } = detail
+      if (before && after && before.access !== after.access)
+        return { who, text: `changed ${target} in ${where} from ${accessLabel(before.access)} to ${accessLabel(after.access)}` }
+      if (before && after && before.exactLocations !== after.exactLocations)
+        return { who, text: `turned ${after.exactLocations ? 'on' : 'off'} ${EXACT_LOCATIONS.label} for ${target} in ${where}` }
+      return { who, text: `changed what ${target} can do in ${where}` }
+    }
+  }
+}
+
 /** The name in bold, and the rest of the sentence after it. */
 export function activitySentence(event: ActivityEvent, whereName: WhereName): { who: string; text: string } {
   const who = event.personName ?? 'Someone'
@@ -36,7 +73,8 @@ export function activitySentence(event: ActivityEvent, whereName: WhereName): { 
     case 'collection-change':
       return { who, text: `changed the details of ${where}` }
     case 'access-change':
-      return { who, text: event.bucket ? `changed who can use ${where}` : 'changed what someone can do' }
+      return accessChangeSentence(event, whereName)
+        ?? { who, text: event.bucket ? `changed who can use ${where}` : 'changed what someone can do' }
     case 'denied':
       return { who, text: `tried to open something they don't have access to in ${where}` }
     case 'bad-signature':

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Access, AccessApi, ApiError, Person } from './api'
+import { problemSentence, type Access, type AccessApi, type Person } from './api'
 import { ACCESS_CHOICES, EXACT_LOCATIONS } from './AccessChoices'
 
 type Row = { personId: string; name: string; access: Access; exactLocations: boolean }
@@ -15,6 +15,7 @@ export function CollectionMembers({ api, bucket, people }: {
 }) {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [saved, setSaved] = useState<Row[]>([])
+  const [version, setVersion] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [problem, setProblem] = useState('')
   const [message, setMessage] = useState('')
@@ -34,9 +35,10 @@ export function CollectionMembers({ api, bucket, people }: {
       }))
       setRows(loaded)
       setSaved(loaded)
+      setVersion(here?.membersVersion ?? null)
       setProblem('')
     } catch (cause) {
-      setProblem((cause as Error).message)
+      setProblem(problemSentence(cause))
     }
   }
 
@@ -59,14 +61,16 @@ export function CollectionMembers({ api, bucket, people }: {
     setBusy(true)
     setMessage('')
     try {
-      await api.setMembers(bucket, rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })))
+      const written = await api.setMembers(
+        bucket,
+        rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
+        version,
+      )
+      setVersion(written.membersVersion)
       setSaved(rows)
       setMessage('Saved.')
     } catch (cause) {
-      const status = (cause as ApiError).status
-      setMessage(status === 412 || status === 409
-        ? 'Someone else changed this. Reload and try again.'
-        : (cause as Error).message)
+      setMessage(problemSentence(cause))
     } finally {
       setBusy(false)
     }

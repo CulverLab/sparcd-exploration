@@ -36,10 +36,14 @@ describe('the sentence for each kind', () => {
     expect(activitySentence(event('list-change', { key: 'Settings/other.json' }), where).text).toBe('changed the shared list')
   })
 
-  it('covers collection details and access changes', () => {
+  it('covers collection details', () => {
     expect(activitySentence(event('collection-change'), where).text).toBe('changed the details of Research 1')
+  })
+
+  it('falls back when an access change carries no detail', () => {
     expect(activitySentence(event('access-change'), where).text).toBe('changed who can use Research 1')
     expect(activitySentence(event('access-change', { bucket: undefined }), where).text).toBe('changed what someone can do')
+    expect(activitySentence(event('access-change', { detail: { target: { personId: 'p2', personName: 'Luis Park' } } }), where).text).toBe('changed who can use Research 1')
   })
 
   it('covers problems and signing in', () => {
@@ -50,6 +54,48 @@ describe('the sentence for each kind', () => {
 
   it('falls back to Someone when the service did not name anyone', () => {
     expect(activitySentence(event('sign-in', { personName: undefined }), where).who).toBe('Someone')
+  })
+})
+
+describe('access changes in detail (contract 1.1)', () => {
+  const target = { personId: 'p2', personName: 'Luis Park' }
+  const change = (detail: Record<string, unknown>) =>
+    activitySentence(event('access-change', { personName: 'Jorge Delgado', detail: { target, collectionName: 'Research 1', ...detail } }), where)
+
+  it('names the person, the collection and the level', () => {
+    expect(change({ change: 'added', after: { access: 'identify', exactLocations: false } })).toEqual({
+      who: 'Jorge Delgado',
+      text: 'added Luis Park to Research 1 as Can identify',
+    })
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'identify', exactLocations: false } }).text)
+      .toBe('changed Luis Park in Research 1 from Can look to Can identify')
+    expect(change({ change: 'removed' }).text).toBe('removed Luis Park from Research 1')
+  })
+
+  it('says which way the exact-locations box went', () => {
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'look', exactLocations: true } }).text)
+      .toBe('turned on Sees exact camera locations for Luis Park in Research 1')
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: true }, after: { access: 'look', exactLocations: false } }).text)
+      .toBe('turned off Sees exact camera locations for Luis Park in Research 1')
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'look', exactLocations: false } }).text)
+      .toBe('changed what Luis Park can do in Research 1')
+  })
+
+  it('covers the whole-person changes', () => {
+    expect(change({ change: 'invited' }).text).toBe('invited Luis Park')
+    expect(change({ change: 'paused' }).text).toBe("paused Luis Park's access")
+    expect(change({ change: 'resumed' }).text).toBe('let Luis Park sign in again')
+    expect(change({ change: 'reset' }).text).toBe("reset Luis Park's access")
+    expect(change({ change: 'admin-granted' }).text).toBe('made Luis Park an administrator')
+    expect(change({ change: 'admin-removed' }).text).toBe("took Luis Park's administrator access away")
+  })
+
+  it('credits the person who joined, not the administrator', () => {
+    expect(change({ change: 'joined' })).toEqual({ who: 'Luis Park', text: 'joined' })
+  })
+
+  it('uses the collection name from the event when it has one', () => {
+    expect(change({ change: 'removed', collectionName: 'Sky Islands 2026' }).text).toBe('removed Luis Park from Sky Islands 2026')
   })
 })
 

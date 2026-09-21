@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Access, AccessApi, Invite, Person } from './api'
+import { problemSentence, type Access, type AccessApi, type Invite, type Person } from './api'
 import { AccessChoices, membershipSentence } from './AccessChoices'
 import { AddPerson } from './AddPerson'
 import { InviteLink, inviteLink } from './InviteLink'
@@ -51,6 +51,7 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
   const [confirm, setConfirm] = useState<Confirm>(null)
   const [invite, setInvite] = useState<{ person: Person; invite: Invite } | null>(null)
   const [addTo, setAddTo] = useState<{ bucket: string; access: Access; exactLocations: boolean } | null>(null)
+  const [editing, setEditing] = useState<{ bucket: string; access: Access; exactLocations: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = async () => {
@@ -58,7 +59,7 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
       setPeople(await api.listPeople())
       setProblem('')
     } catch (cause) {
-      setProblem((cause as Error).message)
+      setProblem(problemSentence(cause))
     }
   }
 
@@ -73,7 +74,7 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
       await run()
       await refresh()
     } catch (cause) {
-      setProblem((cause as Error).message)
+      setProblem(problemSentence(cause))
     } finally {
       setBusy(false)
       setConfirm(null)
@@ -86,17 +87,17 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
   const reset = (person: Person) =>
     act(async () => { setInvite({ person, invite: await api.resetPerson(person.id) }) })
 
-  const addToCollection = (person: Person, bucket: string, access: Access, exactLocations: boolean) =>
+  // One person at a time: the service owns the member list, so nothing here
+  // has to read it, rewrite it, and race whoever else is editing it.
+  const putMember = (person: Person, bucket: string, access: Access, exactLocations: boolean) =>
     act(async () => {
-      // There is no per-person endpoint: the whole member list goes back.
-      const all = await api.listCollectionAccess()
-      const target = all.find((entry) => entry.bucket === bucket)
-      const members = (target?.members ?? [])
-        .filter((member) => member.personId !== person.id)
-        .map((member) => ({ personId: member.personId, access: member.access, exactLocations: member.exactLocations }))
-      await api.setMembers(bucket, [...members, { personId: person.id, access, exactLocations }])
+      await api.setMember(bucket, person.id, { access, exactLocations })
       setAddTo(null)
+      setEditing(null)
     })
+
+  const dropMember = (person: Person, bucket: string) =>
+    act(async () => { await api.removeMember(bucket, person.id) })
 
   const needle = search.trim().toLocaleLowerCase()
   const visible = (people ?? []).filter((person) =>
@@ -135,7 +136,7 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
                   <li key={person.id} className="border-b border-ruleSoft last:border-b-0">
                     <button
                       type="button"
-                      onClick={() => { setSelectedId(person.id); setAdding(false); setConfirm(null); setInvite(null); setAddTo(null) }}
+                      onClick={() => { setSelectedId(person.id); setAdding(false); setConfirm(null); setInvite(null); setAddTo(null); setEditing(null) }}
                       aria-current={person.id === selectedId ? 'true' : undefined}
                       className={`flex w-full items-center gap-3 px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
                         person.id === selectedId ? 'bg-accentSoft' : 'hover:bg-paperHover'
@@ -180,9 +181,28 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
               ? <p className="m-0 text-sm text-inkSoft">Not in any collection yet.</p>
               : <ul className="m-0 list-none p-0">
                   {selected.collections.map((membership) => (
-                    <li key={membership.bucket} className="py-0.5 text-sm text-ink">{membershipSentence(membership)}</li>
+                    <li key={membership.bucket} className="flex flex-wrap items-center gap-2 py-0.5 text-sm text-ink">
+                      <span className="min-w-0 flex-1">{membershipSentence(membership)}</span>
+                      <button type="button" className="text-sm underline" onClick={() => { setAddTo(null); setEditing({ bucket: membership.bucket, access: membership.access, exactLocations: membership.exactLocations }) }}>Change</button>
+                      <button type="button" className="text-sm underline" onClick={() => void dropMember(selected, membership.bucket)}>Remove</button>
+                    </li>
                   ))}
                 </ul>}
+            {editing && (
+              <div className="mt-2">
+                <AccessChoices
+                  name="change-access"
+                  value={editing.access}
+                  onChange={(access) => setEditing({ ...editing, access })}
+                  exactLocations={editing.exactLocations}
+                  onExactLocations={(exactLocations) => setEditing({ ...editing, exactLocations })}
+                />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" disabled={busy} onClick={() => void putMember(selected, editing.bucket, editing.access, editing.exactLocations)} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-40">Save access</button>
+                  <button type="button" onClick={() => setEditing(null)} className={plainButton}>Cancel</button>
+                </div>
+              </div>
+            )}
             {addTo ? (
               <div className="mt-2">
                 <label className="grid gap-1 text-sm font-medium text-ink">
@@ -206,14 +226,14 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
                   />
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button type="button" disabled={busy || !addTo.bucket} onClick={() => void addToCollection(selected, addTo.bucket, addTo.access, addTo.exactLocations)} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-40">Add to collection</button>
+                  <button type="button" disabled={busy || !addTo.bucket} onClick={() => void putMember(selected, addTo.bucket, addTo.access, addTo.exactLocations)} className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:opacity-40">Add to collection</button>
                   <button type="button" onClick={() => setAddTo(null)} className={plainButton}>Cancel</button>
                 </div>
               </div>
             ) : (
               <button
                 type="button"
-                onClick={() => setAddTo({ bucket: collections[0]?.bucket ?? '', access: 'identify', exactLocations: false })}
+                onClick={() => { setEditing(null); setAddTo({ bucket: collections[0]?.bucket ?? '', access: 'identify', exactLocations: false }) }}
                 className={`mt-2 ${plainButton}`}
               >
                 Add to a collection
