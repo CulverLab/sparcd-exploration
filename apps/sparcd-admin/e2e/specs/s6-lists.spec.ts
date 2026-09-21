@@ -50,19 +50,30 @@ test('a species rename lands in storage with a history, and a bad latitude is re
   const row = locations(page).getByRole('button', { name: /Bear Canyon Upper/ })
   const save = locations(page).getByRole('button', { name: 'Save', exact: true })
 
+  // Every save leaves the same "Saved." behind, so waiting for that sentence
+  // would be happy with the one the save before it left. The count of changed
+  // records only clears when this save's own write has gone through.
+  const pending = locations(page).getByText(/\d+ locations? changed/)
+
   await row.click()
   await locations(page).getByRole('button', { name: 'Retire', exact: true }).click()
+  await expect(pending).toBeVisible()
   await save.click()
+  await expect(pending).toHaveCount(0)
   await expect(locations(page).getByRole('status')).toHaveText('Saved.')
   await expect(row).toContainText('Retired')
   await settled(page)
+  await expect(row).toContainText('Retired')
 
   // The save leaves the same record open, so bringing it back is one click.
   await locations(page).getByRole('button', { name: 'Bring back', exact: true }).click()
+  await expect(pending).toBeVisible()
   await save.click()
+  await expect(pending).toHaveCount(0)
   await expect(locations(page).getByRole('status')).toHaveText('Saved.')
   await expect(row).toContainText('Active')
   await settled(page)
+  await expect(row).toContainText('Active')
 
   // Number() would happily read 0x20 as 32 and write back a latitude nobody
   // typed, so the text is refused before it is ever converted.
