@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityEvent } from '../src/api'
-import { activityCsv, activitySentence, dayHeading, downloadsSentence, groupByDay } from '../src/activity'
+import { activityCsv, activitySentence, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping } from '../src/activity'
 
 const where = (bucket?: string) => (bucket === 'sparcd-aaa' ? 'Research 1' : 'Sky Islands 2026')
 
@@ -134,5 +134,38 @@ describe('grouping and export', () => {
     const [header, row] = csv.split('\n')
     expect(header).toBe('When,Who,What,Collection,File')
     expect(row).toBe('2026-09-12T14:03:00.000Z,Priya Nair,downloaded IMG_0412.JPG from Research 1,Research 1,IMG_0412.JPG')
+  })
+})
+
+describe('the timeline the activity screen shows', () => {
+  const at = (seconds: number, extra: Partial<ActivityEvent> = {}) =>
+    event('denied', { ts: `2026-09-12T14:${String(3 + Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.000Z`, personId: 'p1', ...extra })
+
+  it('folds a burst of the same thing into one line with a count', () => {
+    const rows = collapseRuns([at(0), at(5), at(10), at(20), at(30), at(40)], where)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(6)
+    expect(`${rows[0].who} ${rows[0].text}`)
+      .toBe("Priya Nair tried to open something they don't have access to in Research 1")
+  })
+
+  it('starts a new line past a minute, and for a different person or collection', () => {
+    expect(collapseRuns([at(0), at(90)], where)).toHaveLength(2)
+    expect(collapseRuns([at(0), at(5, { personId: 'p2', personName: 'Sam Ortiz' })], where)).toHaveLength(2)
+    expect(collapseRuns([at(0), at(5, { bucket: 'sparcd-bbb' })], where)).toHaveLength(2)
+  })
+
+  it('keeps separate files apart even in the same minute', () => {
+    const download = (key: string) =>
+      event('download', { ts: '2026-09-12T14:03:00.000Z', personId: 'p1', key })
+    expect(collapseRuns([download('a/IMG_1.JPG'), download('a/IMG_2.JPG')], where)).toHaveLength(2)
+    expect(collapseRuns([download('a/IMG_1.JPG'), download('a/IMG_1.JPG')], where)[0].count).toBe(2)
+  })
+
+  it('leaves the app’s own bookkeeping writes out of the timeline', () => {
+    const marker = event('list-change', { key: 'Settings/admin-sessions/1234.json' })
+    const history = event('list-change', { key: 'Settings/audit/config/2026-09-12/abc.prepared.json' })
+    const real = event('list-change', { key: 'Settings/species.json' })
+    expect([marker, history, real].filter((one) => !isOwnBookkeeping(one))).toEqual([real])
   })
 })

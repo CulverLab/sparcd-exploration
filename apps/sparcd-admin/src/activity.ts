@@ -20,6 +20,16 @@ const listWord = (key?: string) => {
   return 'shared'
 }
 
+/**
+ * Writes this app makes to do its own bookkeeping — the session marker and the
+ * history entries beside every save. They are not a change anyone made to a
+ * list, and one save emits several of them.
+ */
+export const isOwnBookkeeping = (event: ActivityEvent) =>
+  event.kind === 'list-change' &&
+  (event.key?.startsWith('Settings/admin-sessions/') === true ||
+    event.key?.startsWith('Settings/audit/config/') === true)
+
 const accessChangeSentence = (event: ActivityEvent, whereName: WhereName): { who: string; text: string } | null => {
   const detail = event.detail as AccessChangeDetail | undefined
   if (!detail?.change || !detail.target) return null
@@ -106,6 +116,31 @@ export function groupByDay(events: ActivityEvent[]) {
     else days.push({ key, events: [event] })
   }
   return days
+}
+
+export type TimelineRow = { event: ActivityEvent; who: string; text: string; count: number }
+
+const RUN_MS = 60000
+
+/**
+ * A burst of the same thing reads as one line with a count. Each run is
+ * measured from its own first event, so a long stream still breaks by minute.
+ */
+export function collapseRuns(events: ActivityEvent[], whereName: WhereName): TimelineRow[] {
+  const rows: TimelineRow[] = []
+  for (const event of events) {
+    const { who, text } = activitySentence(event, whereName)
+    const last = rows[rows.length - 1]
+    const sameRun = last
+      && last.event.kind === event.kind
+      && last.event.personId === event.personId
+      && last.event.bucket === event.bucket
+      && last.text === text
+      && Math.abs(Date.parse(event.ts) - Date.parse(last.event.ts)) <= RUN_MS
+    if (sameRun) last.count += 1
+    else rows.push({ event, who, text, count: 1 })
+  }
+  return rows
 }
 
 /** "IMG_0412.JPG from Research 1 was downloaded by Priya Nair on Sep 12, 14:03." */

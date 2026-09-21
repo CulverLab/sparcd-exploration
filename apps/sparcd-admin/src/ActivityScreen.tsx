@@ -3,11 +3,12 @@ import type { AccessApi, ActivityEvent, Person } from './api'
 import {
   ACTIVITY_CHIPS,
   activityCsv,
-  activitySentence,
+  collapseRuns,
   dayHeading,
   downloadsSentence,
   fileName,
   groupByDay,
+  isOwnBookkeeping,
   sinceDays,
   timeOf,
 } from './activity'
@@ -56,8 +57,10 @@ export function ActivityScreen({ api, collections, people }: {
     }
   }
 
+  const shown = events.filter((event) => !isOwnBookkeeping(event))
+
   const download = () => {
-    const blob = new Blob([activityCsv(events, whereName)], { type: 'text/csv' })
+    const blob = new Blob([activityCsv(shown, whereName)], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -130,21 +133,21 @@ export function ActivityScreen({ api, collections, people }: {
 
       <div className="p-4">
         {problem && <p role="alert" className="text-sm text-warn">{problem}</p>}
-        {!problem && events.length === 0 && <p className="m-0 text-sm text-inkSoft">Nothing happened in this stretch.</p>}
-        {groupByDay(events).map((day) => (
+        {!problem && shown.length === 0 && <p className="m-0 text-sm text-inkSoft">Nothing happened in this stretch.</p>}
+        {groupByDay(shown).map((day) => (
           <div key={day.key} className="mb-4 border border-ruleSoft">
             <h2 className="m-0 border-b border-ruleSoft px-3 py-2 text-xs font-semibold uppercase tracking-wider text-inkSoft">{dayHeading(day.events[0].ts)}</h2>
             <ul className="m-0 list-none p-0">
-              {day.events.map((event, index) => {
-                const { who, text } = activitySentence(event, whereName)
-                return (
-                  <li key={`${event.ts}-${index}`} className="flex items-center gap-3 border-b border-ruleSoft px-3 py-2 text-sm last:border-b-0">
-                    <span className="min-w-0 flex-1 text-ink"><b>{who}</b> {text}</span>
-                    <span className="shrink-0 border border-ruleSoft px-1.5 py-0.5 font-mono text-xs text-inkSoft">{kindWord[event.kind]}</span>
-                    <span className="w-12 shrink-0 text-right font-mono text-xs text-inkSoft">{timeOf(event.ts)}</span>
-                  </li>
-                )
-              })}
+              {collapseRuns(day.events, whereName).map((row, index) => (
+                <li key={`${row.event.ts}-${index}`} className="flex items-center gap-3 border-b border-ruleSoft px-3 py-2 text-sm last:border-b-0">
+                  <span className="min-w-0 flex-1 text-ink">
+                    <b>{row.who}</b> {row.text}
+                    {row.count > 1 && <span className="text-inkSoft"> · {row.count} times</span>}
+                  </span>
+                  <span className="shrink-0 border border-ruleSoft px-1.5 py-0.5 font-mono text-xs text-inkSoft">{kindWord[row.event.kind]}</span>
+                  <span className="w-12 shrink-0 text-right font-mono text-xs text-inkSoft">{timeOf(row.event.ts)}</span>
+                </li>
+              ))}
             </ul>
           </div>
         ))}
