@@ -2,8 +2,9 @@
 import { act } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CollectionMembers, RUNNER_SENTENCE, hasRunner } from '../src/CollectionMembers'
-import { button, click, render, settle, type } from './dom'
+import { button, click, hasButton, render, settle, type } from './dom'
 import { fakeApi, person } from './fakeApi'
+import type { AccessApi } from '../src/api'
 
 const people = [person('p1', 'Ana Morales'), person('p2', 'Luis Park'), person('p3', 'Priya Nair')]
 
@@ -145,6 +146,82 @@ describe('a read that started before a save', () => {
     await settle()
     expect(view.host.textContent).not.toContain('Someone else changed this.')
     expect(calls.filter((call) => call.name === 'setMembers')).toHaveLength(2)
+  })
+})
+
+describe('switching to another collection', () => {
+  // Two collections whose member lists differ, and a read that can be held
+  // open so the switch can be inspected mid-flight.
+  const two = () => {
+    const collection = (bucket: string, uuid: string, runner: string) => ({
+      bucket, uuid, name: bucket, organization: 'Sky Island Alliance',
+      members: [
+        { personId: 'p1', name: 'Ana Morales', access: (runner === 'p1' ? 'run' : 'upload') as 'run' | 'upload', exactLocations: true },
+        { personId: 'p2', name: 'Luis Park', access: (runner === 'p2' ? 'run' : 'identify') as 'run' | 'identify', exactLocations: false },
+      ],
+      membersVersion: `${uuid}-v1`,
+    })
+    const made = fakeApi({ people, collections: [collection('sparcd-aaa', 'aaa', 'p1'), collection('sparcd-bbb', 'bbb', 'p2')] })
+    const api = made.api as AccessApi & { listCollectionAccess: () => Promise<unknown> }
+    const answer = api.listCollectionAccess.bind(api)
+    const gates: (() => void)[] = []
+    let holdNext = false
+    api.listCollectionAccess = async () => {
+      const answered = structuredClone(await answer())
+      if (holdNext) {
+        holdNext = false
+        await new Promise<void>((resolve) => { gates.push(resolve) })
+      }
+      return answered
+    }
+    return { ...made, hold: () => { holdNext = true }, release: () => act(async () => { gates.shift()!() }) }
+  }
+
+  it('shows nothing editable until the other list of people arrives', async () => {
+    const { api, calls, hold, release } = two()
+    const view = render(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
+    await settle()
+    expect(radio(view.host, 'Runs this collection for Ana Morales').checked).toBe(true)
+
+    hold()
+    view.rerender(<CollectionMembers api={api} bucket="sparcd-bbb" people={people} />)
+    await settle()
+
+    expect(view.host.textContent).toContain('Loading people…')
+    expect(view.host.querySelectorAll('input[type="radio"]')).toHaveLength(0)
+    expect(hasButton(view.host, 'Save people')).toBe(false)
+
+    await release()
+    await settle()
+    // Now it is the other collection's list, with its own runner.
+    expect(radio(view.host, 'Runs this collection for Luis Park').checked).toBe(true)
+
+    await click(radio(view.host, 'Sees exact camera locations for Luis Park'))
+    await click(button(view.host, 'Save people'))
+    await settle()
+    const sent = calls.find((call) => call.name === 'setMembers')!
+    expect(sent.args[0]).toBe('sparcd-bbb')
+    expect(sent.args[2]).toBe('bbb-v1')
+    expect(sent.args[1]).toEqual([
+      { personId: 'p1', access: 'upload', exactLocations: true },
+      { personId: 'p2', access: 'run', exactLocations: true },
+    ])
+  })
+
+  it('drops an answer for the collection it left', async () => {
+    const { api, hold, release } = two()
+    hold()
+    const view = render(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
+    await settle()
+
+    view.rerender(<CollectionMembers api={api} bucket="sparcd-bbb" people={people} />)
+    await settle()
+    expect(radio(view.host, 'Runs this collection for Luis Park').checked).toBe(true)
+
+    await release()
+    await settle()
+    expect(radio(view.host, 'Runs this collection for Luis Park').checked).toBe(true)
+    expect(radio(view.host, 'Runs this collection for Ana Morales').checked).toBe(false)
   })
 })
 
