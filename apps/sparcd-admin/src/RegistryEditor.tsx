@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ConditionalReplaceConflictError, type SafeS3Client } from '@sparcd/s3-safe'
 import type { SharedList } from './load'
 import {
@@ -59,6 +59,12 @@ const rowLabel = (kind: ListKind, record: Entry) =>
 const rowDetail = (kind: ListKind, record: Entry) =>
   String((kind === 'Species' ? record.scientificName : record.idProperty) ?? '').trim()
 
+/** What a record is still known by after a save, so a reload can re-find it. */
+const identityOf = (kind: ListKind, record: Entry) =>
+  JSON.stringify(kind === 'Species'
+    ? [record.name, record.scientificName]
+    : [record.idProperty, record.nameProperty])
+
 function StatusPill({ retired }: { retired: boolean }) {
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 text-xs ${retired ? 'border-ruleSoft text-inkMute' : 'border-ok text-ok'}`}>
@@ -83,7 +89,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   title: ListKind
   registry: Registry
   client: SafeS3Client
-  reload: () => void
+  reload: () => void | Promise<void>
   actor: string
 }) {
   const [items, setItems] = useState(registry.value as Entry[])
@@ -98,16 +104,25 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
   // over by fresh data, so a reload elsewhere cannot silently rebase an edit.
   const [baseline, setBaseline] = useState(registry.value)
   const [stale, setStale] = useState(false)
+  const [saving, setSaving] = useState(false)
   const dirty = useRef(false)
+  const searchId = useId()
+  // The record a save left open, so the reload it triggers can re-select it
+  // rather than dropping the person back to an empty pane.
+  const keep = useRef<string | null>(null)
 
   const adopt = (next: Registry) => {
-    setItems(next.value as Entry[])
+    const list = next.value as Entry[]
+    const at = keep.current === null ? -1 : list.findIndex((record) => identityOf(title, record) === keep.current)
+    keep.current = null
+    setItems(list)
     setBaseline(next.value)
     setEtag(next.etag)
-    setSelected(null)
+    setSelected(at === -1 ? null : at)
     setDraftIndex(null)
     setShowErrors(false)
     setStale(false)
+    setSaving(false)
   }
 
   useEffect(() => {
@@ -163,6 +178,8 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
       setMessage(invalid)
       return
     }
+    keep.current = selected !== null && staged[selected] ? identityOf(title, staged[selected]) : null
+    setSaving(true)
     try {
       const occurredAt = new Date().toISOString()
       const eventId = id()
@@ -196,15 +213,18 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
         await applied()
         setRetryApplied(null)
         setMessage('Saved.')
-        reload()
+        await reload()
+        setSaving(false)
       } catch {
         setRetryApplied(() => applied)
         setMessage('Saved. Its history entry did not go through.')
+        setSaving(false)
       }
     } catch (error) {
       setMessage(error instanceof ConditionalReplaceConflictError
         ? `Someone else changed this list while you were editing. Reload before saving again.`
         : (error as Error).message)
+      setSaving(false)
     }
   }
 
@@ -225,11 +245,11 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
           {modifiedCount > 0 && <p className="m-0 text-sm text-inkSoft">{modifiedCount} {modifiedCount === 1 ? noun : plural} changed</p>}
           <button
             type="button"
-            disabled={modifiedCount === 0 || retryApplied !== null}
+            disabled={saving || modifiedCount === 0 || retryApplied !== null}
             className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             onClick={() => void save()}
           >
-            Save
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -248,9 +268,10 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
       <div className="grid gap-4 p-4 lg:grid-cols-2">
         <div className="min-w-0">
           <div className="flex gap-2">
-            <label className="sr-only" htmlFor={`${plural}-search`}>Search {plural}</label>
+            <label className="sr-only" htmlFor={searchId}>Search {plural}</label>
             <input
-              id={`${plural}-search`}
+              id={searchId}
+              disabled={saving}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={`Search ${plural}`}
@@ -258,6 +279,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
             />
             <button
               type="button"
+              disabled={saving}
               onClick={addRecord}
               className="shrink-0 border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
@@ -270,6 +292,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
               <li key={index} className="border-b border-ruleSoft last:border-b-0">
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => select(index)}
                   aria-current={selected === index ? 'true' : undefined}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
@@ -293,7 +316,7 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
             ? <p className="m-0 border border-ruleSoft bg-paper p-3 text-sm text-inkSoft">Pick a {noun} from the list to change it, or add a new one.</p>
             : (
               <>
-                <fieldset className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
+                <fieldset disabled={saving} className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
                   <legend className="px-1 text-sm font-semibold text-ink">{rowLabel(title, item)}</legend>
                   {fields[title].map((key) => {
                     const numeric = (NUMERIC_LOCATION_FIELDS as readonly string[]).includes(key)
@@ -335,14 +358,16 @@ export function RegistryEditor({ title, registry, client, reload, actor }: {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    disabled={saving}
+                    className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     onClick={() => setItems(setRetired(items, selected!, item.retired !== true))}
                   >
                     {item.retired === true ? 'Bring back' : 'Retire'}
                   </button>
                   <button
                     type="button"
-                    className="border border-rule px-3 py-2 text-sm text-inkSoft hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    disabled={saving}
+                    className="border border-rule px-3 py-2 text-sm text-inkSoft hover:bg-paperHover disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     onClick={() => select(null)}
                   >
                     Close

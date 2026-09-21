@@ -18,6 +18,7 @@ const members = async (runner: boolean) => {
         { personId: 'p1', name: 'Ana Morales', access: runner ? 'run' : 'upload', exactLocations: true },
         { personId: 'p2', name: 'Luis Park', access: 'identify', exactLocations: false },
       ],
+      membersVersion: 'members-v1',
     }],
   })
   const view = render(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
@@ -59,12 +60,38 @@ describe('who runs the collection', () => {
       { personId: 'p1', access: 'upload', exactLocations: true },
       { personId: 'p2', access: 'run', exactLocations: false },
     ])
+    expect(sent.args[2]).toBe('members-v1')
     expect(view.host.textContent).toContain('Saved.')
   })
 
   it('knows the rule without a screen', () => {
     expect(hasRunner([{ access: 'upload' }, { access: 'run' }])).toBe(true)
     expect(hasRunner([{ access: 'upload' }])).toBe(false)
+  })
+})
+
+describe('two coordinators at once', () => {
+  it('sends the version it read and says who moved first', async () => {
+    const { api, calls, data } = fakeApi({
+      people,
+      collections: [{
+        bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', organization: 'Sky Island Alliance',
+        members: [{ personId: 'p1', name: 'Ana Morales', access: 'run', exactLocations: false }],
+        membersVersion: 'members-v1',
+      }],
+    })
+    const view = render(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
+    await settle()
+
+    data.collections[0].membersVersion = 'members-v7'
+    await click(radio(view.host, 'Can upload for Ana Morales'))
+    await click(radio(view.host, 'Runs this collection for Ana Morales'))
+    await click(view.host.querySelector('input[aria-label="Sees exact camera locations for Ana Morales"]')!)
+    await click(button(view.host, 'Save people'))
+    await settle()
+
+    expect(calls.find((call) => call.name === 'setMembers')!.args[2]).toBe('members-v1')
+    expect(view.host.textContent).toContain('Someone else changed this. Reload and try again.')
   })
 })
 

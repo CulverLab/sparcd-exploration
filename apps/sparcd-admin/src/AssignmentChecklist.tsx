@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 
 export type Kind = 'species' | 'locations'
 export type Entry = Record<string, unknown>
@@ -110,6 +110,7 @@ export function AssignmentChecklist({
   onUpdateAll,
   onUpdateOne,
   blocked,
+  saving,
   pending,
 }: {
   kind: Kind
@@ -126,8 +127,11 @@ export function AssignmentChecklist({
   onUpdateAll: () => void
   onUpdateOne: (index: number) => void
   blocked?: boolean
+  /** This list's save is in flight; its controls wait for the reload. */
+  saving?: boolean
   pending?: ReactNode
 }) {
+  const searchId = useId()
   const plural = kind === 'species' ? 'species' : 'locations'
   const one = kind === 'species' ? 'species' : 'location'
   const rows = checklistRows(kind, used, shared)
@@ -155,6 +159,7 @@ export function AssignmentChecklist({
               <button
                 type="button"
                 onClick={onUpdateAll}
+                disabled={saving}
                 className="border border-rule px-3 py-1.5 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Update them
@@ -166,16 +171,17 @@ export function AssignmentChecklist({
                 {outdated.map((entry) => (
                   <li key={entry.index} className="flex items-center gap-3 py-1 text-sm text-ink">
                     <span className="min-w-0 flex-1 truncate">{rowLabel(kind, entry.current)} → {rowLabel(kind, entry.truth)}</span>
-                    <button type="button" className="underline" onClick={() => onUpdateOne(entry.index)}>Update</button>
+                    <button type="button" disabled={saving} className="underline disabled:opacity-40" onClick={() => onUpdateOne(entry.index)}>Update</button>
                   </li>
                 ))}
               </ul>
             </details>
           </div>
         )}
-        <label className="block text-sm font-medium text-ink" htmlFor={`${kind}-search`}>Search {plural}</label>
+        <label className="block text-sm font-medium text-ink" htmlFor={searchId}>Search {plural}</label>
         <input
-          id={`${kind}-search`}
+          id={searchId}
+          disabled={saving}
           value={search}
           onChange={(event) => onSearch(event.target.value)}
           placeholder={`Search ${plural}`}
@@ -187,6 +193,7 @@ export function AssignmentChecklist({
               <label className={`flex items-center gap-2 px-3 py-2 text-sm text-ink ${row.status === 'active' ? '' : 'opacity-70'}`}>
                 <input
                   type="checkbox"
+                  disabled={saving}
                   className="h-4 w-4 accent-accent"
                   checked={row.usedIndex >= 0}
                   onChange={() => toggle(row)}
@@ -204,6 +211,7 @@ export function AssignmentChecklist({
             <button
               type="button"
               onClick={onUndo}
+              disabled={saving}
               className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               Undo
@@ -211,11 +219,11 @@ export function AssignmentChecklist({
           )}
           <button
             type="button"
-            disabled={!used.length || !changed || blocked}
+            disabled={saving || !used.length || !changed || blocked}
             onClick={onSave}
             className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           >
-            Save {plural}
+            {saving ? 'Saving…' : `Save ${plural}`}
           </button>
         </div>
         {!used.length && <p role="alert" className="mb-0 mt-2 text-sm text-warn">Keep at least one {one} in this collection.</p>}

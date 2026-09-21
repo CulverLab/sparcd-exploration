@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityEvent } from '../src/api'
-import { activityCsv, activitySentence, dayHeading, downloadsSentence, groupByDay } from '../src/activity'
+import { activityCsv, activitySentence, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping } from '../src/activity'
 
 const where = (bucket?: string) => (bucket === 'sparcd-aaa' ? 'Research 1' : 'Sky Islands 2026')
 
@@ -36,10 +36,14 @@ describe('the sentence for each kind', () => {
     expect(activitySentence(event('list-change', { key: 'Settings/other.json' }), where).text).toBe('changed the shared list')
   })
 
-  it('covers collection details and access changes', () => {
+  it('covers collection details', () => {
     expect(activitySentence(event('collection-change'), where).text).toBe('changed the details of Research 1')
+  })
+
+  it('falls back when an access change carries no detail', () => {
     expect(activitySentence(event('access-change'), where).text).toBe('changed who can use Research 1')
     expect(activitySentence(event('access-change', { bucket: undefined }), where).text).toBe('changed what someone can do')
+    expect(activitySentence(event('access-change', { detail: { target: { personId: 'p2', personName: 'Luis Park' } } }), where).text).toBe('changed who can use Research 1')
   })
 
   it('covers problems and signing in', () => {
@@ -50,6 +54,48 @@ describe('the sentence for each kind', () => {
 
   it('falls back to Someone when the service did not name anyone', () => {
     expect(activitySentence(event('sign-in', { personName: undefined }), where).who).toBe('Someone')
+  })
+})
+
+describe('access changes in detail (contract 1.1)', () => {
+  const target = { personId: 'p2', personName: 'Luis Park' }
+  const change = (detail: Record<string, unknown>) =>
+    activitySentence(event('access-change', { personName: 'Jorge Delgado', detail: { target, collectionName: 'Research 1', ...detail } }), where)
+
+  it('names the person, the collection and the level', () => {
+    expect(change({ change: 'added', after: { access: 'identify', exactLocations: false } })).toEqual({
+      who: 'Jorge Delgado',
+      text: 'added Luis Park to Research 1 as Can identify',
+    })
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'identify', exactLocations: false } }).text)
+      .toBe('changed Luis Park in Research 1 from Can look to Can identify')
+    expect(change({ change: 'removed' }).text).toBe('removed Luis Park from Research 1')
+  })
+
+  it('says which way the exact-locations box went', () => {
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'look', exactLocations: true } }).text)
+      .toBe('turned on Sees exact camera locations for Luis Park in Research 1')
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: true }, after: { access: 'look', exactLocations: false } }).text)
+      .toBe('turned off Sees exact camera locations for Luis Park in Research 1')
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'look', exactLocations: false } }).text)
+      .toBe('changed what Luis Park can do in Research 1')
+  })
+
+  it('covers the whole-person changes', () => {
+    expect(change({ change: 'invited' }).text).toBe('invited Luis Park')
+    expect(change({ change: 'paused' }).text).toBe("paused Luis Park's access")
+    expect(change({ change: 'resumed' }).text).toBe('let Luis Park sign in again')
+    expect(change({ change: 'reset' }).text).toBe("reset Luis Park's access")
+    expect(change({ change: 'admin-granted' }).text).toBe('made Luis Park an administrator')
+    expect(change({ change: 'admin-removed' }).text).toBe("took Luis Park's administrator access away")
+  })
+
+  it('credits the person who joined, not the administrator', () => {
+    expect(change({ change: 'joined' })).toEqual({ who: 'Luis Park', text: 'joined' })
+  })
+
+  it('uses the collection name from the event when it has one', () => {
+    expect(change({ change: 'removed', collectionName: 'Sky Islands 2026' }).text).toBe('removed Luis Park from Sky Islands 2026')
   })
 })
 
@@ -88,5 +134,38 @@ describe('grouping and export', () => {
     const [header, row] = csv.split('\n')
     expect(header).toBe('When,Who,What,Collection,File')
     expect(row).toBe('2026-09-12T14:03:00.000Z,Priya Nair,downloaded IMG_0412.JPG from Research 1,Research 1,IMG_0412.JPG')
+  })
+})
+
+describe('the timeline the activity screen shows', () => {
+  const at = (seconds: number, extra: Partial<ActivityEvent> = {}) =>
+    event('denied', { ts: `2026-09-12T14:${String(3 + Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.000Z`, personId: 'p1', ...extra })
+
+  it('folds a burst of the same thing into one line with a count', () => {
+    const rows = collapseRuns([at(0), at(5), at(10), at(20), at(30), at(40)], where)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(6)
+    expect(`${rows[0].who} ${rows[0].text}`)
+      .toBe("Priya Nair tried to open something they don't have access to in Research 1")
+  })
+
+  it('starts a new line past a minute, and for a different person or collection', () => {
+    expect(collapseRuns([at(0), at(90)], where)).toHaveLength(2)
+    expect(collapseRuns([at(0), at(5, { personId: 'p2', personName: 'Sam Ortiz' })], where)).toHaveLength(2)
+    expect(collapseRuns([at(0), at(5, { bucket: 'sparcd-bbb' })], where)).toHaveLength(2)
+  })
+
+  it('keeps separate files apart even in the same minute', () => {
+    const download = (key: string) =>
+      event('download', { ts: '2026-09-12T14:03:00.000Z', personId: 'p1', key })
+    expect(collapseRuns([download('a/IMG_1.JPG'), download('a/IMG_2.JPG')], where)).toHaveLength(2)
+    expect(collapseRuns([download('a/IMG_1.JPG'), download('a/IMG_1.JPG')], where)[0].count).toBe(2)
+  })
+
+  it('leaves the app’s own bookkeeping writes out of the timeline', () => {
+    const marker = event('list-change', { key: 'Settings/admin-sessions/1234.json' })
+    const history = event('list-change', { key: 'Settings/audit/config/2026-09-12/abc.prepared.json' })
+    const real = event('list-change', { key: 'Settings/species.json' })
+    expect([marker, history, real].filter((one) => !isOwnBookkeeping(one))).toEqual([real])
   })
 })

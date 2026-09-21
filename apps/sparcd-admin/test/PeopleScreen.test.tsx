@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { PeopleScreen, collectionsText, lastActiveText } from '../src/PeopleScreen'
 import { inviteLink, inviteMailto } from '../src/InviteLink'
 import { button, click, field, hasButton, render, settle, type } from './dom'
+import { ApiError } from '../src/api'
 import { fakeApi, person } from './fakeApi'
 
 const collections = [{ bucket: 'sparcd-aaa', name: 'Sky Islands 2026' }]
@@ -73,6 +74,61 @@ describe('adding a person', () => {
     expect(body).toContain('Hi Sam,')
     expect(body).toContain('https://x/join')
     expect(body).toContain('Jorge Delgado')
+  })
+})
+
+describe('one person at a time (contract 1.1)', () => {
+  const withMembership = {
+    people: [person('p1', 'Ana Morales', {
+      collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: 'look' as const, exactLocations: false }],
+    })],
+  }
+
+  it('adds to a collection through the per-person call', async () => {
+    const { view, calls } = await screen()
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Add to a collection'))
+    await click(view.host.querySelector('input[type="checkbox"]')!)
+    await click(button(view.host, 'Add to collection'))
+    await settle()
+    expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
+      'sparcd-aaa', 'p1', { access: 'identify', exactLocations: true },
+    ])
+    expect(calls.some((call) => call.name === 'setMembers')).toBe(false)
+  })
+
+  it('changes one membership without rewriting the list', async () => {
+    const { view, calls } = await screen(withMembership)
+    await click(rowFor(view.host, 'Ana Morales'))
+    expect(view.host.textContent).toContain('Sky Islands 2026 · Can look')
+    await click(button(view.host, 'Change'))
+    await click(view.host.querySelectorAll('input[type="radio"]')[2])
+    await click(button(view.host, 'Save access'))
+    await settle()
+    expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
+      'sparcd-aaa', 'p1', { access: 'upload', exactLocations: false },
+    ])
+  })
+
+  it('removes one membership through the per-person call', async () => {
+    const { view, calls } = await screen(withMembership)
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Remove'))
+    await settle()
+    expect(calls.find((call) => call.name === 'removeMember')!.args).toEqual(['sparcd-aaa', 'p1'])
+  })
+
+  it('turns a refusal into one plain sentence', async () => {
+    const { api, calls } = fakeApi()
+    const failing = { ...api, updatePerson: async () => { throw new ApiError(409, 'last_admin', 'cannot demote') } }
+    const view = render(<PeopleScreen api={failing as never} endpoint="storage.test" collections={collections} from="Jorge Delgado" />)
+    await settle()
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Pause access'))
+    await click(button(view.host, 'Yes, pause access'))
+    await settle()
+    expect(view.host.textContent).toContain("SPARC'd always needs at least one administrator.")
+    expect(calls).toBeDefined()
   })
 })
 

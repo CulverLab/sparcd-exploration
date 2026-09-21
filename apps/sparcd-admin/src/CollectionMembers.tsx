@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Access, AccessApi, ApiError, Person } from './api'
+import { problemSentence, type Access, type AccessApi, type Person } from './api'
 import { ACCESS_CHOICES, EXACT_LOCATIONS } from './AccessChoices'
 
 type Row = { personId: string; name: string; access: Access; exactLocations: boolean }
@@ -15,6 +15,7 @@ export function CollectionMembers({ api, bucket, people }: {
 }) {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [saved, setSaved] = useState<Row[]>([])
+  const [version, setVersion] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [problem, setProblem] = useState('')
   const [message, setMessage] = useState('')
@@ -34,9 +35,10 @@ export function CollectionMembers({ api, bucket, people }: {
       }))
       setRows(loaded)
       setSaved(loaded)
+      setVersion(here?.membersVersion ?? null)
       setProblem('')
     } catch (cause) {
-      setProblem((cause as Error).message)
+      setProblem(problemSentence(cause))
     }
   }
 
@@ -59,14 +61,16 @@ export function CollectionMembers({ api, bucket, people }: {
     setBusy(true)
     setMessage('')
     try {
-      await api.setMembers(bucket, rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })))
+      const written = await api.setMembers(
+        bucket,
+        rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
+        version,
+      )
+      setVersion(written.membersVersion)
       setSaved(rows)
       setMessage('Saved.')
     } catch (cause) {
-      const status = (cause as ApiError).status
-      setMessage(status === 412 || status === 409
-        ? 'Someone else changed this. Reload and try again.'
-        : (cause as Error).message)
+      setMessage(problemSentence(cause))
     } finally {
       setBusy(false)
     }
@@ -106,6 +110,7 @@ export function CollectionMembers({ api, bucket, people }: {
                   <td key={choice.value} className="px-2 py-2 text-center">
                     <input
                       type="radio"
+                      disabled={busy}
                       name={`access-${bucket}-${row.personId}`}
                       aria-label={`${choice.label} for ${row.name}`}
                       className="h-4 w-4 accent-accent"
@@ -117,6 +122,7 @@ export function CollectionMembers({ api, bucket, people }: {
                 <td className="px-2 py-2 text-center">
                   <input
                     type="checkbox"
+                    disabled={busy}
                     aria-label={`${EXACT_LOCATIONS.label} for ${row.name}`}
                     className="h-4 w-4 accent-accent"
                     checked={row.exactLocations}
@@ -124,7 +130,7 @@ export function CollectionMembers({ api, bucket, people }: {
                   />
                 </td>
                 <td className="py-2 text-right">
-                  <button type="button" className="text-sm text-ink underline" onClick={() => setRows(rows.filter((other) => other.personId !== row.personId))}>Remove</button>
+                  <button type="button" disabled={busy} className="text-sm text-ink underline disabled:opacity-40" onClick={() => setRows(rows.filter((other) => other.personId !== row.personId))}>Remove</button>
                 </td>
               </tr>
             ))}
@@ -135,6 +141,7 @@ export function CollectionMembers({ api, bucket, people }: {
         <label className="mt-3 block text-sm font-medium text-ink" htmlFor={`add-person-${bucket}`}>Add a person to this collection</label>
         <input
           id={`add-person-${bucket}`}
+          disabled={busy}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search people"
@@ -166,7 +173,7 @@ export function CollectionMembers({ api, bucket, people }: {
             onClick={() => void save()}
             className="border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
-            Save people
+            {busy ? 'Saving…' : 'Save people'}
           </button>
           {message && <p role="status" className="m-0 text-sm text-inkSoft">{message}</p>}
         </div>

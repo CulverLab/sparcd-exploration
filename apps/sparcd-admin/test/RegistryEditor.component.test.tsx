@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ConditionalReplaceConflictError } from '@sparcd/s3-safe'
 import { RegistryEditor, type Registry } from '../src/RegistryEditor'
@@ -196,5 +197,56 @@ describe('after a failed history entry', () => {
     expect(hasButton(host, 'Retry history entry')).toBe(true)
     await click(button(host, 'Retry history entry'))
     expect(host.textContent).toContain('The history entry still did not go through: storage hiccup')
+  })
+})
+
+describe('a save and the reload it triggers', () => {
+  const held = () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    return { gate, release: () => release() }
+  }
+
+  it('says Saving… and stops taking edits until the reload settles', async () => {
+    const { client } = recordingClient({ existing: speciesFile })
+    const { gate, release } = held()
+    const { host } = render(
+      <RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => gate} />)
+    await click(rowButtons(host)[0])
+    await type(field(host, 'Common name'), 'Coyote (plains)')
+    await click(button(host, 'Save'))
+
+    expect(hasButton(host, 'Saving…')).toBe(true)
+    expect((host.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(true)
+    expect((rowButtons(host)[0] as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => release())
+    expect(hasButton(host, 'Save')).toBe(true)
+    expect((host.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(false)
+    expect(host.textContent).toContain('Saved.')
+  })
+
+  it('keeps the same record open when the reloaded list arrives', async () => {
+    const { client } = recordingClient({ existing: speciesFile })
+    const first = species()
+    const reloaded: Registry = {
+      ...first,
+      etag: 'species-v2',
+      value: [first.value[0], { name: 'Mearns coyote', scientificName: 'Canis latrans mearnsi' }],
+    }
+    let asked = false
+    const editor = (registry: Registry) => (
+      <RegistryEditor title="Species" registry={registry} client={client} actor="admin" reload={() => { asked = true }} />
+    )
+    const view = render(editor(first))
+    await click(rowButtons(view.host)[1])
+    await type(field(view.host, 'Common name'), 'Mearns coyote')
+    await click(button(view.host, 'Save'))
+    expect(asked).toBe(true)
+
+    view.rerender(editor(reloaded))
+    expect(field(view.host, 'Common name').value).toBe('Mearns coyote')
+    expect(field(view.host, 'Scientific name').value).toBe('Canis latrans mearnsi')
+    expect(rowButtons(view.host)[1].getAttribute('aria-current')).toBe('true')
   })
 })

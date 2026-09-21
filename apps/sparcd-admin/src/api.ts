@@ -45,6 +45,25 @@ export type CollectionAccess = {
   name: string | null
   organization: string | null
   members: CollectionMember[]
+  /** Opaque; null when no member list has been written yet. */
+  membersVersion: string | null
+}
+
+export type MembersResult = { members: CollectionMember[]; membersVersion: string | null }
+
+export type AccessChange =
+  | 'invited' | 'joined' | 'paused' | 'resumed' | 'reset'
+  | 'admin-granted' | 'admin-removed' | 'added' | 'changed' | 'removed'
+
+export type AccessLevel = { access: Access; exactLocations: boolean }
+
+export type AccessChangeDetail = {
+  change: AccessChange
+  target: { personId: string; personName: string }
+  bucket?: string
+  collectionName?: string
+  before?: AccessLevel
+  after?: AccessLevel
 }
 
 export type ActivityKind =
@@ -61,7 +80,7 @@ export type ActivityEvent = {
   key?: string
   status?: number
   bytes?: number
-  detail?: Record<string, unknown>
+  detail?: AccessChangeDetail | Record<string, unknown>
 }
 
 export type ActivityQuery = {
@@ -83,11 +102,32 @@ export class NoAccessServiceError extends Error {
   }
 }
 
+export type ErrorCode =
+  | 'invalid' | 'forbidden' | 'not_found' | 'last_admin' | 'last_runner'
+  | 'changed_elsewhere' | 'too_large' | 'busy' | 'upstream'
+
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+const NOT_ANSWERING = 'The storage is not answering right now. Try again in a minute.'
+
+const sentences: Partial<Record<ErrorCode, string>> = {
+  last_runner: 'A collection always needs at least one person running it.',
+  last_admin: "SPARC'd always needs at least one administrator.",
+  changed_elsewhere: 'Someone else changed this. Reload and try again.',
+  busy: NOT_ANSWERING,
+  upstream: NOT_ANSWERING,
+}
+
+/** The one place a failure turns into something worth showing someone. */
+export function problemSentence(cause: unknown) {
+  if (cause instanceof NoAccessServiceError) return 'This storage does not manage people.'
+  if (cause instanceof ApiError) return sentences[cause.code as ErrorCode] ?? "That didn't work. Try again, and ask for help if it keeps happening."
+  return "That didn't work. Try again, and ask for help if it keeps happening."
 }
 
 // WebCrypto stands in for the SDK's hash class so the signer needs nothing
@@ -118,7 +158,13 @@ export function endpointUrl(config: S3Config) {
   return `${config.secure === false ? 'http' : 'https'}://${config.endpoint}`
 }
 
-type Request = { method: string; path: string; query?: Record<string, string>; body?: unknown }
+type Request = {
+  method: string
+  path: string
+  query?: Record<string, string>
+  body?: unknown
+  headers?: Record<string, string>
+}
 
 async function readJson(response: Response) {
   const type = response.headers.get('content-type') ?? ''
@@ -143,7 +189,7 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
     sha256: Sha256 as never,
   })
 
-  const send = async ({ method, path, query, body }: Request) => {
+  const send = async ({ method, path, query, body, headers }: Request) => {
     const url = new URL(`${base}/-/${path}`)
     for (const [name, value] of Object.entries(query ?? {})) url.searchParams.set(name, value)
     const payload = body === undefined ? undefined : JSON.stringify(body)
@@ -154,7 +200,7 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
       port: url.port ? Number(url.port) : undefined,
       path: url.pathname,
       query: Object.fromEntries(url.searchParams),
-      headers: { host: url.host, ...(payload === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { host: url.host, ...headers, ...(payload === undefined ? {} : { 'content-type': 'application/json' }) },
       body: payload,
     })
     let response: Response
@@ -199,12 +245,28 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
     async listCollectionAccess(): Promise<CollectionAccess[]> {
       return ((await send({ method: 'GET', path: 'admin/collections' })) as { collections: CollectionAccess[] }).collections
     },
-    async setMembers(bucket: string, members: { personId: string; access: Access; exactLocations: boolean }[]) {
-      return ((await send({
+    // The version the list was read at goes back with it, so two coordinators
+    // editing one collection cannot quietly overwrite each other.
+    async setMembers(bucket: string, members: { personId: string; access: Access; exactLocations: boolean }[], membersVersion: string | null) {
+      return (await send({
         method: 'PUT',
         path: `admin/collections/${encodeURIComponent(bucket)}/members`,
         body: { members },
-      })) as { members: CollectionMember[] }).members
+        headers: membersVersion ? { 'if-match': membersVersion } : { 'if-none-match': '*' },
+      })) as MembersResult
+    },
+    async setMember(bucket: string, personId: string, level: AccessLevel) {
+      return (await send({
+        method: 'PUT',
+        path: `admin/collections/${encodeURIComponent(bucket)}/members/${encodeURIComponent(personId)}`,
+        body: level,
+      })) as MembersResult
+    },
+    async removeMember(bucket: string, personId: string) {
+      return (await send({
+        method: 'DELETE',
+        path: `admin/collections/${encodeURIComponent(bucket)}/members/${encodeURIComponent(personId)}`,
+      })) as MembersResult
     },
     async activity(query: ActivityQuery) {
       return (await send({ method: 'GET', path: 'admin/activity', query: activityQuery(query) })) as {

@@ -40,11 +40,11 @@ export function Chrome({
         onClick={() => onSectionChange(id)}
         aria-current={active ? 'page' : undefined}
         className={`relative text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2 ${
-          compact ? 'flex-1 min-h-11 px-3' : 'w-full px-4 py-3 text-left'
+          compact ? 'min-h-11 px-2 border-r border-b border-ruleSoft' : 'w-full px-4 py-3 text-left'
         } ${active ? 'bg-accentSoft text-ink font-[600]' : 'text-inkSoft hover:bg-panelHover hover:text-ink'}`}
       >
         {label}
-        {active && <span className={`absolute bg-ink ${compact ? 'left-3 right-3 -bottom-px h-0.5' : 'left-0 top-0 bottom-0 w-0.5'}`} />}
+        {active && <span className={`absolute bg-ink ${compact ? 'left-2 right-2 bottom-0 h-0.5' :'left-0 top-0 bottom-0 w-0.5'}`} />}
       </button>
     )
   }
@@ -66,7 +66,9 @@ export function Chrome({
           </button>
         </div>
       </header>
-      <nav className="md:hidden shrink-0 bg-panel border-b border-rule flex items-stretch" aria-label="Sections">
+      {/* Three columns rather than one row: six labels in a row cannot shrink
+          below their text and push the page sideways on a phone. */}
+      <nav className="md:hidden shrink-0 bg-panel border-b border-rule grid grid-cols-3" aria-label="Sections">
         {sections.map((entry) => item(entry, labels[entry], true))}
       </nav>
       <div className="flex-1 min-h-0 flex">
