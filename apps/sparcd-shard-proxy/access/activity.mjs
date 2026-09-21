@@ -78,19 +78,25 @@ export function makeActivity({ upstream, settingsBucket, flushMs = FLUSH_MS }) {
 
     async query({ from, to, person, bucket, kind, limit = 200 } = {}) {
       const events = await read({ upstream, settingsBucket, from, to });
+      // One chip on the Activity screen can stand for several kinds —
+      // "Problems" is denied plus bad-signature — so the filter is a list.
+      const kinds = kind ? new Set(String(kind).split(',').map((k) => k.trim()).filter(Boolean)) : null;
       const matched = events.filter((e) =>
         (!person || e.personId === person)
         && (!bucket || e.bucket === bucket)
-        && (!kind || e.kind === kind)
+        && (!kinds || kinds.has(e.kind))
         && (!from || e.ts >= from)
         && (!to || e.ts <= to));
       matched.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
       return { events: matched.slice(0, limit), truncated: matched.length > limit };
     },
 
+    /** `key` is the whole key, or the file name on its own — which is what
+     *  "who downloaded this image?" actually has to hand. */
     async downloads({ bucket, key }) {
       const { events } = await this.query({ kind: 'download', bucket, limit: Infinity });
-      return { events: key ? events.filter((e) => e.key === key) : events };
+      const leaf = (k) => String(k ?? '').slice(String(k ?? '').lastIndexOf('/') + 1);
+      return { events: key ? events.filter((e) => e.key === key || leaf(e.key) === key) : events };
     },
   };
 }
