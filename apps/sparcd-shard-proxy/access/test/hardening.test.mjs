@@ -5,9 +5,11 @@ import assert from 'node:assert/strict';
 
 import {
   makeNamespace, parseBucketNames, buildListBuckets, leaksNamespace, scrubErrorDetail,
-  safeKeySegments,
+  safeKeySegments, safeRequestTarget,
 } from '../namespace.mjs';
-import { listingGuard, buildListing } from '../rules.mjs';
+import {
+  listingGuard, buildListing, afterTree, decodeListingToken,
+} from '../rules.mjs';
 import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
 import { makeActivity } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
@@ -278,5 +280,173 @@ describe('finding 6 and contract c: the published error codes', () => {
       'busy', 'changed_elsewhere', 'forbidden', 'invalid', 'last_admin',
       'last_runner', 'not_found', 'too_large', 'upstream',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 3: the follow-ups from reviewing the rewrite.
+// ---------------------------------------------------------------------------
+
+describe('N3: responses are scrubbed by shape, not by tag name', () => {
+  test('Location and Endpoint go the way Resource and HostId did', () => {
+    const xml = '<CompleteMultipartUploadResult>'
+      + '<Location>http://upstream.internal:9000/t-sparcd-aaa/k.jpg</Location>'
+      + '<Endpoint>upstream.internal:9000</Endpoint>'
+      + '<Bucket>t-sparcd-aaa</Bucket><Key>k.jpg</Key><ETag>"e"</ETag>'
+      + '</CompleteMultipartUploadResult>';
+    const out = scrubErrorDetail(xml);
+    assert.equal(out.includes('Location'), false);
+    assert.equal(out.includes('Endpoint'), false);
+    assert.equal(out.includes('upstream.internal'), false);
+    assert.match(out, /<Key>k\.jpg<\/Key>/);
+  });
+
+  test('a namespaced name anywhere but a Key or a Prefix is a leak', () => {
+    assert.equal(leaksNamespace('<Message>bucket t-sparcd-aaa is missing</Message>', 't-'), true);
+    assert.equal(leaksNamespace('<Location>http://h/t-sparcd-aaa/k</Location>', 't-'), true);
+    assert.equal(leaksNamespace('<Endpoint>t-sparcd-aaa.h</Endpoint>', 't-'), true);
+    // Object keys and listing prefixes are the caller's own strings.
+    assert.equal(leaksNamespace('<Key>t-notes/x.txt</Key>', 't-'), false);
+    assert.equal(leaksNamespace('<Prefix>t-notes/</Prefix>', 't-'), false);
+    // A namespace that appears mid-word is not a bucket name.
+    assert.equal(leaksNamespace('<Message>the widget-t-shirt failed</Message>', 't-'), false);
+  });
+});
+
+describe('N4: a settings listing steps around the protected trees', () => {
+  test('the jump target sorts after everything in the tree', () => {
+    const after = afterTree('Settings/access/');
+    assert.ok(after > 'Settings/access/zzzzzzzz');
+    assert.ok(after > 'Settings/access/￿');
+    assert.ok(after < 'Settings/activity/');
+    assert.ok(after < 'Settings/locations.json');
+  });
+
+  test('a page that had to stop says so, with a token of our own', () => {
+    const xml = buildListing({
+      bucket: 'b',
+      prefix: 'Settings/',
+      keys: [{ key: 'Settings/a.json' }, { key: 'Settings/b.json' }],
+      commonPrefixes: [],
+      truncated: true,
+      nextToken: 'Settings/b.json',
+    });
+    assert.match(xml, /<IsTruncated>true<\/IsTruncated>/);
+    const token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1];
+    assert.ok(token, 'no continuation token');
+    assert.equal(token.includes('Settings/'), false, 'the token is not opaque');
+    assert.equal(decodeListingToken(token), 'Settings/b.json');
+  });
+
+  test('an untruncated page still carries no token', () => {
+    const xml = buildListing({ bucket: 'b', keys: [], commonPrefixes: [] });
+    assert.match(xml, /<IsTruncated>false<\/IsTruncated>/);
+    assert.equal(xml.includes('NextContinuationToken'), false);
+  });
+
+  test('a token that is not ours reads as no token at all', () => {
+    assert.equal(decodeListingToken('not base64url !!!'), null);
+    assert.equal(decodeListingToken(''), null);
+  });
+});
+
+describe('N5: the Host is the one the signature is checked against', () => {
+  test('a backslash in the target is refused before parsing', () => {
+    // `new URL('/\\evil.example/x', 'http://good')` yields host `evil.example`,
+    // so the check has to happen on the raw bytes.
+    assert.equal(safeRequestTarget('/\\evil.example/x'), false);
+    assert.equal(safeRequestTarget('/b/k?a=\\'), false);
+    assert.equal(safeRequestTarget('//evil.example/x'), false);
+    assert.equal(safeRequestTarget('http://evil.example/x'), false);
+    assert.equal(safeRequestTarget('/b/Collections/u/Uploads/s/a.jpg?x-id=PutObject'), true);
+    assert.equal(safeRequestTarget('/'), true);
+  });
+});
+
+describe('N7: the activity writer does one flush at a time', () => {
+  test('recording during a stuck flush does not start a second one', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let failing = true;
+    const written = [];
+    const client = () => ({
+      put: async (bucket, key, body) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        if (failing) return false;
+        written.push(body);
+        return true;
+      },
+    });
+    const activity = makeActivity({
+      upstream: client, settingsBucket: () => 'b', flushMs: 1,
+    });
+    for (let i = 0; i < 400; i += 1) {
+      activity.record({ personId: `p${i}`, kind: 'download', bucket: 'x', status: 200 });
+    }
+    await activity.drain();
+    assert.equal(peak, 1, `${peak} flushes overlapped`);
+
+    failing = false;
+    await activity.drain();
+    const lines = written.flatMap((b) => b.trim().split('\n'));
+    assert.equal(lines.length, 400, `kept ${lines.length} of 400`);
+  });
+
+  test('a source that stops misbehaving is forgotten', async () => {
+    const activity = makeActivity({
+      upstream: () => ({ put: async () => true }), settingsBucket: () => 'b', flushMs: 1,
+    });
+    activity.badSignature('10.0.0.9', { detail: 'x' });
+    assert.equal(activity.trackedSources(), 1);
+    activity.sweep(Date.now() + 120000);
+    assert.equal(activity.trackedSources(), 0);
+  });
+});
+
+describe('N8: reloads are serialized and never go backwards', () => {
+  const slowStore = () => {
+    let running = 0;
+    let peak = 0;
+    let runs = 0;
+    const upstream = {
+      listBuckets: async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        runs += 1;
+        await new Promise((r) => setTimeout(r, 10));
+        running -= 1;
+        return ['t-sparcd-settings-x'];
+      },
+      getJson: async () => ({ status: 404 }),
+      get: async () => ({ status: 404 }),
+      listKeys: async () => [],
+      listCommonPrefixes: async () => [],
+      put: async () => true,
+    };
+    return {
+      store: makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' }),
+      peak: () => peak,
+      runs: () => runs,
+    };
+  };
+
+  test('five callers at once become one reload and one follow-up', async () => {
+    const { store, peak, runs } = slowStore();
+    await Promise.all([
+      store.reload(), store.reload(), store.reload(), store.reload(), store.reload(),
+    ]);
+    assert.equal(peak(), 1, `${peak()} reloads overlapped`);
+    assert.equal(runs(), 2, `${runs()} reloads ran, expected one plus one follow-up`);
+  });
+
+  test('a caller arriving mid-reload still sees the result of its own request', async () => {
+    const { store } = slowStore();
+    const first = store.reload();
+    const second = store.reload();
+    await Promise.all([first, second]);
+    assert.equal(store.snapshot().settingsBucket, 'sparcd-settings-x');
   });
 });

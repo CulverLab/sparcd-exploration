@@ -326,12 +326,18 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     const retiredAt = new Date().toISOString();
     const { token, record } = newInvite();
-    await guard(() => store.savePerson({
+    const saved = await guard(() => store.savePerson({
       ...person,
       status: 'invited',
       invite: record,
       keys: (person.keys ?? []).map((k) => ({ ...k, retiredAt: k.retiredAt ?? retiredAt })),
     }, person.etag));
+    // The same recheck PATCH does: a reset is the other way to lose the last
+    // admin, and another proxy may have removed the other one in between.
+    if (activeAdmins().length === 0) {
+      await store.savePerson({ ...person }, saved.etag).catch(() => {});
+      fail('last_admin', 'the last active admin cannot be reset');
+    }
     logChange(actor, requestId, 'reset', person);
     return { invite: { token, expiresAt: record.expiresAt } };
   }

@@ -33,7 +33,13 @@ proxy are built against it independently.
    allowlist below reach the upstream; any other `x-amz-*` header on the request is a
    403, so a client that grew a new one fails loudly instead of being silently
    stripped. A header from the ordinary forward list travels only if it is in
-   `SignedHeaders`. Responses that name a bucket are **rebuilt**, not filtered.
+   `SignedHeaders`. Response headers are an allowlist too. Responses that name a bucket
+   are **rebuilt**, not filtered, and a response whose text still carries the namespace
+   anywhere but a `Key` or a `Prefix` is a 502 rather than a pass.
+7. **Listings step around what they may not show.** A settings listing never reads
+   through `Settings/access/` or `Settings/activity/`; it jumps past them, returns an
+   honest `IsTruncated`, and pages with a `NextContinuationToken` the proxy minted
+   itself, so a caller cannot measure what was withheld by how far the cursor moved.
 
 ## Layout in storage
 
@@ -181,7 +187,10 @@ writes two.
 `BUCKET_NAMESPACE`, `BUCKET_ALLOW`, `ACCESS_MASTER_KEY`, `PORT` (default 8787),
 `ALLOW_ORIGINS` (CORS, default `*`), `MAX_BODY_BYTES` (default 67108864),
 `MAX_BUFFERED_BYTES` (default 536870912 — the ceiling on request bodies held in memory
-across all in-flight requests at once; past it the answer is 503 `busy`).
+across all in-flight requests at once, charged as bytes arrive rather than reserved
+against a declared length, with any one access key limited to a quarter; past either the
+answer is 503 `busy`), `BODY_IDLE_MS` (default 10000 — a request body that makes no
+progress for this long is 408 and the connection closes).
 
 Required, no default, the process refuses to start without them:
 

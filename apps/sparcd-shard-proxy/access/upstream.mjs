@@ -47,11 +47,12 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
      *              create. Returns false on 412/409, which is the caller's cue
      *              to reload and retry.
      */
-    async put(bucket, key, body, { contentType = 'application/json', ...guard } = {}) {
+    async put(bucket, key, body, { contentType = 'application/json', retry = true, ...guard } = {}) {
       const headers = { 'content-type': contentType };
       if (guard.ifMatch) headers['if-match'] = guard.ifMatch;
       if (guard.ifNoneMatch) headers['if-none-match'] = guard.ifNoneMatch;
-      const res = await sendMeta(url(bucket, key), { method: 'PUT', body, headers });
+      const via = retry ? sendMeta : send;
+      const res = await via(url(bucket, key), { method: 'PUT', body, headers });
       if (res.status === 412 || res.status === 409) return false;
       if (!res.ok) throw new Error(`PUT ${bucket}/${key} → ${res.status} ${await res.text()}`);
       return true;
@@ -76,10 +77,13 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
     },
 
     /** One upstream listing page, with the fields a client's SDK reads back. */
-    async listPage(bucket, { prefix = '', delimiter = '', token, maxKeys = 1000 } = {}) {
+    async listPage(bucket, {
+      prefix = '', delimiter = '', token, startAfter, maxKeys = 1000,
+    } = {}) {
       const query = { 'list-type': '2', prefix, 'max-keys': String(maxKeys) };
       if (delimiter) query.delimiter = delimiter;
       if (token) query['continuation-token'] = token;
+      if (startAfter) query['start-after'] = startAfter;
       const res = await sendMeta(url(bucket, '', query));
       if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
       const xml = await res.text();
@@ -88,8 +92,12 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
           const hit = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(m[1]);
           return hit ? decodeEntities(hit[1]) : undefined;
         };
+        const key = pick('Key');
+        // A listing entry with no key is not something to filter, skip or
+        // guess at — it means the body is not the shape this code reads.
+        if (key === undefined) throw new Error('listing entry has no Key');
         return {
-          key: pick('Key'),
+          key,
           size: Number(pick('Size') ?? 0),
           lastModified: pick('LastModified'),
           etag: pick('ETag'),

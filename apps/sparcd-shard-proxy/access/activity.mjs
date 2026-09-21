@@ -24,7 +24,11 @@ export function makeActivity({
 }) {
   let buffer = [];
   let timer = null;
-  let flushing = null;
+  // The single in-flight flush. Every trigger chains onto it rather than
+  // starting its own: concurrent flushes each take the whole backlog, so the
+  // queue cap stops counting what is in flight and the same lines get written
+  // twice on a retry.
+  let flushing = Promise.resolve();
   let dropped = 0;
   const seenToday = new Set();
   const badSignatures = new Map();
@@ -37,7 +41,12 @@ export function makeActivity({
     }
   }
 
-  async function flush() {
+  function kick() {
+    flushing = flushing.then(flushOnce, flushOnce);
+    return flushing;
+  }
+
+  async function flushOnce() {
     if (dropped > 0) {
       const count = dropped;
       dropped = 0;
@@ -62,16 +71,14 @@ export function makeActivity({
     for (const [day, lines] of byDay) {
       const body = `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`;
       let written = false;
-      let key = nameFor(day);
-      for (let attempt = 0; attempt < 3 && !written; attempt += 1) {
-        try {
-          written = await upstream().put(settingsBucket(), key, body, {
-            contentType: 'application/x-ndjson', ifNoneMatch: '*',
-          });
-        } catch {
-          written = false;
-        }
-        if (!written) key = nameFor(day);
+      try {
+        // No transport retries: the re-queue below is the retry, and it is the
+        // one that respects the cap and the flush interval.
+        written = await upstream().put(settingsBucket(), nameFor(day), body, {
+          contentType: 'application/x-ndjson', ifNoneMatch: '*', retry: false,
+        });
+      } catch {
+        written = false;
       }
       if (!written) failed.push(...lines);
     }
@@ -89,7 +96,7 @@ export function makeActivity({
     if (timer) return;
     timer = setTimeout(() => {
       timer = null;
-      flushing = flush().catch(() => {});
+      kick().catch(() => {});
     }, flushMs);
     timer.unref?.();
   }
@@ -99,7 +106,7 @@ export function makeActivity({
     record(event) {
       enqueue({ ts: new Date().toISOString(), ...event });
       if (buffer.length >= FLUSH_LINES) {
-        flushing = flush().catch(() => {});
+        kick().catch(() => {});
       } else {
         schedule();
       }
@@ -112,6 +119,7 @@ export function makeActivity({
      */
     badSignature(source, event) {
       const now = Date.now();
+      this.sweep(now);
       const open = badSignatures.get(source);
       if (open && now - open.since < BAD_SIGNATURE_WINDOW_MS) {
         open.count += 1;
@@ -134,6 +142,15 @@ export function makeActivity({
       schedule();
     },
 
+    /** Sources that have gone quiet stop costing a map entry. */
+    sweep(now = Date.now()) {
+      for (const [source, open] of badSignatures) {
+        if (now - open.since >= BAD_SIGNATURE_WINDOW_MS) badSignatures.delete(source);
+      }
+    },
+
+    trackedSources: () => badSignatures.size,
+
     /** The contract's `sign-in`: first request per key per day. */
     signIn(accessKeyId, event) {
       const stamp = `${accessKeyId}:${dayOf(Date.now())}`;
@@ -145,8 +162,8 @@ export function makeActivity({
     async drain() {
       if (timer) { clearTimeout(timer); timer = null; }
       badSignatures.clear();
-      await flushing;
-      await flush();
+      await flushing.catch(() => {});
+      await kick().catch(() => {});
     },
 
     async query({ from, to, person, bucket, kind, limit = 200 } = {}) {

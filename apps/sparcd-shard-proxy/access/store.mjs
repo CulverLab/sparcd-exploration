@@ -49,7 +49,25 @@ export function makeStore({
     return ns.toUpstream(state.settingsBucket);
   };
 
-  async function reload() {
+  // One reload at a time, and at most one follow-up queued behind it. Two
+  // overlapping reloads can finish out of order, and the slower one then
+  // overwrites newer state with older — a pause that reappears as active.
+  let running = null;
+  let queued = null;
+
+  function reload() {
+    if (!running) return runReload();
+    if (!queued) queued = running.then(runReload, runReload);
+    return queued;
+  }
+
+  function runReload() {
+    queued = null;
+    running = doReload().finally(() => { running = null; });
+    return running;
+  }
+
+  async function doReload() {
     const next = emptyState();
     for (const upstreamName of await upstream.listBuckets()) {
       const client = ns.toClient(upstreamName);

@@ -127,24 +127,58 @@ export function buildListBuckets(clientNames) {
     + `<Buckets>${buckets}</Buckets></ListAllMyBucketsResult>`;
 }
 
-const NAMING_TAGS = /<(Name|Bucket|BucketName|Resource|HostId)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g;
+const ANY_ELEMENT = /<([A-Za-z][\w.-]*)(?:\s[^>]*)?>([^<]*)<\/\1>/g;
+
+// The caller's own strings. A key or a listing prefix is whatever the caller
+// asked about, so a namespace-shaped substring in one of them is theirs.
+const CALLER_TEXT = new Set(['Key', 'Prefix', 'NextContinuationToken', 'StartAfter', 'Marker']);
 
 /**
- * True when a response still names an upstream bucket. Only the elements that
- * carry a bucket name are examined — an object key that happens to start with
- * the namespace is a key, not a leak.
+ * True when a response still names an upstream bucket, looking at every
+ * element's text rather than a list of elements known to carry a name — the
+ * list approach missed `Location`, `Endpoint` and `Message`, and would miss
+ * the next one too.
+ *
+ * The match is boundary-anchored: a namespace has to start the value or follow
+ * a separator, so `t-` inside `widget-t-shirt` is prose and `/t-sparcd-aaa` is
+ * a bucket.
  */
 export function leaksNamespace(text, namespace) {
   if (!namespace) return false;
-  for (const [, , value] of text.matchAll(NAMING_TAGS)) {
-    if (value.startsWith(namespace) || value.startsWith(`/${namespace}`)) return true;
+  for (const [, tag, value] of text.matchAll(ANY_ELEMENT)) {
+    if (CALLER_TEXT.has(tag)) continue;
+    let at = value.indexOf(namespace);
+    while (at !== -1) {
+      const before = at === 0 ? '' : value[at - 1];
+      if (before === '' || '/ \t"\'(:=,'.includes(before)) return true;
+      at = value.indexOf(namespace, at + 1);
+    }
   }
   return false;
 }
 
-/** S3 error bodies name the upstream path and host. Neither is the caller's. */
+/**
+ * Elements that describe where the upstream is rather than what the caller
+ * asked for. `Location` on a completed multipart upload is a full URL naming
+ * the upstream host and the namespaced bucket; `Endpoint` appears on redirect
+ * errors; `Resource` and `HostId` are on every S3 error.
+ */
 export function scrubErrorDetail(xml) {
-  return xml.replace(/<(Resource|HostId)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g, '');
+  return xml.replace(
+    /<(Resource|HostId|Location|Endpoint)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g, '',
+  );
+}
+
+/**
+ * The request target, judged on the raw bytes. `new URL('/\\evil/x', base)`
+ * hands back host `evil` because WHATWG treats a backslash as a separator, so
+ * a check that runs after parsing is checking the attacker's host.
+ */
+export function safeRequestTarget(target) {
+  if (typeof target !== 'string') return false;
+  if (!target.startsWith('/')) return false;
+  if (target.startsWith('//')) return false;
+  return !target.includes('\\');
 }
 
 /**

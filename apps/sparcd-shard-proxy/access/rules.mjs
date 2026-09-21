@@ -254,12 +254,43 @@ export function listingGuard({ prefix = '', person, isSettings }) {
 }
 
 /**
- * A ListBucketResult built from scratch, as one complete page. The proxy
- * paginates the upstream itself for the settings bucket, because handing back
- * a filtered page with the upstream's continuation token would let a caller
- * count what was removed.
+ * The first string that sorts after everything under `tree`. Incrementing the
+ * trailing separator gets there: every key in `Settings/access/` is less than
+ * `Settings/access0`, and `Settings/access0` is still less than the next real
+ * child of `Settings/`. That is what lets a listing step over a protected tree
+ * in one request instead of paging through it.
  */
-export function buildListing({ bucket, prefix = '', delimiter = '', keys, commonPrefixes }) {
+export function afterTree(tree) {
+  const last = tree.charCodeAt(tree.length - 1);
+  return tree.slice(0, -1) + String.fromCharCode(last + 1);
+}
+
+/**
+ * The continuation token is the proxy's own, not the upstream's: the upstream's
+ * would describe a position in a listing the caller never received, and would
+ * let them count what was filtered out by how far it jumped.
+ */
+export function encodeListingToken(key) {
+  return Buffer.from(key, 'utf8').toString('base64url');
+}
+
+export function decodeListingToken(token) {
+  if (typeof token !== 'string' || token === '') return null;
+  const decoded = Buffer.from(token, 'base64url');
+  // base64url decoding never throws, so the round trip is the validation.
+  if (decoded.toString('base64url') !== token) return null;
+  return decoded.toString('utf8');
+}
+
+/**
+ * A ListBucketResult built from scratch. The proxy paginates the upstream
+ * itself for the settings bucket, because handing back a filtered page with
+ * the upstream's continuation token would let a caller count what was removed.
+ */
+export function buildListing({
+  bucket, prefix = '', delimiter = '', keys, commonPrefixes,
+  truncated = false, nextToken = null,
+}) {
   const contents = keys.map((k) =>
     `<Contents><Key>${xml(k.key)}</Key>`
     + `<LastModified>${xml(k.lastModified ?? '1970-01-01T00:00:00.000Z')}</LastModified>`
@@ -273,7 +304,10 @@ export function buildListing({ bucket, prefix = '', delimiter = '', keys, common
     + `<Name>${xml(bucket)}</Name><Prefix>${xml(prefix)}</Prefix>`
     + `<Delimiter>${xml(delimiter)}</Delimiter>`
     + `<KeyCount>${keys.length}</KeyCount><MaxKeys>${keys.length}</MaxKeys>`
-    + '<IsTruncated>false</IsTruncated>'
+    + `<IsTruncated>${truncated ? 'true' : 'false'}</IsTruncated>`
+    + (truncated && nextToken
+      ? `<NextContinuationToken>${xml(encodeListingToken(nextToken))}</NextContinuationToken>`
+      : '')
     + contents + prefixes
     + '</ListBucketResult>';
 }

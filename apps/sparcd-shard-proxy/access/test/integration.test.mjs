@@ -12,6 +12,7 @@ import {
 
 import {
   startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest, rawTarget,
+  stalledPut, chunked, spawnServer, MASTER_KEY,
   BUCKET_A, BUCKET_B, SETTINGS, CANARY, CANARY_KEY, CANARY_BODY,
   UUID_A, UUID_B, NAMESPACE,
 } from './harness.mjs';
@@ -997,6 +998,213 @@ describe('hardening', () => {
     }
     const me = res.body.people.find((p) => p.name === 'alice');
     assert.match(me.lastActiveAt, /^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe('round 3 follow-ups', () => {
+  const mediaA = `${prefixA}/a.jpg`;
+
+  // N1 — a declared length is a claim, not a reservation
+  test('connections that promise bytes and send none do not hold the budget', async () => {
+    const small = await startProxy(
+      endpoint, { maxBufferedBytes: 64 * 1024, bodyIdleMs: 400 }, { bootstrap: false },
+    );
+    try {
+      const { port } = new URL(small.origin);
+      // Eight sockets, each declaring the whole budget, each sending nothing.
+      const stalled = Array.from({ length: 8 }, () =>
+        stalledPut(port, `/${BUCKET_A}/${prefixA}/stall.jpg`, 64 * 1024,
+          people.alice.accessKey));
+      await new Promise((r) => setTimeout(r, 150));
+
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const real = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/through.jpg`, { body: 'x' });
+      assert.equal(real.status, 200, 'a real upload was held out by stalled ones');
+
+      // And the stalled ones are timed out rather than parked for 300 s.
+      const outcomes = await Promise.all(stalled);
+      for (const out of outcomes) assert.ok([408, 0].includes(out.status), `got ${out.status}`);
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('one key cannot take more than a quarter of the budget', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 4096 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/share.jpg`, {
+        body: 'x'.repeat(2048),
+      });
+      assert.equal(res.status, 503);
+      assert.match(res.text, /SlowDown/);
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('a paused key is refused before its body is read', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const bobId = list.body.people.find((p) => p.name === 'bob').id;
+    await people.admin.api('PATCH', `/-/admin/people/${bobId}`, { status: 'paused' });
+    try {
+      const res = await people.bob.raw('PUT', `/${BUCKET_A}/${prefixA}/paused.jpg`, {
+        body: 'x'.repeat(1024),
+      });
+      assert.equal(res.status, 403);
+      assert.match(res.text, /person is paused|AccessDenied/);
+    } finally {
+      await people.admin.api('PATCH', `/-/admin/people/${bobId}`, { status: 'active' });
+    }
+  });
+
+  // N2 — a body with no declared length is still accounted
+  test('a chunked body is counted, not waved through', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 4096 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/chunked.jpg`, {
+        body: chunked('x'.repeat(2048)),
+      });
+      assert.equal(res.status, 503, 'an undeclared body escaped the budget');
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  test('the budget comes back after the response, so the next upload fits', async () => {
+    const small = await startProxy(endpoint, { maxBufferedBytes: 64 * 1024 }, { bootstrap: false });
+    try {
+      const who = caller(small.origin, {
+        accessKey: people.alice.accessKey, secretKey: people.alice.secretKey,
+      });
+      for (let i = 0; i < 6; i += 1) {
+        const res = await who.raw('PUT', `/${BUCKET_A}/${prefixA}/again${i}.jpg`, {
+          body: 'x'.repeat(8 * 1024),
+        });
+        assert.equal(res.status, 200, `upload ${i}`);
+      }
+    } finally {
+      await small.proxy.close();
+    }
+  });
+
+  // N3 — nothing names the upstream
+  test('a completed multipart upload names the client bucket and no host', async () => {
+    const key = `${prefixA}/n3-multi.bin`;
+    const s3 = people.alice.s3();
+    const created = await s3.send(new CreateMultipartUploadCommand({ Bucket: BUCKET_A, Key: key }));
+    const parts = [];
+    for (let n = 1; n <= 2; n += 1) {
+      const out = await s3.send(new UploadPartCommand({
+        Bucket: BUCKET_A, Key: key, UploadId: created.UploadId, PartNumber: n,
+        Body: Buffer.alloc(5 * 1024 * 1024, 64 + n),
+      }));
+      parts.push({ ETag: out.ETag, PartNumber: n });
+    }
+    const raw = await people.alice.raw(
+      'POST', `/${BUCKET_A}/${key}?uploadId=${encodeURIComponent(created.UploadId)}`,
+      {
+        body: `<CompleteMultipartUpload>${parts.map((p) =>
+          `<Part><PartNumber>${p.PartNumber}</PartNumber><ETag>${p.ETag}</ETag></Part>`).join('')}`
+          + '</CompleteMultipartUpload>',
+        headers: { 'content-type': 'application/xml' },
+      },
+    );
+    assert.equal(raw.status, 200, raw.text);
+    assert.equal(raw.text.includes('<Location>'), false, raw.text);
+    assert.equal(raw.text.includes('<Endpoint>'), false);
+    assert.equal(raw.text.includes(NAMESPACE + BUCKET_A), false);
+    assert.match(raw.text, /<Bucket>sparcd-/);
+  });
+
+  test('response headers are an allowlist', async () => {
+    const res = await people.alice.raw('GET', `/${BUCKET_A}/${mediaA}`);
+    assert.equal(res.status, 200);
+    for (const name of ['server', 'x-amz-id-2', 'x-xss-protection', 'vary-something']) {
+      assert.equal(res.headers.get(name), null, name);
+    }
+    assert.ok(res.headers.get('content-type'));
+    assert.ok(res.headers.get('etag'));
+  });
+
+  // N4 — listing around the protected trees
+  test('a settings listing stays honest as the activity tree grows', async () => {
+    // Enough activity objects that a page walk would bury the real files.
+    const bucket = `${NAMESPACE}${SETTINGS}`;
+    for (let i = 0; i < 40; i += 1) {
+      await root.put(bucket, `Settings/activity/2020-01-01/${1000 + i}-0000000${i % 10}.ndjson`,
+        '{"kind":"download"}\n', { contentType: 'application/x-ndjson' });
+    }
+    await root.put(bucket, 'Settings/species.json', '[]');
+
+    const res = await people.alice.raw('GET', `/${SETTINGS}?list-type=2&prefix=Settings/`);
+    assert.equal(res.status, 200);
+    assert.match(res.text, /Settings\/locations\.json/);
+    assert.match(res.text, /Settings\/species\.json/);
+    assert.equal(res.text.includes('Settings/activity/'), false);
+    assert.equal(res.text.includes('Settings/access/'), false);
+  });
+
+  test('a page that had to stop says so and can be resumed', async () => {
+    const first = await people.alice.raw('GET', `/${SETTINGS}?list-type=2&prefix=Settings/&max-keys=1`);
+    assert.equal(first.status, 200);
+    assert.match(first.text, /<IsTruncated>true<\/IsTruncated>/);
+    const token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(first.text)[1];
+    assert.equal(token.includes('Settings'), false, 'the token is not opaque');
+
+    const seen = new Set();
+    let next = token;
+    for (let page = 0; page < 10 && next; page += 1) {
+      const res = await people.alice.raw(
+        'GET', `/${SETTINGS}?list-type=2&prefix=Settings/&max-keys=1`
+          + `&continuation-token=${encodeURIComponent(next)}`);
+      assert.equal(res.status, 200);
+      for (const m of res.text.matchAll(/<Key>([\s\S]*?)<\/Key>/g)) seen.add(m[1]);
+      next = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(res.text)?.[1] ?? null;
+    }
+    assert.ok(seen.has('Settings/species.json'), [...seen].join(','));
+    for (const key of seen) assert.equal(key.startsWith('Settings/activity/'), false);
+  });
+
+  // N5 — the Host the signature is checked against
+  test('a backslash target cannot move the host the signature is checked against', async () => {
+    const { port } = new URL(origin);
+    const res = await rawTarget(port, '/\\evil.example/-/health');
+    assert.equal(res.status, 400);
+  });
+
+  // N6 — a process that cannot listen says so and stops
+  test('a second process on a taken port exits non-zero', async () => {
+    const out = await spawnServer({
+      UPSTREAM: endpoint,
+      S3_ACCESS_KEY_ID: 'accesstestkey',
+      S3_SECRET_ACCESS_KEY: 'accesstestsecret',
+      BUCKET_NAMESPACE: NAMESPACE,
+      ACCESS_MASTER_KEY: MASTER_KEY,
+      PUBLIC_ENDPOINT: origin,
+      ALLOWED_HOSTS: new URL(origin).host,
+      PORT: new URL(origin).port,
+    });
+    assert.notEqual(out.code, 0, `exited ${out.code}`);
+    assert.match(out.stderr, /EADDRINUSE|listen/i);
+  });
+
+  // 6 residue — reset is the other way to lose the last admin
+  test('resetting the last active admin is refused, before and after the write', async () => {
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const me = list.body.people.find((p) => p.admin && p.status === 'active');
+    const res = await people.admin.api('POST', `/-/admin/people/${me.id}/reset`);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'last_admin');
+    // The key still works, so nothing half-happened.
+    assert.equal((await people.admin.api('GET', '/-/admin/people')).status, 200);
   });
 });
 

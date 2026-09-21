@@ -1,7 +1,7 @@
 // Shared scaffolding for the integration run: a loopback MinIO, a seeded
 // namespace, the proxy on an ephemeral port, and signing helpers.
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { request as httpRequest, createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -152,10 +152,16 @@ export function caller(origin, { accessKey, secretKey }) {
      */
     async raw(method, path, { body, headers = {}, unsignedHeaders, unsigned = false } = {}) {
       const extra = { ...headers };
-      if (!unsigned && body !== undefined && !('x-amz-content-sha256' in extra)) {
+      const streaming = body && typeof body.getReader === 'function';
+      // A stream cannot be hashed up front, which is exactly why a browser
+      // declares UNSIGNED-PAYLOAD for one.
+      if (!unsigned && !streaming && body !== undefined && !('x-amz-content-sha256' in extra)) {
         extra['x-amz-content-sha256'] = await sha256hex(body);
       }
-      const req = await aws.sign(`${origin}${path}`, { method, body, headers: extra });
+      const init = { method, body, headers: extra };
+      // A stream body needs the half-duplex opt-in before it can be a Request.
+      if (streaming) init.duplex = 'half';
+      const req = await aws.sign(`${origin}${path}`, init);
       for (const [k, v] of Object.entries(unsignedHeaders ?? {})) req.headers.set(k, v);
       const res = await fetch(req);
       return { status: res.status, text: await res.text(), headers: res.headers };
@@ -247,6 +253,67 @@ export function rawTarget(port, path, host = `127.0.0.1:${port}`) {
     });
     req.on('error', reject);
     req.end();
+  });
+}
+
+/**
+ * A PUT that announces a body and then sends nothing. The point of the
+ * exercise: a declared Content-Length is a claim, and a proxy that reserves
+ * budget against claims can be starved by sockets that never deliver.
+ */
+export function stalledPut(port, path, declared, accessKey) {
+  return new Promise((resolve) => {
+    const req = httpRequest({
+      host: '127.0.0.1', port, method: 'PUT', path,
+      headers: {
+        host: `127.0.0.1:${port}`,
+        'content-length': String(declared),
+        'x-amz-date': '20260101T000000Z',
+        'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
+        // A real key id, so the request gets past the cheap lookup and into
+        // the body-reading path this is about. The signature is nonsense, but
+        // it is not checked until the body has arrived — which it never does.
+        authorization: `AWS4-HMAC-SHA256 Credential=${accessKey}/20260101/`
+          + 'us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, '
+          + 'Signature=00',
+      },
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode }));
+    });
+    req.on('error', () => resolve({ status: 0 }));
+    // Deliberately never written and never ended.
+    req.flushHeaders();
+    setTimeout(() => { req.destroy(); resolve({ status: 0 }); }, 5000).unref?.();
+  });
+}
+
+/** A body with no Content-Length, so the proxy is told nothing up front. */
+export function chunked(text) {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
+/** Start `access/server.mjs` as its own process and wait for it to give up. */
+export function spawnServer(env) {
+  const entry = fileURLToPath(new URL('../server.mjs', import.meta.url));
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [entry], {
+      env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    let stdout = '';
+    child.stderr.on('data', (c) => { stderr += c; });
+    child.stdout.on('data', (c) => { stdout += c; });
+    const kill = setTimeout(() => child.kill('SIGKILL'), 20000);
+    child.on('exit', (code, signal) => {
+      clearTimeout(kill);
+      resolve({ code: code ?? `signal:${signal}`, stderr, stdout });
+    });
   });
 }
 
