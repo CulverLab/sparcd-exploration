@@ -48,7 +48,10 @@ const EXPOSE_HEADERS =
 // `origin`, `accept-*`, `sec-fetch-*`, `cf-connecting-ip`, `user-agent` — is
 // dropped rather than forwarded. Forwarding them means signing them, and any
 // one the platform rewrites between signing and sending invalidates the
-// signature at the far end.
+// signature at the far end. Everything forwarded is also signed (`allHeaders`
+// below), because Ceph RGW refuses a PUT that carries a `content-type` outside
+// SignedHeaders with 403 AccessDenied, and aws4fetch leaves `content-type`
+// unsigned by default.
 const FORWARD_HEADERS = new Set([
   'content-type', 'content-md5', 'cache-control', 'content-disposition',
   'content-encoding', 'content-language', 'expires',
@@ -154,6 +157,7 @@ export default {
       method: request.method,
       headers: upstreamHeaders(request),
       body,
+      aws: { allHeaders: true },
     });
 
     // The Worker owns CORS the way Caddy does, so any CORS headers the

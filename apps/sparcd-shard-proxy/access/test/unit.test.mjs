@@ -16,6 +16,7 @@ import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
   newInvite, inviteMatches, hashToken,
 } from '../keys.mjs';
+import { makeUpstream } from '../upstream.mjs';
 
 const KEY = { accessKeyId: 'SPKABCDEFGHIJKLMNOP', secretAccessKey: 'a'.repeat(40) };
 const lookup = (id) => (id === KEY.accessKeyId ? KEY.secretAccessKey : null);
@@ -438,5 +439,60 @@ describe('credential wrapping and invites', () => {
     assert.equal(inviteMatches(undefined, token), false);
     const expired = { tokenHash: hashToken(token), expiresAt: new Date(Date.now() - 1).toISOString() };
     assert.equal(inviteMatches(expired, token), false);
+  });
+});
+
+describe('upstream signing', () => {
+  // Ceph RGW refuses a PUT whose content-type is not inside SignedHeaders, so
+  // the proxy signs everything it sends. No socket: global fetch is replaced
+  // with a recorder, and aws4fetch hands it the signed Request.
+  async function capture(run) {
+    const real = globalThis.fetch;
+    let seen;
+    globalThis.fetch = async (req) => {
+      seen = req;
+      return new Response('', { status: 200, headers: { etag: '"x"' } });
+    };
+    try {
+      await run(makeUpstream({
+        endpoint: 'https://rgw.example/',
+        accessKeyId: 'AKIAEXAMPLE',
+        secretAccessKey: 'b'.repeat(40),
+      }));
+    } finally {
+      globalThis.fetch = real;
+    }
+    const auth = seen.headers.get('authorization');
+    return {
+      request: seen,
+      signedHeaders: /SignedHeaders=([^,]+)/.exec(auth)[1].split(';'),
+    };
+  }
+
+  test('a metadata PUT signs its content-type and its guard', async () => {
+    const { signedHeaders } = await capture((upstream) => upstream.put(
+      'sparcd-settings', 'people/p1.json', '{"id":"p1"}',
+      { ifNoneMatch: '*' },
+    ));
+    assert.ok(signedHeaders.includes('content-type'));
+    assert.ok(signedHeaders.includes('if-none-match'));
+    assert.ok(!signedHeaders.includes('content-length'));
+  });
+
+  test('the proxied passthrough signs the headers it forwards', async () => {
+    // The header set `proxyFetch` in server.mjs hands to `upstream.send`.
+    const headers = new Headers({
+      'content-type': 'image/jpeg',
+      'if-none-match': '*',
+      'x-amz-meta-sha256': 'deadbeef',
+    });
+    const { request, signedHeaders } = await capture((upstream) => upstream.send(
+      upstream.url('sparcd-coll', 'Media/abc/img.jpg'),
+      { method: 'PUT', headers, body: Buffer.from([0xff, 0xd8]) },
+    ));
+    assert.equal(request.method, 'PUT');
+    for (const name of ['content-type', 'host', 'if-none-match', 'x-amz-meta-sha256']) {
+      assert.ok(signedHeaders.includes(name), `${name} is not signed`);
+    }
   });
 });

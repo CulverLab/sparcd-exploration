@@ -91,6 +91,14 @@ reaches an HTTP/1.1 upstream as `Transfer-Encoding: chunked`, and RGW answers
 501. This process buffers too, because it has to hash the body to check it
 against `x-amz-content-sha256`.
 
+RGW also refuses a PUT that carries a `content-type` the signature does not
+cover, with 403 AccessDenied; the same request signed, or with no
+`content-type` at all, succeeds, and MinIO accepts either, which is why the
+suites here never caught it. So every upstream request signs all its headers
+(`aws: { allHeaders: true }`) and every body goes out as bytes, because Node's
+fetch attaches `content-type: text/plain;charset=UTF-8` to a string body after
+signing.
+
 No deployment automation ships here.
 
 ## Client notes
