@@ -75,10 +75,10 @@ export function downloadsSentence(file: string, where: string, events: ActivityE
   if (events.length === 0) return `Nobody has downloaded ${file} from ${where}.`
   const parts = events.map((event) => {
     const when = new Date(event.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    return `${event.personName ?? 'Someone'} on ${when}, ${timeOf(event.ts)}`
+    return `by ${event.personName ?? 'someone'} on ${when}, ${timeOf(event.ts)}`
   })
   const people = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
-  return `${file} from ${where} was downloaded by ${people}.`
+  return `${file} from ${where} was downloaded ${people}.`
 }
 
 const csvCell = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)

@@ -3,9 +3,9 @@ import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { S3Config } from '@sparcd/types'
 import { App } from '../src/App'
-import { button, click, field, render, rowButtons, settle, type } from './dom'
+import { button, click, field, hasButton, render, rowButtons, settle, type } from './dom'
 import { config, fakeStorage, httpError, settingsStore, type Store } from './storage'
-import { noService } from './fakeApi'
+import { fakeApi, noService } from './fakeApi'
 import type { MakeApi } from '../src/App'
 
 type Message = { type: string; config?: S3Config }
@@ -124,6 +124,42 @@ describe('a load that finishes late (fix 3)', () => {
 
     expect(speciesSection(view.host).textContent).toContain('Newer')
     expect(speciesSection(view.host).textContent).not.toContain('Older')
+  })
+})
+
+const sidebar = (host: HTMLElement) =>
+  Array.from(host.querySelectorAll('nav[aria-label="Sections"]')[0].querySelectorAll('button')).map((one) => one.textContent)
+
+describe('what this login can manage', () => {
+  it('works as before when the storage does not manage people', async () => {
+    const { view } = open(settingsStore())
+    await settle()
+    expect(sidebar(view.host)).toEqual(['Species', 'Locations', 'Collections', 'Settings'])
+    expect(view.host.textContent).not.toContain('People')
+  })
+
+  it('adds People after Collections, and Activity, for an administrator', async () => {
+    const { api } = fakeApi()
+    const { view } = open(settingsStore(), {}, () => api)
+    await settle()
+    expect(sidebar(view.host)).toEqual(['Species', 'Locations', 'Collections', 'People', 'Activity', 'Settings'])
+  })
+
+  it('uses the name the service knows as the administrator identity', async () => {
+    const { api } = fakeApi()
+    const { view } = open(settingsStore(), {}, () => api)
+    await settle()
+    expect(view.host.textContent).toContain('Jorge Delgado')
+  })
+
+  it('stops a login that is not an administrator with one plain screen', async () => {
+    const { api } = fakeApi({ me: { id: 'p1', name: 'Ana Morales', email: 'ana@example.org', admin: false, collections: [] } })
+    const { view } = open(settingsStore(), {}, () => api)
+    await settle()
+    expect(view.host.textContent).toContain("This login can't manage SPARC'd.")
+    expect(view.host.textContent).toContain('Ask an administrator for access.')
+    expect(hasButton(view.host, 'Logout')).toBe(true)
+    expect(view.host.querySelector('nav[aria-label="Sections"]')).toBeNull()
   })
 })
 
