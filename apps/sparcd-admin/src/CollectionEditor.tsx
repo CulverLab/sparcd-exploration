@@ -96,7 +96,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
   collections: CollectionRecord[]
   client: SafeS3Client
   actor: string
-  reload: () => void
+  reload: () => void | Promise<void>
   speciesRegistry: unknown[]
   locationsRegistry: unknown[]
   /** People in this collection, when the storage manages people. */
@@ -109,8 +109,12 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
   const blank = { collection: null, species: null, locations: null }
   const [retry, setRetry] = useState<Record<Slot, (() => Promise<void>) | null>>(blank)
   const [note, setNote] = useState<Record<Slot, string>>({ collection: '', species: '', locations: '' })
+  // Which save is in flight. It clears when the reload it triggered lands, so
+  // the controls stay disabled across the gap instead of swallowing clicks.
+  const [saving, setSaving] = useState<Slot | null>(null)
 
   useEffect(() => {
+    setSaving(null)
     if (!editing) {
       if (collections[0]) setEditing(editingFor(collections[0]))
       return
@@ -190,11 +194,13 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       setRetry((current) => ({ ...current, [slot]: null }))
       setNote((current) => ({ ...current, [slot]: '' }))
       setMessage(savedMessage)
-      reload()
+      await reload()
+      setSaving(null)
     } catch {
       setRetry((current) => ({ ...current, [slot]: applied }))
       setNote((current) => ({ ...current, [slot]: `Saved. The history entry for “${where}” did not go through.` }))
       setMessage('')
+      setSaving(null)
     }
   }
 
@@ -225,6 +231,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       return
     }
     const key = `Collections/${selected.uuid}/${kind}.json`
+    setSaving(kind)
     const { eventId, occurredAt, base } = auditBase()
     const event = {
       schemaVersion: 1,
@@ -262,6 +269,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       setMessage(cause instanceof ConditionalReplaceConflictError
         ? 'Someone else changed this while you were editing. Reload before saving again.'
         : (cause as Error).message)
+      setSaving(null)
     }
   }
 
@@ -271,6 +279,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       setMessage(invalid)
       return
     }
+    setSaving('collection')
     const { eventId, occurredAt, base } = auditBase()
     const event = {
       schemaVersion: 1,
@@ -305,6 +314,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       setMessage(cause instanceof ConditionalReplaceConflictError
         ? 'Someone else changed this collection while you were editing. Reload before saving again.'
         : (cause as Error).message)
+      setSaving(null)
     }
   }
 
@@ -348,6 +358,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
               <li key={entry.key} className="border-b border-ruleSoft last:border-b-0">
                 <button
                   type="button"
+                  disabled={saving !== null}
                   onClick={() => selectCollection(entry)}
                   aria-current={entry.key === editing.record.key ? 'true' : undefined}
                   className={`block w-full px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 -outline-offset-2 focus-visible:outline-accent ${
@@ -363,7 +374,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
           </ul>
         </div>
         <div className="min-w-0">
-          <fieldset className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
+          <fieldset disabled={saving !== null} className="grid gap-3 border border-rule p-4 sm:grid-cols-2">
             <legend className="px-1 text-sm font-semibold text-ink">{selected.name ?? selected.bucket}</legend>
             {fields.map(([key, label]) => (
               <label key={key} className="grid gap-1 text-sm font-medium text-ink">
@@ -384,11 +395,11 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
           </fieldset>
           <button
             type="button"
-            disabled={!collectionHasChanges(editing.draft, selected.document) || retry.collection !== null}
+            disabled={saving !== null || !collectionHasChanges(editing.draft, selected.document) || retry.collection !== null}
             onClick={() => void saveMetadata()}
             className="mt-3 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           >
-            Save collection
+            {saving === 'collection' ? 'Saving…' : 'Save collection'}
           </button>
           {historyBlock('collection')}
           {membersFor?.(selected)}
@@ -409,6 +420,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
               onUpdateAll={() => updateAll(kind)}
               onUpdateOne={(index) => updateOne(kind, index)}
               blocked={retry[kind] !== null}
+              saving={saving === kind}
               pending={historyBlock(kind)}
             />
           ))}
