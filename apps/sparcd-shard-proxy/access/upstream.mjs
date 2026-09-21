@@ -22,8 +22,16 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
     return u;
   };
 
-  const send = (u, init = {}) => passthrough.fetch(u, { ...init, redirect: 'manual' });
-  const sendMeta = (u, init = {}) => aws.fetch(u, { ...init, redirect: 'manual' });
+  // `allHeaders` signs every header on the request instead of aws4fetch's
+  // default set. Ceph RGW refuses a PUT whose `content-type` is present but
+  // absent from SignedHeaders with 403 AccessDenied, and `content-type` is one
+  // of the headers aws4fetch skips by default. MinIO accepts either, so only
+  // RGW ever showed it. Nothing below sets `content-length`, `connection` or
+  // `host` by hand: those the runtime rewrites after signing, and a signed
+  // header that changes in flight fails the same way.
+  const signAll = (init) => ({ ...init, redirect: 'manual', aws: { ...init.aws, allHeaders: true } });
+  const send = (u, init = {}) => passthrough.fetch(u, signAll(init));
+  const sendMeta = (u, init = {}) => aws.fetch(u, signAll(init));
 
   return {
     origin: base,
@@ -52,7 +60,11 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
       if (guard.ifMatch) headers['if-match'] = guard.ifMatch;
       if (guard.ifNoneMatch) headers['if-none-match'] = guard.ifNoneMatch;
       const via = retry ? sendMeta : send;
-      const res = await via(url(bucket, key), { method: 'PUT', body, headers });
+      // Bytes, not a string: for a string body Node's fetch appends its own
+      // `content-type: text/plain;charset=UTF-8` after signing, which RGW then
+      // rejects as an unsigned header even when the caller passed one.
+      const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
+      const res = await via(url(bucket, key), { method: 'PUT', body: bytes, headers });
       if (res.status === 412 || res.status === 409) return false;
       if (!res.ok) throw new Error(`PUT ${bucket}/${key} → ${res.status} ${await res.text()}`);
       return true;
