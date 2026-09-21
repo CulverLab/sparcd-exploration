@@ -1,0 +1,88 @@
+// The one upstream (invariant 2). Every byte that leaves this process for
+// storage goes through here, signed with the credential that never leaves it.
+// Redirects are not followed: a 3xx is returned as-is rather than chased to
+// whatever host it names.
+
+import { AwsClient } from 'aws4fetch';
+
+export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secretAccessKey }) {
+  const base = new URL(endpoint);
+  const aws = new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region });
+
+  const url = (bucket, key = '', query) => {
+    const u = new URL(base);
+    u.pathname = `/${bucket}${key ? `/${key.split('/').map(encodeURIComponent).join('/')}` : ''}`;
+    if (query) for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+    return u;
+  };
+
+  const send = (u, init = {}) => aws.fetch(u, { ...init, redirect: 'manual' });
+
+  return {
+    origin: base,
+    send,
+    url,
+
+    async get(bucket, key) {
+      const res = await send(url(bucket, key));
+      if (res.status === 404) return { status: 404 };
+      if (!res.ok) throw new Error(`GET ${bucket}/${key} → ${res.status}`);
+      return { status: res.status, etag: res.headers.get('etag'), text: await res.text() };
+    },
+
+    async getJson(bucket, key) {
+      const res = await this.get(bucket, key);
+      return res.status === 404 ? { status: 404 } : { ...res, value: JSON.parse(res.text) };
+    },
+
+    /**
+     * @param guard `{ ifMatch }` for a replace, `{ ifNoneMatch: '*' }` for a
+     *              create. Returns false on 412/409, which is the caller's cue
+     *              to reload and retry.
+     */
+    async put(bucket, key, body, { contentType = 'application/json', ...guard } = {}) {
+      const headers = { 'content-type': contentType };
+      if (guard.ifMatch) headers['if-match'] = guard.ifMatch;
+      if (guard.ifNoneMatch) headers['if-none-match'] = guard.ifNoneMatch;
+      const res = await send(url(bucket, key), { method: 'PUT', body, headers });
+      if (res.status === 412 || res.status === 409) return false;
+      if (!res.ok) throw new Error(`PUT ${bucket}/${key} → ${res.status} ${await res.text()}`);
+      return true;
+    },
+
+    async listKeys(bucket, prefix) {
+      const keys = [];
+      let token;
+      do {
+        const query = { 'list-type': '2', prefix, 'max-keys': '1000' };
+        if (token) query['continuation-token'] = token;
+        const res = await send(url(bucket, '', query));
+        if (res.status === 404) return [];
+        if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
+        const xml = await res.text();
+        for (const m of xml.matchAll(/<Key>([\s\S]*?)<\/Key>/g)) keys.push(decodeEntities(m[1]));
+        token = /<IsTruncated>true<\/IsTruncated>/.test(xml)
+          ? decodeEntities(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1] ?? '')
+          : null;
+      } while (token);
+      return keys;
+    },
+
+    async listBuckets() {
+      const u = new URL(base);
+      u.pathname = '/';
+      const res = await send(u);
+      if (!res.ok) throw new Error(`ListBuckets → ${res.status}`);
+      const xml = await res.text();
+      return [...xml.matchAll(/<Bucket>[\s\S]*?<Name>([\s\S]*?)<\/Name>[\s\S]*?<\/Bucket>/g)]
+        .map((m) => decodeEntities(m[1]));
+    },
+  };
+}
+
+function decodeEntities(s) {
+  return s
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
