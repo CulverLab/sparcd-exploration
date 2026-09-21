@@ -38,6 +38,14 @@ describe('what went wrong (bug 11)', () => {
     await expect(loadAdminData(storage.make)).rejects.toThrow(/Access denied/)
   })
 
+  it('passes over an area holding only one of the two lists (fix 5)', async () => {
+    const store = settingsStore()
+    store['sparcd-settings-0'] = { 'Settings/locations.json': [] }
+    const storage = fakeStorage(store)
+    const data = await loadAdminData(storage.make)
+    expect(data.species.bucket).toBe('sparcd-settings-a')
+  })
+
   it('says so plainly when the lists really are not there', async () => {
     const storage = fakeStorage({ 'sparcd-settings-a': {}, other: {} })
     await expect(loadAdminData(storage.make)).rejects.toThrow(

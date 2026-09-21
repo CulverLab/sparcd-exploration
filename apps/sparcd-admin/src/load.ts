@@ -45,7 +45,10 @@ async function findSettingsArea(client: SafeS3Client) {
   }
   for (const bucket of settingsBucketCandidates(visible)) {
     try {
+      // Both files, or it is not the settings area: a half-populated candidate
+      // would otherwise win and the other list would read as missing.
       await client.statObject(bucket, LOCATIONS_KEY)
+      await client.statObject(bucket, SPECIES_KEY)
       return bucket
     } catch (cause) {
       if (!isNotFound(cause)) throw readProblem(cause, `the shared lists in “${bucket}”`)

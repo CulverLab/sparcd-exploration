@@ -207,3 +207,28 @@ describe('collection checklist', () => {
     ]);
   });
 });
+
+describe('review fixes', () => {
+  it('refuses numbers that are not plain decimals (fix 6)', () => {
+    expect(numberFieldError('elevationProperty', '0x20')).toBe('Elevation must be a number, like 1415.');
+    expect(numberFieldError('elevationProperty', '1e3')).toBe('Elevation must be a number, like 1415.');
+    expect(numberFieldError('latProperty', '0b10')).toBe('Latitude must be a number, like 32.158.');
+    expect(normalizeNumbers('Locations', [{ elevationProperty: '1e3' }])).toEqual([{ elevationProperty: '1e3' }]);
+  });
+
+  it('checks for a conflict when a record is brought back (fix 7)', () => {
+    const before = [
+      { idProperty: 'DOS09', nameProperty: 'Apache Pass', latProperty: 32.1, lngProperty: -109.4, elevationProperty: 1415, retired: true },
+      { idProperty: 'DOS09', nameProperty: 'Apache Pass south', latProperty: 32.2, lngProperty: -109.5, elevationProperty: 1420 },
+    ];
+    const changed = [{ ...before[0], retired: false }, before[1]];
+    expect(changedRecordsValidationError('Locations', changed, before)).toMatch(/already used/);
+  });
+
+  it('shows one row when the shared list holds a record twice (fix 4)', () => {
+    const twice = [{ idProperty: 'A', nameProperty: 'North gate' }, { idProperty: 'A', nameProperty: 'North gate' }];
+    const rows = checklistRows('locations', [twice[1]], twice);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].usedIndex).toBe(0);
+  });
+});

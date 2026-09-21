@@ -15,12 +15,17 @@ const numberRules: Record<string, { label: string; example: string; min?: number
  * both "31.2q" and a box holding only spaces into values that look saveable
  * (NaN and 0), so the text is checked before it is ever converted.
  */
+// Number() also swallows 0x20, 0b10 and 1e3 and writes back something the
+// administrator never typed, so the text has to look like a plain decimal
+// before it is converted at all.
+const decimal = /^-?\d+(\.\d+)?$/;
+
 export function numberFieldError(field: string, raw: unknown): string | null {
   const rule = numberRules[field];
   const text = String(raw ?? '').trim();
   if (text === '') return `${rule.label} needs a number.`;
+  if (!decimal.test(text)) return `${rule.label} must be a number, like ${rule.example}.`;
   const value = Number(text);
-  if (!Number.isFinite(value)) return `${rule.label} must be a number, like ${rule.example}.`;
   if (rule.min !== undefined && (value < rule.min || value > rule.max!))
     return `${rule.label} must be between ${rule.min} and ${rule.max}.`;
   return null;
@@ -33,7 +38,7 @@ export function normalizeNumbers(kind: ListKind, items: Entry[]): Entry[] {
     const next = { ...item };
     for (const field of NUMERIC_LOCATION_FIELDS) {
       const text = String(next[field] ?? '').trim();
-      if (text !== '' && Number.isFinite(Number(text))) next[field] = Number(text);
+      if (decimal.test(text)) next[field] = Number(text);
     }
     return next;
   });
@@ -55,6 +60,11 @@ const conflicts = (items: Entry[], index: number, field: string, value: string) 
 const newOrChanged = (before: Entry | undefined, field: string, value: string) =>
   before === undefined || text(before, field) !== value;
 
+// A record coming back into use has to face the same check: while it was
+// retired another record was free to take its ID.
+const broughtBack = (before: Entry | undefined, item: Entry) =>
+  before?.retired === true && item.retired !== true;
+
 export function validationError(
   kind: ListKind,
   items: Entry[],
@@ -66,7 +76,7 @@ export function validationError(
   if (kind === 'Species') {
     const scientificName = text(item, 'scientificName');
     if (!text(item, 'name') || !scientificName) return 'Common name and scientific name are required.';
-    if (newOrChanged(before, 'scientificName', scientificName) && conflicts(items, index, 'scientificName', scientificName))
+    if ((newOrChanged(before, 'scientificName', scientificName) || broughtBack(before, item)) && conflicts(items, index, 'scientificName', scientificName))
       return 'Scientific name is already used by another species.';
     return null;
   }
@@ -77,7 +87,7 @@ export function validationError(
     if (error) return error;
   }
   const locationId = text(item, 'idProperty');
-  if (newOrChanged(before, 'idProperty', locationId) && conflicts(items, index, 'idProperty', locationId))
+  if ((newOrChanged(before, 'idProperty', locationId) || broughtBack(before, item)) && conflicts(items, index, 'idProperty', locationId))
     return 'Location ID is already used by another location.';
   return null;
 }
