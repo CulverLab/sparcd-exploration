@@ -1,48 +1,153 @@
 // @vitest-environment jsdom
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CollectionEditor, type CollectionRecord } from '../src/CollectionEditor'
+import { button, click, field, hasButton, render, type } from './dom'
+import { lastOf, recordingClient } from './fake'
 
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-const collection: CollectionRecord = {
-  key: 'sparcd-test::abc', bucket: 'sparcd-test', uuid: 'abc', name: 'Test collection',
-  organization: 'Lab', contact: null, description: 'Study', etag: 'collection-etag',
-  document: { nameProperty: 'Test collection', organizationProperty: 'Lab', descriptionProperty: 'Study' },
-  speciesAssignment: { values: [{ scientificName: 'puma', name: 'Puma' }], etag: 'species-etag' },
-  locationsAssignment: { values: [{ idProperty: 'north', nameProperty: 'North' }], etag: 'locations-etag' },
+const shared = {
+  species: [
+    { scientificName: 'Canis latrans', name: 'Coyote' },
+    { scientificName: 'Puma concolor', name: 'Puma' },
+    { scientificName: 'Lynx rufus', name: 'Bobcat' },
+  ],
+  locations: [{ idProperty: 'DOS09', nameProperty: 'Apache Pass' }],
 }
 
-function renderEditor(client: any) {
-  const host = document.createElement('div'); document.body.appendChild(host)
-  const root = createRoot(host)
-  act(() => root.render(<CollectionEditor collections={[collection]} client={client} actor="admin" reload={() => {}} speciesRegistry={collection.speciesAssignment.values} locationsRegistry={collection.locationsAssignment.values} />))
-  return { host, root }
-}
+const collection = (suffix: string, name: string): CollectionRecord => ({
+  key: `sparcd-${suffix}::${suffix}`,
+  bucket: `sparcd-${suffix}`,
+  uuid: suffix,
+  name,
+  organization: `${name} Lab`,
+  contact: null,
+  description: 'Study',
+  etag: `${suffix}-collection-etag`,
+  document: { nameProperty: name, organizationProperty: `${name} Lab`, descriptionProperty: 'Study' },
+  speciesAssignment: { values: [shared.species[0]], etag: `${suffix}-species-etag` },
+  locationsAssignment: { values: [shared.locations[0]], etag: `${suffix}-locations-etag` },
+})
 
-describe('CollectionEditor audit retry', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+const collections = [collection('aaa', 'Alpha'), collection('bbb', 'Beta')]
 
-  it('shows Retry audit record after applied audit failure and recovers on click', async () => {
-    let appliedAttempts = 0
-    const client = {
-      writeImmutable: async (_bucket: string, key: string) => {
-        if (key.endsWith('.applied.json') && appliedAttempts++ === 0) throw new Error('temporary audit failure')
-      },
-      replaceIfUnchanged: async () => ({ etag: 'new-etag' }),
-    }
-    const { host, root } = renderEditor(client)
-    const description = host.querySelector('input[aria-label="Description"]') as HTMLInputElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-      setter.call(description, 'Updated study')
-      description.dispatchEvent(new Event('input', { bubbles: true }))
+const editor = (client: ReturnType<typeof recordingClient>['client'], records = collections) =>
+  render(
+    <CollectionEditor
+      collections={records}
+      client={client}
+      actor="admin"
+      reload={() => {}}
+      speciesRegistry={shared.species}
+      locationsRegistry={shared.locations}
+    />,
+  )
+
+const collectionRows = (host: HTMLElement) => Array.from(host.querySelectorAll('ul')[0].querySelectorAll('button'))
+const checkboxes = (host: HTMLElement) => Array.from(host.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[]
+
+afterEach(() => { document.body.innerHTML = '' })
+
+describe('picking a collection', () => {
+  it('lists collections with their organization and keeps the ID small', async () => {
+    const { client } = recordingClient()
+    const { host } = editor(client)
+    expect(collectionRows(host)).toHaveLength(2)
+    expect(collectionRows(host)[1].textContent).toContain('Beta Lab')
+    expect(host.querySelector('.font-mono')?.textContent).toBe('aaa')
+  })
+
+  it('saves against the version tags of the collection now on screen (bug 5)', async () => {
+    const { calls, client } = recordingClient()
+    const { host } = editor(client)
+    await click(collectionRows(host)[1])
+    await click(checkboxes(host)[0])
+    await click(button(host, 'Save species'))
+    expect(lastOf(calls, 'replaceIfUnchanged').etag).toBe('bbb-species-etag')
+    expect(lastOf(calls, 'replaceIfUnchanged').key).toBe('Collections/bbb/species.json')
+  })
+
+  it('drops the previous collection\'s undo buffer (bug 5)', async () => {
+    const { client } = recordingClient()
+    const { host } = editor(client)
+    await click(checkboxes(host)[0])
+    expect(hasButton(host, 'Undo')).toBe(true)
+    await click(collectionRows(host)[1])
+    expect(hasButton(host, 'Undo')).toBe(false)
+  })
+})
+
+describe('the checklist', () => {
+  it('undoes one step and then stops offering (bug 13)', async () => {
+    const { client } = recordingClient()
+    const { host } = editor(client)
+    expect(checkboxes(host).map((box) => box.checked)).toEqual([false, true, false, true])
+    await click(checkboxes(host)[0])
+    expect(checkboxes(host)[0].checked).toBe(true)
+    await click(button(host, 'Undo'))
+    expect(checkboxes(host)[0].checked).toBe(false)
+    expect(hasButton(host, 'Undo')).toBe(false)
+  })
+
+  it('counts what is used in a sentence', async () => {
+    const { client } = recordingClient()
+    const { host } = editor(client)
+    expect(host.textContent).toContain('1 of 3 species used here.')
+  })
+
+  it('will not save an empty list', async () => {
+    const { client } = recordingClient()
+    const { host } = editor(client)
+    await click(checkboxes(host)[1])
+    expect(host.textContent).toContain('Keep at least one species in this collection.')
+    expect((button(host, 'Save species') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('saving what a collection uses', () => {
+  it('offers a retry when only the history entry fails (bug 6)', async () => {
+    const { client } = recordingClient({
+      onWrite: (key, attempt) => { if (key.endsWith('.applied.json') && attempt === 1) throw Error('storage hiccup') },
     })
-    await act(async () => (host.querySelector('button') as HTMLButtonElement).click())
-    expect(host.textContent).toContain('Retry audit record')
-    await act(async () => (Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'Retry audit record') as HTMLButtonElement).click())
-    expect(host.textContent).toContain('Applied audit record recovered.')
-    act(() => root.unmount())
+    const { host } = editor(client)
+    await click(checkboxes(host)[0])
+    await click(button(host, 'Save species'))
+    expect(host.textContent).toContain('Saved. Its history entry did not go through.')
+    await click(button(host, 'Retry history entry'))
+    expect(host.textContent).toContain('History entry saved.')
+  })
+
+  it('saves again against the version just written (bug 7)', async () => {
+    const { calls, client } = recordingClient({
+      etags: ['aaa-species-v2'],
+      onWrite: (key, attempt) => { if (key.endsWith('.applied.json') && attempt === 1) throw Error('storage hiccup') },
+    })
+    const { host } = editor(client)
+    await click(checkboxes(host)[0])
+    await click(button(host, 'Save species'))
+    await click(checkboxes(host)[2])
+    await click(button(host, 'Save species'))
+    expect(lastOf(calls, 'replaceIfUnchanged').etag).toBe('aaa-species-v2')
+  })
+
+  it('creates the file and picks up its version when none exists yet', async () => {
+    const fresh = [{ ...collections[0], speciesAssignment: { values: [shared.species[0]], etag: null } }]
+    const { calls, client } = recordingClient({ statEtag: 'fresh-etag' })
+    const { host } = editor(client, fresh)
+    await click(checkboxes(host)[0])
+    await click(button(host, 'Save species'))
+    expect(calls.map((call) => call.method)).toEqual(['writeImmutable', 'writeImmutable', 'statObject', 'writeImmutable'])
+    await click(checkboxes(host)[2])
+    await click(button(host, 'Save species'))
+    expect(lastOf(calls, 'replaceIfUnchanged').etag).toBe('fresh-etag')
+  })
+})
+
+describe('collection details', () => {
+  it('saves the metadata against the collection version it loaded', async () => {
+    const { calls, client } = recordingClient()
+    const { host } = editor(client)
+    await type(field(host, 'Description'), 'Updated study')
+    await click(button(host, 'Save collection'))
+    expect(lastOf(calls, 'replaceIfUnchanged').etag).toBe('aaa-collection-etag')
+    expect(host.textContent).toContain('Saved.')
   })
 })
