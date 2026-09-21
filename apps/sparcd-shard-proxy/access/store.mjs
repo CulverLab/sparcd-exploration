@@ -84,8 +84,10 @@ export function makeStore({ upstream, namespace = '', allow, pollMs = 5000 }) {
         c.membersEtag = members.etag;
       }
       if (meta.status !== 404) {
-        c.name = meta.value.name ?? c.bucket;
-        c.organization = meta.value.organization ?? null;
+        // `collection.json` carries the SPARC'd `*Property` names; `name` and
+        // `organization` are the short spellings some fixtures use.
+        c.name = meta.value.nameProperty ?? meta.value.name ?? c.bucket;
+        c.organization = meta.value.organizationProperty ?? meta.value.organization ?? null;
       } else {
         c.name = c.bucket;
       }
