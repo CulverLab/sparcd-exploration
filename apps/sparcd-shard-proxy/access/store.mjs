@@ -78,14 +78,25 @@ export function makeStore({
     }
     if (!next.settingsBucket) { state = next; return state; }
 
+    // A reload is the slowest thing the proxy does, and every write waits on
+    // one. Against storage that answers in 150 ms, reading the people one after
+    // another put "add a person" — two writes, each followed by a reload — past
+    // fifteen seconds on its own. Depth is what costs, so the round trips that
+    // do not depend on each other are made together.
     const sb = ns.toUpstream(next.settingsBucket);
-    const gen = await upstream.getJson(sb, GENERATION_KEY);
+    const [gen, peopleKeys] = await Promise.all([
+      upstream.getJson(sb, GENERATION_KEY),
+      upstream.listKeys(sb, PEOPLE_PREFIX),
+    ]);
     next.generation = gen.status === 404 ? 0 : (gen.value.generation ?? 0);
     next.generationEtag = gen.status === 404 ? null : gen.etag;
 
-    for (const key of await upstream.listKeys(sb, PEOPLE_PREFIX)) {
-      if (!key.endsWith('.json')) continue;
-      const got = await upstream.getJson(sb, key);
+    // Applied in the order the listing gave, so two people sharing an access
+    // key id resolve the same way on every reload.
+    const read = await Promise.all(peopleKeys
+      .filter((key) => key.endsWith('.json'))
+      .map((key) => upstream.getJson(sb, key)));
+    for (const got of read) {
       if (got.status === 404) continue;
       const person = { ...got.value, etag: got.etag };
       next.people.set(person.id, person);
