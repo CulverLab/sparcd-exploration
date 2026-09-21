@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changedRecordCount, discardBlankDraft, retireItem, setRetired, updateItem } from '../src/RegistryEditor';
+import { changedRecordCount, discardBlankDraft, setRetired, updateItem } from '../src/RegistryEditor';
 import { changedRecordsValidationError, normalizeNumbers, numberFieldError, validationError } from '../src/validation';
 import { assignmentDiscrepancies, collectionHasChanges, collectionValidationError, makeAppliedAuditRetry } from '../src/CollectionEditor';
 import { activeCount, checklistRows, matchShared, sharedHasId } from '../src/AssignmentChecklist';
@@ -15,7 +15,7 @@ describe('registry mutation', () => {
 });
 
 it('retires a species without removing its historical identity', () => {
-  expect(retireItem([{ scientificName: 'Canis latrans', name: 'Coyote' }], 0)).toEqual([
+  expect(setRetired([{ scientificName: 'Canis latrans', name: 'Coyote' }], 0, true)).toEqual([
     { scientificName: 'Canis latrans', name: 'Coyote', retired: true },
   ]);
 });

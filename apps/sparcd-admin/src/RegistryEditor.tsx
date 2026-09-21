@@ -32,10 +32,6 @@ export function updateItem(items: Entry[], at: number, next: Entry) {
   return items.map((value, index) => (index === at ? next : value))
 }
 
-export function retireItem(items: Entry[], at: number) {
-  return updateItem(items, at, { ...items[at], retired: true })
-}
-
 /** Retiring is reversible: the same row carries the record back into use. */
 export function setRetired(items: Entry[], at: number, retired: boolean) {
   return updateItem(items, at, { ...items[at], retired })
