@@ -644,6 +644,26 @@ describe('activity', () => {
     assert.equal((await people.alice.api('GET', '/-/admin/activity')).status, 403);
   });
 
+  test('a list of kinds is allowed, an unknown one in it is not', async () => {
+    const ok = await people.admin.api(
+      'GET', '/-/admin/activity?kind=download,sign-in&limit=1000');
+    assert.equal(ok.status, 200);
+    assert.ok(ok.body.events.some((e) => e.kind === 'download'));
+    assert.ok(ok.body.events.every((e) => e.kind === 'download' || e.kind === 'sign-in'));
+
+    const bad = await people.admin.api('GET', '/-/admin/activity?kind=download,nonsense');
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'invalid');
+  });
+
+  test('the downloads query takes a bare file name', async () => {
+    const res = await people.admin.api(
+      'GET', `/-/admin/activity/downloads?bucket=${BUCKET_A}&key=a.jpg`);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.events.length > 0);
+    assert.ok(res.body.events.every((e) => e.key.endsWith('/a.jpg')));
+  });
+
   test('listings and metadata reads are not logged', async () => {
     await people.alice.s3().send(new ListObjectsV2Command({ Bucket: BUCKET_A }));
     await people.alice.s3().send(new HeadObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }));

@@ -5,6 +5,7 @@
 // needs one credential and no second login. `/-/join` and `/-/health` are the
 // exceptions, since a joining person has no key yet.
 
+import { KINDS } from './activity.mjs';
 import { Conflict } from './store.mjs';
 import {
   INVITE_TTL_MS, inviteMatches, newAccessKeyId, newInvite, newPersonId,
@@ -38,6 +39,16 @@ export class ApiError extends Error {
 }
 
 const fail = (code, message) => { throw new ApiError(code, message); };
+
+/** `kind=denied,bad-signature` — the admin screens filter on several at once. */
+function parseKinds(raw) {
+  if (!raw) return undefined;
+  const kinds = raw.split(',').map((k) => k.trim()).filter(Boolean);
+  for (const kind of kinds) {
+    if (!KINDS.has(kind)) fail('invalid', `unknown activity kind ${kind}`);
+  }
+  return kinds.length ? kinds : undefined;
+}
 
 const ACCESS_LEVELS = ['look', 'identify', 'upload', 'run'];
 
@@ -189,7 +200,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
           to: query.get('to') ?? undefined,
           person: query.get('person') ?? undefined,
           bucket: query.get('bucket') ?? undefined,
-          kind: query.get('kind') ?? undefined,
+          kinds: parseKinds(query.get('kind')),
           limit: query.get('limit') ? Number(query.get('limit')) : 200,
         }),
       };

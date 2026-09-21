@@ -19,6 +19,11 @@ const BAD_SIGNATURE_WINDOW_MS = 60000;
 
 const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
 
+export const KINDS = new Set([
+  'download', 'upload', 'identify', 'list-change', 'collection-change',
+  'access-change', 'denied', 'bad-signature', 'sign-in', 'log-gap',
+]);
+
 export function makeActivity({
   upstream, settingsBucket, flushMs = FLUSH_MS, maxQueue = MAX_QUEUE,
 }) {
@@ -166,12 +171,13 @@ export function makeActivity({
       await kick().catch(() => {});
     },
 
-    async query({ from, to, person, bucket, kind, limit = 200 } = {}) {
+    async query({ from, to, person, bucket, kinds, limit = 200 } = {}) {
+      const wanted = kinds?.length ? new Set(kinds) : null;
       const events = await read({ upstream, settingsBucket, from, to });
       const matched = events.filter((e) =>
         (!person || e.personId === person)
         && (!bucket || e.bucket === bucket)
-        && (!kind || e.kind === kind)
+        && (!wanted || wanted.has(e.kind))
         && (!from || e.ts >= from)
         && (!to || e.ts <= to));
       matched.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
@@ -179,8 +185,12 @@ export function makeActivity({
     },
 
     async downloads({ bucket, key, from, to }) {
-      const { events } = await this.query({ kind: 'download', bucket, from, to, limit: Infinity });
-      return { events: key ? events.filter((e) => e.key === key) : events };
+      const { events } = await this.query({
+        kinds: ['download'], bucket, from, to, limit: Infinity,
+      });
+      if (!key) return { events };
+      const leaf = (k) => (k ?? '').slice((k ?? '').lastIndexOf('/') + 1);
+      return { events: events.filter((e) => e.key === key || leaf(e.key) === key) };
     },
   };
 }

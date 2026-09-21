@@ -148,8 +148,11 @@ Admin only:
   existing runner rather than demanding one: an edit that would remove the collection's
   last `run` member is 409 `last_runner`, while a collection that has no members yet can
   receive its first at any level.
-- `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`
-- `GET /-/admin/activity/downloads?bucket=&key=` → `{ events: [...] }`
+- `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`.
+  `kind` is a comma-separated list and matches any of them; a kind outside the set below is
+  400 `invalid`, and no `kind` at all is every kind.
+- `GET /-/admin/activity/downloads?bucket=&key=` → `{ events: [...] }`. `key` matches an
+  event whose key equals it or whose last path segment equals it, case-sensitive.
 
 Access changes take effect on the proxy that made them at once, and on any other proxy
 within 5 s (each polls `generation.json`).

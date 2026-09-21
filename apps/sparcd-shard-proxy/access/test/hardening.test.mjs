@@ -11,7 +11,7 @@ import {
   listingGuard, buildListing, afterTree, decodeListingToken,
 } from '../rules.mjs';
 import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
-import { makeActivity } from '../activity.mjs';
+import { makeActivity, KINDS } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
 import { ERROR_CODES } from '../api.mjs';
 
@@ -448,5 +448,75 @@ describe('N8: reloads are serialized and never go backwards', () => {
     const second = store.reload();
     await Promise.all([first, second]);
     assert.equal(store.snapshot().settingsBucket, 'sparcd-settings-x');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 4: what the admin screens actually ask for.
+// ---------------------------------------------------------------------------
+
+describe('activity queries the admin screens make', () => {
+  const EVENTS = [
+    { ts: '2026-01-01T00:00:01.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/s/IMG_0412.JPG' },
+    { ts: '2026-01-01T00:00:02.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/t/IMG_0412.JPG' },
+    { ts: '2026-01-01T00:00:03.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/s/img_0412.jpg' },
+    { ts: '2026-01-01T00:00:04.000Z', kind: 'denied', bucket: 'b' },
+    { ts: '2026-01-01T00:00:05.000Z', kind: 'bad-signature', bucket: 'b' },
+    { ts: '2026-01-01T00:00:06.000Z', kind: 'list-change', bucket: 'b' },
+    { ts: '2026-01-01T00:00:07.000Z', kind: 'collection-change', bucket: 'b' },
+    { ts: '2026-01-01T00:00:08.000Z', kind: 'upload', bucket: 'b' },
+  ];
+  const canned = () => makeActivity({
+    settingsBucket: () => 'b',
+    upstream: () => ({
+      put: async () => true,
+      listCommonPrefixes: async () => ['Settings/activity/2026-01-01/'],
+      listKeys: async () => ['Settings/activity/2026-01-01/1-00000000.ndjson'],
+      get: async () => ({
+        status: 200, text: `${EVENTS.map((e) => JSON.stringify(e)).join('\n')}\n`,
+      }),
+    }),
+  });
+
+  test('a single kind still filters to that kind', async () => {
+    const { events } = await canned().query({ kinds: ['denied'] });
+    assert.deepEqual(events.map((e) => e.kind), ['denied']);
+  });
+
+  test('several kinds come back together, newest first', async () => {
+    const { events } = await canned().query({ kinds: ['denied', 'bad-signature'] });
+    assert.deepEqual(events.map((e) => e.kind), ['bad-signature', 'denied']);
+    const changes = await canned().query({ kinds: ['list-change', 'collection-change'] });
+    assert.deepEqual(changes.events.map((e) => e.kind), ['collection-change', 'list-change']);
+  });
+
+  test('no kinds at all is every kind', async () => {
+    const { events } = await canned().query({});
+    assert.equal(events.length, EVENTS.length);
+  });
+
+  test('the downloads query takes a file name as well as a whole key', async () => {
+    const byName = await canned().downloads({ bucket: 'b', key: 'IMG_0412.JPG' });
+    assert.deepEqual(byName.events.map((e) => e.key), [
+      'Collections/u/Uploads/t/IMG_0412.JPG',
+      'Collections/u/Uploads/s/IMG_0412.JPG',
+    ]);
+
+    const byKey = await canned().downloads({
+      bucket: 'b', key: 'Collections/u/Uploads/s/IMG_0412.JPG',
+    });
+    assert.deepEqual(byKey.events.map((e) => e.key), ['Collections/u/Uploads/s/IMG_0412.JPG']);
+  });
+
+  test('the file-name match is case-sensitive', async () => {
+    const { events } = await canned().downloads({ bucket: 'b', key: 'img_0412.jpg' });
+    assert.deepEqual(events.map((e) => e.key), ['Collections/u/Uploads/s/img_0412.jpg']);
+  });
+
+  test('the kinds the contract names are the ones the API will take', () => {
+    assert.deepEqual([...KINDS].sort(), [
+      'access-change', 'bad-signature', 'collection-change', 'denied', 'download',
+      'identify', 'list-change', 'log-gap', 'sign-in', 'upload',
+    ]);
   });
 });
