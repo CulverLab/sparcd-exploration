@@ -96,6 +96,11 @@ and never forwarded. Everything else — `x-amz-acl`, `x-amz-grant-*`, the SSE-C
 `x-amz-tagging`, `x-amz-storage-class`, `x-amz-website-redirect-location`, the
 object-lock family, `x-amz-trailer` — is refused.
 
+`If-Match` is forwarded with the quotes stripped from each tag, after the caller's
+signature has been verified against what they sent, because Ceph RGW answers 412 to a
+quoted tag on a PUT even when it is current; ETags come back to the client exactly as
+the upstream wrote them.
+
 Object keys are refused when a decoded segment is `.` or `..`, or the key contains a
 backslash or a NUL, or starts with `/`.
 

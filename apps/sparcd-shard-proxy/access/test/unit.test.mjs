@@ -16,7 +16,7 @@ import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
   newInvite, inviteMatches, hashToken,
 } from '../keys.mjs';
-import { makeUpstream } from '../upstream.mjs';
+import { makeUpstream, normalizeIfMatch } from '../upstream.mjs';
 
 const KEY = { accessKeyId: 'SPKABCDEFGHIJKLMNOP', secretAccessKey: 'a'.repeat(40) };
 const lookup = (id) => (id === KEY.accessKeyId ? KEY.secretAccessKey : null);
@@ -494,5 +494,39 @@ describe('upstream signing', () => {
     for (const name of ['content-type', 'host', 'if-none-match', 'x-amz-meta-sha256']) {
       assert.ok(signedHeaders.includes(name), `${name} is not signed`);
     }
+  });
+
+  test('a metadata PUT sends its If-Match unquoted', async () => {
+    const { request } = await capture((upstream) => upstream.put(
+      'sparcd-settings', 'people/p1.json', '{"id":"p1"}',
+      { ifMatch: '"c1f2"' },
+    ));
+    assert.equal(request.headers.get('if-match'), 'c1f2');
+  });
+});
+
+describe('If-Match normalizing', () => {
+  const cases = [
+    ['"c1f2"', 'c1f2'],
+    ['c1f2', 'c1f2'],
+    ['W/"c1f2"', 'c1f2'],
+    ['"a", "b"', 'a, b'],
+    ['"a",W/"b", c', 'a, b, c'],
+    ['*', '*'],
+    ['', ''],
+    ['  ', ''],
+    ['"a", , "b"', 'a, b'],
+    ['""', ''],
+    ['"a"b"', 'a"b'],
+  ];
+  for (const [input, want] of cases) {
+    test(`${JSON.stringify(input)} → ${JSON.stringify(want)}`, () => {
+      assert.equal(normalizeIfMatch(input), want);
+    });
+  }
+
+  test('null and undefined pass through', () => {
+    assert.equal(normalizeIfMatch(null), null);
+    assert.equal(normalizeIfMatch(undefined), undefined);
   });
 });
