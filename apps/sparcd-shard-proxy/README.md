@@ -154,14 +154,14 @@ Four things cost real time to discover. They are load-bearing.
 
 ## Choose your deployment
 
-| | [Docker + Caddy](#docker--caddy) | [Jetstream2 VM](./deploy/jetstream2/) | [Cloudflare Worker](./deploy/cloudflare-worker/) |
-|---|---|---|---|
-| Signature handling | passthrough | passthrough | verified, then re-signed |
-| S3 credentials | in the browser | in the browser | Worker secrets |
-| Browsers hold | the S3 credential | the S3 credential | a proxy-issued pair |
-| Shards | ports or subdomains | ports | subdomains |
-| HTTP/3 | yes | yes | yes |
-| You operate | a host | a VM image | nothing |
+| | [Docker + Caddy](#docker--caddy) | [Jetstream2 VM](./deploy/jetstream2/) | [Cloudflare Worker](./deploy/cloudflare-worker/) | [Access proxy](./access/) |
+|---|---|---|---|---|
+| Signature handling | passthrough | passthrough | verified, then re-signed | verified, then re-signed |
+| S3 credentials | in the browser | in the browser | Worker secrets | the service's environment |
+| Browsers hold | the S3 credential | the S3 credential | a proxy-issued pair | a per-person pair |
+| Shards | ports or subdomains | ports | subdomains | whatever Caddy fronts it with |
+| HTTP/3 | yes | yes | yes | via Caddy |
+| You operate | a host | a VM image | nothing | a host |
 
 Passthrough is the honest default: the proxy never sees a credential and cannot
 act on its own. The Worker recipe trades that for having no server. Because it
@@ -303,3 +303,9 @@ inline.
 The [Cloudflare Worker recipe](./deploy/cloudflare-worker/) is different in
 kind: it holds an S3 credential, so it verifies the caller's signature itself
 before re-signing. Read its README before deploying it.
+
+The [access proxy](./access/) takes that one step further: instead of one
+proxy-issued pair for everybody, it issues a pair per person and decides what
+each request is allowed to do before it re-signs. It shares this repo's
+signature verification with the Worker, and runs behind the same Caddyfile. Its
+wire contract is [`access/CONTRACT.md`](./access/CONTRACT.md).

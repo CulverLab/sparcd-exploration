@@ -1,0 +1,46 @@
+name: Access proxy tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/sparcd-shard-proxy/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/access-proxy-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/sparcd-shard-proxy/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/access-proxy-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Signatures, namespace, rules and credentials
+        run: pnpm --filter sparcd-shard-proxy test
+
+      # ubuntu-latest ships Docker and the compose plugin, the same way the
+      # uploader benchmark job already relies on them. The MinIO image comes
+      # from Quay: Docker Hub stopped serving minio/minio.
+      - name: End to end against a loopback MinIO
+        run: pnpm --filter sparcd-shard-proxy test:integration

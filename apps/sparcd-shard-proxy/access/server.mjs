@@ -156,7 +156,12 @@ export async function createAccessProxy(config) {
     let person = null;
     if (!open) {
       const verified = await verifySignature({
-        method: req.method, url, headers, body, lookupSecret, allowPresigned: true,
+        method: req.method, url, headers, body, lookupSecret,
+        // Presigned URLs are for object reads; an API call that changes
+        // access is signed with headers and its body is bound to the
+        // signature.
+        allowPresigned: !isApi,
+        requireSignedBody: isApi,
       });
       if (verified.error) {
         activity.record({

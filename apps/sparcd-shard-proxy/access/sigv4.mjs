@@ -142,11 +142,12 @@ async function signatureFor({ secretAccessKey, scopeParts, amzDate, canonicalReq
  * from the header, so a header cannot spoof it.
  *
  * `lookupSecret(accessKeyId)` returns the secret or null/undefined. It may be
- * async. `allowPresigned` opts into the query-string form.
+ * async. `allowPresigned` opts into the query-string form, and
+ * `requireSignedBody` refuses UNSIGNED-PAYLOAD.
  */
 export async function verifySignature({
   method, url, headers, body, lookupSecret,
-  allowPresigned = false, now = Date.now(),
+  allowPresigned = false, requireSignedBody = false, now = Date.now(),
 }) {
   const presigned = allowPresigned && url.searchParams.has('X-Amz-Algorithm');
 
@@ -215,7 +216,11 @@ export async function verifySignature({
     // the declaration against the body is what stops a captured PUT from being
     // replayed inside the window with different contents.
     if (payloadHash === 'UNSIGNED-PAYLOAD') {
-      // Accepted, because the uploader's blob path produces it: the browser AWS
+      // The JSON API sets this, because an admin call that changes access
+      // must not be replayable inside the window with a different body. S3
+      // traffic cannot: see below.
+      if (requireSignedBody) return { error: 'UNSIGNED-PAYLOAD is not accepted here' };
+      // Otherwise accepted, because the uploader's blob path produces it: the browser AWS
       // SDK hashes string and ArrayBuffer bodies but declares UNSIGNED-PAYLOAD
       // for a Blob, and image uploads stream Blob slices so memory stays flat.
       // The consequence is real and worth stating: for those requests the body
