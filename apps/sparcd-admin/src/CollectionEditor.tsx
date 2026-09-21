@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ConditionalReplaceConflictError, type CollectionRef, type SafeS3Client } from '@sparcd/s3-safe'
 import { AssignmentChecklist, matchShared, type Entry, type Kind } from './AssignmentChecklist'
+import { moment } from './moment'
 
 export type CollectionAssignment = { values: unknown[]; etag: string | null }
 export type CollectionRecord = CollectionRef & {
@@ -92,8 +93,10 @@ const editingFor = (record: CollectionRecord): Editing => ({
 export const editingIsDirty = (editing: Editing) =>
   JSON.stringify([editing.draft, editing.used.species, editing.used.locations]) !== contentOf(editing.record)
 
-export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry, membersFor }: {
+export function CollectionEditor({ collections, client, actor, reload, speciesRegistry, locationsRegistry, membersFor, loadedAt }: {
   collections: CollectionRecord[]
+  /** When the read behind `collections` began. */
+  loadedAt: number
   client: SafeS3Client
   actor: string
   reload: () => void | Promise<void>
@@ -112,8 +115,12 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
   // Which save is in flight. It clears when the reload it triggered lands, so
   // the controls stay disabled across the gap instead of swallowing clicks.
   const [saving, setSaving] = useState<Slot | null>(null)
+  // When this editor last wrote one of its files. Anything read before that
+  // moment is older than what the write produced, however late it arrives.
+  const wroteAt = useRef(0)
 
   useEffect(() => {
+    if (loadedAt < wroteAt.current) return
     setSaving(null)
     if (!editing) {
       if (collections[0]) setEditing(editingFor(collections[0]))
@@ -255,6 +262,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
       }
       // The list is saved at this point. Hold its new version tag whatever the
       // history entry does next, or the following save reads as a conflict.
+      wroteAt.current = moment()
       setEditing((current) => ({
         ...current!,
         record: { ...current!.record, [`${kind}Assignment`]: { values, etag: written.etag ?? null } },
@@ -300,6 +308,7 @@ export function CollectionEditor({ collections, client, actor, reload, speciesRe
         { etag: editing.etags.collection, ...asJson },
       )
       const saved = editing.draft
+      wroteAt.current = moment()
       setEditing((current) => ({
         ...current!,
         record: { ...current!.record, document: saved, etag: written.etag ?? current!.record.etag },

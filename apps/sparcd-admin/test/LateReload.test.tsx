@@ -170,6 +170,161 @@ describe('what the administrator does while a reload is in flight', () => {
   })
 })
 
+const LOCATIONS_READ = 'get sparcd-settings-a/Settings/locations.json'
+
+/**
+ * An app where a read can answer and then take its time arriving, and where a
+ * save can be parked between its successful write and the reload it asks for.
+ * Both gaps are a whole round trip against real storage, and both are where a
+ * read taken before the write gets a chance to land after it.
+ */
+function openStaged(makeApi: MakeApi = noService) {
+  const storage = fakeStorage(settingsStore())
+  let slowRead: string | null = null
+  let parkedReads: (() => void)[] = []
+  let holdApplied = false
+  let appliedParked: (() => void)[] = []
+
+  const make = (read: string[], write: string[]) => {
+    const inner = storage.make(read, write)
+    return new Proxy(inner, {
+      get(target, name) {
+        const value = Reflect.get(target, name) as (...args: unknown[]) => unknown
+        if (typeof value !== 'function') return value
+        if (name === 'statObject' || name === 'getObject')
+          return async (bucket: string, key: string) => {
+            const answered = await value.apply(target, [bucket, key])
+            if (slowRead === `${name === 'statObject' ? 'stat' : 'get'} ${bucket}/${key}`) {
+              slowRead = null
+              await new Promise<void>((resolve) => parkedReads.push(resolve))
+            }
+            return answered
+          }
+        if (name === 'writeImmutable')
+          return async (...args: unknown[]) => {
+            if (holdApplied && String(args[1]).endsWith('.applied.json')) {
+              holdApplied = false
+              await new Promise<void>((resolve) => appliedParked.push(resolve))
+            }
+            return value.apply(target, args)
+          }
+        return value.bind(target)
+      },
+    })
+  }
+
+  sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+  const view = render(<App makeClient={(_c, read, write) => make(read, write)} makeApi={makeApi} />)
+  mounted.push(view)
+
+  const drain = async () => { for (let round = 0; round < 6; round += 1) await settle() }
+  const releasing = async (parked: (() => void)[]) => {
+    await act(async () => { for (const resolve of parked) resolve() })
+    await drain()
+  }
+  return {
+    view,
+    storage,
+    drain,
+    /** The next read of `entry` answers now and arrives when released. */
+    slowRead: (entry: string) => { slowRead = entry },
+    holdApplied: () => { holdApplied = true },
+    releaseRead: async () => { const parked = parkedReads; parkedReads = []; await releasing(parked) },
+    releaseApplied: async () => { const parked = appliedParked; appliedParked = []; await releasing(parked) },
+    wrote: (entry: string) => storage.log.includes(entry),
+    parkedCount: () => parkedReads.length + appliedParked.length,
+  }
+}
+
+/**
+ * Rename a species and save. The reload that starts reads everything as it
+ * stands now, and its last read is left waiting to arrive.
+ */
+async function renameSpeciesHoldingItsReload(app: ReturnType<typeof openStaged>) {
+  const species = section(app.view.host, 'Species')
+  await click(rowButtons(species)[0])
+  await type(field(species, 'Common name'), 'Coyote (plains)')
+  app.slowRead(LOCATIONS_READ)
+  await click(button(species, 'Save'))
+  await app.drain()
+  expect(app.parkedCount()).toBe(1)
+}
+
+describe('a reload that started before a save lands after it', () => {
+  it('keeps a retired location saved when the older reload lands first', async () => {
+    const app = openStaged()
+    await app.drain()
+    await renameSpeciesHoldingItsReload(app)
+
+    const locations = () => section(app.view.host, 'Locations')
+    await click(rowButtons(locations())[0])
+    await click(button(locations(), 'Retire'))
+    app.holdApplied()
+    await click(button(locations(), 'Save'))
+    await app.drain()
+    expect(app.wrote('replace sparcd-settings-a/Settings/locations.json')).toBe(true)
+
+    // The older read arrives while the save is still finishing, so nothing
+    // newer has been asked for yet: what it carries is all the app has.
+    await app.releaseRead()
+    expect(rowButtons(locations())[0].textContent).toContain('Retired')
+    expect(locations().textContent).not.toContain('location changed')
+
+    await app.releaseApplied()
+    expect(rowButtons(locations())[0].textContent).toContain('Retired')
+    expect(locations().textContent).not.toContain('location changed')
+
+    await type(field(locations(), 'Name'), 'Apache Pass north')
+    await click(button(locations(), 'Save'))
+    await app.drain()
+    expect(locations().textContent).not.toContain('Someone else changed this list')
+    expect(locations().textContent).toContain('Saved.')
+  })
+
+  it('keeps a retired location saved when the older reload lands last', async () => {
+    const app = openStaged()
+    await app.drain()
+    await renameSpeciesHoldingItsReload(app)
+
+    const locations = () => section(app.view.host, 'Locations')
+    await click(rowButtons(locations())[0])
+    await click(button(locations(), 'Retire'))
+    app.holdApplied()
+    await click(button(locations(), 'Save'))
+    await app.drain()
+
+    await app.releaseApplied()
+    await app.releaseRead()
+
+    expect(rowButtons(locations())[0].textContent).toContain('Retired')
+    expect(locations().textContent).not.toContain('location changed')
+  })
+
+  it('keeps a saved collection detail when the older reload lands', async () => {
+    const app = openStaged()
+    await app.drain()
+    await renameSpeciesHoldingItsReload(app)
+
+    const collections = () => collectionsSection(app.view.host)
+    await type(field(collections(), 'Organization'), 'Culver Lab')
+    app.holdApplied()
+    await click(button(collections(), 'Save collection'))
+    await app.drain()
+
+    await app.releaseRead()
+    expect(field(collections(), 'Organization').value).toBe('Culver Lab')
+
+    await app.releaseApplied()
+    expect(field(collections(), 'Organization').value).toBe('Culver Lab')
+    expect(collections().textContent).not.toContain('Someone else changed this collection')
+
+    await type(field(collections(), 'Contact'), 'lab@example.org')
+    await click(button(collections(), 'Save collection'))
+    await app.drain()
+    expect(collections().textContent).not.toContain('Someone else changed this collection')
+  })
+})
+
 describe('other tabs', () => {
   it('ignores a sibling relaying the connection this tab already has', async () => {
     const app = openHeld()

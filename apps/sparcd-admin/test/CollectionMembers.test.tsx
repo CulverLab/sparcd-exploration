@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CollectionMembers, RUNNER_SENTENCE, hasRunner } from '../src/CollectionMembers'
 import { button, click, render, settle, type } from './dom'
@@ -92,6 +93,58 @@ describe('two coordinators at once', () => {
 
     expect(calls.find((call) => call.name === 'setMembers')!.args[2]).toBe('members-v1')
     expect(view.host.textContent).toContain('Someone else changed this. Reload and try again.')
+  })
+})
+
+describe('a read that started before a save', () => {
+  it('never replaces what the save wrote', async () => {
+    const collection = (bucket: string, uuid: string, runner: string) => ({
+      bucket, uuid, name: bucket, organization: 'Sky Island Alliance',
+      members: [
+        { personId: 'p1', name: 'Ana Morales', access: (runner === 'p1' ? 'run' : 'upload') as 'run' | 'upload', exactLocations: true },
+        { personId: 'p2', name: 'Luis Park', access: 'identify' as const, exactLocations: false },
+      ],
+      membersVersion: `${uuid}-v1`,
+    })
+    const { api, calls } = fakeApi({ people, collections: [collection('sparcd-aaa', 'aaa', 'p1'), collection('sparcd-bbb', 'bbb', 'p1')] })
+    let slow: (() => void) | null = null
+    let holding = false
+    const answer = api.listCollectionAccess.bind(api)
+    api.listCollectionAccess = async () => {
+      const answered = structuredClone(await answer())
+      if (holding) {
+        holding = false
+        await new Promise<void>((resolve) => { slow = resolve })
+      }
+      return answered
+    }
+
+    const view = render(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
+    await settle()
+    // Reading the other collection takes its time; coming back is quick.
+    holding = true
+    view.rerender(<CollectionMembers api={api} bucket="sparcd-bbb" people={people} />)
+    await settle()
+    view.rerender(<CollectionMembers api={api} bucket="sparcd-aaa" people={people} />)
+    await settle()
+
+    await click(radio(view.host, 'Runs this collection for Luis Park'))
+    await click(button(view.host, 'Save people'))
+    await settle()
+    expect(view.host.textContent).toContain('Saved.')
+
+    await act(async () => { slow!() })
+    await settle()
+
+    expect(radio(view.host, 'Runs this collection for Luis Park').checked).toBe(true)
+    expect((button(view.host, 'Save people') as HTMLButtonElement).disabled).toBe(true)
+
+    // And the next save goes out against the version that save came back with.
+    await click(view.host.querySelector('input[aria-label="Sees exact camera locations for Luis Park"]')!)
+    await click(button(view.host, 'Save people'))
+    await settle()
+    expect(view.host.textContent).not.toContain('Someone else changed this.')
+    expect(calls.filter((call) => call.name === 'setMembers')).toHaveLength(2)
   })
 })
 

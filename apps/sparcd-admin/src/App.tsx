@@ -214,14 +214,15 @@ export function App({
       <div className="max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         {notice && <p role="alert" className="mb-4 border border-warn px-3 py-2 text-sm text-warn">{notice}</p>}
         <div className={section === 'species' ? '' : 'hidden'}>
-          <RegistryEditor title="Species" registry={data.species} client={data.client} actor={actor} reload={() => void refresh()} />
+          <RegistryEditor title="Species" registry={data.species} loadedAt={data.startedAt} client={data.client} actor={actor} reload={() => void refresh()} />
         </div>
         <div className={section === 'locations' ? '' : 'hidden'}>
-          <RegistryEditor title="Locations" registry={data.locations} client={data.client} actor={actor} reload={() => void refresh()} />
+          <RegistryEditor title="Locations" registry={data.locations} loadedAt={data.startedAt} client={data.client} actor={actor} reload={() => void refresh()} />
         </div>
         <div className={section === 'collections' ? '' : 'hidden'}>
           <CollectionEditor
             collections={data.collections}
+            loadedAt={data.startedAt}
             client={data.client}
             actor={actor}
             speciesRegistry={data.species.value}

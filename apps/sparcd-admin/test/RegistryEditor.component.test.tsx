@@ -5,6 +5,7 @@ import { ConditionalReplaceConflictError } from '@sparcd/s3-safe'
 import { RegistryEditor, type Registry } from '../src/RegistryEditor'
 import { button, click, field, hasButton, render, rowButtons, type } from './dom'
 import { lastOf, methods, recordingClient } from './fake'
+import { moment } from '../src/moment'
 
 const species = (): Registry => ({
   key: 'Settings/species.json',
@@ -34,7 +35,7 @@ afterEach(() => { document.body.innerHTML = '' })
 describe('picking a record (bug 1)', () => {
   it('edits the row that was clicked when two records carry the same name', async () => {
     const { calls, client } = recordingClient({ existing: speciesFile })
-    const { host } = render(<RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[1])
     await type(field(host, 'Common name'), 'Mearns coyote')
     await click(button(host, 'Save'))
@@ -48,7 +49,7 @@ describe('picking a record (bug 1)', () => {
 describe('number boxes (bug 2)', () => {
   it('keeps what was typed, says what is wrong, and saves nothing', async () => {
     const { calls, client } = recordingClient({ existing: locationsFile })
-    const { host } = render(<RegistryEditor title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Latitude'), '31.2q')
     expect(field(host, 'Latitude').value).toBe('31.2q')
@@ -75,7 +76,7 @@ describe('number boxes (bug 2)', () => {
 describe('retiring', () => {
   it('turns Retire into Bring back and keeps the row in the list', async () => {
     const { calls, client } = recordingClient({ existing: locationsFile })
-    const { host } = render(<RegistryEditor title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await click(button(host, 'Retire'))
     expect(host.textContent).toContain('Retired')
@@ -89,7 +90,7 @@ describe('retiring', () => {
 describe('protected locations', () => {
   it('stores the plain checkbox as sensitive on the record', async () => {
     const { calls, client } = recordingClient({ existing: locationsFile })
-    const { host } = render(<RegistryEditor title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Locations" registry={locations()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     const box = Array.from(host.querySelectorAll('input[type="checkbox"]'))[0] as HTMLInputElement
     await click(box)
@@ -102,7 +103,7 @@ describe('protected locations', () => {
 describe('the save sequence', () => {
   it('writes the prepared note, then the list against the version it loaded, then the applied note', async () => {
     const { calls, client } = recordingClient({ existing: speciesFile })
-    const { host } = render(<RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Common name'), 'Coyote (plains)')
     await click(button(host, 'Save'))
@@ -120,7 +121,7 @@ describe('the save sequence', () => {
       existing: speciesFile,
       onReplace: (key) => { throw new ConditionalReplaceConflictError(key) },
     })
-    const { host } = render(<RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Common name'), 'Coyote (plains)')
     await click(button(host, 'Save'))
@@ -130,7 +131,7 @@ describe('the save sequence', () => {
 
 describe('a reload landing on an open draft (fix 1)', () => {
   const editor = (registry: Registry, client: ReturnType<typeof recordingClient>['client']) =>
-    <RegistryEditor title="Species" registry={registry} client={client} actor="admin" reload={() => {}} />
+    <RegistryEditor loadedAt={moment()} title="Species" registry={registry} client={client} actor="admin" reload={() => {}} />
 
   it('keeps the draft and offers the change when the list moved underneath', async () => {
     const { client } = recordingClient({ existing: speciesFile })
@@ -167,7 +168,7 @@ describe('after a failed history entry', () => {
       existing: speciesFile,
       onWrite: (key, attempt) => { if (key.endsWith('.applied.json') && attempt === 1) throw Error('storage hiccup') },
     })
-    const { host } = render(<RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Common name'), 'Coyote (plains)')
     await click(button(host, 'Save'))
@@ -190,7 +191,7 @@ describe('after a failed history entry', () => {
       existing: speciesFile,
       onWrite: (key) => { if (key.endsWith('.applied.json')) throw Error('storage hiccup') },
     })
-    const { host } = render(<RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
+    const { host } = render(<RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => {}} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Common name'), 'Coyote (plains)')
     await click(button(host, 'Save'))
@@ -211,7 +212,7 @@ describe('a save and the reload it triggers', () => {
     const { client } = recordingClient({ existing: speciesFile })
     const { gate, release } = held()
     const { host } = render(
-      <RegistryEditor title="Species" registry={species()} client={client} actor="admin" reload={() => gate} />)
+      <RegistryEditor loadedAt={moment()} title="Species" registry={species()} client={client} actor="admin" reload={() => gate} />)
     await click(rowButtons(host)[0])
     await type(field(host, 'Common name'), 'Coyote (plains)')
     await click(button(host, 'Save'))
@@ -236,7 +237,7 @@ describe('a save and the reload it triggers', () => {
     }
     let asked = false
     const editor = (registry: Registry) => (
-      <RegistryEditor title="Species" registry={registry} client={client} actor="admin" reload={() => { asked = true }} />
+      <RegistryEditor loadedAt={moment()} title="Species" registry={registry} client={client} actor="admin" reload={() => { asked = true }} />
     )
     const view = render(editor(first))
     await click(rowButtons(view.host)[1])
