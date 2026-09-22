@@ -107,16 +107,39 @@ export function seedPlan(namespace) {
       { bucket, key: `${base}/collection.json`, body: json(collection.document), contentType: 'application/json' },
       { bucket, key: `${base}/species.json`, body: json(collection.species), contentType: 'application/json' },
       { bucket, key: `${base}/locations.json`, body: json(collection.locations), contentType: 'application/json' },
+      // Every real upload leaves one, and both sibling apps read it when they
+      // list what is in a collection.
+      {
+        bucket,
+        key: `${base}/Uploads/${collection.stamp}/deployments.csv`,
+        body: `deploymentID,locationID,locationName,latitude,longitude\n${collection.stamp},${collection.locations[0].idProperty},${collection.locations[0].nameProperty},${collection.locations[0].latProperty},${collection.locations[0].lngProperty}\n`,
+        contentType: 'text/csv',
+      },
       {
         bucket,
         key: `${base}/Uploads/${collection.stamp}/media.csv`,
         body: `mediaID,filePath\n${collection.media.map((n, i) => `${i + 1},${n}`).join('\n')}\n`,
         contentType: 'text/csv',
       },
+      // The whole shape `UploadMetaJson` names. The Tagger's Browse screen
+      // reads several of these fields straight out and a missing one takes the
+      // page down, so the seed writes what a real upload writes.
       {
         bucket,
         key: `${base}/Uploads/${collection.stamp}/UploadMeta.json`,
-        body: json({ schemaVersion: 1, uploadedBy: 'seed', imageCount: collection.media.length }),
+        body: json({
+          uploadUser: collection.stamp.split('_')[1] ?? 'seed',
+          uploadDate: {
+            date: { year: 2026, month: 2, day: 2 },
+            time: { hour: 18, minute: 45, second: 3, nano: 0 },
+          },
+          imagesWithSpecies: 0,
+          imageCount: collection.media.length,
+          editComments: [],
+          bucket,
+          uploadPath: `${base}/Uploads/${collection.stamp}/`,
+          description: 'Seeded for the end-to-end run.',
+        }),
         contentType: 'application/json',
       },
     );

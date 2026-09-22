@@ -4,9 +4,10 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 import type { Page, BrowserContext, Browser } from '@playwright/test'
 import { expect } from '@playwright/test'
+import { createApi } from '../src/api'
 
 const STATE = fileURLToPath(new URL('./.state.json', import.meta.url))
 const DESCRIPTOR = fileURLToPath(new URL('./.stack.json', import.meta.url))
@@ -61,6 +62,21 @@ export async function savedConnection(page: Page): Promise<Connection> {
   return JSON.parse(raw) as Connection
 }
 
+/** The two sibling apps the same people sign in to with the same login. */
+export const UPLOADER = `http://127.0.0.1:${process.env.E2E_UPLOADER_PORT ?? 5413}/sparcd-exploration/uploader/`
+export const TAGGER = `http://127.0.0.1:${process.env.E2E_TAGGER_PORT ?? 5414}/sparcd-exploration/tagger/`
+
+/**
+ * Sign in to whichever app is open. All three ship the same three-field form,
+ * so one person's login works the same everywhere.
+ */
+export async function signInHere(page: Page, credentials: { endpoint: string; accessKey: string; secretKey: string }) {
+  await page.locator('#endpoint').fill(credentials.endpoint)
+  await page.locator('#accessKey').fill(credentials.accessKey)
+  await page.locator('#secretKey').fill(credentials.secretKey)
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+}
+
 /** Sign in through the real form, the way an administrator does. */
 export async function signIn(page: Page, credentials: { endpoint: string; accessKey: string; secretKey: string }) {
   await page.goto('index.html')
@@ -85,9 +101,16 @@ export async function openSection(page: Page, name: string) {
   await section(page, name).click()
 }
 
+/**
+ * Screenshots are taken at twice the pixel density, so a 1440px-wide desktop
+ * picture is a 2880px file — sharp enough to read on the screen it is reviewed
+ * on rather than a blurry thumbnail.
+ */
+export const SHOT_SCALE = 2
+
 /** Open an invite link in a context of its own, as the invited person would. */
-export async function openInvite(browser: Browser, link: string) {
-  const context = await browser.newContext()
+export async function openInvite(browser: Browser, link: string, options: Parameters<Browser['newContext']>[0] = {}) {
+  const context = await browser.newContext(options)
   const page = await context.newPage()
   await page.goto(link)
   return { context, page }
@@ -119,6 +142,35 @@ export async function statusOf(call: Promise<unknown>): Promise<number> {
 }
 
 export const bytes = (label: string) => Buffer.from(`${label}\n`, 'utf8')
+
+/** The whole of one stored object, as text. */
+export async function textOf(client: S3Client, bucket: string, key: string) {
+  const got = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+  return got.Body!.transformToString()
+}
+
+export const jsonOf = async <T>(client: S3Client, bucket: string, key: string): Promise<T> =>
+  JSON.parse(await textOf(client, bucket, key)) as T
+
+export async function keysUnder(client: S3Client, bucket: string, prefix: string) {
+  const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }))
+  return (listed.Contents ?? []).map((entry) => entry.Key!).sort()
+}
+
+/**
+ * The same JSON API the app's own screens call, signed with one person's key.
+ * The suite uses it where the app has no button for something — inviting a
+ * second administrator, for one — so the scenario can still be set up honestly.
+ */
+export const apiFor = (connection: { endpoint: string; accessKey: string; secretKey: string; region?: string }) =>
+  createApi({
+    endpoint: connection.endpoint,
+    region: connection.region ?? 'us-east-1',
+    accessKey: connection.accessKey,
+    secretKey: connection.secretKey,
+    forcePathStyle: true,
+    secure: false,
+  } as never)
 
 export async function shot(page: Page, folder: string, name: string) {
   mkdirSync(`${SHOTS}/${folder}`, { recursive: true })
