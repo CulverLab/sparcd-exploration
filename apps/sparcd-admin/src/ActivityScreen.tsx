@@ -3,12 +3,15 @@ import type { AccessApi, ActivityEvent, Person } from './api'
 import {
   ACTIVITY_CHIPS,
   activityCsv,
+  chosenWindow,
   collapseRuns,
   dayHeading,
   downloadsSentence,
   fileName,
   groupByDay,
   isOwnBookkeeping,
+  lastDaysWindow,
+  RANGE_TOO_WIDE,
   sinceDays,
   timeOf,
   TRUNCATION_NOTE,
@@ -34,6 +37,9 @@ export function ActivityScreen({ api, collections, people }: {
   const [problem, setProblem] = useState('')
   const [lookupBucket, setLookupBucket] = useState('')
   const [lookupName, setLookupName] = useState('')
+  const [lookupRange, setLookupRange] = useState('7')
+  const [lookupFrom, setLookupFrom] = useState('')
+  const [lookupTo, setLookupTo] = useState('')
   const [answer, setAnswer] = useState('')
 
   const whereName = (target?: string) =>
@@ -51,9 +57,16 @@ export function ActivityScreen({ api, collections, people }: {
   const lookUp = async () => {
     const target = lookupBucket || collections[0]?.bucket
     if (!target || !lookupName.trim()) return
+    const custom = lookupRange === 'custom'
+    if (custom && !(lookupFrom && lookupTo)) return
+    const window = custom ? chosenWindow(lookupFrom, lookupTo) : lastDaysWindow(Number(lookupRange))
+    if (!window) {
+      setAnswer(RANGE_TOO_WIDE)
+      return
+    }
     try {
-      const found = await api.downloadsOf(target, lookupName.trim())
-      setAnswer(downloadsSentence(fileName(lookupName.trim()) || lookupName.trim(), whereName(target), found))
+      const found = await api.downloadsOf(target, lookupName.trim(), window)
+      setAnswer(downloadsSentence(fileName(lookupName.trim()) || lookupName.trim(), whereName(target), found, window))
     } catch (cause) {
       setAnswer((cause as Error).message)
     }
@@ -128,6 +141,20 @@ export function ActivityScreen({ api, collections, people }: {
           </select>
           <label className="sr-only" htmlFor="lookup-name">Image name</label>
           <input id="lookup-name" className={`${inputClass} min-w-0 flex-1`} placeholder="IMG_0412.JPG" value={lookupName} onChange={(event) => setLookupName(event.target.value)} />
+          <label className="sr-only" htmlFor="lookup-range">Time range</label>
+          <select id="lookup-range" className={inputClass} value={lookupRange} onChange={(event) => setLookupRange(event.target.value)}>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="custom">Choose dates</option>
+          </select>
+          {lookupRange === 'custom' && (
+            <>
+              <label className="sr-only" htmlFor="lookup-from">From</label>
+              <input id="lookup-from" type="date" className={inputClass} value={lookupFrom} onChange={(event) => setLookupFrom(event.target.value)} />
+              <label className="sr-only" htmlFor="lookup-to">To</label>
+              <input id="lookup-to" type="date" className={inputClass} value={lookupTo} onChange={(event) => setLookupTo(event.target.value)} />
+            </>
+          )}
           <button type="button" onClick={() => void lookUp()} className="border border-rule px-3 py-2 text-sm text-ink hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Look it up</button>
         </div>
         {answer && <p className="mb-0 mt-2 text-sm text-ink">{answer}</p>}
