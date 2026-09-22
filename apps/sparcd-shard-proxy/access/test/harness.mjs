@@ -32,29 +32,120 @@ export const CANARY_KEY = 'secret.txt';
 export const CANARY_BODY = 'the-canary-must-never-be-read';
 
 const compose = (...args) =>
-  run('docker', ['compose', '-f', COMPOSE, '-p', PROJECT, ...args], { timeout: 180000 });
+  run('docker', ['compose', '-f', COMPOSE, '-p', PROJECT, ...args], { timeout: 600000 });
+
+/**
+ * Run one setup step under a deadline, with a heartbeat that holds the event
+ * loop open for its duration. Without the heartbeat a step that waits on
+ * something holding no ref'd handle — a `fetch` that never settles, say — lets
+ * the loop drain, and node:test cancels every suite with nothing but
+ * "Promise resolution is still pending" to show for it.
+ */
+export async function stage(label, ms, fn) {
+  const beat = setInterval(() => {}, 250);
+  const started = Date.now();
+  let timer;
+  process.stderr.write(`# ${label}\n`);
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: gave up after ${ms} ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    clearInterval(beat);
+    process.stderr.write(`# ${label} — ${Date.now() - started} ms\n`);
+  }
+}
+
+/** Whatever Docker can tell us about why MinIO is not answering. */
+async function dockerDiagnostics() {
+  const say = async (...args) => {
+    try {
+      const { stdout, stderr } = await compose(...args);
+      return `$ docker compose ${args.join(' ')}\n${stdout}${stderr}`;
+    } catch (err) {
+      return `$ docker compose ${args.join(' ')}\n${err.message}`;
+    }
+  };
+  return [await say('ps', '-a'), await say('logs', '--tail', '50', 'minio')].join('\n');
+}
+
+/** The loopback host:port Docker published for MinIO, or a loud failure. */
+async function publishedAddress() {
+  const loopback = (text) => text.split('\n')
+    .map((line) => line.trim())
+    .map((line) => line.replace(/^0\.0\.0\.0:/, '127.0.0.1:'))
+    .find((line) => /^127\.0\.0\.1:\d+$/.test(line));
+
+  const { stdout } = await compose('port', 'minio', '9000').catch(() => ({ stdout: '' }));
+  const fromPort = loopback(stdout);
+  if (fromPort) return fromPort;
+
+  // `docker compose port` comes back empty on some Linux/Compose combinations
+  // when the publish is pinned to an IP with an ephemeral host port, which is
+  // exactly the mapping this stack uses. Ask the container instead.
+  const { stdout: ids } = await compose('ps', '-q', 'minio').catch(() => ({ stdout: '' }));
+  const id = ids.trim().split('\n')[0];
+  if (id) {
+    const { stdout: hostPort } = await run('docker', [
+      'inspect', '-f', '{{range $p := index .NetworkSettings.Ports "9000/tcp"}}{{$p.HostIp}}:{{$p.HostPort}}\n{{end}}', id,
+    ]).catch(() => ({ stdout: '' }));
+    const fromInspect = loopback(hostPort);
+    if (fromInspect) return fromInspect;
+  }
+
+  throw new Error(
+    'Docker published no loopback address for MinIO port 9000 '
+    + `(compose port said ${JSON.stringify(stdout)})\n${await dockerDiagnostics()}`,
+  );
+}
+
+async function waitForMinio(endpoint, ms) {
+  const url = `${endpoint}/minio/health/ready`;
+  const deadline = Date.now() + ms;
+  let last = 'no attempt finished';
+  for (;;) {
+    try {
+      // A per-attempt deadline, so one socket that never answers cannot stall
+      // the whole wait.
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) return;
+      last = `HTTP ${res.status}`;
+    } catch (err) {
+      last = err.message;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `MinIO never answered ${url} within ${ms} ms — last attempt: ${last}\n`
+        + await dockerDiagnostics(),
+      );
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
 
 export async function startMinio() {
   await compose('down', '-v').catch(() => {});
-  await compose('up', '-d');
-  const { stdout } = await compose('port', 'minio', '9000');
-  const endpoint = `http://${stdout.trim().replace(/^0\.0\.0\.0/, '127.0.0.1')}`;
-  const deadline = Date.now() + 90000;
-  for (;;) {
-    try {
-      const res = await fetch(`${endpoint}/minio/health/ready`);
-      if (res.ok) break;
-    } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error('MinIO did not become ready');
-    await new Promise((r) => setTimeout(r, 500));
-  }
+  // The pull gets its own budget: on a cold runner it is minutes of download,
+  // and none of that says anything about whether MinIO is healthy.
+  await stage('pulling the MinIO image', 480000, () => compose('pull', '--quiet'));
+  await stage('starting MinIO', 180000, () => compose('up', '-d', '--wait', '--wait-timeout', '120'));
+  const endpoint = `http://${await stage('reading the published port', 30000, publishedAddress)}`;
+  await stage(`waiting for MinIO on ${endpoint}`, 60000, () => waitForMinio(endpoint, 60000));
   return endpoint;
 }
 
 export const stopMinio = () => compose('down', '-v');
 
 /** Seed the upstream: three buckets inside the namespace, one canary outside. */
-export async function seed(endpoint) {
+export function seed(endpoint) {
+  return stage('seeding the namespace', 60000, () => seedNow(endpoint));
+}
+
+async function seedNow(endpoint) {
   const root = makeUpstream({ endpoint, ...ROOT });
   const makeBucket = async (name) => {
     const u = new URL(endpoint);
@@ -93,7 +184,11 @@ export function freePort() {
   });
 }
 
-export async function startProxy(endpoint, overrides = {}, { bootstrap = true } = {}) {
+export function startProxy(endpoint, overrides = {}, opts = {}) {
+  return stage('starting the proxy', 60000, () => startProxyNow(endpoint, overrides, opts));
+}
+
+async function startProxyNow(endpoint, overrides = {}, { bootstrap = true } = {}) {
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const config = {
