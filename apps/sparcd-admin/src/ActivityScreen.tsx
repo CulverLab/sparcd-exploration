@@ -11,6 +11,7 @@ import {
   isOwnBookkeeping,
   sinceDays,
   timeOf,
+  TRUNCATION_NOTE,
 } from './activity'
 
 const kindWord: Record<string, string> = {
@@ -29,6 +30,7 @@ export function ActivityScreen({ api, collections, people }: {
   const [bucket, setBucket] = useState('')
   const [days, setDays] = useState(7)
   const [events, setEvents] = useState<ActivityEvent[]>([])
+  const [truncated, setTruncated] = useState(false)
   const [problem, setProblem] = useState('')
   const [lookupBucket, setLookupBucket] = useState('')
   const [lookupName, setLookupName] = useState('')
@@ -41,7 +43,7 @@ export function ActivityScreen({ api, collections, people }: {
     let dropped = false
     const kinds = ACTIVITY_CHIPS.filter((chip) => chips.includes(chip.id)).flatMap((chip) => chip.kinds)
     api.activity({ from: sinceDays(days), person: person || undefined, bucket: bucket || undefined, kind: kinds.length ? kinds : undefined })
-      .then((result) => { if (!dropped) { setEvents(result.events); setProblem('') } })
+      .then((result) => { if (!dropped) { setEvents(result.events); setTruncated(result.truncated === true); setProblem('') } })
       .catch((cause: Error) => { if (!dropped) setProblem(cause.message) })
     return () => { dropped = true }
   }, [chips, person, bucket, days])
@@ -60,7 +62,7 @@ export function ActivityScreen({ api, collections, people }: {
   const shown = events.filter((event) => !isOwnBookkeeping(event))
 
   const download = () => {
-    const blob = new Blob([activityCsv(shown, whereName)], { type: 'text/csv' })
+    const blob = new Blob([activityCsv(shown, whereName, truncated)], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -133,6 +135,7 @@ export function ActivityScreen({ api, collections, people }: {
 
       <div className="p-4">
         {problem && <p role="alert" className="text-sm text-warn">{problem}</p>}
+        {!problem && truncated && <p className="mb-3 mt-0 text-sm text-inkSoft">{TRUNCATION_NOTE}</p>}
         {!problem && shown.length === 0 && <p className="m-0 text-sm text-inkSoft">Nothing happened in this stretch.</p>}
         {groupByDay(shown).map((day) => (
           <div key={day.key} className="mb-4 border border-ruleSoft">
