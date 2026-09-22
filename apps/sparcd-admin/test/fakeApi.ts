@@ -100,7 +100,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       return { members: here.members, membersVersion: here.membersVersion }
     },
     async activity() { record('activity'); return { events: data.events, truncated: data.truncated } },
-    async downloadsOf(bucket: string, key: string) { record('downloadsOf', bucket, key); return data.downloads },
+    async downloadsOf(bucket: string, key: string, window: { from: string; to: string }) { record('downloadsOf', bucket, key, window); return data.downloads },
   }
   return { api: api as unknown as AccessApi, calls, data }
 }

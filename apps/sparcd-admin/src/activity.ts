@@ -143,15 +143,41 @@ export function collapseRuns(events: ActivityEvent[], whereName: WhereName): Tim
   return rows
 }
 
-/** "IMG_0412.JPG from Research 1 was downloaded by Priya Nair on Sep 12, 14:03." */
-export function downloadsSentence(file: string, where: string, events: ActivityEvent[]) {
-  if (events.length === 0) return `Nobody has downloaded ${file} from ${where}.`
+export type ActivityWindow = { from: string; to: string; phrase: string }
+
+export const MAX_WINDOW_DAYS = 31
+export const RANGE_TOO_WIDE = `Pick a range of ${MAX_WINDOW_DAYS} days or less.`
+
+export const lastDaysWindow = (days: number, now = new Date()): ActivityWindow => ({
+  from: sinceDays(days, now),
+  to: now.toISOString(),
+  phrase: `in the last ${days} days`,
+})
+
+// Noon keeps a date-only value on its own day whatever the reader's offset.
+const dayLabel = (date: string) =>
+  new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+/** Two date inputs turned into a window, or null when the service would refuse them. */
+export function chosenWindow(from: string, to: string): ActivityWindow | null {
+  const days = (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86400000
+  if (!(days >= 0) || days > MAX_WINDOW_DAYS - 1) return null
+  return {
+    from: `${from}T00:00:00.000Z`,
+    to: `${to}T23:59:59.999Z`,
+    phrase: `between ${dayLabel(from)} and ${dayLabel(to)}`,
+  }
+}
+
+/** "IMG_0412.JPG from Research 1 was downloaded by Priya Nair on Sep 12, in the last 30 days." */
+export function downloadsSentence(file: string, where: string, events: ActivityEvent[], window: ActivityWindow) {
+  if (events.length === 0) return `Nobody downloaded ${file} from ${where} ${window.phrase}.`
   const parts = events.map((event) => {
     const when = new Date(event.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    return `by ${event.personName ?? 'someone'} on ${when}, ${timeOf(event.ts)}`
+    return `by ${event.personName ?? 'someone'} on ${when}`
   })
   const people = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
-  return `${file} from ${where} was downloaded ${people}.`
+  return `${file} from ${where} was downloaded ${people}, ${window.phrase}.`
 }
 
 /** Said on screen and again at the top of the spreadsheet, so a file that

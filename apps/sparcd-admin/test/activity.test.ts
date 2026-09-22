@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityEvent } from '../src/api'
-import { activityCsv, activitySentence, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping, TRUNCATION_NOTE } from '../src/activity'
+import { activityCsv, activitySentence, chosenWindow, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping, lastDaysWindow, TRUNCATION_NOTE } from '../src/activity'
 
 const where = (bucket?: string) => (bucket === 'sparcd-aaa' ? 'Research 1' : 'Sky Islands 2026')
 
@@ -118,15 +118,34 @@ describe('grouping and export', () => {
     expect(dayHeading('2026-09-01T09:00:00.000Z', now)).not.toMatch(/^(Today|Yesterday)/)
   })
 
-  it('answers who downloaded an image in one sentence', () => {
+  it('answers who downloaded an image in one sentence, naming the window', () => {
     const downloads = [
       event('download', { ts: '2026-09-12T14:03:00.000Z', personName: 'Priya Nair' }),
       event('download', { ts: '2026-09-09T09:41:00.000Z', personName: 'Todd Reyes' }),
     ]
-    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', downloads)).toMatch(
-      /^IMG_0412\.JPG from Research 1 was downloaded by Priya Nair on Sep 12, \d\d:\d\d and by Todd Reyes on Sep 9, \d\d:\d\d\.$/,
+    const month = lastDaysWindow(30)
+    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', downloads, month)).toBe(
+      'IMG_0412.JPG from Research 1 was downloaded by Priya Nair on Sep 12 and by Todd Reyes on Sep 9, in the last 30 days.',
     )
-    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', [])).toBe('Nobody has downloaded IMG_0412.JPG from Research 1.')
+    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', [], month)).toBe(
+      'Nobody downloaded IMG_0412.JPG from Research 1 in the last 30 days.',
+    )
+  })
+
+  it('names a chosen range in the answer instead', () => {
+    const august = chosenWindow('2026-08-01', '2026-08-31')!
+    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', [], august)).toBe(
+      'Nobody downloaded IMG_0412.JPG from Research 1 between Aug 1 and Aug 31.',
+    )
+    expect(downloadsSentence('IMG_0412.JPG', 'Research 1', [event('download', { ts: '2026-08-04T14:03:00.000Z' })], august)).toBe(
+      'IMG_0412.JPG from Research 1 was downloaded by Priya Nair on Aug 4, between Aug 1 and Aug 31.',
+    )
+  })
+
+  it('refuses a chosen range wider than 31 days', () => {
+    expect(chosenWindow('2026-08-01', '2026-09-10')).toBe(null)
+    expect(chosenWindow('2026-08-01', '2026-08-31')?.from).toBe('2026-08-01T00:00:00.000Z')
+    expect(chosenWindow('2026-08-01', '2026-08-31')?.to).toBe('2026-08-31T23:59:59.999Z')
   })
 
   it('writes the shown events as a spreadsheet', () => {

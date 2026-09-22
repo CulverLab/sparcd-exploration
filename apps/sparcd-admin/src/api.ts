@@ -274,8 +274,9 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
         truncated?: boolean
       }
     },
-    async downloadsOf(bucket: string, key: string) {
-      return ((await send({ method: 'GET', path: 'admin/activity/downloads', query: { bucket, key } })) as { events: ActivityEvent[] }).events
+    async downloadsOf(bucket: string, key: string, window: { from: string; to: string }) {
+      const query = { bucket, key, from: window.from, to: window.to }
+      return ((await send({ method: 'GET', path: 'admin/activity/downloads', query })) as { events: ActivityEvent[] }).events
     },
   }
 }
