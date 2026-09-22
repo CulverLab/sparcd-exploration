@@ -35,7 +35,11 @@ proxy are built against it independently.
    stripped. A header from the ordinary forward list travels only if it is in
    `SignedHeaders`. Response headers are an allowlist too. Responses that name a bucket
    are **rebuilt**, not filtered, and a response whose text still carries the namespace
-   anywhere but a `Key` or a `Prefix` is a 502 rather than a pass.
+   anywhere but a `Key` or a `Prefix` is a 502 rather than a pass. Every answer —
+   S3, JSON API and refusal alike — carries `Cache-Control: no-store`, overriding
+   whatever the upstream said: each one is decided from one person's key, so a shared
+   cache would hand it to somebody else, and a browser guessing a lifetime from
+   `Last-Modified` would serve a list that has since been changed by someone else.
 7. **Listings step around what they may not show.** A settings listing never reads
    through `Settings/access/` or `Settings/activity/`; it jumps past them, returns an
    honest `IsTruncated`, and pages with a `NextContinuationToken` the proxy minted

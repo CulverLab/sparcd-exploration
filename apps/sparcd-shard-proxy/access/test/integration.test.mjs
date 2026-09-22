@@ -137,6 +137,23 @@ describe('invariant 1: nothing outside the namespace', () => {
     }
   });
 
+  test('no answer may be kept by a cache, whatever it says', async () => {
+    // Each of these is decided from one person's key. Without `no-store` a
+    // browser guesses a lifetime from `Last-Modified` and serves the same
+    // person a list someone else has since changed, and a shared cache would
+    // hand it to a different person altogether.
+    const answers = [
+      ['a media read', await people.alice.raw('GET', `/${BUCKET_A}/${prefixA}/a.jpg`)],
+      ['a bucket listing', await people.alice.raw('GET', '/')],
+      ['an object listing', await people.alice.raw('GET', `/${BUCKET_A}?list-type=2`)],
+      ['a refusal', await people.bob.raw('GET', `/${BUCKET_B}/${prefixB}/a.jpg`)],
+      ['a JSON answer', await people.alice.raw('GET', '/-/whoami')],
+    ];
+    for (const [what, res] of answers) {
+      assert.equal(res.headers.get('cache-control'), 'no-store', what);
+    }
+  });
+
   test('the canary is still there, read with the upstream credential', async () => {
     const got = await root.get(CANARY, CANARY_KEY);
     assert.equal(got.text, CANARY_BODY);

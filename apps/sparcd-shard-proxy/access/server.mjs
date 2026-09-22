@@ -508,6 +508,7 @@ export async function createAccessProxy(input) {
     res.writeHead(200, {
       'content-type': 'application/xml',
       'content-length': Buffer.byteLength(xml),
+      'cache-control': 'no-store',
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Expose-Headers': EXPOSE_HEADERS,
       Vary: 'Origin',
@@ -563,6 +564,7 @@ export async function createAccessProxy(input) {
       res.writeHead(200, {
         'content-type': 'application/xml',
         'content-length': Buffer.byteLength(xml),
+        'cache-control': 'no-store',
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Expose-Headers': EXPOSE_HEADERS,
         Vary: 'Origin',
@@ -653,6 +655,14 @@ export async function createAccessProxy(input) {
       if (!allowed) continue;
       out[name] = value;
     }
+    // Every answer here is one person's, decided from their key. Nothing may
+    // keep a copy: a shared cache would hand it to the next caller, and a
+    // browser left to guess a freshness lifetime from `Last-Modified` serves
+    // its own user a version of a list someone else has since changed — which
+    // is exactly the case the conditional writes downstream exist to catch.
+    // It overrides any `cache-control` the upstream sent, which is why it is
+    // set after the forward loop rather than inside it.
+    out['cache-control'] = 'no-store';
     out['Access-Control-Allow-Origin'] = origin;
     out['Access-Control-Expose-Headers'] = EXPOSE_HEADERS;
     out.Vary = 'Origin';
@@ -695,6 +705,7 @@ export async function createAccessProxy(input) {
     res.writeHead(status, {
       'content-type': 'application/xml',
       'content-length': Buffer.byteLength(xml),
+      'cache-control': 'no-store',
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Expose-Headers': EXPOSE_HEADERS,
       Vary: 'Origin',
@@ -707,6 +718,7 @@ export async function createAccessProxy(input) {
     res.writeHead(status, {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(json),
+      'cache-control': 'no-store',
       'Access-Control-Allow-Origin': origin,
       Vary: 'Origin',
     });
