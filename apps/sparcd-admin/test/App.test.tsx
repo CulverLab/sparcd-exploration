@@ -184,3 +184,61 @@ describe('answering another tab (bug 12)', () => {
     expect(heard).toEqual([{ type: 'connect', config }])
   })
 })
+
+describe('a login whose people arrive after it was abandoned (fix 4)', () => {
+  it('stays logged out when the list lands after Logout', async () => {
+    const { api } = fakeApi()
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const late = { ...api, listPeople: async () => { await held; return api.listPeople() } }
+
+    const { view } = open(settingsStore(), {}, (target) => (target.accessKey === 'OTHERKEY' ? late : api) as never)
+    await settle()
+    expect(view.host.textContent).toContain('Species')
+
+    // A sibling tab hands over a different login; its people list is still in
+    // flight when this tab logs out.
+    const sibling = new FakeChannel('sparcd-connection-live')
+    await act(async () => { sibling.postMessage({ type: 'connect', config: { ...config, accessKey: 'OTHERKEY' } }) })
+    await click(button(view.host, 'Logout'))
+    await act(async () => { release() })
+    await settle()
+
+    expect(view.host.querySelector('nav[aria-label="Sections"]')).toBeNull()
+    expect(hasButton(view.host, 'Connect')).toBe(true)
+  })
+})
+
+describe('one people list behind both screens (fix 5)', () => {
+  it("finds someone added on People in a collection's members table", async () => {
+    const { api } = fakeApi()
+    const { view } = open(settingsStore(), {}, () => api)
+    await settle()
+
+    await click(button(view.host, 'People'))
+    await click(button(view.host, 'Add a person'))
+    // The hidden Collections screen has a "Name" field too, so this stays
+    // inside the panel that was just opened.
+    const panel = view.host.querySelector('section[aria-labelledby="add-person-heading"]') as HTMLElement
+    await type(field(panel, 'Name'), 'Priya Nair')
+    await type(field(panel, 'Email'), 'priya@example.org')
+    await click(button(panel, 'Add person'))
+    await settle()
+
+    await click(button(view.host, 'Collections'))
+    await settle()
+    const search = view.host.querySelector('input[id^="add-person-"]') as HTMLInputElement
+    await type(search, 'Priya')
+    expect(hasButton(view.host, 'Priya Nair')).toBe(true)
+  })
+
+  it('reads the list again when Collections opens', async () => {
+    const { api, calls } = fakeApi()
+    const { view } = open(settingsStore(), {}, () => api)
+    await settle()
+    const atSignIn = calls.filter((call) => call.name === 'listPeople').length
+    await click(button(view.host, 'Collections'))
+    await settle()
+    expect(calls.filter((call) => call.name === 'listPeople').length).toBeGreaterThan(atSignIn)
+  })
+})
