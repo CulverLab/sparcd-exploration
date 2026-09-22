@@ -37,13 +37,15 @@ function StatusPill({ status }: { status: Person['status'] }) {
 
 type Confirm = 'pause' | 'resume' | 'reset' | null
 
-export function PeopleScreen({ api, endpoint, collections, from }: {
+export function PeopleScreen({ api, people, refresh, endpoint, collections, from }: {
   api: AccessApi
+  /** The one list the app holds; the members table reads the same one. */
+  people: Person[] | null
+  refresh: () => Promise<void>
   endpoint: string
   collections: { bucket: string; name: string }[]
   from: string
 }) {
-  const [people, setPeople] = useState<Person[] | null>(null)
   const [problem, setProblem] = useState('')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -54,16 +56,16 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
   const [editing, setEditing] = useState<{ bucket: string; access: Access; exactLocations: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const refresh = async () => {
+  const reload = async () => {
     try {
-      setPeople(await api.listPeople())
+      await refresh()
       setProblem('')
     } catch (cause) {
       setProblem(problemSentence(cause))
     }
   }
 
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => { void reload() }, [])
 
   const selected = people?.find((person) => person.id === selectedId) ?? null
 
@@ -160,7 +162,7 @@ export function PeopleScreen({ api, endpoint, collections, from }: {
               endpoint={endpoint}
               collections={collections}
               from={from}
-              onAdded={() => void refresh()}
+              onAdded={() => void reload()}
               onClose={() => setAdding(false)}
             />
           )}

@@ -6,12 +6,22 @@ import { inviteLink, inviteMailto } from '../src/InviteLink'
 import { button, click, field, hasButton, render, settle, type } from './dom'
 import { ApiError } from '../src/api'
 import { fakeApi, person } from './fakeApi'
+import type { AccessApi, Person } from '../src/api'
+import { useState } from 'react'
 
 const collections = [{ bucket: 'sparcd-aaa', name: 'Sky Islands 2026' }]
 
+// The app owns the list now, so the test stands in for it: one piece of state,
+// one refresh, handed to the screen the way App hands it over.
+function Host({ api }: { api: AccessApi }) {
+  const [people, setPeople] = useState<Person[] | null>(null)
+  const refresh = async () => { setPeople(await api.listPeople()) }
+  return <PeopleScreen api={api} people={people} refresh={refresh} endpoint="storage.test" collections={collections} from="Jorge Delgado" />
+}
+
 const screen = async (state: Parameters<typeof fakeApi>[0] = {}) => {
   const { api, calls, data } = fakeApi(state)
-  const view = render(<PeopleScreen api={api} endpoint="storage.test" collections={collections} from="Jorge Delgado" />)
+  const view = render(<Host api={api} />)
   await settle()
   return { view, calls, data }
 }
@@ -126,7 +136,7 @@ describe('one person at a time (contract 1.1)', () => {
       await new Promise<void>((resolve) => { release = resolve })
       return setMember(...args)
     }
-    const view = render(<PeopleScreen api={api} endpoint="storage.test" collections={collections} from="Jorge Delgado" />)
+    const view = render(<Host api={api} />)
     await settle()
 
     await click(rowFor(view.host, 'Ana Morales'))
@@ -154,7 +164,7 @@ describe('one person at a time (contract 1.1)', () => {
   it('turns a refusal into one plain sentence', async () => {
     const { api, calls } = fakeApi()
     const failing = { ...api, updatePerson: async () => { throw new ApiError(409, 'last_admin', 'cannot demote') } }
-    const view = render(<PeopleScreen api={failing as never} endpoint="storage.test" collections={collections} from="Jorge Delgado" />)
+    const view = render(<Host api={failing as never} />)
     await settle()
     await click(rowFor(view.host, 'Ana Morales'))
     await click(button(view.host, 'Pause access'))
