@@ -19,6 +19,7 @@ import { init } from '../../sparcd-shard-proxy/access/cli.mjs';
 import { makeUpstream } from '../../sparcd-shard-proxy/access/upstream.mjs';
 
 import { planTarget } from './target.mjs';
+import { removeWritten } from './cleanup.mjs';
 import { startLatencyForwarder } from './latency.mjs';
 import {
   CANARY_BUCKET, CANARY_BODY, CANARY_KEY, COLLECTIONS, SETTINGS_BUCKET,
@@ -36,11 +37,6 @@ export const DESCRIPTOR = fileURLToPath(new URL('./.stack.json', import.meta.url
 const MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const ADMIN = { name: 'Jorge Delgado', email: 'jorge@example.org' };
-
-// The proxy keeps every person and key it knows under here. An external proxy
-// owns those records, so cleanup leaves the prefix alone — emptying the buckets
-// is the operator's way to reset them.
-const ACCESS_PREFIX = 'Settings/access/';
 
 const compose = (...args) =>
   run('docker', ['compose', '-f', COMPOSE, '-p', PROJECT, ...args], { timeout: 180000 });
@@ -68,11 +64,6 @@ async function makeBucket(root, name) {
   if (!res.ok && res.status !== 409) throw new Error(`create bucket ${name} → ${res.status}`);
 }
 
-async function deleteObject(root, bucket, key) {
-  const res = await root.send(root.url(bucket, key), { method: 'DELETE' });
-  if (!res.ok && res.status !== 404) throw new Error(`delete ${bucket}/${key} → ${res.status}`);
-}
-
 export async function startStack(env = process.env) {
   const plan = planTarget(env);
   const port = Number(env.E2E_PROXY_PORT ?? 8797);
@@ -84,16 +75,21 @@ export async function startStack(env = process.env) {
     secretAccessKey: plan.secretAccessKey,
   });
 
+  // Every object this run puts upstream, recorded as it goes: cleanup removes
+  // exactly this list and never asks storage what else is there.
+  const written = [];
+  const put = async (object) => {
+    await root.put(object.bucket, object.key, object.body, { contentType: object.contentType });
+    written.push({ bucket: object.bucket, key: object.key });
+  };
+
   if (plan.createBuckets) {
     for (const bucket of namespacedBuckets(plan.namespace)) await makeBucket(root, bucket);
     await makeBucket(root, CANARY_BUCKET);
-    await root.put(CANARY_BUCKET, CANARY_KEY, CANARY_BODY, { contentType: 'text/plain' });
+    await put({ bucket: CANARY_BUCKET, key: CANARY_KEY, body: CANARY_BODY, contentType: 'text/plain' });
   }
 
-  const written = seedPlan(plan.namespace);
-  for (const object of written) {
-    await root.put(object.bucket, object.key, object.body, { contentType: object.contentType });
-  }
+  for (const object of seedPlan(plan.namespace)) await put(object);
 
   // Seeding keeps the direct endpoint; only what the app does through the
   // proxy is slowed down, which is the traffic a person waits on.
@@ -160,22 +156,10 @@ export async function startStack(env = process.env) {
         return;
       }
       // Storage this run does not own: undo what it wrote, and nothing else.
-      // Buckets stay, and so does every key outside the prefixes below — the
-      // only places the seed, the proxy and the suite ever put anything.
-      const settings = `${plan.namespace}${SETTINGS_BUCKET}`;
-      const sweep = [
-        ...['Settings/', 'Collections/'].map((prefix) => [settings, prefix]),
-        ...COLLECTIONS.map((c) => [`${plan.namespace}${c.bucket}`, `Collections/${c.uuid}/`]),
-      ];
-      for (const [bucket, prefix] of sweep) {
-        for (const key of await root.listKeys(bucket, prefix)) {
-          // Records an external proxy owns, including the administrator this
-          // run signed in as. Only the run that created them may remove them.
-          if (!plan.startProxy && key.startsWith(ACCESS_PREFIX)) continue;
-          await deleteObject(root, bucket, key);
-        }
-      }
-      for (const object of written) await deleteObject(root, object.bucket, object.key);
+      // Buckets stay, and so does everything the run did not put there —
+      // including what the specs made through the proxy, which `cleanup.mjs`
+      // explains and the operator's reset removes.
+      await removeWritten(root, written, plan);
     },
   };
 }

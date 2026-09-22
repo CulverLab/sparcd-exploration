@@ -5,6 +5,8 @@
 import { test, expect } from '@playwright/test'
 // @ts-expect-error — plain JavaScript, shared with the stack.
 import { planTarget, isLoopback, TargetRefused } from '../target.mjs'
+// @ts-expect-error — plain JavaScript, shared with the stack.
+import { removeWritten } from '../cleanup.mjs'
 
 test.describe('the upstream guard', () => {
   test('brings up its own MinIO when no upstream is named', () => {
@@ -85,6 +87,40 @@ test.describe('the upstream guard', () => {
       expect(() => planTarget({ E2E_PROXY_URL: 'https://proxy.example.org:8460', ...admin }))
         .toThrow(/E2E_ADMIN_ACCESS_KEY_ID and E2E_ADMIN_SECRET_ACCESS_KEY/)
     }
+  })
+
+  test('cleanup removes what the run wrote and leaves everything else', async () => {
+    const deleted: string[] = []
+    let listed = 0
+    const root = {
+      url: (bucket: string, key: string) => `http://storage.test/${bucket}/${key}`,
+      async send(url: string) { deleted.push(String(url)); return { ok: true, status: 204 } },
+      async listKeys() { listed += 1; return ['scratch-sparcd-settings-test/Settings/theirs.json'] },
+    }
+    const written = [{ bucket: 'scratch-sparcd-settings-test', key: 'Settings/species.json' }]
+
+    await removeWritten(root, written, { startProxy: true })
+
+    expect(deleted).toEqual(['http://storage.test/scratch-sparcd-settings-test/Settings/species.json'])
+    // A pre-existing key under the same prefix is never even asked about.
+    expect(listed).toBe(0)
+  })
+
+  test("leaves an external proxy's own records where they are", async () => {
+    const deleted: string[] = []
+    const root = {
+      url: (bucket: string, key: string) => `http://storage.test/${bucket}/${key}`,
+      async send(url: string) { deleted.push(String(url)); return { ok: true, status: 204 } },
+      async listKeys() { return [] },
+    }
+    const written = [
+      { bucket: 'scratch-sparcd-settings-test', key: 'Settings/access/people/p1.json' },
+      { bucket: 'scratch-sparcd-settings-test', key: 'Settings/species.json' },
+    ]
+
+    await removeWritten(root, written, { startProxy: false })
+
+    expect(deleted).toEqual(['http://storage.test/scratch-sparcd-settings-test/Settings/species.json'])
   })
 
   test('the real upstream hosts are not loopback', () => {
