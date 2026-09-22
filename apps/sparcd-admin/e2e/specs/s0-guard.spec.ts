@@ -51,6 +51,42 @@ test.describe('the upstream guard', () => {
     expect(plan.deleteOwnObjectsOnly).toBe(true)
   })
 
+  test('starts its own proxy and mints its own administrator by default', () => {
+    const plan = planTarget({})
+    expect(plan.proxy).toBe('internal')
+    expect(plan.startProxy).toBe(true)
+    expect(plan.admin).toBe(null)
+  })
+
+  test('starts no proxy when it is pointed at one already deployed', () => {
+    const plan = planTarget({
+      E2E_UPSTREAM: 'https://storage.example.org',
+      E2E_NAMESPACE: 'scratch-',
+      E2E_PROXY_URL: 'https://proxy.example.org:8460/',
+      E2E_ADMIN_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+      E2E_ADMIN_SECRET_ACCESS_KEY: 'shhh',
+    })
+    expect(plan.proxy).toBe('external')
+    expect(plan.startProxy).toBe(false)
+    expect(plan.proxyUrl).toBe('https://proxy.example.org:8460')
+    expect(plan.admin).toEqual({ accessKey: 'AKIAEXAMPLE', secretKey: 'shhh' })
+    // Everything that keeps a remote run contained still holds.
+    expect(plan.mode).toBe('remote')
+    expect(plan.createBuckets).toBe(false)
+    expect(plan.deleteOwnObjectsOnly).toBe(true)
+  })
+
+  test('refuses an external proxy without the administrator it cannot create there', () => {
+    for (const admin of [
+      {},
+      { E2E_ADMIN_ACCESS_KEY_ID: 'AKIAEXAMPLE' },
+      { E2E_ADMIN_SECRET_ACCESS_KEY: 'shhh' },
+    ]) {
+      expect(() => planTarget({ E2E_PROXY_URL: 'https://proxy.example.org:8460', ...admin }))
+        .toThrow(/E2E_ADMIN_ACCESS_KEY_ID and E2E_ADMIN_SECRET_ACCESS_KEY/)
+    }
+  })
+
   test('the real upstream hosts are not loopback', () => {
     for (const host of ['js2.jetstream-cloud.org', 'wildcats.sparcd.arizona.edu', 'https://127.0.0.1.example.org']) {
       expect(isLoopback(host)).toBe(false)

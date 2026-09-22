@@ -191,7 +191,10 @@ Configuration is environment variables only; nothing here reads a `.env`.
 | `E2E_NAMESPACE` | `e2e-` | prefix every upstream bucket carries |
 | `E2E_CREATE_BUCKETS` | on locally | whether the run may create its own buckets |
 | `E2E_KEEP` | off | leave the data and the container in place afterwards |
-| `E2E_PROXY_PORT` | `8797` | where the access proxy listens |
+| `E2E_PROXY_PORT` | `8797` | where the access proxy listens, when the run starts one |
+| `E2E_PROXY_URL` | *(unset)* | an access proxy already running elsewhere. Set means "start none" |
+| `E2E_ADMIN_ACCESS_KEY_ID` | *(unset)* | the first administrator's login on that proxy. Both halves required with `E2E_PROXY_URL` |
+| `E2E_ADMIN_SECRET_ACCESS_KEY` | *(unset)* | " |
 | `E2E_APP_PORT` | `5411` | where the built Admin app is served |
 | `E2E_UPLOADER_PORT` | `5413` | where the built Uploader is served |
 | `E2E_TAGGER_PORT` | `5414` | where the built Tagger is served |
@@ -241,5 +244,40 @@ that decision, and it needs no browser and no sockets.
 E2E_UPSTREAM=https://storage.example.org \
 E2E_NAMESPACE=scratch- \
 E2E_S3_ACCESS_KEY_ID=... E2E_S3_SECRET_ACCESS_KEY=... \
+pnpm --filter sparcd-admin e2e
+```
+
+### Against an access proxy someone else is running
+
+`E2E_PROXY_URL` points the suite at a deployed proxy. The run then starts no
+proxy of its own: it seeds storage upstream exactly as above, and the apps, the
+S3 clients and every scenario dial the URL given. The upstream guard is
+unchanged, so a remote upstream still needs its namespace and still creates no
+buckets.
+
+Because the harness does not start that proxy, it cannot run `cli.mjs init`
+against it either, and the first administrator has to exist there already.
+`E2E_ADMIN_ACCESS_KEY_ID` and `E2E_ADMIN_SECRET_ACCESS_KEY` carry that login,
+and without both the run refuses to start.
+
+Before a run, on the proxy host:
+
+1. empty the three namespaced test buckets — the settings bucket and the two
+   collection buckets — leaving the buckets themselves in place;
+2. run `cli.mjs init` to create the first administrator, and keep the access
+   key and secret it prints.
+
+Emptying is what resets the proxy: every person and key it knows lives under
+`Settings/access/` in the settings bucket, so clearing the bucket clears them
+too, and `init` will then find no administrator and mint one. In this mode
+cleanup never touches that prefix, so a run leaves the administrator it signed
+in as intact.
+
+```sh
+E2E_UPSTREAM=https://storage.example.org \
+E2E_NAMESPACE=scratch- E2E_CREATE_BUCKETS=0 \
+E2E_PROXY_URL=https://proxy.example.org:8460 \
+E2E_S3_ACCESS_KEY_ID=... E2E_S3_SECRET_ACCESS_KEY=... \
+E2E_ADMIN_ACCESS_KEY_ID=... E2E_ADMIN_SECRET_ACCESS_KEY=... \
 pnpm --filter sparcd-admin e2e
 ```

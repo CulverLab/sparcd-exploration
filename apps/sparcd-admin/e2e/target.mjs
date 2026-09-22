@@ -6,6 +6,11 @@
 // namespace must be non-empty, must not be the one real SPARC'd buckets carry,
 // bucket creation must be off, and cleanup may only remove objects this run
 // wrote. Anything less and the run refuses to start.
+//
+// `E2E_PROXY_URL` points the run at an access proxy someone else deployed. The
+// harness then starts no proxy of its own, so it cannot mint the first
+// administrator either: that login has to be handed in, and without both
+// halves of it the run refuses to start.
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0']);
 
@@ -35,8 +40,36 @@ export class TargetRefused extends Error {
 }
 
 /**
+ * The access proxy this run talks to: one it starts itself, or one already
+ * deployed elsewhere.
+ *
+ * @throws {TargetRefused} when an external proxy is named without the first
+ *   administrator's login, which the harness cannot mint on someone else's proxy.
+ */
+function planProxy(env) {
+  const url = (env.E2E_PROXY_URL ?? '').trim();
+  if (url === '') return { proxy: 'internal', proxyUrl: null, startProxy: true, admin: null };
+
+  const accessKey = (env.E2E_ADMIN_ACCESS_KEY_ID ?? '').trim();
+  const secretKey = (env.E2E_ADMIN_SECRET_ACCESS_KEY ?? '').trim();
+  if (!accessKey || !secretKey) {
+    throw new TargetRefused(
+      `E2E_PROXY_URL ${url} names a proxy this run does not start, so it cannot create the first administrator. `
+      + 'Set E2E_ADMIN_ACCESS_KEY_ID and E2E_ADMIN_SECRET_ACCESS_KEY to a login that already exists there.',
+    );
+  }
+
+  return {
+    proxy: 'external',
+    proxyUrl: url.replace(/\/$/, ''),
+    startProxy: false,
+    admin: { accessKey, secretKey },
+  };
+}
+
+/**
  * @param env  process.env, or a plain object in a test.
- * @returns `{ mode, upstream, startMinio, namespace, createBuckets, deleteOwnObjectsOnly, accessKeyId, secretAccessKey }`
+ * @returns `{ mode, upstream, startMinio, namespace, createBuckets, deleteOwnObjectsOnly, accessKeyId, secretAccessKey, proxy, proxyUrl, startProxy, admin }`
  * @throws  {TargetRefused} when a non-loopback upstream is not provably contained.
  */
 export function planTarget(env = {}) {
@@ -45,6 +78,7 @@ export function planTarget(env = {}) {
   const accessKeyId = env.E2E_S3_ACCESS_KEY_ID ?? 'admine2ekey';
   const secretAccessKey = env.E2E_S3_SECRET_ACCESS_KEY ?? 'admine2esecret';
   const keep = flag(env.E2E_KEEP, false);
+  const proxy = planProxy(env);
 
   if (upstream === '' || isLoopback(upstream)) {
     return {
@@ -57,6 +91,7 @@ export function planTarget(env = {}) {
       accessKeyId,
       secretAccessKey,
       keep,
+      ...proxy,
     };
   }
 
@@ -86,5 +121,6 @@ export function planTarget(env = {}) {
     accessKeyId,
     secretAccessKey,
     keep,
+    ...proxy,
   };
 }

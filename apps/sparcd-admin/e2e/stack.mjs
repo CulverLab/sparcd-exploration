@@ -1,5 +1,7 @@
 // Everything the browser run talks to, started and stopped as one thing:
-// storage, the seeded buckets, the first administrator, and the access proxy.
+// storage, the seeded buckets, the first administrator, and the access proxy —
+// unless `E2E_PROXY_URL` names a proxy someone else deployed, in which case the
+// run seeds storage and signs in with the administrator it was handed.
 // The built admin app is served separately by Playwright's `webServer`, so the
 // pages under test are the ones a deploy would actually ship.
 //
@@ -34,6 +36,11 @@ export const DESCRIPTOR = fileURLToPath(new URL('./.stack.json', import.meta.url
 const MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const ADMIN = { name: 'Jorge Delgado', email: 'jorge@example.org' };
+
+// The proxy keeps every person and key it knows under here. An external proxy
+// owns those records, so cleanup leaves the prefix alone — emptying the buckets
+// is the operator's way to reset them.
+const ACCESS_PREFIX = 'Settings/access/';
 
 const compose = (...args) =>
   run('docker', ['compose', '-f', COMPOSE, '-p', PROJECT, ...args], { timeout: 180000 });
@@ -91,9 +98,9 @@ export async function startStack(env = process.env) {
   // Seeding keeps the direct endpoint; only what the app does through the
   // proxy is slowed down, which is the traffic a person waits on.
   const latencyMs = Number(env.E2E_LATENCY_MS ?? 0);
-  const slow = latencyMs > 0 ? await startLatencyForwarder(upstream, latencyMs) : null;
+  const slow = latencyMs > 0 && plan.startProxy ? await startLatencyForwarder(upstream, latencyMs) : null;
 
-  const origin = `http://127.0.0.1:${port}`;
+  const origin = plan.startProxy ? `http://127.0.0.1:${port}` : plan.proxyUrl;
   const config = {
     upstream: slow ? slow.origin : upstream,
     region: env.S3_REGION ?? 'us-east-1',
@@ -114,12 +121,21 @@ export async function startStack(env = process.env) {
     flushMs: 250,
   };
 
-  const admin = await init({ ...ADMIN, config });
-  const proxy = await createAccessProxy(config);
-  await proxy.listen(port);
+  // An external proxy is already running with its own configuration and its own
+  // first administrator; the harness only hands the suite the login it was given.
+  let admin;
+  let proxy = null;
+  if (plan.startProxy) {
+    admin = await init({ ...ADMIN, config });
+    proxy = await createAccessProxy(config);
+    await proxy.listen(port);
+  } else {
+    admin = { ...ADMIN, ...plan.admin };
+  }
 
   const descriptor = {
     mode: plan.mode,
+    proxyMode: plan.proxy,
     upstream,
     namespace: plan.namespace,
     proxy: origin,
@@ -135,7 +151,7 @@ export async function startStack(env = process.env) {
   return {
     ...descriptor,
     async stop() {
-      await proxy.close();
+      if (proxy) await proxy.close();
       if (slow) await slow.stop();
       await rm(DESCRIPTOR, { force: true });
       if (plan.keep) return;
@@ -153,6 +169,9 @@ export async function startStack(env = process.env) {
       ];
       for (const [bucket, prefix] of sweep) {
         for (const key of await root.listKeys(bucket, prefix)) {
+          // Records an external proxy owns, including the administrator this
+          // run signed in as. Only the run that created them may remove them.
+          if (!plan.startProxy && key.startsWith(ACCESS_PREFIX)) continue;
           await deleteObject(root, bucket, key);
         }
       }
