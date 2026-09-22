@@ -141,7 +141,7 @@ export function ActivityScreen({ api, collections, people }: {
           </select>
           <label className="sr-only" htmlFor="lookup-name">Image name</label>
           <input id="lookup-name" className={`${inputClass} min-w-0 flex-1`} placeholder="IMG_0412.JPG" value={lookupName} onChange={(event) => setLookupName(event.target.value)} />
-          <label className="sr-only" htmlFor="lookup-range">Time range</label>
+          <label className="sr-only" htmlFor="lookup-range">Dates to look in</label>
           <select id="lookup-range" className={inputClass} value={lookupRange} onChange={(event) => setLookupRange(event.target.value)}>
             <option value="7">Last 7 days</option>
             <option value="30">Last 30 days</option>
