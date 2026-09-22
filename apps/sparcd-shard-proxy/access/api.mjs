@@ -5,7 +5,7 @@
 // needs one credential and no second login. `/-/join` and `/-/health` are the
 // exceptions, since a joining person has no key yet.
 
-import { KINDS } from './activity.mjs';
+import { KINDS, MAX_RANGE_DAYS, rangeTooWide } from './activity.mjs';
 import { Conflict } from './store.mjs';
 import {
   INVITE_TTL_MS, inviteMatches, newAccessKeyId, newInvite, newPersonId,
@@ -192,6 +192,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
     if (path === '/-/admin/activity' && method === 'GET') {
       requireAdmin(person);
+      requireNarrowRange(query);
       await activity.drain();
       return {
         status: 200,
@@ -208,6 +209,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
     if (path === '/-/admin/activity/downloads' && method === 'GET') {
       requireAdmin(person);
+      requireNarrowRange(query);
       await activity.drain();
       return {
         status: 200,
@@ -225,6 +227,14 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   function requireAdmin(person) {
     if (!person?.admin) fail('forbidden', 'admin only');
+  }
+
+  // Refused rather than quietly narrowed: an admin who asked for a year and
+  // got a month back would read the short answer as the whole story.
+  function requireNarrowRange(query) {
+    if (rangeTooWide(query.get('from'), query.get('to'))) {
+      fail('invalid', `from and to may span at most ${MAX_RANGE_DAYS} days`);
+    }
   }
 
   async function join(token, requestId) {

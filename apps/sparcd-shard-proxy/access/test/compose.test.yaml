@@ -13,3 +13,11 @@ services:
       MINIO_ROOT_PASSWORD: accesstestsecret
     ports:
       - "127.0.0.1::9000"
+    # `up --wait` needs a healthcheck to have anything to wait for. `mc` ships
+    # in the server image, and `mc ready` is the check MinIO documents.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+      start_period: 3s

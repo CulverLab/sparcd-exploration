@@ -15,9 +15,25 @@ const FLUSH_LINES = 200;
 const FLUSH_MS = 5000;
 const MAX_QUEUE = 10000;
 const READ_CONCURRENCY = 8;
+/**
+ * The widest window a query may ask for. A year of `from`/`to` is a year of
+ * day prefixes listed, every object downloaded and parsed, and only then a
+ * `limit` of 200 applied — one admin request that reads the whole log.
+ */
+export const MAX_RANGE_DAYS = 31;
 const BAD_SIGNATURE_WINDOW_MS = 60000;
 
 const dayOf = (ts) => new Date(ts).toISOString().slice(0, 10);
+
+/** True when `from`..`to` asks for more days than a query may read. */
+export function rangeTooWide(from, to) {
+  if (!from) return false;
+  const start = Date.parse(from);
+  const end = to ? Date.parse(to) : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end)) return false;
+  const span = Date.parse(dayOf(end)) - Date.parse(dayOf(start));
+  return span / 86400000 + 1 > MAX_RANGE_DAYS;
+}
 
 export const KINDS = new Set([
   'download', 'upload', 'identify', 'list-change', 'collection-change',
@@ -173,13 +189,23 @@ export function makeActivity({
 
     async query({ from, to, person, bucket, kinds, limit = 200 } = {}) {
       const wanted = kinds?.length ? new Set(kinds) : null;
-      const events = await read({ upstream, settingsBucket, from, to });
-      const matched = events.filter((e) =>
+      const keep = (e) =>
         (!person || e.personId === person)
         && (!bucket || e.bucket === bucket)
         && (!wanted || wanted.has(e.kind))
         && (!from || e.ts >= from)
-        && (!to || e.ts <= to));
+        && (!to || e.ts <= to);
+
+      const client = upstream();
+      const logBucket = settingsBucket();
+      const matched = [];
+      // Newest day first, and every line in an older day is older than every
+      // line in this one. So once a day is read and the page is already full,
+      // nothing left to read can appear on it — and nothing left is read.
+      for (const day of await daysToRead({ client, bucket: logBucket, from, to })) {
+        for (const e of await readDay(client, logBucket, day)) if (keep(e)) matched.push(e);
+        if (matched.length > limit) break;
+      }
       matched.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
       return { events: matched.slice(0, limit), truncated: matched.length > limit };
     },
@@ -201,13 +227,11 @@ function nameFor(day) {
 }
 
 /**
- * Read the day objects in range. Listing is done per day prefix rather than
- * across the whole tree, and the reads run eight at a time, so one query can
- * neither list a year of objects in one call nor open a thousand sockets.
+ * The day prefixes a query covers, newest first and never more than
+ * `MAX_RANGE_DAYS` of them. Listing is per day prefix rather than across the
+ * whole tree, so one query can never list a year of objects in one call.
  */
-async function read({ upstream, settingsBucket, from, to }) {
-  const client = upstream();
-  const bucket = settingsBucket();
+async function daysToRead({ client, bucket, from, to }) {
   const fromDay = from ? dayOf(Date.parse(from)) : null;
   const toDay = to ? dayOf(Date.parse(to)) : null;
 
@@ -217,9 +241,13 @@ async function read({ upstream, settingsBucket, from, to }) {
       .map((p) => p.slice(ACTIVITY_PREFIX.length).replace(/\/$/, ''))
       .filter((day) => (!toDay || day <= toDay));
 
-  const keys = (await mapLimit(days, READ_CONCURRENCY,
-    (day) => client.listKeys(bucket, `${ACTIVITY_PREFIX}${day}/`))).flat();
+  days.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  return days.slice(0, MAX_RANGE_DAYS);
+}
 
+/** One day's objects, read eight at a time so no query opens a thousand sockets. */
+async function readDay(client, bucket, day) {
+  const keys = await client.listKeys(bucket, `${ACTIVITY_PREFIX}${day}/`);
   const bodies = await mapLimit(keys, READ_CONCURRENCY, (k) => client.get(bucket, k));
   const out = [];
   for (const got of bodies) {

@@ -706,6 +706,21 @@ describe('activity', () => {
     assert.equal(bad.body.error.code, 'invalid');
   });
 
+  test('a range wider than a month is refused', async () => {
+    const wide = await people.admin.api(
+      'GET', '/-/admin/activity?from=2026-01-01T00:00:00.000Z&to=2026-03-01T00:00:00.000Z');
+    assert.equal(wide.status, 400);
+    assert.equal(wide.body.error.code, 'invalid');
+
+    const downloads = await people.admin.api(
+      'GET', '/-/admin/activity/downloads?from=2026-01-01T00:00:00.000Z&to=2026-03-01T00:00:00.000Z');
+    assert.equal(downloads.status, 400);
+
+    const month = await people.admin.api(
+      'GET', '/-/admin/activity?from=2026-01-01T00:00:00.000Z&to=2026-01-31T00:00:00.000Z');
+    assert.equal(month.status, 200);
+  });
+
   test('the downloads query takes a bare file name', async () => {
     const res = await people.admin.api(
       'GET', `/-/admin/activity/downloads?bucket=${BUCKET_A}&key=a.jpg`);

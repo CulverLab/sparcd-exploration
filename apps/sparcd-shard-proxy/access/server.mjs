@@ -549,6 +549,7 @@ export async function createAccessProxy(input) {
       const hiddenTrees = [ACCESS_PREFIX, ...(person.admin ? [] : [ACTIVITY_PREFIX])];
 
       const page = await listAroundProtectedTrees({
+        upstream,
         bucket: upstreamBucket, prefix, delimiter, maxKeys, after, hidden, hiddenTrees,
       });
 
@@ -576,49 +577,6 @@ export async function createAccessProxy(input) {
     } finally {
       settingsListings -= 1;
     }
-  }
-
-  /**
-   * One page of a settings listing, stepping over the protected trees rather
-   * than reading through them. Paging through `Settings/activity/` means the
-   * real settings files fall off the end as soon as the log grows, so when a
-   * listing walks into a tree the caller may not see, the cursor jumps past
-   * the whole tree in one move.
-   */
-  async function listAroundProtectedTrees({
-    bucket, prefix, delimiter, maxKeys, after, hidden, hiddenTrees,
-  }) {
-    const keys = [];
-    const commonPrefixes = [];
-    let cursor = after ?? undefined;
-    let truncated = false;
-
-    for (let page = 0; page < 20; page += 1) {
-      const got = await upstream.listPage(bucket, {
-        prefix, delimiter, startAfter: cursor, maxKeys: 1000,
-      });
-      for (const p of got.commonPrefixes) if (!hidden(p)) commonPrefixes.push(p);
-
-      let jumpedTo = null;
-      for (const entry of got.keys) {
-        const tree = hiddenTrees.find((t) => entry.key.startsWith(t));
-        if (tree) { jumpedTo = afterTree(tree); break; }
-        if (keys.length >= maxKeys) { truncated = true; break; }
-        keys.push(entry);
-        cursor = entry.key;
-      }
-      if (truncated) break;
-      if (jumpedTo) { cursor = jumpedTo; continue; }
-      if (!got.nextToken || got.keys.length === 0) break;
-      cursor = got.keys[got.keys.length - 1].key;
-    }
-
-    return {
-      keys,
-      commonPrefixes,
-      truncated,
-      nextToken: truncated ? keys[keys.length - 1]?.key ?? null : null,
-    };
   }
 
   async function proxyFetch(req, url, headers, signedHeaders, body, upstreamPath) {
@@ -847,4 +805,62 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     fail('could not start', err);
     process.exit(1);
   }
+}
+
+/**
+ * One page of a settings listing, stepping over the protected trees rather
+ * than reading through them. Paging through `Settings/activity/` means the
+ * real settings files fall off the end as soon as the log grows, so when a
+ * listing walks into a tree the caller may not see, the cursor jumps past
+ * the whole tree in one move.
+ */
+export async function listAroundProtectedTrees({
+  upstream, bucket, prefix, delimiter, maxKeys, after, hidden, hiddenTrees,
+}) {
+  const keys = [];
+  const commonPrefixes = [];
+  let cursor = after ?? undefined;
+  let truncated = false;
+  // Where the caller got to. A folder is resumed past rather than into,
+  // because its own keys sort after its name.
+  let resumeAt = null;
+  const entries = () => keys.length + commonPrefixes.length;
+
+  for (let page = 0; page < 20; page += 1) {
+    const got = await upstream.listPage(bucket, {
+      prefix, delimiter, startAfter: cursor, maxKeys: 1000,
+    });
+
+    // With a delimiter, folders and keys are two halves of one page and both
+    // are entries as far as `max-keys` goes. Counting only the keys hands
+    // back a page of folders and calls it an empty listing.
+    for (const p of got.commonPrefixes) {
+      if (hidden(p)) continue;
+      if (entries() >= maxKeys) { truncated = true; break; }
+      commonPrefixes.push(p);
+      resumeAt = afterTree(p);
+    }
+    if (truncated) break;
+
+    let jumpedTo = null;
+    for (const entry of got.keys) {
+      const tree = hiddenTrees.find((t) => entry.key.startsWith(t));
+      if (tree) { jumpedTo = afterTree(tree); break; }
+      if (entries() >= maxKeys) { truncated = true; break; }
+      keys.push(entry);
+      cursor = entry.key;
+      resumeAt = entry.key;
+    }
+    if (truncated) break;
+    if (jumpedTo) { cursor = jumpedTo; continue; }
+    if (!got.nextToken) break;
+    // A page of nothing but folders still has a position to go on from.
+    // Stopping there because it held no keys drops every page after it.
+    if (got.keys.length > 0) cursor = got.keys[got.keys.length - 1].key;
+    else if (got.commonPrefixes.length > 0) {
+      cursor = afterTree(got.commonPrefixes[got.commonPrefixes.length - 1]);
+    } else break;
+  }
+
+  return { keys, commonPrefixes, truncated, nextToken: truncated ? resumeAt : null };
 }
