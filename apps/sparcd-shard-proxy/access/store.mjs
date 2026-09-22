@@ -130,6 +130,20 @@ export function makeStore({
     return state;
   }
 
+  /**
+   * Put one committed person into the live state, the way a reload would.
+   * Retired keys leave `byAccessKey` here and not one reload later.
+   */
+  function applyPerson(person) {
+    state.people.set(person.id, { ...person });
+    for (const [id, hit] of state.byAccessKey) {
+      if (hit.personId === person.id) state.byAccessKey.delete(id);
+    }
+    for (const k of person.keys ?? []) {
+      if (!k.retiredAt) state.byAccessKey.set(k.accessKeyId, { personId: person.id, key: k });
+    }
+  }
+
   // The generation counter is the fast path, not the only one. A bump that was
   // lost — because the proxy that made the change could not write the counter —
   // would otherwise never reach the other proxies at all.
@@ -185,15 +199,22 @@ export function makeStore({
 
     /** @param expect `'new'` for a create, or the etag the caller read. */
     async savePerson(person, expect) {
-      const body = JSON.stringify({ ...person, etag: undefined, updatedAt: new Date().toISOString() });
+      const written = { ...person, etag: undefined, updatedAt: new Date().toISOString() };
       const guard = expect === 'new' ? { ifNoneMatch: '*' } : { ifMatch: expect };
       const ok = await upstream.put(
-        settings(), `${PEOPLE_PREFIX}${person.id}.json`, body, guard,
+        settings(), `${PEOPLE_PREFIX}${person.id}.json`, JSON.stringify(written), guard,
       );
       if (!ok) throw new Conflict('person changed underneath this edit');
       // The write landed, so this process must see it whatever happens next.
-      // Skipping the reload because the counter bump threw would leave a pause
-      // or a key retirement written but not in force here.
+      // The reload below confirms it, but a reload is many reads and any one of
+      // them can fail; waiting for it would leave a pause or a key retirement
+      // written upstream and still being honoured here.
+      // The etag stays the one the caller edited from, never undefined: the
+      // reload is what learns the new one, and an unguarded next write is a
+      // worse answer than a conflict.
+      applyPerson({ ...written, etag: person.etag });
+      // Skipping the reload because the counter bump threw would leave the
+      // rest of this process's state behind the storage.
       try {
         await bumpGeneration();
       } finally {
@@ -211,6 +232,10 @@ export function makeStore({
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,
       );
       if (!ok) throw new Conflict('members changed underneath this edit');
+      // In force here the moment it is committed upstream, for the same reason
+      // as a person: a removal that waits for a reload is a removal that a
+      // failed read leaves undone.
+      c.members = members;
       try {
         await bumpGeneration();
       } finally {

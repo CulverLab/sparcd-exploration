@@ -11,9 +11,10 @@ import {
   listingGuard, buildListing, afterTree, decodeListingToken,
 } from '../rules.mjs';
 import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
-import { makeActivity, KINDS } from '../activity.mjs';
+import { makeActivity, KINDS, MAX_RANGE_DAYS, rangeTooWide } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
 import { ERROR_CODES } from '../api.mjs';
+import { listAroundProtectedTrees } from '../server.mjs';
 
 const ns = makeNamespace({ namespace: 't-', allow: 'sparcd,sparcd-*' });
 
@@ -518,5 +519,204 @@ describe('activity queries the admin screens make', () => {
       'access-change', 'bad-signature', 'collection-change', 'denied', 'download',
       'identify', 'list-change', 'log-gap', 'sign-in', 'upload',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 5: reviewing the pull request.
+// ---------------------------------------------------------------------------
+
+describe('a revocation is in force before the reload confirms it', () => {
+  // A store whose reads can be turned off after the first reload, so the
+  // reload that follows a write fails the way a flaky upstream makes it fail.
+  const stubStore = (extra = []) => {
+    const objects = new Map();
+    const reads = { failing: false };
+    const refuse = () => { throw new Error('upstream is down for reads'); };
+    const upstream = {
+      listBuckets: async () => (reads.failing ? refuse() : ['t-sparcd-settings-x', ...extra]),
+      getJson: async (bucket, key) => {
+        if (reads.failing) refuse();
+        const hit = objects.get(`${bucket}/${key}`);
+        return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+      },
+      get: async () => ({ status: 404 }),
+      listKeys: async (bucket, prefix) => (reads.failing ? refuse() : [...objects.keys()]
+        .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+        .map((k) => k.slice(bucket.length + 1))),
+      put: async (bucket, key, body) => {
+        objects.set(`${bucket}/${key}`, { body, etag: `"${objects.size}"` });
+        return true;
+      },
+    };
+    return { store: makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' }), reads };
+  };
+
+  const KEY = { accessKeyId: 'SPKAAAAAAAAAAAAAAAAAA', wrapped: 'v1.x.y' };
+
+  test('a pause and a key retirement hold even when the reload fails', async () => {
+    const { store, reads } = stubStore();
+    await store.reload();
+    await store.savePerson({
+      id: 'p1', name: 'P', status: 'active', admin: false, keys: [KEY],
+    }, 'new');
+    assert.equal(store.byAccessKey(KEY.accessKeyId)?.person.id, 'p1', 'setup: the key works');
+
+    reads.failing = true;
+    const person = store.person('p1');
+    await assert.rejects(() => store.savePerson({
+      ...person,
+      status: 'paused',
+      keys: [{ ...KEY, retiredAt: '2026-01-01T00:00:00.000Z' }],
+    }, person.etag), /upstream is down for reads/);
+
+    assert.equal(store.person('p1').status, 'paused', 'the pause waited for a reload');
+    assert.equal(store.byAccessKey(KEY.accessKeyId), null, 'the retired key still opens the door');
+  });
+
+  test('a removed member is out of the collection at once', async () => {
+    const uuid = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
+    const bucket = `sparcd-${uuid}`;
+    const { store, reads } = stubStore([`t-${bucket}`]);
+    await store.reload();
+    await store.saveMembers(bucket, [{ personId: 'p1', access: 'run' }], null);
+    assert.equal(store.membership('p1', bucket)?.access, 'run', 'setup: the member is in');
+
+    reads.failing = true;
+    await assert.rejects(() => store.saveMembers(bucket, [], store.collection(bucket).membersEtag),
+      /upstream is down for reads/);
+    assert.equal(store.membership('p1', bucket), null, 'the removal waited for a reload');
+  });
+});
+
+describe('an activity query reads a bounded slice of the log', () => {
+  const dayOfEvents = (day, count) => Array.from({ length: count }, (_, i) => ({
+    ts: `${day}T00:00:0${i}.000Z`, kind: 'download', bucket: 'b', personId: `p${i}`,
+  }));
+
+  const threeDays = () => {
+    const read = [];
+    const days = {
+      '2026-03-01': dayOfEvents('2026-03-01', 6),
+      '2026-03-02': dayOfEvents('2026-03-02', 6),
+      '2026-03-03': dayOfEvents('2026-03-03', 6),
+    };
+    const activity = makeActivity({
+      settingsBucket: () => 'b',
+      upstream: () => ({
+        put: async () => true,
+        listCommonPrefixes: async () => Object.keys(days).map((d) => `Settings/activity/${d}/`),
+        listKeys: async (bucket, prefix) => [`${prefix}1-00000000.ndjson`],
+        get: async (bucket, key) => {
+          read.push(key);
+          const day = key.slice('Settings/activity/'.length, -'/1-00000000.ndjson'.length);
+          return { status: 200, text: `${days[day].map((e) => JSON.stringify(e)).join('\n')}\n` };
+        },
+      }),
+    });
+    return { activity, read };
+  };
+
+  test('a full page stops the walk at the newest day', async () => {
+    const { activity, read } = threeDays();
+    const { events, truncated } = await activity.query({ limit: 5 });
+    assert.equal(events.length, 5);
+    assert.equal(truncated, true);
+    assert.equal(events[0].ts.startsWith('2026-03-03'), true, 'not newest first');
+    assert.deepEqual(read, ['Settings/activity/2026-03-03/1-00000000.ndjson'],
+      `read ${read.length} day objects, expected the newest one only`);
+  });
+
+  test('a page that is not filled still reads every day in range', async () => {
+    const { activity, read } = threeDays();
+    const { events } = await activity.query({ limit: 200 });
+    assert.equal(events.length, 18);
+    assert.equal(read.length, 3);
+  });
+
+  test('a range wider than a month is refused, not silently narrowed', () => {
+    assert.equal(rangeTooWide('2026-01-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z'), true);
+    assert.equal(rangeTooWide('2026-01-01T00:00:00.000Z', '2026-01-31T00:00:00.000Z'), false);
+    assert.equal(MAX_RANGE_DAYS, 31);
+  });
+
+  test('a query with no range reads at most a month of days', async () => {
+    const asked = [];
+    const activity = makeActivity({
+      settingsBucket: () => 'b',
+      upstream: () => ({
+        put: async () => true,
+        listCommonPrefixes: async () => Array.from({ length: 90 }, (_, i) =>
+          `Settings/activity/2026-01-${String((i % 28) + 1).padStart(2, '0')}/`),
+        listKeys: async (bucket, prefix) => { asked.push(prefix); return []; },
+        get: async () => ({ status: 404 }),
+      }),
+    });
+    await activity.query({ limit: 200 });
+    assert.ok(asked.length <= MAX_RANGE_DAYS, `listed ${asked.length} days`);
+  });
+});
+
+describe('a settings listing pages through folders as well as keys', () => {
+  const pager = (pages) => {
+    const asked = [];
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => {
+        asked.push(startAfter ?? null);
+        return pages[asked.length - 1] ?? { keys: [], commonPrefixes: [], nextToken: null };
+      },
+    };
+    return { upstream, asked };
+  };
+
+  test('a page of nothing but folders is followed, not treated as the end', async () => {
+    const { upstream, asked } = pager([
+      {
+        keys: [],
+        commonPrefixes: ['Settings/species/', 'Settings/locations/'],
+        nextToken: 'more',
+      },
+      {
+        keys: [{ key: 'Settings/zones.json' }],
+        commonPrefixes: [],
+        nextToken: null,
+      },
+    ]);
+    const page = await listAroundProtectedTrees({
+      upstream,
+      bucket: 't-sparcd-settings-x',
+      prefix: 'Settings/',
+      delimiter: '/',
+      maxKeys: 1000,
+      after: null,
+      hidden: () => false,
+      hiddenTrees: [],
+    });
+    assert.equal(asked.length >= 2, true, 'the second page was never asked for');
+    assert.deepEqual(page.keys.map((k) => k.key), ['Settings/zones.json']);
+    assert.equal(page.commonPrefixes.length, 2);
+  });
+
+  test('folders count against max-keys and carry the continuation token', async () => {
+    const { upstream } = pager([
+      {
+        keys: [],
+        commonPrefixes: ['Settings/a/', 'Settings/b/', 'Settings/c/'],
+        nextToken: 'more',
+      },
+    ]);
+    const page = await listAroundProtectedTrees({
+      upstream,
+      bucket: 't-sparcd-settings-x',
+      prefix: 'Settings/',
+      delimiter: '/',
+      maxKeys: 2,
+      after: null,
+      hidden: () => false,
+      hiddenTrees: [],
+    });
+    assert.deepEqual(page.commonPrefixes, ['Settings/a/', 'Settings/b/']);
+    assert.equal(page.truncated, true, 'a full page of folders reported as complete');
+    assert.equal(page.nextToken, afterTree('Settings/b/'));
   });
 });

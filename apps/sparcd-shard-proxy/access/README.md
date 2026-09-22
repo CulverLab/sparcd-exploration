@@ -57,9 +57,10 @@ an admin exists. Everyone after that is invited through
 | `BUCKET_ALLOW` | `sparcd,sparcd-*` | globs a client bucket must match |
 | `ACCESS_MASTER_KEY` | — | 32 bytes, base64; wraps the issued secrets |
 | `PORT` | `8787` | loopback listen port |
-| `PUBLIC_ENDPOINT` | `UPSTREAM` | what `/-/join` hands back to a new person |
 | `ALLOW_ORIGINS` | `*` | CORS; a comma-separated list pins it |
-| `MAX_BODY_BYTES` | `67108864` | request bodies are buffered up to this |
+| `MAX_BODY_BYTES` | `67108864` | the largest single request body |
+| `MAX_BUFFERED_BYTES` | `536870912` | all in-flight bodies together; a quarter of it is any one key's share |
+| `BODY_IDLE_MS` | `10000` | a request body that sends nothing for this long is dropped |
 
 `BUCKET_NAMESPACE` plus `BUCKET_ALLOW` are the containment boundary. Nothing
 outside that set is read, written, listed, or named in a response, for anyone,
