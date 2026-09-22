@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityEvent } from '../src/api'
-import { activityCsv, activitySentence, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping } from '../src/activity'
+import { activityCsv, activitySentence, collapseRuns, dayHeading, downloadsSentence, groupByDay, isOwnBookkeeping, TRUNCATION_NOTE } from '../src/activity'
 
 const where = (bucket?: string) => (bucket === 'sparcd-aaa' ? 'Research 1' : 'Sky Islands 2026')
 
@@ -167,5 +167,18 @@ describe('the timeline the activity screen shows', () => {
     const history = event('list-change', { key: 'Settings/audit/config/2026-09-12/abc.prepared.json' })
     const real = event('list-change', { key: 'Settings/species.json' })
     expect([marker, history, real].filter((one) => !isOwnBookkeeping(one))).toEqual([real])
+  })
+})
+
+describe('a spreadsheet of a truncated answer', () => {
+  it('carries the same sentence as its first row', () => {
+    const rows = activityCsv([event('download', { key: 'a/IMG_0412.JPG' })], where, true).split('\n')
+    expect(rows[0]).toBe(TRUNCATION_NOTE)
+    expect(rows[1]).toBe('When,Who,What,Collection,File')
+  })
+
+  it('starts at the header when nothing was left out', () => {
+    const rows = activityCsv([event('download', { key: 'a/IMG_0412.JPG' })], where).split('\n')
+    expect(rows[0]).toBe('When,Who,What,Collection,File')
   })
 })

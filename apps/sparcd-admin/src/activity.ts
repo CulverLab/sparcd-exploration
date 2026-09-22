@@ -154,10 +154,16 @@ export function downloadsSentence(file: string, where: string, events: ActivityE
   return `${file} from ${where} was downloaded ${people}.`
 }
 
+/** Said on screen and again at the top of the spreadsheet, so a file that
+ * leaves the app carries the reason it is short. */
+export const TRUNCATION_NOTE = 'Showing the latest 200 events. Narrow the dates or filters to see the rest.'
+
 const csvCell = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)
 
-export function activityCsv(events: ActivityEvent[], whereName: WhereName) {
-  const rows = [['When', 'Who', 'What', 'Collection', 'File']]
+export function activityCsv(events: ActivityEvent[], whereName: WhereName, truncated = false) {
+  const rows = truncated
+    ? [[TRUNCATION_NOTE], ['When', 'Who', 'What', 'Collection', 'File']]
+    : [['When', 'Who', 'What', 'Collection', 'File']]
   for (const event of events) {
     const { who, text } = activitySentence(event, whereName)
     rows.push([event.ts, who, text, event.bucket ? whereName(event.bucket) : '', fileName(event.key)])

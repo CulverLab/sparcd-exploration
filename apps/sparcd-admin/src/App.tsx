@@ -43,7 +43,7 @@ export function App({
   const [section, setSection] = useState<AdminSection>('species')
   const [me, setMe] = useState<WhoAmI | null>(null)
   const [api, setApi] = useState<AccessApi | null>(null)
-  const [people, setPeople] = useState<Person[]>([])
+  const [people, setPeople] = useState<Person[] | null>(null)
   const configRef = useRef<S3Config | null>(null)
   const started = useRef(false)
   // Every load carries a number. A login or reload that finishes after a newer
@@ -58,12 +58,18 @@ export function App({
 
   const authorize = async (nextConfig: S3Config, remember = true) => {
     const run = ++runId.current
+    // A logout or a newer login only has to change the run number to make this
+    // one stop, so every await is followed by a look at it. Anything installed
+    // after one of them would be this run landing on top of a later decision.
+    const mine = () => run === runId.current
     setConnecting(true)
     setError('')
     try {
       const loaded = await load(nextConfig)
+      if (!mine()) return
       const service = makeApi(nextConfig)
       const whoami = await identify(service)
+      if (!mine()) return
       const who = sessionStorage.getItem(IDENTITY_KEY) || whoami?.name || ''
       // Someone who is not an administrator cannot write to the settings area
       // by design, so probing first would turn "you can't manage SPARC'd" into
@@ -71,13 +77,15 @@ export function App({
       // still gets probed: there, the write is the only way to know.
       if (!whoami || whoami.admin) {
         await probeWriteAccess(loaded.client, loaded.species.bucket, who.trim() || 'unnamed administrator')
+        if (!mine()) return
       }
-      if (run !== runId.current) return
+      const roster = whoami?.admin ? await service.listPeople().catch(() => []) : []
+      if (!mine()) return
       saveSharedConnection(nextConfig, remember)
       setIdentity(who)
       setMe(whoami)
       setApi(whoami?.admin ? service : null)
-      setPeople(whoami?.admin ? await service.listPeople().catch(() => []) : [])
+      setPeople(roster)
       setData(loaded)
       setConfig(nextConfig)
       setNotice('')
@@ -110,6 +118,18 @@ export function App({
       setNotice(`The lists could not be reloaded. ${(cause as Error).message}`)
     }
   }
+
+  // One people list behind both screens. The People screen edits it and the
+  // members table picks names out of it, so a person added on one is there on
+  // the other without signing in again.
+  const refreshPeople = async () => {
+    if (api) setPeople(await api.listPeople())
+  }
+
+  useEffect(() => {
+    if (!api || section !== 'collections') return
+    void api.listPeople().then(setPeople).catch(() => {})
+  }, [api, section])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -228,14 +248,14 @@ export function App({
             speciesRegistry={data.species.value}
             locationsRegistry={data.locations.value}
             reload={() => void refresh()}
-            membersFor={api ? (record) => <CollectionMembers api={api} bucket={record.bucket} people={people} /> : undefined}
+            membersFor={api ? (record) => <CollectionMembers api={api} bucket={record.bucket} people={people ?? []} /> : undefined}
           />
         </div>
         {api && section === 'people' && (
-          <PeopleScreen api={api} endpoint={config.endpoint} collections={named} from={actor} />
+          <PeopleScreen api={api} people={people} refresh={refreshPeople} endpoint={config.endpoint} collections={named} from={actor} />
         )}
         {api && section === 'activity' && (
-          <ActivityScreen api={api} collections={named} people={people} />
+          <ActivityScreen api={api} collections={named} people={people ?? []} />
         )}
         {section === 'settings' && <section className="max-w-2xl border border-rule bg-panel p-4" aria-labelledby="settings-heading">
           <h1 id="settings-heading" className="m-0 text-lg font-semibold text-ink">Settings</h1>

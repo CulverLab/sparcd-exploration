@@ -9,6 +9,7 @@ export type FakeApiState = {
   people: Person[]
   collections: CollectionAccess[]
   events: ActivityEvent[]
+  truncated: boolean
   downloads: ActivityEvent[]
 }
 
@@ -37,6 +38,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       membersVersion: 'members-v1',
     }],
     events: [],
+    truncated: false,
     downloads: [],
     ...state,
   }
@@ -97,7 +99,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       here.membersVersion = `members-v${++version}`
       return { members: here.members, membersVersion: here.membersVersion }
     },
-    async activity() { record('activity'); return { events: data.events } },
+    async activity() { record('activity'); return { events: data.events, truncated: data.truncated } },
     async downloadsOf(bucket: string, key: string) { record('downloadsOf', bucket, key); return data.downloads },
   }
   return { api: api as unknown as AccessApi, calls, data }
