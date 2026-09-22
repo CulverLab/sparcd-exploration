@@ -16,7 +16,7 @@ import { ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3'
 import { jpegWithExifDate } from '../../../sparcd-uploader/features/steps/fixtures-data'
 import {
   TAGGER, UPLOADER, collectionNamed, keysUnder, openInvite, openSection, recall, remember,
-  s3, savedConnection, signInAsAdmin, signInHere, statusOf, textOf, type Connection,
+  s3, savedConnection, signInAsAdmin, signInHere, stack, statusOf, textOf, type Connection,
 } from '../lib'
 
 test.describe.configure({ timeout: 240_000 })
@@ -173,8 +173,10 @@ test('a person who can upload completes a real one in the Uploader', async ({ br
   if (await complete.isVisible().catch(() => false)) await complete.getByRole('button', { name: 'OK' }).click()
 
   // The shard probe walks 8443-8462 on a bare https endpoint. This one carries
-  // a port, so it must not have dialled anything.
-  expect(uploader.seen.filter((url) => SHARD_PORTS.test(url)), 'the shard probe must stay quiet here').toEqual([])
+  // a port, so it must not have dialled anything. A proxy that happens to
+  // listen inside that range is still just the endpoint, not a probe.
+  const probed = uploader.seen.filter((url) => SHARD_PORTS.test(url) && new URL(url).origin !== stack().proxy)
+  expect(probed, 'the shard probe must stay quiet here').toEqual([])
 
   const added = (await uploadPrefixes(asAdmin, sky)).filter((prefix) => !before.has(prefix))
   expect(added, 'exactly one new upload').toHaveLength(1)
