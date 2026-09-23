@@ -41,8 +41,6 @@ export type ProcessResponse = {
   error?: string;
 };
 
-const THUMB_MAX = 64; // longest edge, CSS px doubled for crisp 32px rows
-
 // Window-typed `self` in this lib config; cast to the dedicated-worker shape we
 // actually use for posting structured-clone messages.
 const post = (msg: ProcessResponse) => (self as unknown as Worker).postMessage(msg);
@@ -58,7 +56,7 @@ async function streamSha256(file: File): Promise<string> {
   return hasher.digest('hex');
 }
 
-const EXIF_FIELDS = ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'Make', 'Model'] as const;
+const EXIF_FIELDS = ['DateTimeOriginal', 'CreateDate', 'ModifyDate', 'Make', 'Model', 'ExifImageWidth', 'ExifImageHeight'] as const;
 
 // EXIF datetimes are `YYYY:MM:DD HH:MM:SS`. Parse the raw string into naive
 // components directly so the browser zone never enters (reviveValues:false
@@ -93,7 +91,10 @@ async function readExif(file: File): Promise<Partial<ProcessResponse>> {
     const modified = primary ? undefined : parseNaive(tags.ModifyDate);
     const exifNaive = primary ?? modified;
     const exifCamera = [tags.Make, tags.Model].filter(Boolean).join(' ').trim() || undefined;
-    return { exifNaive, exifTimestampSource: modified ? 'exif-modify' : undefined, exifCamera, ...gpsToResult(gps) };
+    return {
+      exifNaive, exifTimestampSource: modified ? 'exif-modify' : undefined, exifCamera,
+      width: tags.ExifImageWidth, height: tags.ExifImageHeight, ...gpsToResult(gps),
+    };
   } catch {
     return {}; // missing/corrupt EXIF is a validation concern, not a hard failure
   }
@@ -110,23 +111,10 @@ function gpsToResult(
 
 async function makeThumbnail(file: File): Promise<Partial<ProcessResponse>> {
   try {
-    const bitmap = await createImageBitmap(file);
-    const { width, height } = bitmap;
-    const scale = Math.min(1, THUMB_MAX / Math.max(width, height));
-    const tw = Math.max(1, Math.round(width * scale));
-    const th = Math.max(1, Math.round(height * scale));
-    const canvas = new OffscreenCanvas(tw, th);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      bitmap.close();
-      return { width, height };
-    }
-    ctx.drawImage(bitmap, 0, 0, tw, th);
-    bitmap.close();
-    const thumbnail = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
-    return { width, height, thumbnail };
+    const bytes = await exifr.thumbnail(file);
+    return bytes ? { thumbnail: new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }) } : {};
   } catch {
-    return {}; // undecodable preview is non-fatal; the file still uploads
+    return {};
   }
 }
 

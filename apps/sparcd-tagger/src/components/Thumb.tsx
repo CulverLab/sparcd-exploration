@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { previewKeyFor } from '@sparcd/camtrap';
 import { useMediaUrl, type MediaPriority } from '../lib/useMediaUrl';
 import { isVideoKey } from '../lib/workspace';
 
@@ -21,7 +23,10 @@ export function Thumb({
   isVideo?: boolean;
   priority?: MediaPriority;
 }) {
-  const { url, isError, markLoaded } = useMediaUrl(objectKey, priority);
+  const [failed, setFailed] = useState<string>();
+  const preview = isVideo ? undefined : previewKeyFor(objectKey);
+  const key = preview && failed !== preview ? preview : objectKey;
+  const { url, isError, markLoaded } = useMediaUrl(key, priority);
 
   if (isError) {
     return (
@@ -64,7 +69,10 @@ export function Thumb({
             loading="lazy"
             fetchPriority={priority}
             onLoad={markLoaded}
-            onError={markLoaded}
+            onError={() => {
+              if (key === preview) setFailed(preview);
+              markLoaded();
+            }}
             className="w-full h-full object-cover"
           />
         ))}

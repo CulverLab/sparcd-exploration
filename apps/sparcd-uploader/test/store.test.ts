@@ -61,6 +61,8 @@ function snapshot(sessionId: string, phase: UploadPhase): UploadSnapshot {
     files: [],
     uploadedBytes: 0,
     skippedBytes: 0,
+    previewsWritten: 0,
+    previewsSkipped: 0,
     totalBytes: 0,
     log: [],
     bucket: 'sparcd-test',

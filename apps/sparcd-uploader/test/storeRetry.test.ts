@@ -35,6 +35,8 @@ const partial = () => ({
   files: [],
   uploadedBytes: 0,
   skippedBytes: 0,
+  previewsWritten: 0,
+  previewsSkipped: 0,
   totalBytes: 1,
   log: [],
   bucket: 'bucket',

@@ -11,6 +11,13 @@
 /** One row of `deployments.csv` — a camera location for one upload. */
 export type TimestampSource = 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified' | 'exif-modify';
 
+export const PREVIEW_NAME = 'preview-640.jpg';
+/** Derived preview key for an original in the Media/<sha256>/ layout, undefined for any other key. */
+export function previewKeyFor(originalKey: string): string | undefined {
+  const match = /^Media\/([0-9a-f]{64})\/([^/]+)$/.exec(originalKey);
+  return match && match[2] !== PREVIEW_NAME ? `Media/${match[1]}/${PREVIEW_NAME}` : undefined;
+}
+
 export type Deployment = {
   timestampIssues?: boolean;
   deploymentId: string; // "<collection-uuid>:<location-id>"

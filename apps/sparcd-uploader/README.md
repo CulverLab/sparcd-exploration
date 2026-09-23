@@ -72,6 +72,8 @@ Non-controls:
 
 ## Develop
 
+For originals stored under `Media/<sha256>/`, the upload lane writes `preview-640.jpg` beside the original after its PUT. Preview creation is best effort; old-layout keys and undecodable images upload without one.
+
 ```sh
 pnpm install          # from the repo root
 pnpm --filter sparcd-uploader dev

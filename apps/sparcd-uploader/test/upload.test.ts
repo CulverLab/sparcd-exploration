@@ -20,6 +20,7 @@ type FakeClient = {
 };
 
 const mocks = vi.hoisted(() => ({
+  makePreview: vi.fn(async () => ({ blob: new Blob(['preview'], { type: 'image/jpeg' }), width: 64, height: 48 })),
   client: null as FakeClient | null,
   // Set only by the sharding tests; otherwise the run gets the single client.
   shardClients: null as FakeClient[] | null,
@@ -28,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   markFileState: vi.fn(),
   markBatchComplete: vi.fn(),
 }));
+
+vi.mock('../src/lib/preview', () => ({ makePreview: mocks.makePreview }));
 
 vi.mock('../src/lib/s3', () => ({
   getClient: vi.fn(() => mocks.client),
@@ -100,6 +103,92 @@ function makeRecord(sessionId: string, i: number, state: FileRecord['state'] = '
     attempt: 0,
   };
 }
+
+const mediaKey = `Media/${'a'.repeat(64)}/x.jpg`;
+
+describe('derived preview upload', () => {
+  beforeEach(() => mocks.makePreview.mockClear());
+
+  it('writes a JPEG preview after its original', async () => {
+    const session = makeSession(['pending']);
+    session.files[0].remoteKey = mediaKey;
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const events: string[] = [];
+    client.writeImmutableStream.mockImplementation(async () => { events.push('original'); return { etag: 'etag' }; });
+    client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => { if (key.endsWith('preview-640.jpg')) events.push('preview'); });
+    const updates: UploadSnapshot[] = [];
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, (s) => updates.push(s)).done;
+    expect(events.slice(0, 2)).toEqual(['original', 'preview']);
+    expect(client.writeImmutable).toHaveBeenCalledWith('bucket', `Media/${'a'.repeat(64)}/preview-640.jpg`, expect.any(Uint8Array), expect.objectContaining({ contentType: 'image/jpeg' }));
+    expect(updates.at(-1)?.previewsWritten).toBe(1);
+  });
+
+  it('skips an existing preview without decoding', async () => {
+    const session = makeSession(['done']);
+    session.files[0].remoteKey = mediaKey;
+    const client = makeClient(session.files);
+    client.statObject.mockImplementation(async () => ({ size: 12, metadata: { sha256: 'sha-0' } }));
+    mocks.client = client;
+    const updates: UploadSnapshot[] = [];
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, (s) => updates.push(s)).done;
+    expect(mocks.makePreview).not.toHaveBeenCalled();
+    expect(client.writeImmutable.mock.calls.some((c) => c[1].endsWith('preview-640.jpg'))).toBe(false);
+    expect(updates.at(-1)?.previewsSkipped).toBe(1);
+  });
+
+  it('does not check a preview for old-layout keys', async () => {
+    const session = makeSession(['pending']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, () => {}).done;
+    expect(mocks.makePreview).not.toHaveBeenCalled();
+    expect(client.statObject.mock.calls.some((c) => c[1].endsWith('preview-640.jpg'))).toBe(false);
+  });
+
+  it('keeps a file done and bytes unchanged when preview PUT fails', async () => {
+    const session = makeSession(['pending']);
+    session.files[0].remoteKey = mediaKey;
+    const client = makeClient(session.files);
+    client.writeImmutableStream.mockImplementation(async (_b: string, _k: string, file: File, opts: { onProgress: (n: number) => void }) => {
+      opts.onProgress(file.size);
+      return { etag: 'etag' };
+    });
+    client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => { if (key.endsWith('preview-640.jpg')) throw badRequest(); });
+    mocks.client = client;
+    const updates: UploadSnapshot[] = [];
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, (s) => updates.push(s)).done;
+    expect(updates.at(-1)?.files[0].state).toBe('done');
+    expect(updates.at(-1)?.uploadedBytes).toBe(session.files[0].size);
+    expect(updates.at(-1)?.previewsSkipped).toBe(1);
+  });
+
+  it('writes a missing preview when resuming a verified original', async () => {
+    const session = makeSession(['done']);
+    session.files[0].remoteKey = mediaKey;
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const updates: UploadSnapshot[] = [];
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, (s) => updates.push(s)).done;
+    expect(client.writeImmutableStream).not.toHaveBeenCalled();
+    expect(mocks.makePreview).toHaveBeenCalledTimes(1);
+    expect(client.writeImmutable).toHaveBeenCalledWith('bucket', `Media/${'a'.repeat(64)}/preview-640.jpg`, expect.any(Uint8Array), expect.objectContaining({ contentType: 'image/jpeg' }));
+    expect(updates.at(-1)?.previewsWritten).toBe(1);
+  });
+
+  it('counts a 412 on the preview PUT as skipped', async () => {
+    const session = makeSession(['pending']);
+    session.files[0].remoteKey = mediaKey;
+    const client = makeClient(session.files);
+    client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => { if (key.endsWith('preview-640.jpg')) throw new PreconditionFailedError(key); });
+    mocks.client = client;
+    const updates: UploadSnapshot[] = [];
+    await resumeUpload({ config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(1) }, (s) => updates.push(s)).done;
+    expect(updates.at(-1)?.files[0].state).toBe('done');
+    expect(updates.at(-1)?.previewsWritten).toBe(0);
+    expect(updates.at(-1)?.previewsSkipped).toBe(1);
+  });
+});
 
 function makeBundleRecord(sessionId: string): BundleRecord {
   return {
