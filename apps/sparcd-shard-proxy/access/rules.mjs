@@ -84,15 +84,16 @@ export function protectedKey(key, { isSettings }) {
 }
 
 const SNAP = '[^/]+/[^/]+';
-const csvOrMeta = '(media\\.csv|observations\\.csv|UploadMeta\\.json)';
+const csvOrMeta = '(media\\.csv|observations\\.csv|deployments\\.csv|UploadMeta\\.json)';
 
 /**
  * The keys the Tagger writes, and only those. Sources (paths relative to the
  * repo root):
- *   apps/sparcd-tagger/src/lib/sync.ts:251 — the canonical trio, replaceIfUnchanged
- *   apps/sparcd-tagger/src/lib/sync.ts:187 — snapshotPrefixOf, writeImmutable
+ *   apps/sparcd-tagger/src/lib/sync.ts — the canonical four, replaceIfUnchanged;
+ *     `deployments.csv` since the Tagger corrects an upload's location
+ *   apps/sparcd-tagger/src/lib/sync.ts — snapshotPrefixOf, writeImmutable
  * The `<user>` snapshot segment is the one percent-encoded segment either app
- * produces (sync.ts:188), so it is matched as an opaque segment.
+ * produces, so it is matched as an opaque segment.
  */
 export function taggerWriteKey(key, uuid) {
   const u = escapeRe(uuid);
@@ -209,12 +210,13 @@ export function eventKind(op, { isSettings, key }) {
   return null;
 }
 
-// The Tagger's canonical trio and its snapshots are identification work; a
+// The Tagger's canonical files and its snapshots are identification work; a
 // media blob at the same prefix is an upload.
 function taggerMetadataLeaf(key) {
   if (!key) return false;
   const leaf = key.slice(key.lastIndexOf('/') + 1);
-  return (leaf === 'media.csv' || leaf === 'observations.csv' || leaf === 'UploadMeta.json')
+  return (leaf === 'media.csv' || leaf === 'observations.csv' || leaf === 'deployments.csv'
+    || leaf === 'UploadMeta.json')
     || key.includes('/.sparcd-tagger-snapshots/');
 }
 

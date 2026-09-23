@@ -195,7 +195,7 @@ describe('the access table', () => {
       // [person, bucket, key, expected]
       ['carol', BUCKET_A, `${prefixA}/observations.csv`, 200], // identify: a Tagger file
       ['carol', BUCKET_A, `${prefixA}/new.jpg`, 403], // identify: not a Tagger file
-      ['carol', BUCKET_A, `${prefixA}/deployments.csv`, 403], // the Uploader's, not the Tagger's
+      ['carol', BUCKET_A, `${prefixA}/deployments.csv`, 200], // identify: the Tagger corrects locations
       ['bob', BUCKET_A, `${prefixA}/new.jpg`, 200], // upload
       ['bob', BUCKET_A, `Collections/${UUID_A}/species.json`, 403], // upload is not run
       ['alice', BUCKET_A, `Collections/${UUID_A}/species.json`, 200], // run
