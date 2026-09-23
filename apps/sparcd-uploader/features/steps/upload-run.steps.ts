@@ -955,7 +955,6 @@ Then('releasing the held blob lets the upload complete', async ({ app }) => {
 
 const DROP_BATCH_SIZE = 24;
 const dropBatchNames = () => manyJpegs(DROP_BATCH_SIZE).map((s) => s.path.split('/').pop()!).sort();
-const countOf = (text: string, needle: RegExp) => (text.match(needle) ?? []).length;
 const published = (app: App) => app.s3.puts.some((p) => p.key.endsWith('UploadComplete.json'));
 
 /** Upload folders this scenario created, leaving out the seeded prior upload. */
@@ -975,31 +974,57 @@ function storedImageNames(app: App, folder: string): string[] {
     .sort();
 }
 
-/** Take the whole browser offline, and wait until the run has noticed. */
-async function dropConnection(app: App): Promise<void> {
-  const before = countOf(await app.logText(), /waiting for network/g);
+// The writes the connection drops cut off, one per drop.
+const CUT_OFF = ['IMG_0004.JPG', 'IMG_0010.JPG', 'IMG_0016.JPG'];
+
+const gatedKey = (app: App, name: string) => app.s3.gated.find((k) => k.endsWith(`/${name}`));
+const logCount = async (app: App, text: string) => (await app.logText()).split(text).length - 1;
+
+/**
+ * Wait until the write for `name` is held at the mock, take the browser
+ * offline, then let that write go so it fails as a dropped connection would.
+ * Returns once the run has parked that file to wait for the network.
+ */
+async function cutOff(app: App, name: string): Promise<void> {
+  await expect.poll(() => gatedKey(app, name), { timeout: 60_000 }).toBeTruthy();
+  const key = gatedKey(app, name)!;
+  const waitsBefore = await logCount(app, `waiting for network to retry ${key}`);
   app.s3.offline = true;
   await app.page.context().setOffline(true);
+  app.s3.releaseGatedPut(key);
+  await expect.poll(() => app.s3.refusedOffline).toContain(`${BUCKET_A}/${key}`);
+  expect(app.s3.has(BUCKET_A, key)).toBe(false);
   await expect
-    .poll(async () => countOf(await app.logText(), /waiting for network/g), { timeout: 30_000 })
-    .toBeGreaterThan(before);
+    .poll(() => logCount(app, `waiting for network to retry ${key}`), { timeout: 30_000 })
+    .toBeGreaterThan(waitsBefore);
+  await expect(app.runPhase()).toHaveText('uploading');
+  app.notes.cutOffKey = key;
 }
 
 async function restoreConnection(app: App): Promise<void> {
-  const before = countOf(await app.logText(), /network back/g);
+  const key = app.notes.cutOffKey as string;
+  const backBefore = await logCount(app, `network back, retrying ${key}`);
   app.s3.offline = false;
   await app.page.context().setOffline(false);
-  await expect
-    .poll(async () => countOf(await app.logText(), /network back/g), { timeout: 30_000 })
-    .toBeGreaterThan(before);
+  await expect.poll(() => logCount(app, `network back, retrying ${key}`)).toBeGreaterThan(backBefore);
+}
+
+/** Stop holding writes, letting any still at the gate through. */
+function openGate(app: App): void {
+  app.s3.gatePut = undefined;
+  for (const key of app.s3.gated) app.s3.releaseGatedPut(key);
 }
 
 Given('a real upload of many images is under way', async ({ app }) => {
   await rescanFromUpload(app, manyJpegs(DROP_BATCH_SIZE));
-  // The fewest lanes and a write delay keep the run going long enough to cut
-  // it off more than once.
   await app.pinConcurrency(4);
-  app.s3.putDelayMs = 400;
+  const held = new Set<string>();
+  app.s3.gatePut = (_bucket, key) => {
+    const name = key.split('/').pop()!;
+    if (!CUT_OFF.includes(name) || held.has(name)) return false;
+    held.add(name);
+    return true;
+  };
   await app.dryRunCheckbox().uncheck();
   await app.startRun();
   // Count every click from here on, so a Then can show nobody restarted it.
@@ -1008,28 +1033,19 @@ Given('a real upload of many images is under way', async ({ app }) => {
     w.__clicksAfterStart = 0;
     document.addEventListener('click', () => { w.__clicksAfterStart++; }, true);
   });
-  await expect.poll(() => mediaPuts(app).length, { intervals: [50] }).toBeGreaterThan(0);
 });
 
 Given('the connection drops while the upload is in progress', async ({ app }) => {
-  await dropConnection(app);
-  // Let requests already in flight settle, then check nothing new is sent.
-  await app.page.waitForTimeout(500);
-  const stalledAt = mediaPuts(app).length;
-  expect(stalledAt).toBeLessThan(DROP_BATCH_SIZE);
-  await app.page.waitForTimeout(1_000);
-  expect(mediaPuts(app).length).toBe(stalledAt);
-  await expect(app.runPhase()).toHaveText('uploading');
-  app.notes.stalledAt = stalledAt;
+  await cutOff(app, CUT_OFF[0]);
 });
 
 When('the connection returns', async ({ app }) => {
   await restoreConnection(app);
+  openGate(app);
 });
 
 Then('the upload continues and is published with every image', async ({ app }) => {
   await expect.poll(() => published(app), { timeout: 120_000 }).toBe(true);
-  expect(mediaPuts(app).length).toBeGreaterThan(app.notes.stalledAt as number);
   const [folder] = batchFolders(app);
   expect(storedImageNames(app, folder)).toEqual(dropBatchNames());
 });
@@ -1043,13 +1059,9 @@ Then('nothing had to be clicked to restart it', async ({ app }) => {
 });
 
 When('the connection drops and returns three times during the upload', async ({ app }) => {
-  for (const threshold of [4, 10, 16]) {
-    await expect
-      .poll(() => mediaPuts(app).length, { intervals: [50], timeout: 60_000 })
-      .toBeGreaterThanOrEqual(threshold);
+  for (const name of CUT_OFF) {
+    await cutOff(app, name);
     expect(published(app)).toBe(false);
-    await dropConnection(app);
-    await app.page.waitForTimeout(500);
     await restoreConnection(app);
   }
 });
