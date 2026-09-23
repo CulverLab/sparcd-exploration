@@ -45,6 +45,7 @@ const errorBody = (code: string, message: string): string =>
 let etagCounter = 0;
 let mpuCounter = 0;
 const nextEtag = (): string => `"etag-${++etagCounter}"`;
+const bareEtag = (etag: string): string => etag.replace(/^W\//, '').replace(/^"(.*)"$/, '$1');
 
 export class S3Mock {
   buckets: string[] = [];
@@ -373,7 +374,7 @@ export class S3Mock {
           await fail({ status: 412, code: 'PreconditionFailed', message: 'At least one of the pre-conditions you specified did not hold' });
           return;
         }
-        if (ifMatch !== undefined && (!existing || existing.etag !== ifMatch)) {
+        if (ifMatch !== undefined && (!existing || bareEtag(existing.etag) !== bareEtag(ifMatch))) {
           await fail({ status: 412, code: 'PreconditionFailed', message: 'ETag mismatch' });
           return;
         }
