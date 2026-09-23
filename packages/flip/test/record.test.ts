@@ -4,7 +4,7 @@
 // handles are left out because Node has nothing to structured-clone them from.
 
 import 'fake-indexeddb/auto';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   flipDb,
   mergeTags,
@@ -189,6 +189,28 @@ describe('not keeping batches forever', () => {
     await finishFlipRecord('handed-back', {}, 'anita');
     expect(await pruneFlipRecords()).toBe(1);
     expect(await flipDb.records.get('untouched')).toBeUndefined();
+  });
+
+  // Opened on day 1, tagged on day 20, swept on day 45: only the tag write
+  // keeps it inside the 30 days.
+  it.each([
+    ['a per-image save', (id: string) => updateFlipTags(id, { 'SD/IMG_0001.JPG': [coyote] })],
+    ['the hand-back', (id: string) => finishFlipRecord(id, { 'SD/IMG_0001.JPG': [coyote] }, 'anita')],
+  ])('keeps a batch whose last use was %s', async (_, tag) => {
+    const day = (d: number) => Date.parse('2026-08-01T00:00:00.000Z') + d * 24 * 60 * 60 * 1000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(day(0));
+      await writeFlipRecord(record({ createdAt: new Date().toISOString() }));
+      vi.setSystemTime(day(1));
+      await readFlipRecord('batch-1');
+      vi.setSystemTime(day(20));
+      await tag('batch-1');
+      expect(await pruneFlipRecords(day(45))).toBe(0);
+      expect((await flipDb.records.get('batch-1'))!.tags['SD/IMG_0001.JPG']).toEqual([coyote]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

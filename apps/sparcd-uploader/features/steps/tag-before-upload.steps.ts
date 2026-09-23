@@ -163,7 +163,7 @@ async function handBackAndReattach(app: App, id: string): Promise<void> {
 Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
   const id = await handOff(app);
   app.notes.flipId = id;
-  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
+  await app.finishFlipRecord(id, TAGS, 'anita');
   await handBackAndReattach(app, id);
 });
 
@@ -180,14 +180,14 @@ Given('a batch was handed to the Tagger 40 days ago', async ({ app }) => {
   app.notes.flipId = await handOff(app);
 });
 
-Given('it was tagged and handed back 25 days later', async ({ app }) => {
+// The Tagger's write is the last thing to touch the record before the sweep,
+// so the batch survives only if tagging counts as use.
+Given('it was tagged in the Tagger 25 days later', async ({ app }) => {
   await app.page.clock.setSystemTime((app.notes.now as number) - 15 * DAY_MS);
-  const id = app.notes.flipId as string;
-  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
-  await handBackAndReattach(app, id);
+  await app.finishFlipRecord(app.notes.flipId as string, TAGS, 'anita');
 });
 
-When('the batch is opened again 15 days after that', async ({ app }) => {
+When('the batch is handed back 15 days after that', async ({ app }) => {
   await app.page.clock.setSystemTime(app.notes.now as number);
   // The same address the Tagger's hand-back leaves in the tab. Loading it runs
   // the sweep of old hand-offs before the batch is read.

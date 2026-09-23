@@ -331,9 +331,10 @@ When('the batch is uploaded with {string} as its location', async ({ app }, loca
 });
 
 When('the next batch is uploaded with {string} as its location', async ({ app }, location: string) => {
-  // Upload folders are stamped to the second; a second upload inside the same
-  // second would claim the first one's folder.
-  await app.page.waitForTimeout(1_100);
+  // Upload folders are stamped to the second, so a second upload inside the
+  // same second would claim the first one's folder. Moving the page clock a
+  // minute ahead puts the next stamp in a later second by construction.
+  await app.page.clock.setSystemTime(Date.now() + 60_000);
   await app.page.getByRole('button', { name: 'Next batch' }).click();
   await app.dropFolder([
     jpegAt('IMG_0101.JPG', '2026:07:08 06:00:00'),

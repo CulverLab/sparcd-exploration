@@ -123,13 +123,13 @@ Feature: Identify species before the batch is uploaded
   @A1 @A1-6
   Scenario: Tags survive weeks of waiting for a connection
     Given a batch was handed to the Tagger 40 days ago
-    And it was tagged and handed back 25 days later
-    When the batch is opened again 15 days after that
+    And it was tagged in the Tagger 25 days later
+    When the batch is handed back 15 days after that
     And it is published
     Then observations.csv has one row per species applied, against the right image
     And each row carries the common name the tagger used
     # Unused hand-offs are swept 30 days after last use. The batch here is 40
-    # days old but was last opened 15 days ago, so its tags must still be there.
+    # days old but was last tagged 15 days ago, so its tags must still be there.
 
   @AL2 @AL2-5
   Scenario: Retrying a failed upload of a tagged batch does not ask for the tags again
