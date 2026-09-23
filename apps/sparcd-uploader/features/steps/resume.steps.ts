@@ -389,6 +389,19 @@ Then('"Resume upload" is offered', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume upload' })).toBeVisible();
 });
 
+Then(
+  'History says storage refused the file and to ask an administrator before resuming',
+  async ({ app }) => {
+    await app.gotoSection('History');
+    const row = app.page.locator('li').filter({ has: app.page.getByText('open', { exact: true }) });
+    await expect(row).toContainText(
+      'Storage refused 1 file (Access Denied); ask your administrator to fix that, then Resume upload.',
+    );
+    await expect(row).not.toContainText('Interrupted');
+    await app.gotoSection('New upload');
+  },
+);
+
 When('the refusal is cleared and "Resume upload" is chosen', async ({ app }) => {
   app.s3.putHooks.length = 0;
   await app.page.getByRole('button', { name: 'Resume upload' }).click();

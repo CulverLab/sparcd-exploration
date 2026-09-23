@@ -14,6 +14,7 @@ import {
   loadSession,
   discardSession,
   fileStateCounts,
+  refusedFiles,
   updateBatch,
   type BatchRecord,
   type LoadedSession,
@@ -31,7 +32,11 @@ import type { ProcessResponse } from '../lib/processPool';
 import { Note } from '../components/RunMonitor';
 import { PublishedUploads } from '../components/PublishedUploads';
 
-type Row = { batch: BatchRecord; counts: Record<PersistedFileState, number> };
+type Row = {
+  batch: BatchRecord;
+  counts: Record<PersistedFileState, number>;
+  refused: { count: number; reason?: string };
+};
 
 const stampOf = (prefix: string) => prefix.slice(prefix.lastIndexOf('/') + 1);
 
@@ -94,14 +99,24 @@ export function History() {
   const refresh = useCallback(async () => {
     const batches = await listBatches();
     const withCounts = await Promise.all(
-      batches.map(async (batch) => ({ batch, counts: await fileStateCounts(batch.id) })),
+      batches.map(async (batch) => ({
+        batch,
+        counts: await fileStateCounts(batch.id),
+        refused: await refusedFiles(batch.id),
+      })),
     );
     setRows(withCounts);
   }, []);
 
+  // Rows come from the local ledger, which a live run keeps writing to: reload
+  // whenever the run changes phase, and every couple of seconds while it runs.
+  // Per-file ledger writes trail the phase change, so look once more shortly after.
+  const runPhase = useStore((s) => s.activeSnap?.phase);
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    const settle = setTimeout(() => void refresh(), 1_000);
+    return () => clearTimeout(settle);
+  }, [refresh, runPhase]);
 
   const closePicker = useCallback(() => {
     pickerOpenRef.current = false;
@@ -117,6 +132,11 @@ export function History() {
   }, []);
 
   const running = activeSessionId !== null;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => void refresh(), 2_000);
+    return () => clearInterval(timer);
+  }, [running, refresh]);
   const online = useOnline();
 
   const launch = useCallback(
@@ -436,7 +456,7 @@ export function History() {
       )}
 
       <ul className="space-y-3">
-        {rows.map(({ batch, counts }) => {
+        {rows.map(({ batch, counts, refused }) => {
           const isActive = activeSessionId === batch.id;
           const isPreparing = preparation?.sessionId === batch.id;
           const verifyProgress = isPreparing ? preparation.progress : null;
@@ -467,7 +487,14 @@ export function History() {
                 )}
               </p>
 
-              {!batch.completedAt && !isActive && !isPreparing && (
+              {!batch.completedAt && !isActive && !isPreparing && refused.count > 0 && (
+                <p className="font-body text-[12px] text-warn">
+                  Storage refused {refused.count} file{refused.count === 1 ? '' : 's'} ({refused.reason});{' '}
+                  <span className="text-ink">ask your administrator to fix that, then Resume upload.</span>
+                </p>
+              )}
+
+              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && (
                 <p className="font-body text-[12px] text-warn">
                   {total - counts.done > 0
                     ? `Interrupted with ${total - counts.done} of ${total} file${total === 1 ? '' : 's'} still to send.`

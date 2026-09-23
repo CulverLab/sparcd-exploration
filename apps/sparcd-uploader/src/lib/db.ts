@@ -181,6 +181,13 @@ export async function fileStateCounts(
   return counts;
 }
 
+/** Files storage refused outright in a session's last attempt, with the first reason given. */
+export async function refusedFiles(sessionId: string): Promise<{ count: number; reason?: string }> {
+  const rows = await db.files.where('sessionId').equals(sessionId).toArray();
+  const refused = rows.filter((r) => r.state === 'failed' && r.refused);
+  return { count: refused.length, reason: refused[0]?.lastError };
+}
+
 export type LoadedSession = {
   batch: BatchRecord;
   // Null while the batch is still being discovered/inspected — the metadata

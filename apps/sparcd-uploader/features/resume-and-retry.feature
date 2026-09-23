@@ -89,6 +89,7 @@ Feature: Resume an interrupted upload and retry a failed one
   Scenario: Resuming a run that failed outright completes that same upload
     Given a real upload failed outright
     Then "Resume upload" is offered
+    And History says storage refused the file and to ask an administrator before resuming
     When the refusal is cleared and "Resume upload" is chosen
     Then the upload completes
     And when they all land, the metadata for that same upload folder is published
