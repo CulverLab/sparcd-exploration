@@ -83,7 +83,10 @@ export function protectedKey(key, { isSettings }) {
   return null;
 }
 
-const SNAP = '[^/]+/[^/]+';
+// One key segment, never `.` or `..`. The server refuses those before any rule
+// runs; the rule refuses them too so it does not lean on that alone.
+const SEG = '(?!\\.\\.?/)[^/]+';
+const SNAP = `${SEG}/${SEG}`;
 const csvOrMeta = '(media\\.csv|observations\\.csv|deployments\\.csv|UploadMeta\\.json)';
 
 /**
@@ -98,7 +101,7 @@ const csvOrMeta = '(media\\.csv|observations\\.csv|deployments\\.csv|UploadMeta\
 export function taggerWriteKey(key, uuid) {
   const u = escapeRe(uuid);
   return new RegExp(
-    `^Collections/${u}/Uploads/[^/]+/(`
+    `^Collections/${u}/Uploads/${SEG}/(`
     + `${csvOrMeta}`
     + `|\\.sparcd-tagger-snapshots/${SNAP}/(${csvOrMeta}|manifest\\.json)`
     + `)$`,

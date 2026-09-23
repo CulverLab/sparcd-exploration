@@ -329,6 +329,26 @@ describe('the access table', () => {
     );
   });
 
+  test('the rule itself refuses dot segments for every Tagger file', () => {
+    const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
+    for (const leaf of ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json']) {
+      for (const key of [
+        `${base}/Uploads/../${leaf}`,
+        `${base}/Uploads/./${leaf}`,
+        `${upload}/.sparcd-tagger-snapshots/../2026-01-01T00-00-00/${leaf}`,
+        `${upload}/.sparcd-tagger-snapshots/jo/../${leaf}`,
+        `${upload}/.sparcd-tagger-snapshots/./2026-01-01T00-00-00/${leaf}`,
+        `${upload}/.sparcd-tagger-snapshots/jo/./${leaf}`,
+      ]) {
+        assert.equal(taggerWriteKey(key, uuid), false, key);
+        assert.equal(at('PutObject', key, 'identify').allow, false, key);
+      }
+    }
+    // Dots inside a name are ordinary.
+    assert.equal(taggerWriteKey(`${base}/Uploads/..jo/observations.csv`, uuid), true);
+    assert.equal(taggerWriteKey(`${upload}/.sparcd-tagger-snapshots/j.o/2026.01/manifest.json`, uuid), true);
+  });
+
   test('a traversal onto deployments.csv never reaches the rule', () => {
     // The server refuses these by key shape before decide() runs, decoding
     // each path segment first, so an escaped slash cannot smuggle one in.
