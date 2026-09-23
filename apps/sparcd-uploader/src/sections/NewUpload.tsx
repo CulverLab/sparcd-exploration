@@ -92,6 +92,11 @@ export function NewUpload() {
   // Clicking a severity counter filters the list to just those files —
   // scrolling a 5000-row list for the one flagged file is not an option.
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
+  const [showFiles, setShowFiles] = useState(false);
+  const toggleFilter = (filter: Severity) => {
+    setSeverityFilter((f) => (f === filter ? null : filter));
+    setShowFiles(true);
+  };
   useEffect(() => {
     if (severityFilter === 'error' && summary.errors === 0) setSeverityFilter(null);
     if (severityFilter === 'warning' && summary.warnings === 0) setSeverityFilter(null);
@@ -136,7 +141,8 @@ export function NewUpload() {
         <div className="space-y-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="font-body text-[14px] text-inkSoft">
-              <span className="font-mono text-ink">{files.length}</span> files ·{' '}
+              <span className="font-mono text-ink">{summary.processed}</span> of{' '}
+              <span className="font-mono text-ink">{files.length}</span> files processed ·{' '}
               <span className="font-mono text-ink">{formatBytes(totalBytes)}</span>
               {flipId && (
                 <>
@@ -144,18 +150,12 @@ export function NewUpload() {
                   <span className="font-mono text-ink">{tagged}</span> tagged
                 </>
               )}
-              {summary.pending > 0 && (
-                <>
-                  {' · '}
-                  <span className="font-mono text-inkSoft">{summary.pending}</span> processing
-                </>
-              )}
               {summary.errors > 0 && (
                 <>
                   {' · '}
                   <button
                     type="button"
-                    onClick={() => setSeverityFilter((f) => (f === 'error' ? null : 'error'))}
+                    onClick={() => toggleFilter('error')}
                     aria-pressed={severityFilter === 'error'}
                     title={severityFilter === 'error' ? 'Show all files' : 'Show only files needing attention'}
                     className={counterClass('error', 'text-warn')}
@@ -169,7 +169,7 @@ export function NewUpload() {
                   {' · '}
                   <button
                     type="button"
-                    onClick={() => setSeverityFilter((f) => (f === 'warning' ? null : 'warning'))}
+                    onClick={() => toggleFilter('warning')}
                     aria-pressed={severityFilter === 'warning'}
                     title={severityFilter === 'warning' ? 'Show all files' : 'Show only warnings'}
                     className={counterClass('warning', 'text-warn')}
@@ -236,17 +236,27 @@ export function NewUpload() {
               </button>
             </div>
           </div>
-          <FileList severityFilter={severityFilter} />
-          <p className="font-body text-[13px] text-inkMute">
-            Press <span className="font-mono">D</span> to drop a flagged duplicate — it's kept
-            otherwise.
-            {summary.noCameraTime > 0 && (
-              <>
-                {' '}
-                A timestamp needs review in Assign before upload.
-              </>
-            )}
-          </p>
+          <button
+            type="button"
+            onClick={() => setShowFiles((v) => !v)}
+            aria-expanded={showFiles}
+            className="inline-flex min-h-[40px] items-center gap-1.5 px-2 sm:min-h-0 sm:px-0 font-body text-[13px] text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <span aria-hidden>{showFiles ? '▾' : '▸'}</span>
+            {showFiles ? 'Hide files' : 'Show files'}
+          </button>
+          {showFiles && <FileList severityFilter={severityFilter} />}
+          {(showFiles || summary.noCameraTime > 0) && (
+            <p className="font-body text-[13px] text-inkMute">
+              {showFiles && (
+                <>
+                  Press <span className="font-mono">D</span> to drop a flagged duplicate — it's
+                  kept otherwise.{' '}
+                </>
+              )}
+              {summary.noCameraTime > 0 && 'A timestamp needs review in Assign before upload.'}
+            </p>
+          )}
         </div>
       )}
 

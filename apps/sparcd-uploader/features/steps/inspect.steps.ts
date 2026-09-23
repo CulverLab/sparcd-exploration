@@ -20,7 +20,7 @@ Given('a folder of media has been scanned', async ({ app }) => {
 
 Given('the New upload section is showing the Inspect step', async ({ app }) => {
   await app.expectStep('Inspect');
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 // --- what Inspect establishes ---------------------------------------------
@@ -67,18 +67,51 @@ Given('files are still being examined', async ({ app }) => {
     ],
     { raw: true },
   );
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
-Then('the summary shows the file count, total size, and how many are still processing', async ({ app }) => {
+Then('the summary shows how many of the files are processed, and their total size', async ({ app }) => {
   await expect
     .poll(() => app.batchSummary(), { timeout: 30_000 })
-    .toMatch(/4 files · [\d.]+ (B|KB|MB) · \d+ processing/);
+    .toMatch(/\d of 4 files processed · [\d.]+ (B|KB|MB)/);
+  expect(await app.pendingCount()).toBeGreaterThan(0);
 });
 
 Then('it shows how many files need attention and how many carry warnings', async ({ app }) => {
   await expect.poll(() => app.batchSummary(), { timeout: 30_000 }).toMatch(/1 need attention/);
   await expect.poll(() => app.batchSummary(), { timeout: 30_000 }).toMatch(/1 warnings/);
+});
+
+// --- the folded file list --------------------------------------------------
+
+Then('the summary line is showing and the per-file list is hidden', async ({ app }) => {
+  await expect.poll(() => app.fileCount()).toBeGreaterThan(0);
+  await expect(app.fileListToggle()).toHaveAttribute('aria-expanded', 'false');
+  await expect(app.fileListPane()).toHaveCount(0);
+});
+
+When('"Show files" is chosen', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Show files', exact: true }).click();
+});
+
+When('"Hide files" is chosen', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Hide files', exact: true }).click();
+});
+
+Then('the per-file list is shown', async ({ app }) => {
+  await expect(app.fileListToggle()).toHaveAttribute('aria-expanded', 'true');
+  await expect(app.fileListPane()).toBeVisible();
+});
+
+When('the count of files needing attention is chosen', async ({ app }) => {
+  await expect.poll(() => app.batchSummary(), { timeout: 30_000 }).toMatch(/1 need attention/);
+  await expect(app.fileListPane()).toHaveCount(0);
+  await app.page.getByRole('button', { name: '1 need attention' }).click();
+});
+
+Then('the per-file list is shown with only that file in it', async ({ app }) => {
+  await expect(app.fileListPane()).toBeVisible();
+  await expect.poll(async () => (await app.listedFiles()).map((f) => f.name)).toEqual(['BROKEN.JPG']);
 });
 
 // --- blocking problems -----------------------------------------------------
@@ -244,8 +277,8 @@ Then('it explains that files needing attention must be resolved first', async ({
 Given('a large batch is still being examined', async ({ app }) => {
   await app.holdInspect('BIG_CLIP.MP4');
   await app.rescan(publishableBatch());
-  await expect(app.fileListPane()).toBeVisible();
-  await expect.poll(() => app.batchSummary()).toMatch(/\d+ processing/);
+  await expect(app.fileListToggle()).toBeVisible();
+  await expect.poll(() => app.pendingCount()).toBeGreaterThan(0);
 });
 
 Given('no file has been marked as needing attention', async ({ app }) => {
@@ -271,28 +304,21 @@ Then('examination carries on in the background while the user works on Assign', 
 
 Given('a batch is still being examined', async ({ app }) => {
   await app.rescan(manyJpegs(1200));
-  await expect(app.fileListPane()).toBeVisible();
-  await expect.poll(() => app.batchSummary()).toMatch(/\d+ processing/);
-  const m = /(\d+) processing/.exec(await app.batchSummary());
-  app.notes.pendingBefore = Number(m![1]);
+  await expect(app.fileListToggle()).toBeVisible();
+  await expect.poll(() => app.pendingCount()).toBeGreaterThan(0);
+  app.notes.pendingBefore = await app.pendingCount();
 });
 
 When('the user switches to History or Settings and back', async ({ app }) => {
   await app.gotoSection('Settings');
   await expect(app.page.getByText('Uploader identity')).toBeVisible();
   await app.gotoSection('New upload');
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Then('examination has continued in the background rather than restarting', async ({ app }) => {
   await expect
-    .poll(
-      async () => {
-        const m = /(\d+) processing/.exec(await app.batchSummary());
-        return m ? Number(m[1]) : 0;
-      },
-      { timeout: 30_000 },
-    )
+    .poll(() => app.pendingCount(), { timeout: 30_000 })
     .toBeLessThan(app.notes.pendingBefore as number);
   await app.waitForInspected();
   expect(await app.fileCount()).toBe(1200);
@@ -304,15 +330,15 @@ When('"Start over" is chosen', async ({ app }) => {
 
 Then('the batch is cleared and the wizard returns to the Files step', async ({ app }) => {
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
-  await expect(app.fileListPane()).toHaveCount(0);
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
+  await expect(app.fileListToggle()).toHaveCount(0);
 });
 
 // --- very large batches ----------------------------------------------------
 
 Given('a batch of several thousand files', async ({ app }) => {
   await app.rescan(manyJpegs(3000));
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await expect.poll(() => app.fileCount(), { timeout: 60_000 }).toBe(3000);
 });
 

@@ -174,6 +174,12 @@ export function Upload() {
 
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
   const stillInspecting = files.length - ready.length;
+  // Every scan path keys files as `<picked folder>/<sub>/<file>`; loose files
+  // picked on a phone have no folder to name.
+  const folder = useMemo(() => {
+    const top = files[0]?.relPath.split('/')[0];
+    return top && files.every((f) => f.relPath.startsWith(`${top}/`)) ? top : null;
+  }, [files]);
 
   const start = () => {
     if (!s3Config || !location || !collection || !slug) return;
@@ -339,11 +345,27 @@ export function Upload() {
             <p className="font-body text-[13px] text-inkSoft">
               {ready.length} file{ready.length === 1 ? '' : 's'} ready
               {stillInspecting > 0 && ` (${stillInspecting} still being inspected)`} ·{' '}
-              {formatBytes(ready.reduce((n, f) => n + f.size, 0))} →{' '}
-              <span className="font-mono text-ink break-all">
-                {collection.bucket}/Collections/{collection.uuid}/Uploads/
-              </span>
+              {formatBytes(ready.reduce((n, f) => n + f.size, 0))}
             </p>
+
+            <dl className="space-y-1.5 font-body text-[13px]">
+              <div className="flex items-baseline gap-3">
+                <dt className="text-inkSoft w-28 shrink-0">Collection</dt>
+                <dd className="text-ink min-w-0 break-words">{collection.name ?? '(unnamed)'}</dd>
+              </div>
+              {location && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Location</dt>
+                  <dd className="text-ink min-w-0 break-words">{location.name}</dd>
+                </div>
+              )}
+              {folder && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Folder</dt>
+                  <dd className="font-mono text-ink min-w-0 break-all">{folder}</dd>
+                </div>
+              )}
+            </dl>
 
             <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
               <input

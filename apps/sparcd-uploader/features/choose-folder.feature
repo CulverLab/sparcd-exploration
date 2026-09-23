@@ -13,6 +13,10 @@ Feature: Choose the folder of media to upload
     Given the uploader is connected
     And the New upload section is showing the Files step
 
+  @unmapped
+  Scenario: The drop area names both ways to hand over a folder
+    Then the drop area asks for a folder to be dropped, or for Choose folder to be clicked to browse
+
   @F1
   Scenario: Only JPEG images and MP4 videos are taken from the chosen folder
     When a folder is chosen that also contains other files

@@ -13,8 +13,17 @@ const tmpDir = (name: string) =>
 
 Given('the New upload section is showing the Files step', async ({ app }) => {
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
+
+Then(
+  'the drop area asks for a folder to be dropped, or for Choose folder to be clicked to browse',
+  async ({ app }) => {
+    const zone = app.page.locator('[aria-label^="Drop a folder"]');
+    await expect(zone).toContainText('Drop a folder to upload');
+    await expect(zone).toContainText('or click Choose folder to browse.');
+  },
+);
 
 // --- only JPEG and MP4 are taken ------------------------------------------
 
@@ -151,7 +160,7 @@ Then('examination starts over on the new batch', async ({ app }) => {
   const rows = await app.listedFiles();
   expect(rows).toHaveLength(2);
   for (const row of rows) expect(['OK', 'Warning']).toContain(row.status);
-  expect(await app.batchSummary()).not.toContain('processing');
+  expect(await app.pendingCount()).toBe(0);
 });
 
 // --- de-duplication --------------------------------------------------------
@@ -178,7 +187,7 @@ Then('each distinct path within the folder appears at most once in the batch', a
 When('a folder is supplied by dragging it onto the page', async ({ app }) => {
   await app.makeFolderPickerUnavailable();
   await app.dropFolder(publishableBatch());
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Then('no lasting access to that folder is retained', async ({ app }) => {

@@ -138,7 +138,7 @@ When('the real Tagger hands the batch back', async ({ app }) => {
   // folder is the real UI's expected return path and does not seed IndexedDB.
   await app.seedPickedFolder(app.lastSpecs);
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Then('the Uploader receives Coyote from the shared hand-off record', async ({ app }) => {
@@ -159,7 +159,7 @@ Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
   // again — and the fake picker is reset by the navigation, so re-seed it.
   await app.seedPickedFolder(app.lastSpecs);
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Given('a batch tagged in the Tagger is handed back with no remembered folder', async ({ app }) => {
@@ -241,7 +241,7 @@ Then('choosing the folder again puts the batch back on the Inspect step', async 
 
 Then('a "Reopen batch" button is offered instead of the file list', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Reopen batch' })).toBeVisible();
-  await expect(app.fileListPane()).toHaveCount(0);
+  await expect(app.fileListToggle()).toHaveCount(0);
 });
 
 // --- publishing what came back ---------------------------------------------

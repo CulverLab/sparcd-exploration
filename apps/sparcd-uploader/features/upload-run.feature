@@ -25,6 +25,12 @@ Feature: Upload and publish a batch
     Then the complete status explains itself on hover and keyboard focus
 
   @unmapped
+  Scenario: The Upload step names where the batch is going
+    Given the upload has not been started
+    Then it names the collection, the location and the chosen folder
+    And no storage path is shown
+
+  @unmapped
   Scenario: A real upload is offered by default; a dry run is opt-in
     Given the upload has not been started
     Then dry run is switched off by default
