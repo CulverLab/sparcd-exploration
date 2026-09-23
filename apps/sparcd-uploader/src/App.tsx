@@ -18,6 +18,9 @@ const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefine
 const persistedConnection = loadPersistedConnection();
 const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: devEndpoint } : {}) };
 
+const AUTO_RETRY_BASE_MS = 15_000;
+const AUTO_RETRY_MAX_MS = 5 * 60_000;
+
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
@@ -77,6 +80,21 @@ export function App() {
       window.removeEventListener('online', tryAutoResume);
     };
   }, [retryPartialRun]);
+
+  // A connection can die while the browser still reports itself online, so
+  // no `online` event will ever come. A run that stopped only for want of an
+  // answer is retried on a backoff timer instead.
+  const autoRetryPhase = activeSnap?.autoRetry ? activeSnap.phase : null;
+  const autoRetries = useRef(0);
+  useEffect(() => {
+    if (activeSnap?.phase === 'done') autoRetries.current = 0;
+    if (autoRetryPhase !== 'partial') return;
+    const delay = Math.min(AUTO_RETRY_MAX_MS, AUTO_RETRY_BASE_MS * 2 ** autoRetries.current++);
+    const timer = setTimeout(() => {
+      if (navigator.onLine !== false) void retryPartialRun();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [autoRetryPhase, activeSnap?.phase, retryPartialRun]);
 
   // Hold a screen wake lock while any run is in flight (including dry runs and
   // the preparing phase). Lives here (not in Upload) so it survives the user

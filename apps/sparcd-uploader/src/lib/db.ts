@@ -83,6 +83,10 @@ export interface FileRecord {
   mimeType?: string;
   remoteETag?: string;
   lastError?: string;
+  // Set when storage answered and said no (a 4xx such as AccessDenied), as
+  // opposed to the request never getting an answer. Resuming alone cannot fix
+  // a refusal, so History names a different next step for it.
+  refused?: boolean;
   // Species applied in the tagger before this batch was ever uploaded. Not
   // indexed, so it needs no schema bump; persisted so a batch interrupted days
   // after tagging still publishes the identifications it left with.

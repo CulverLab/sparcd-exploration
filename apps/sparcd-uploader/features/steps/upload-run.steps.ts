@@ -1044,6 +1044,22 @@ When('the connection returns', async ({ app }) => {
   openGate(app);
 });
 
+When('storage stops answering while the browser still reports being online', async ({ app }) => {
+  await expect.poll(() => gatedKey(app, CUT_OFF[0]), { timeout: 60_000 }).toBeTruthy();
+  app.s3.offline = true;
+  openGate(app);
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(true);
+});
+
+Then('the run stops as partial and says it picks up again on its own', async ({ app }) => {
+  await app.waitForRunPhase('partial', 120_000);
+  expect(await app.logText()).toContain('the upload picks up again on its own');
+});
+
+When('storage answers again', async ({ app }) => {
+  app.s3.offline = false;
+});
+
 Then('the upload continues and is published with every image', async ({ app }) => {
   await expect.poll(() => published(app), { timeout: 120_000 }).toBe(true);
   const [folder] = batchFolders(app);
