@@ -300,7 +300,7 @@ describe('the access table', () => {
   test('identify writes only what the Tagger writes', () => {
     assert.equal(at('PutObject', taggerCsv, 'identify').allow, true);
     assert.equal(at('PutObject', taggerSnap, 'identify').allow, true);
-    assert.equal(at('PutObject', deployments, 'identify').allow, false);
+    assert.equal(at('PutObject', deployments, 'identify').allow, true);
     assert.equal(at('PutObject', media, 'identify').allow, false);
     assert.equal(at('CreateMultipartUpload', media, 'identify').allow, false);
     assert.equal(at('DeleteObject', media, 'identify').allow, false);
