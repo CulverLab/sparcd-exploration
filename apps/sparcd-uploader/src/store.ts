@@ -174,7 +174,7 @@ type UploaderState = {
   }) => void;
   applyProgress: (started: string[], results: ProcessResponse[]) => void;
   revalidate: () => void;
-  setThumbnail: (id: string, thumbnail: Blob, dims?: { width: number; height: number }) => void;
+  setThumbnail: (id: string, thumbnail: Blob) => void;
   removeFile: (id: string) => void;
   setManualNaive: (id: string, naive: NaiveDateTime | null, source?: 'manual' | 'spread') => void;
   setManualNaiveMany: (
@@ -574,12 +574,12 @@ export const useStore = create<UploaderState>()(
       // Attach a best-effort poster after the fact (video frames are captured on
       // the main thread, post-worker). No validation re-run: a poster never
       // changes a verdict.
-      setThumbnail: (id, thumbnail, dims) =>
+      setThumbnail: (id, thumbnail) =>
         set((s) => {
           const i = getFileIndex(s.files).get(id);
           if (i === undefined) return {};
           const files = s.files.slice();
-          files[i] = { ...files[i], thumbnail, ...dims };
+          files[i] = { ...files[i], thumbnail };
           return { files };
         }),
 

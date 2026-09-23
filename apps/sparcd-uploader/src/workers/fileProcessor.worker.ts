@@ -10,6 +10,7 @@
 // is applied later (main thread) to derive the true UTC timestamp.
 
 import exifr from 'exifr';
+import { makePreview } from '../lib/preview';
 import { createSHA256 } from 'hash-wasm';
 
 export type NaiveExif = {
@@ -109,10 +110,14 @@ function gpsToResult(
   return {};
 }
 
+// The camera's embedded EXIF thumbnail costs no decode; files without one get
+// a reduced-size decode, which also supplies dims when EXIF lacks them.
 async function makeThumbnail(file: File): Promise<Partial<ProcessResponse>> {
   try {
     const bytes = await exifr.thumbnail(file);
-    return bytes ? { thumbnail: new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }) } : {};
+    if (bytes) return { thumbnail: new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' }) };
+    const small = await makePreview(file, undefined, 64);
+    return small ? { thumbnail: small.blob, width: small.width, height: small.height } : {};
   } catch {
     return {};
   }

@@ -5,7 +5,6 @@
 
 import { processBatch, type ProcessRun, type ProcessResponse } from './processPool';
 import { posterFor } from './videoPoster';
-import { makePreview } from './preview';
 import { useStore } from '../store';
 
 let run: ProcessRun | null = null;
@@ -36,12 +35,12 @@ export function onFilesReady(listener: ReadyListener): () => void {
   return () => readyListeners.delete(listener);
 }
 
-// Poster and fallback thumbnail capture run on the main thread (video needs a
-// <video> element, no worker API for it), so it's lane-limited like the worker pool rather than
+// Video poster capture runs on the main thread (needs a <video> element, no
+// worker API for it), so it's lane-limited like the worker pool rather than
 // fired unbounded per flush — a batch heavy on videos would otherwise pile up
 // many concurrent <video>/canvas decodes competing with rendering.
 const POSTER_CONCURRENCY = 2;
-let posterQueue: { id: string; file: File; kind: 'image' | 'video' }[] = [];
+let posterQueue: { id: string; file: File }[] = [];
 let posterActive = 0;
 
 function clearPosterQueue(): void {
@@ -54,11 +53,10 @@ function pumpPosterQueue(): void {
   while (posterActive < POSTER_CONCURRENCY && posterQueue.length > 0) {
     const next = posterQueue.shift()!;
     posterActive++;
-    void (next.kind === 'video'
-      ? posterFor(next.file).then((poster) => poster && useStore.getState().setThumbnail(next.id, poster))
-      : makePreview(next.file, undefined, 64).then(
-          (p) => p && useStore.getState().setThumbnail(next.id, p.blob, { width: p.width, height: p.height }),
-        ))
+    void posterFor(next.file)
+      .then((poster) => {
+        if (poster) useStore.getState().setThumbnail(next.id, poster);
+      })
       .finally(() => {
         posterActive--;
         pumpPosterQueue();
@@ -66,15 +64,14 @@ function pumpPosterQueue(): void {
   }
 }
 
-function kickThumbnails(results: ProcessResponse[]): void {
-  // Videos can't be decoded in the worker, and images without an embedded EXIF
-  // thumbnail are not decoded there; draw their row thumbnail on the main
-  // thread once the worker reports the file ready. Best-effort — a failure just
+function kickVideoPosters(results: ProcessResponse[]): void {
+  // Videos can't be decoded in the worker; grab a poster frame on the main
+  // thread once the worker reports a video ready. Best-effort — a failure just
   // leaves the typed placeholder tile in the file list.
   for (const r of results) {
-    if (!r.error && r.mediaKind && !r.thumbnail) {
+    if (!r.error && r.mediaKind === 'video' && !r.thumbnail) {
       const entry = useStore.getState().files.find((f) => f.id === r.id);
-      if (entry) posterQueue.push({ id: r.id, file: entry.file, kind: r.mediaKind });
+      if (entry) posterQueue.push({ id: r.id, file: entry.file });
     }
   }
   pumpPosterQueue();
@@ -102,7 +99,7 @@ function flush(token: number): void {
   // `ready` in the store (and be counted by the close-triggering effect)
   // before it was ever actually enqueued. Keep them adjacent.
   useStore.getState().applyProgress(started, results);
-  kickThumbnails(results);
+  kickVideoPosters(results);
 
   const ready = results.filter((r) => !r.error);
   if (ready.length > 0) for (const listener of readyListeners) listener(ready);
