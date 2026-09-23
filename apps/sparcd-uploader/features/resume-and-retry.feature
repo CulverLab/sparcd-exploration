@@ -76,6 +76,15 @@ Feature: Resume an interrupted upload and retry a failed one
     And when they all land, the metadata for that same upload folder is published
     And exactly one upload exists in the destination
 
+  @AL2 @AL2-2
+  Scenario: Resuming a run that failed outright completes that same upload
+    Given a real upload failed outright
+    Then "Resume upload" is offered
+    When the refusal is cleared and "Resume upload" is chosen
+    Then the upload completes
+    And when they all land, the metadata for that same upload folder is published
+    And exactly one upload exists in the destination
+
   @AL2 @AL2-4
   Scenario: Retrying does not require choosing the location again
     When a failed upload is retried or resumed
