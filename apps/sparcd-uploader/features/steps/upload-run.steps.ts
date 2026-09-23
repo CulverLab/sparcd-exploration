@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
 import { FOLDER, manyJpegs, publishableBatch, sameNameSubfolderBatch, slowPublishableBatch, standardBatch } from './batches';
-import { FAILING_FILE, rescanFromUpload, writtenCsvRows } from './helpers';
+import { FAILING_FILE, rescanFromUpload, writtenBody, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
@@ -1040,4 +1040,41 @@ Then('nothing had to be clicked to restart it', async ({ app }) => {
   );
   expect(clicks).toBe(0);
   await app.waitForRunPhase('done', 120_000);
+});
+
+When('the connection drops and returns three times during the upload', async ({ app }) => {
+  for (const threshold of [4, 10, 16]) {
+    await expect
+      .poll(() => mediaPuts(app).length, { intervals: [50], timeout: 60_000 })
+      .toBeGreaterThanOrEqual(threshold);
+    expect(published(app)).toBe(false);
+    await dropConnection(app);
+    await app.page.waitForTimeout(500);
+    await restoreConnection(app);
+  }
+});
+
+When('the upload finally completes', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
+});
+
+Then('the collection holds the batch in exactly one upload folder', async ({ app }) => {
+  const folders = batchFolders(app);
+  expect(folders).toHaveLength(1);
+  expect(storedImageNames(app, folders[0])).toEqual(dropBatchNames());
+});
+
+Then('History lists that upload once, as complete', async ({ app }) => {
+  expect(await app.readBatchRecords()).toHaveLength(1);
+  await app.gotoSection('History');
+  await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
+  await expect(app.page.getByText('open', { exact: true })).toHaveCount(0);
+});
+
+Then('every image appears exactly once in the stored media.csv', async ({ app }) => {
+  expect(app.s3.puts.filter((p) => p.key.endsWith('media.csv'))).toHaveLength(1);
+  const [folder] = batchFolders(app);
+  expect(app.s3.text(BUCKET_A, `${UPLOADS_PREFIX}${folder}/media.csv`)).toBe(writtenBody(app, 'media.csv'));
+  const names = writtenCsvRows(app, 'media.csv').map((r) => r[6]).filter((n) => n.endsWith('.JPG'));
+  expect(names.sort()).toEqual(dropBatchNames());
 });

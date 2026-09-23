@@ -190,6 +190,15 @@ Feature: Upload and publish a batch
     Then the upload continues and is published with every image
     And nothing had to be clicked to restart it
 
+  @AL1 @AL1-5
+  Scenario: Repeated connection drops still end in one finished upload
+    Given a real upload of many images is under way
+    When the connection drops and returns three times during the upload
+    And the upload finally completes
+    Then the collection holds the batch in exactly one upload folder
+    And History lists that upload once, as complete
+    And every image appears exactly once in the stored media.csv
+
   @unmapped
   Scenario: A run paused because the browser reports offline still completes if packets actually flow
     Given the browser's navigator.onLine flag is stuck reporting offline

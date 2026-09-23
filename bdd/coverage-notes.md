@@ -78,7 +78,7 @@
 | AL1-2 | Data already transferred and verified is not sent again | covered | uploader: resume-and-retry.feature: Files already stored and verified are not sent again | Verified objects are skipped; only missing or mismatched objects are sent. |
 | AL1-3 | An unattended upload is found either complete or clearly resumable | covered | uploader: resume-and-retry.feature: Uploads left running unattended are found either complete or ready to resume | A finished upload shows as complete with nothing to do; one cut off by closing the tab says how many files are left and names Resume upload. |
 | AL1-4 | An upload is never left in a silent, stuck state | untestable | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete | NOTES.md says no threshold defines when silence becomes stuck. |
-| AL1-5 | Repeated interruptions still end in one finished upload | partial | uploader: resume-and-retry.feature: Retrying the failed files of a partial run completes that same upload | Retry leaves one upload, but repeated connection interruptions are not exercised. |
+| AL1-5 | Repeated interruptions still end in one finished upload | covered | uploader: upload-run.feature: Repeated connection drops still end in one finished upload | Three drops fail writes in flight; the run still ends in one upload folder, one History entry, and a media.csv listing every image once. |
 | AL1-6 | An interrupted upload is not presented as complete | covered | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete | Only uploads with published metadata are marked complete. |
 
 ## AL2
@@ -138,9 +138,9 @@
 | F4 | 0 | 0 | 7 | 3 | 10 |
 | A1 | 4 | 1 | 1 | 0 | 6 |
 | A2 | 1 | 0 | 4 | 0 | 5 |
-| AL1 | 4 | 1 | 0 | 1 | 6 |
+| AL1 | 5 | 0 | 0 | 1 | 6 |
 | AL2 | 4 | 2 | 0 | 0 | 6 |
 | H1 | 3 | 0 | 1 | 2 | 6 |
 | H2 | 2 | 2 | 2 | 1 | 7 |
 | H3 | 1 | 5 | 2 | 0 | 8 |
-| Overall | 23 | 23 | 20 | 7 | 73 |
+| Overall | 24 | 22 | 20 | 7 | 73 |
