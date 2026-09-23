@@ -47,6 +47,7 @@ Feature: Choose the folder of media to upload
   Scenario: A device that cannot select whole folders offers individual files
     Given the browser cannot present a folder picker
     Then the drop area offers to choose individual photos or videos instead
+    # Its title and button both name that action; nothing mentions a folder.
     And it states that whole-folder selection is desktop-only
 
   @unmapped

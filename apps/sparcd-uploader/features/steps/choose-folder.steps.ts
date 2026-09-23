@@ -123,8 +123,9 @@ Given('the browser cannot present a folder picker', async ({ app }) => {
 });
 
 Then('the drop area offers to choose individual photos or videos instead', async ({ app }) => {
-  await expect(app.page.getByText('Choose photos or videos')).toBeVisible();
-  await expect(app.page.getByText('Choose folder', { exact: true })).toHaveCount(0);
+  await expect(app.page.getByText('Choose photos or videos to upload', { exact: true })).toBeVisible();
+  await expect(app.page.getByText('Choose photos or videos', { exact: true })).toBeVisible();
+  await expect(app.page.getByText(/Drop a folder|Choose folder/)).toHaveCount(0);
   await expect(app.page.locator('input[type="file"][accept="image/jpeg,video/mp4"]')).toBeAttached();
 });
 

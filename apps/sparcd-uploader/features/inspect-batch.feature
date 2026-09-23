@@ -38,6 +38,13 @@ Feature: Inspect the scanned batch before assigning it
     Then the summary line is showing and the per-file list is hidden
 
   @unmapped
+  Scenario: A new batch starts with the per-file list folded
+    When "Show files" is chosen
+    And "Start over" is chosen
+    And another folder is dropped
+    Then the summary line is showing and the per-file list is hidden
+
+  @unmapped
   Scenario: Choosing a problem count unfolds the list, filtered to those files
     Given one file fails to be examined
     When the count of files needing attention is chosen

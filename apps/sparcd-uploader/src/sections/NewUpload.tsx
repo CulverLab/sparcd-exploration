@@ -93,6 +93,7 @@ export function NewUpload() {
   // scrolling a 5000-row list for the one flagged file is not an option.
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
   const [showFiles, setShowFiles] = useState(false);
+  useEffect(() => setShowFiles(false), [batchToken]);
   const toggleFilter = (filter: Severity) => {
     setSeverityFilter((f) => (f === filter ? null : filter));
     setShowFiles(true);

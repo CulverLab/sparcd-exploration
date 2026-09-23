@@ -103,6 +103,12 @@ Then('the per-file list is shown', async ({ app }) => {
   await expect(app.fileListPane()).toBeVisible();
 });
 
+When('another folder is dropped', async ({ app }) => {
+  await app.expectStep('Files');
+  await app.dropFolder(standardBatch());
+  await app.expectStep('Inspect');
+});
+
 When('the count of files needing attention is chosen', async ({ app }) => {
   await expect.poll(() => app.batchSummary(), { timeout: 30_000 }).toMatch(/1 need attention/);
   await expect(app.fileListPane()).toHaveCount(0);
