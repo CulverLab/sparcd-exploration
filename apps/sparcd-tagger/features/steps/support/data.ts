@@ -19,12 +19,19 @@ export const SETTINGS_BUCKET = 'sparcd-settings-test';
 export const STAMP_A = '2024.01.15.10.00.00_priortagger';
 export const STAMP_B = '2023.06.01.09.30.00_fielduser';
 export const STAMP_C = '2025.03.10.14.00.00_newuploader';
+export const STAMP_D = '2026.03.27.15.19.44_videoproducer';
+export const STAMP_E = '2025.07.01.08.00.00_camerauser';
 export const PREFIX_A = `Collections/${UUID}/Uploads/${STAMP_A}/`;
 export const PREFIX_B = `Collections/${UUID}/Uploads/${STAMP_B}/`;
 export const PREFIX_C = `Collections/${UUID}/Uploads/${STAMP_C}/`;
+export const PREFIX_D = `Collections/${UUID}/Uploads/${STAMP_D}/`;
+export const PREFIX_E = `Collections/${UUID}/Uploads/${STAMP_E}/`;
 
 export const DEPLOYMENT = `${UUID}:SAN15`;
 export const LOCATION_NAME = 'San Pedro 15';
+export const NEW_LOCATION_ID = 'SAN22';
+export const NEW_LOCATION_NAME = 'San Pedro 22';
+export const SAME_ID_LOCATION_NAME = 'San Pedro 15 alternate';
 
 const q = (v: string): string => `"${v.replace(/"/g, '""')}"`;
 const row = (cells: string[], width: number): string =>
@@ -54,6 +61,13 @@ export const MEDIA_A: MediaSpec[] = [
 export const MEDIA_B: MediaSpec[] = [
   { file: 'FOX001.JPG', timestamp: '2023-05-30T19:00:00', mime: 'image/jpeg' },
   { file: 'FOX002.JPG', timestamp: '2023-05-30T19:00:20', mime: 'image/jpeg' },
+];
+
+/** Upload E — every frame untimed (issue #302): a camera whose clock never
+ *  recorded a capture time on any of these clips. */
+export const MEDIA_E: MediaSpec[] = [
+  { file: 'CLIP001.MP4', timestamp: '', mime: 'video/mp4' },
+  { file: 'CLIP002.MP4', timestamp: '', mime: 'video/mp4' },
 ];
 
 export const mediaKey = (prefix: string, file: string): string => `${prefix}${file}`;
@@ -178,6 +192,33 @@ export function observationsCsv(prefix: string, specs: ObsSpec[]): string {
     .join('\n');
 }
 
+/**
+ * A producer that never populates observation_type (col 5) at all — a
+ * real-world video-ingestion upload observed leaving it blank on every row,
+ * including rows that plainly name a species (#306). `parseObservations`
+ * must infer "animal" from a non-empty scientificName in this shape.
+ */
+export function untypedObservationsCsv(prefix: string, specs: ObsSpec[]): string {
+  return specs
+    .map((o) => {
+      const cells: string[] = [];
+      cells[0] = o.id;
+      cells[1] = DEPLOYMENT;
+      cells[2] = '';
+      cells[3] = mediaKey(prefix, o.file);
+      cells[4] = o.timestamp;
+      // cells[5] (observation_type) intentionally left blank.
+      cells[6] = 'false';
+      cells[7] = '';
+      cells[8] = o.scientificName;
+      cells[9] = String(o.count);
+      cells[10] = '0';
+      cells[19] = o.comments;
+      return row(cells, OBS_WIDTH);
+    })
+    .join('\n');
+}
+
 /** One uploader-written placeholder row per file: observationType 'blank', no species. */
 export function blankObservationsCsv(prefix: string, specs: MediaSpec[]): string {
   return specs
@@ -272,6 +313,37 @@ export const SPECIES_JSON = JSON.stringify(
   2,
 );
 
+// The shared camera-location registry (issue #279's Change Location picker
+// reads this — same shape as the uploader's `Settings/locations.json`). SAN15
+// matches upload A's recorded deployment exactly, so it preselects.
+export const LOCATIONS_JSON = JSON.stringify(
+  [
+    {
+      nameProperty: LOCATION_NAME,
+      idProperty: 'SAN15',
+      latProperty: 31.5,
+      lngProperty: -110.2,
+      elevationProperty: 1200,
+    },
+    {
+      nameProperty: NEW_LOCATION_NAME,
+      idProperty: NEW_LOCATION_ID,
+      latProperty: 31.7,
+      lngProperty: -110.4,
+      elevationProperty: 1300,
+    },
+    {
+      nameProperty: SAME_ID_LOCATION_NAME,
+      idProperty: 'SAN15',
+      latProperty: 31.6,
+      lngProperty: -110.3,
+      elevationProperty: 1250,
+    },
+  ],
+  null,
+  2,
+);
+
 export const SNAPSHOT_STAMP = '2024-02-01T12-00-00';
 export const SNAPSHOT_USER = 'priortagger';
 export const SNAPSHOT_PREFIX = `${PREFIX_A}.sparcd-tagger-snapshots/${SNAPSHOT_USER}/${SNAPSHOT_STAMP}/`;
@@ -308,6 +380,7 @@ export function seedFixtures(s3: MockS3): void {
   );
 
   s3.put(SETTINGS_BUCKET, 'Settings/species.json', SPECIES_JSON, 'application/json');
+  s3.put(SETTINGS_BUCKET, 'Settings/locations.json', LOCATIONS_JSON, 'application/json');
 
   // --- Upload A: partially tagged, has a deployment file and a snapshot ------
   s3.put(BUCKET, `${PREFIX_A}media.csv`, mediaCsv(PREFIX_A, MEDIA_A), 'text/csv');
@@ -379,6 +452,53 @@ export function seedFixtures(s3: MockS3): void {
       makePng(240, 180, i + 40),
       m.mime === 'video/mp4' ? 'video/mp4' : 'image/png',
     );
+  });
+
+  // --- Upload D: identified, but the producer never wrote observation_type (#306) ----
+  s3.put(BUCKET, `${PREFIX_D}media.csv`, mediaCsv(PREFIX_D, MEDIA_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_D}observations.csv`, untypedObservationsCsv(PREFIX_D, OBS_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_D}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(
+    BUCKET,
+    `${PREFIX_D}UploadMeta.json`,
+    uploadMetaJson({
+      bucket: BUCKET,
+      prefix: PREFIX_D,
+      user: 'videoproducer',
+      imageCount: MEDIA_A.length,
+      imagesWithSpecies: 3,
+      description: 'Video ingestion — observation_type never populated',
+    }),
+    'application/json',
+  );
+  MEDIA_A.forEach((m, i) => {
+    s3.put(
+      BUCKET,
+      mediaKey(PREFIX_D, m.file),
+      makePng(240, 180, i + 60),
+      m.mime === 'video/mp4' ? 'video/mp4' : 'image/png',
+    );
+  });
+
+  // --- Upload E: every frame untimed, nothing to time-shift ------------------
+  s3.put(BUCKET, `${PREFIX_E}media.csv`, mediaCsv(PREFIX_E, MEDIA_E), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_E}observations.csv`, blankObservationsCsv(PREFIX_E, MEDIA_E), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_E}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(
+    BUCKET,
+    `${PREFIX_E}UploadMeta.json`,
+    uploadMetaJson({
+      bucket: BUCKET,
+      prefix: PREFIX_E,
+      user: 'camerauser',
+      imageCount: MEDIA_E.length,
+      imagesWithSpecies: 0,
+      description: 'Camera with no working clock',
+    }),
+    'application/json',
+  );
+  MEDIA_E.forEach((m, i) => {
+    s3.put(BUCKET, mediaKey(PREFIX_E, m.file), makePng(240, 180, i + 80), 'video/mp4');
   });
 
   // --- A complete snapshot of upload A, plus an abandoned partial one --------

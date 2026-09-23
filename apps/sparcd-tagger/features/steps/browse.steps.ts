@@ -132,8 +132,40 @@ Then(
   },
 );
 
-Then('at 1297px Browse hides image counts before it narrows upload names', async ({ page }) => {
-  await page.setViewportSize({ width: 1297, height: 900 });
+// The table sits beside a 320px rail from 1280px up, so the same viewport
+// width means two different table widths either side of that: 1440px leaves
+// the table 1078px, while 1280px leaves it only 918px.
+Then('at 1440px Browse shows every column', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const row = uploadRow(page, 'priortagger');
+  const upload = row.locator('[data-column="upload"]');
+
+  await expect(upload).toBeVisible();
+  await expect(upload).toContainText('priortagger');
+  await expect(row.locator('[data-column="images"]')).toBeVisible();
+  await expect(row.locator('[data-column="tagged"]')).toBeVisible();
+  await expect(row.locator('[data-column="sync"]')).toBeVisible();
+  await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
+});
+
+Then(
+  'at 1280px Browse yields image counts and tagging progress to the collection rail',
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const row = uploadRow(page, 'priortagger');
+    const upload = row.locator('[data-column="upload"]');
+
+    await expect(upload).toBeVisible();
+    await expect(upload).toContainText('priortagger');
+    await expect(row.locator('[data-column="images"]')).toBeHidden();
+    await expect(row.locator('[data-column="tagged"]')).toBeHidden();
+    await expect(row.locator('[data-column="sync"]')).toBeVisible();
+    await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
+  },
+);
+
+Then('at 1100px Browse shows tagging progress but not image counts', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 900 });
   const row = uploadRow(page, 'priortagger');
   const upload = row.locator('[data-column="upload"]');
 
@@ -145,21 +177,24 @@ Then('at 1297px Browse hides image counts before it narrows upload names', async
   await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
 });
 
-Then(
-  'at 1017px Browse restores details when the upload table has room',
-  async ({ page }) => {
-    await page.setViewportSize({ width: 1017, height: 900 });
-    const row = uploadRow(page, 'priortagger');
-    const upload = row.locator('[data-column="upload"]');
+Then('wide Browse gives tagging progress usable space', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const tagged = uploadRow(page, 'priortagger').locator('[data-column="tagged"]');
 
-    await expect(upload).toBeVisible();
-    await expect(upload).toContainText('priortagger');
-    await expect(row.locator('[data-column="images"]')).toBeVisible();
-    await expect(row.locator('[data-column="tagged"]')).toBeVisible();
-    await expect(row.locator('[data-column="sync"]')).toBeVisible();
-    await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(256);
-  },
-);
+  await expect(tagged).toBeVisible();
+  await expect(tagged).toContainText('3 / 6');
+  // The filled part of the bar is width:0 at 0% tagged, so it is only ever
+  // attached, never "visible" in Playwright's sense.
+  await expect(tagged.locator('[style*="width"]')).toBeAttached();
+  await expect.poll(async () => (await tagged.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(130);
+});
+
+Then('mobile Browse keeps tagging progress aligned', async ({ page }) => {
+  await page.setViewportSize({ width: 767, height: 900 });
+  const tagged = uploadRow(page, 'priortagger').locator('[data-column="tagged"]');
+  await expect(tagged).toBeVisible();
+  await expect(tagged).toHaveCSS('display', 'flex');
+});
 
 Given('an upload has no readable deployment file', async ({ page, s3 }) => {
   expect(s3.has(BUCKET, `${PREFIX_B}deployments.csv`)).toBe(false);
@@ -247,13 +282,13 @@ Then('each tab explains its filter on hover and to assistive technology', async 
 
 Then('the header states how many uploads, images and tagged images it holds', async ({ page }) => {
   const header = page.locator('main p').filter({ hasText: /uploads?\b/ }).first();
-  await expect(header).toContainText('3 uploads');
-  await expect(header).toContainText('14 images');
-  await expect(header).toContainText('5 tagged');
+  await expect(header).toContainText('5 uploads');
+  await expect(header).toContainText('22 images');
+  await expect(header).toContainText('8 tagged');
 });
 
 Then('it states how many images are still to go', async ({ page }) => {
-  await expect(page.locator('main p').filter({ hasText: 'to go' }).first()).toContainText('9 to go');
+  await expect(page.locator('main p').filter({ hasText: 'to go' }).first()).toContainText('14 to go');
 });
 
 Then('it indicates while tallies are still being counted', async ({ page, s3 }) => {
@@ -307,7 +342,6 @@ Then('an upload whose local edits have all been synced is marked as synced', asy
   await page.locator('#user').fill('jgonzalez');
   await sectionTab(page, 'Tag').click();
   await runLiveSync(page);
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
   await sectionTab(page, 'Browse').click();
   await expectRowPill(page, 'priortagger', 'synced');
 });

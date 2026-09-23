@@ -391,11 +391,46 @@ it('sets and clears manual sources, and applies a spread in one store update', (
   expect(useStore.getState().files[0].manualSource).toBe('manual');
   const listener = vi.fn();
   const unsubscribe = useStore.subscribe(listener);
-  state.setManualNaiveMany([{ id: 'a', naive: NAIVE }, { id: 'b', naive: NAIVE }], 'spread');
+  const SPREAD_START: NaiveDateTime = { year: 2026, month: 7, day: 1, hour: 8, minute: 0, second: 0 };
+  state.setManualNaiveMany(
+    [{ id: 'a', naive: NAIVE }, { id: 'b', naive: NAIVE }],
+    'spread',
+    { method: 'sequence', start: SPREAD_START },
+  );
   expect(listener).toHaveBeenCalledTimes(1);
   unsubscribe();
   expect(useStore.getState().files.every((f) => f.manualSource === 'spread' && f.manualNaive === NAIVE)).toBe(true);
+  // Stamped at application time so display never has to re-derive it (#256).
+  expect(useStore.getState().files.every((f) => f.manualSpreadStart === SPREAD_START)).toBe(true);
+  expect(useStore.getState().files.every((f) => f.manualSpreadMethod === 'sequence')).toBe(true);
   state.setManualNaive('a', null);
   expect(useStore.getState().files[0].manualNaive).toBeUndefined();
   expect(useStore.getState().files[0].manualSource).toBeUndefined();
+  expect(useStore.getState().files[0].manualSpreadStart).toBeUndefined();
+  // The optional third argument is meaningful only for a sequence spread.
+  state.setManualNaiveMany([{ id: 'b', naive: NAIVE }], 'manual');
+  expect(useStore.getState().files[1].manualSpreadStart).toBeUndefined();
+
+  state.setManualNaiveMany(
+    [{ id: 'b', naive: NAIVE }],
+    'spread',
+    { method: 'file-modified', timeZone: 'America/Phoenix' },
+  );
+  expect(useStore.getState().files[1]).toMatchObject({
+    manualSpreadMethod: 'file-modified',
+    manualSpreadStart: undefined,
+    manualSpreadTimeZone: 'America/Phoenix',
+  });
+});
+
+it('keeps two separately-spread folders\' starts distinct (#256)', () => {
+  useStore.getState().setFiles([scanned('folderA/1'), scanned('folderB/1')]);
+  const state = useStore.getState();
+  const START_A: NaiveDateTime = { year: 2026, month: 7, day: 1, hour: 8, minute: 0, second: 0 };
+  const START_B: NaiveDateTime = { year: 2026, month: 7, day: 1, hour: 14, minute: 0, second: 0 };
+  state.setManualNaiveMany([{ id: 'folderA/1', naive: NAIVE }], 'spread', { method: 'sequence', start: START_A });
+  state.setManualNaiveMany([{ id: 'folderB/1', naive: NAIVE }], 'spread', { method: 'sequence', start: START_B });
+  const files = useStore.getState().files;
+  expect(files.find((f) => f.id === 'folderA/1')?.manualSpreadStart).toEqual(START_A);
+  expect(files.find((f) => f.id === 'folderB/1')?.manualSpreadStart).toEqual(START_B);
 });

@@ -243,8 +243,7 @@ export function NewUpload() {
             {summary.noCameraTime > 0 && (
               <>
                 {' '}
-                A time tagged <span className="font-mono">EST.</span> was estimated — review it in
-                Assign.
+                A timestamp needs review in Assign before upload.
               </>
             )}
           </p>

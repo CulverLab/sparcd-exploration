@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest';
 import { buildMediaComments, timestampSourceFromComments, serializeMedia, parseMedia, mergeMedia, parseCsvRows, type TimestampSource } from '../src/index';
 
-it.each<TimestampSource>(['manual', 'spread', 'interpolated', 'offset', 'file-modified'])('round trips %s', (timestampSource) => {
+it.each<TimestampSource>(['manual', 'spread', 'interpolated', 'offset', 'file-modified', 'exif-modify'])('round trips %s', (timestampSource) => {
   expect(timestampSourceFromComments(buildMediaComments({ timestampSource }))).toBe(timestampSource);
 });
 it('returns no source for absent or unknown markers', () => {

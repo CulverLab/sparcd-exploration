@@ -105,7 +105,9 @@ export function summarize(
   }
   return {
     total: files.length,
-    noCameraTime: files.filter((f) => f.processState === 'ready' && !f.exifNaive).length,
+    noCameraTime: files.filter(
+      (f) => f.processState === 'ready' && (!f.exifNaive || f.exifTimestampSource === 'exif-modify'),
+    ).length,
     processed,
     pending,
     errors,

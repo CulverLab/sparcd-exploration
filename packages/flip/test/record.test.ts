@@ -93,6 +93,12 @@ describe('capture time', () => {
     );
   });
 
+  it('lets a hand entry override an EXIF ModifyDate candidate', () => {
+    expect(captureTimestampOf(inspected({
+      exifTimestampSource: 'exif-modify', timestampSource: 'manual', manualTimestamp: '2020-01-01T00:00:00',
+    }))).toBe('2020-01-01T00:00:00');
+  });
+
   it('is absent for a file with neither', () => {
     expect(captureTimestampOf(inspected({ exifTimestamp: undefined }))).toBeUndefined();
   });

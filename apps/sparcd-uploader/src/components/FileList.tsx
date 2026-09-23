@@ -5,13 +5,7 @@ import { useStore, type FileEntry } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import { formatNaive, type NaiveDateTime } from '../lib/exifTime';
 import type { CaptureEstimate } from '../lib/estimateCaptureTime';
-import {
-  useCaptureEstimates,
-  effectiveTime,
-  methodLine,
-  sourceTag,
-  spreadStartOf,
-} from '../lib/useCaptureEstimates';
+import { useCaptureEstimates, effectiveTime, methodLine, sourceTag } from '../lib/useCaptureEstimates';
 import type { FileValidation, Severity } from '../lib/validation';
 
 const ROW = 52;
@@ -117,7 +111,6 @@ function Row({
   showTags,
   active,
   estimates,
-  spreadStart,
   timeZone,
   onSelect,
   onRemove,
@@ -127,7 +120,6 @@ function Row({
   showTags: boolean;
   active: boolean;
   estimates: Map<string, CaptureEstimate>;
-  spreadStart?: NaiveDateTime;
   timeZone: string;
   onSelect: () => void;
   onRemove: () => void;
@@ -138,7 +130,7 @@ function Row({
   // override typed over it. The tag says which, so the column is never a lie.
   const { naive, source } = effectiveTime(entry, estimates);
   const how = source
-    ? methodLine(entry, estimates.get(entry.id), timeZone, spreadStart)
+    ? methodLine(entry, estimates.get(entry.id), timeZone)
     : undefined;
   return (
     <div
@@ -214,7 +206,6 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
   const [active, setActive] = useState(0);
 
   const estimates = useCaptureEstimates();
-  const spreadStart = useMemo(() => spreadStartOf(allFiles), [allFiles]);
   const timeZone = useStore((s) => s.uploadTimeZone);
 
   const files = useMemo(
@@ -295,7 +286,6 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
                     showTags={showTags}
                     active={vi.index === active}
                     estimates={estimates}
-                    spreadStart={spreadStart}
                     timeZone={timeZone}
                     onSelect={() => setActive(vi.index)}
                     onRemove={() => removeFile(f.id)}

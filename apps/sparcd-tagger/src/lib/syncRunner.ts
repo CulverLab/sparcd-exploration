@@ -11,6 +11,7 @@ import {
   getUpload,
   groundUpload,
   setUploadTimeOffset,
+  setUploadPendingLocation,
   loadSyncJournal,
   saveSyncJournal,
   clearSyncJournal,
@@ -37,15 +38,19 @@ export async function performSync(args: SyncArgs): Promise<SyncResult> {
   const { cfg, bucket, uploadPrefix, user, images, drafts, dryRun } = args;
 
   // The workspace grounds on load; ground here too as a fallback so a sync is
-  // never run against a missing base.
+  // never run against a missing base. `deploymentsETag === undefined` (as
+  // opposed to '', which means "grounded, no deployments.csv exists") catches
+  // a record grounded before this role existed — without this, its base would
+  // default to '' and mismatch a real remote deployments.csv, reporting a
+  // false conflict on a sync that touches nothing location-related.
   let base = await getUpload(bucket, uploadPrefix);
-  if (!base?.mediaETag) {
+  if (!base?.mediaETag || base.deploymentsETag === undefined) {
     const state = await loadCanonicalState(cfg, bucket, uploadPrefix);
     await groundUpload(bucket, uploadPrefix, state);
     base = await getUpload(bucket, uploadPrefix);
   }
 
-  const plan = buildSyncPlan(images, drafts, base?.timeOffset ?? null);
+  const plan = buildSyncPlan(images, drafts, base?.timeOffset ?? null, base?.pendingLocation ?? null);
   const resumeJournal = await loadSyncJournal(bucket, uploadPrefix);
 
   const io = makeSyncIO(cfg, bucket, uploadPrefix, {
@@ -61,6 +66,7 @@ export async function performSync(args: SyncArgs): Promise<SyncResult> {
       base: {
         media: { etag: base?.mediaETag ?? '', hash: base?.mediaHash ?? '' },
         observations: { etag: base?.observationsETag ?? '', hash: base?.observationsHash ?? '' },
+        deployments: { etag: base?.deploymentsETag ?? '', hash: base?.deploymentsHash ?? '' },
         uploadMeta: { etag: base?.uploadMetaETag ?? '', hash: base?.uploadMetaHash ?? '' },
       },
       plan,
@@ -79,6 +85,10 @@ export async function performSync(args: SyncArgs): Promise<SyncResult> {
     // on top of already-corrected timestamps at the next sync (double shift). The
     // offset is relative; per-image overrides are absolute, so they need no reset.
     await setUploadTimeOffset(bucket, uploadPrefix, null);
+    // Same reasoning as the offset clear above: a location correction is baked
+    // into the new canonical `deployments.csv` / media+observation rows, so the
+    // pending correction must not be re-applied on top of the next sync.
+    if (plan.locationEdit) await setUploadPendingLocation(bucket, uploadPrefix, null);
   }
   return result;
 }

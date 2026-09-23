@@ -5,7 +5,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import type { S3Mock } from './s3mock';
 
 export const APP_PATH = '/sparcd-exploration/uploader/';
-export const S3_ORIGIN = 'http://localhost:5311';
+export const S3_ORIGIN = `http://localhost:${process.env.UPLOADER_TEST_PORT ?? 5311}`;
 export const ACCESS_KEY = 'AKIATESTKEY0001';
 export const SECRET_KEY = 'test-secret-key';
 

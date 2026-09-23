@@ -11,6 +11,7 @@ import {
   collectionRail,
   collectionButton,
   visibleNav,
+  connect,
   ENDPOINT,
   APP_URL,
 } from './support/world';
@@ -24,6 +25,7 @@ import {
   setSyncDryRun,
   readStore,
   waitForDirtyDrafts,
+  waitForSyncDialogClosed,
 } from './support/flows';
 
 // --- Background / shared givens ---------------------------------------------
@@ -178,6 +180,36 @@ Then("it no longer shows the previous connection's collections or images", async
   await expect(second.getByText(COLLECTION_NAME)).toHaveCount(0);
 });
 
+When('a sibling tool disconnects the shared session', async ({ context }) => {
+  // A same-origin static page models another SPARC'd tool's disconnect relay
+  // without mounting a second Tagger that could answer the connection request
+  // and race the disconnect with a fresh connect message.
+  const sibling = await context.newPage();
+  await sibling.route('**/sibling-disconnect', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
+  );
+  await sibling.goto(`${ENDPOINT}/sibling-disconnect`);
+  await sibling.evaluate(async () => {
+    const channel = new BroadcastChannel('sparcd-connection-live');
+    channel.postMessage({ type: 'disconnect' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    channel.close();
+  });
+});
+
+Then('the tagger returns to the connection screen', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+});
+
+Then('after reloading and reconnecting, it has no identity carried over', async ({ page }) => {
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
+  await connect(page);
+  await openSettings(page);
+  await expect(page.locator('#user')).toHaveValue('');
+});
+
 // --- Tag gate ---------------------------------------------------------------
 
 When('no upload has been opened from Browse', async ({ page }) => {
@@ -202,6 +234,64 @@ When('a tagger identity is entered in Settings', async ({ page }) => {
   await expect(page.locator('#user')).toHaveValue('jgonzalez');
 });
 
+Then('that identity is retained in Settings', async ({ page }) => {
+  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+});
+
+Then('a fresh connection starts with no identity carried over', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
+  await connect(page);
+  await openSettings(page);
+  await expect(page.locator('#user')).toHaveValue('');
+});
+
+When('the tagger is opened in a second tab of the same browser', async ({ context, s3, scratch }) => {
+  const second = await context.newPage();
+  await installS3Mock(second, s3);
+  await second.goto(APP_URL);
+  await expect(sectionTab(second, 'Browse')).toBeVisible();
+  scratch.second = second;
+});
+
+Then('that identity is retained in Settings of the second tab', async ({ scratch }) => {
+  const second = scratch.second as import('@playwright/test').Page;
+  await openSettings(second);
+  await expect(second.locator('#user')).toHaveValue('jgonzalez');
+});
+
+When('a sibling tool connects the shared session with different credentials', async ({ context }) => {
+  // A same-origin static page models another SPARC'd tool relaying its own
+  // login, without mounting a second Tagger that would answer the connection
+  // request and race this message.
+  const sibling = await context.newPage();
+  await sibling.route('**/sibling-connect', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
+  );
+  await sibling.goto(`${ENDPOINT}/sibling-connect`);
+  await sibling.evaluate(async (endpoint) => {
+    const channel = new BroadcastChannel('sparcd-connection-live');
+    channel.postMessage({
+      type: 'connect',
+      config: {
+        endpoint,
+        region: 'us-east-1',
+        accessKey: 'otherkey',
+        secretKey: 'othersecret',
+        forcePathStyle: true,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    channel.close();
+  }, ENDPOINT);
+});
+
+Then('Settings shows no tagger identity', async ({ page }) => {
+  await openSettings(page);
+  await expect(page.locator('#user')).toHaveValue('');
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
+});
+
 Then(
   'that identity is used for the audit-snapshot path and the edit comment of every sync',
   async ({ page, s3 }) => {
@@ -223,7 +313,7 @@ Then(
 );
 
 Then('a live sync or restore cannot be run while the identity is empty', async ({ page }) => {
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await waitForSyncDialogClosed(page);
   await openSettings(page);
   await page.locator('#user').fill('');
   await sectionTab(page, 'Tag').click();
