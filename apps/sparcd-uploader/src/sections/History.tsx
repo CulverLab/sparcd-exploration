@@ -467,6 +467,15 @@ export function History() {
                 )}
               </p>
 
+              {!batch.completedAt && !isActive && !isPreparing && (
+                <p className="font-body text-[12px] text-warn">
+                  {total - counts.done > 0
+                    ? `Interrupted with ${total - counts.done} of ${total} file${total === 1 ? '' : 's'} still to send.`
+                    : 'Interrupted before publishing.'}{' '}
+                  <span className="text-ink">Resume upload to finish it.</span>
+                </p>
+              )}
+
               {isPreparing && verifyProgress && (
                 <p className="font-body text-[12px] text-inkSoft">
                   Verifying <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
@@ -485,7 +494,7 @@ export function History() {
                       activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
                     }`}
                   >
-                    {isPreparing ? 'Verifying…' : 'Resume'}
+                    {isPreparing ? 'Verifying…' : 'Resume upload'}
                   </button>
                 )}
                 <button

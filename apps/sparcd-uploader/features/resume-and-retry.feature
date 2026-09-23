@@ -33,6 +33,14 @@ Feature: Resume an interrupted upload and retry a failed one
     And it shows how many of its files are done and how many failed
     And only uploads whose metadata was published are marked complete
 
+  @AL1 @AL1-3
+  Scenario: Uploads left running unattended are found either complete or ready to resume
+    Given one upload finished while nobody was watching
+    And a second upload was cut off part-way while nobody was watching
+    When History is opened
+    Then the finished upload is shown as complete with nothing left to do
+    And the cut-off upload says how many files are still to send and names "Resume upload" as the next step
+
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History
