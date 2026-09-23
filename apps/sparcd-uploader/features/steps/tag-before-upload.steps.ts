@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import { APP_PATH, type App } from './app';
-import { writtenCsvRows } from './helpers';
+import { FAILING_FILE, expectStoredAtLocation, publishedUploads, writtenCsvRows } from './helpers';
 import { jpegModifyDateOnly } from './batches';
 
 // What the Tagger would have written back. Keys are the paths within the
@@ -150,16 +150,90 @@ Then('the Uploader receives Coyote from the shared hand-off record', async ({ ap
 
 // --- coming back ------------------------------------------------------------
 
-Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
-  const id = await handOff(app);
-  app.notes.flipId = id;
-  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
+/** Hand back and reattach the folder, ending on Inspect with the tags shown. */
+async function handBackAndReattach(app: App, id: string): Promise<void> {
   await handBack(app, id);
   // A dragged-in folder never had a durable handle, so the folder is chosen
   // again — and the fake picker is reset by the navigation, so re-seed it.
   await app.seedPickedFolder(app.lastSpecs);
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
   await expect(app.fileListPane()).toBeVisible();
+}
+
+Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
+  const id = await handOff(app);
+  app.notes.flipId = id;
+  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
+  await handBackAndReattach(app, id);
+});
+
+// --- waiting for a connection ----------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The page clock is moved, not frozen: timers keep running, only the date the
+// app reads jumps. The last move lands back on the real date, so the upload
+// itself is signed with the time storage expects.
+Given('a batch was handed to the Tagger 40 days ago', async ({ app }) => {
+  app.notes.now = Date.now();
+  await app.page.clock.setSystemTime((app.notes.now as number) - 40 * DAY_MS);
+  app.notes.flipId = await handOff(app);
+});
+
+Given('it was tagged and handed back 25 days later', async ({ app }) => {
+  await app.page.clock.setSystemTime((app.notes.now as number) - 15 * DAY_MS);
+  const id = app.notes.flipId as string;
+  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
+  await handBackAndReattach(app, id);
+});
+
+When('the batch is opened again 15 days after that', async ({ app }) => {
+  await app.page.clock.setSystemTime(app.notes.now as number);
+  // The same address the Tagger's hand-back leaves in the tab. Loading it runs
+  // the sweep of old hand-offs before the batch is read.
+  await handBack(app, app.notes.flipId as string);
+  await expect(app.page.getByRole('heading', { name: 'Choose the folder again' })).toBeVisible();
+  await app.seedPickedFolder(app.lastSpecs);
+  await app.page.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(app.fileListPane()).toBeVisible();
+  expect(await app.batchSummary()).toContain('2 tagged');
+});
+
+// --- retrying a tagged batch -----------------------------------------------
+
+Given('its upload failed part-way', async ({ app }) => {
+  // See CORRECTIONS.md on the open-session/per-file-state race.
+  app.s3.putDelayMs = 150;
+  await app.walkToUploadStep();
+  app.s3.putHooks.push((_b, key) =>
+    key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
+  );
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('partial', 120_000);
+  expect(app.s3.puts.some((p) => p.key.endsWith('observations.csv'))).toBe(false);
+});
+
+When('the page is reloaded and the upload is resumed from History', async ({ app }) => {
+  app.s3.putHooks.length = 0;
+  // Nothing the hand-back put in memory survives this; only what the upload
+  // recorded on this machine does.
+  await app.reopen();
+  const visited: string[] = [];
+  app.page.on('framenavigated', (frame) => {
+    if (frame === app.page.mainFrame()) visited.push(frame.url());
+  });
+  app.notes.visited = visited;
+  await app.seedPickedFolder(app.lastSpecs);
+  await app.gotoSection('History');
+  await app.page.getByRole('button', { name: 'Resume' }).first().click();
+});
+
+Then('the upload finishes without going back to Inspect or the Tagger', async ({ app }) => {
+  await app.expectStep('Upload');
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  expect((app.notes.visited as string[]).filter((u) => u.includes('/tagger/'))).toEqual([]);
+  await expect(app.page.getByRole('button', { name: /Tag species first|Edit tags/ })).toHaveCount(0);
 });
 
 Given('a batch tagged in the Tagger is handed back with no remembered folder', async ({ app }) => {
@@ -325,3 +399,13 @@ Then('every media row carries the media type the examination sniffed', async ({ 
   expect(byName['IMG_0001.JPG']).toBe('image/jpeg');
   expect(byName['CLIP_0001.MP4']).toBe('video/mp4');
 });
+
+Then(
+  'every identification in observations.csv points at the location assigned to the batch',
+  async ({ app }) => {
+    const [upload] = publishedUploads(app);
+    const { observations } = expectStoredAtLocation(app, upload, 'Bear Canyon');
+    const identified = observations.filter((r) => r[5] === 'animal').map((r) => r[8]);
+    expect(identified.sort()).toEqual(['Canis latrans', 'Casper']);
+  },
+);

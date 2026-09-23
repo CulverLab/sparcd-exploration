@@ -20,7 +20,7 @@
 | F2-2 | A location outside the collection cannot be assigned | missing | — | Outside locations are allowed rather than refused. |
 | F2-3 | An upload cannot be finalized while any batch is missing a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | The single-batch gate requires a location but does not handle or name multiple batches. |
 | F2-4 | An upload can be finalized once every batch has a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | A located single batch continues; all batches in a multi-batch upload are not checked. |
-| F2-5 | Each stored image carries the location Frank assigned to its batch | partial | uploader: upload-run.feature: Every file in the batch is stored under one upload folder in the collection | Deployment metadata is stored, but image locations are not compared with the assignment. |
+| F2-5 | Each stored image carries the location Frank assigned to its batch | covered | uploader: assign-collection-and-deployment.feature: Every stored image carries the location assigned to its batch | Two batches uploaded one after the other to two locations each store their own location, and every media and observation row points at it. |
 | F2-6 | Batches from different cards keep their own separate locations | missing | — | The uploader models one batch and one deployment, not separate card locations. |
 
 ## F3
@@ -58,7 +58,7 @@
 | A1-3 | Untagged images are accepted and marked as untagged | covered | uploader: tag-before-upload.feature: An untagged file is accepted and published as untagged | Tagged and untagged files publish together; untagged files have no species row. |
 | A1-4 | An upload with no tags at all is still accepted | covered | uploader: upload-run.feature: A batch with no species identifications is accepted and recorded as untagged | A wholly untagged batch publishes with placeholder rows and a zero-tag count. |
 | A1-5 | Tags made before upload are attributed to Anita | missing | — | No scenario attributes a pre-upload identification to its maker. |
-| A1-6 | Tags are not lost while waiting for a connection | partial | tagger: local-batch.feature: Coming back to the batch resumes the tagging | Tags survive reopening, but no scenario waits days and verifies uploaded data. |
+| A1-6 | Tags are not lost while waiting for a connection | covered | uploader: tag-before-upload.feature: Tags survive weeks of waiting for a connection | A batch handed over 40 days earlier and last opened 15 days earlier still publishes every tag. |
 
 ## A2
 
@@ -67,8 +67,8 @@
 | A2-1 | Only locations valid for her collection can be assigned | missing | uploader: assign-collection-and-deployment.feature: Locations the chosen collection has already used are offered first | Used locations come first, but every registry location remains selectable. |
 | A2-2 | A location outside her collection cannot be assigned | missing | — | The uploader does not refuse registry locations outside the collection. |
 | A2-3 | The upload cannot be finalized without a location | covered | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | Continue is disabled and explains that a deployment is required. |
-| A2-4 | The stored location matches what Anita assigned | missing | — | No scenario compares every stored image with the assigned location. |
-| A2-5 | The location applies to the identifications she already made | missing | — | No scenario ties pre-upload identifications to the assigned location. |
+| A2-4 | The stored location matches what Anita assigned | covered | uploader: assign-collection-and-deployment.feature: Every stored image carries the location assigned to its batch | The stored deployment carries the assigned location's id, name and coordinates, and every image row points at it. |
+| A2-5 | The location applies to the identifications she already made | covered | uploader: tag-before-upload.feature: The identifications made before upload are tied to the batch's location | Every species row from the Tagger points at the assigned location's deployment. |
 
 ## AL1
 
@@ -89,7 +89,7 @@
 | AL2-2 | The destination ends up with exactly one upload | covered | uploader: resume-and-retry.feature: Retrying the failed files of a partial run completes that same upload | The same folder is published and exactly one upload remains. |
 | AL2-3 | No leftover partial data from the failed attempt remains | partial | uploader: resume-and-retry.feature: Retrying the failed files of a partial run completes that same upload | Stored files remain and the same folder completes, but all failed-attempt residue is not checked. |
 | AL2-4 | Retrying does not require re-entering the location | covered | uploader: resume-and-retry.feature: Retrying does not require choosing the location again | The collection and deployment are not requested again. |
-| AL2-5 | Retrying does not require re-identifying species already tagged | partial | uploader: resume-and-retry.feature: A resumed upload lands in the same place as the original attempt | Vacuous: the resumed batch has no species identified, so nothing shows identifications surviving a retry. |
+| AL2-5 | Retrying does not require re-identifying species already tagged | covered | uploader: tag-before-upload.feature: Retrying a failed upload of a tagged batch does not ask for the tags again | After a reload, History resumes the tagged batch without Inspect or the Tagger and publishes every species row. |
 | AL2-6 | A retry cannot be misdirected to a different destination by accident | covered | uploader: resume-and-retry.feature: A resumed upload lands in the same place as the original attempt | The retry cannot silently change its recorded destination. |
 
 ## H1

@@ -22,7 +22,10 @@ Coverage notes for the as-built uploader feature files.
   exists anywhere in the app** (`navigator.onLine` is never consulted), so that
   criterion is unmet.
 - **F2 / A2** (assign a camera location) — the "cannot finalize without a
-  location" criterion is fully met and tested. The "only locations valid for the
+  location" criterion is fully met and tested, and so is the stored location:
+  every media row and every observation row, including species identified
+  before upload, points at the deployment carrying the assigned location's id,
+  name and coordinates. The "only locations valid for the
   collection" criterion is **not**: as-built *any* location in the registry can
   be assigned; locations the collection has already used are merely sorted to
   the top. Flagged in a trailing comment on that scenario.
@@ -32,12 +35,14 @@ Coverage notes for the as-built uploader feature files.
   no connectivity watcher and no automatic restart. Flagged in a comment.
 - **AL2** (retry to the same destination) — met, and the strongest-covered story:
   the upload folder and object paths are reused verbatim, done objects are
-  skipped after a size + fingerprint check, and location/identity are never
-  re-entered.
+  skipped after a size + fingerprint check, and location, identity and species
+  identifications are never re-entered.
 - **A1** (tag species before upload) — now met, but not by this app alone.
   There is still **no tagging surface here**: the batch is handed to the tagger
   and comes back with species on it, which the uploader shows read-only and
-  publishes as observation rows in the same upload. An untagged batch is still
+  publishes as observation rows in the same upload. Until then the tags live in
+  the hand-off record, which is swept only after 30 days without being opened
+  or tagged, so a batch can wait weeks for a connection. An untagged batch is still
   accepted and recorded as carrying no species. Attribution (the tagger's
   identity travelling with the tags) is recorded on the hand-off record but is
   **not written into the published data** — that criterion stays unmet.

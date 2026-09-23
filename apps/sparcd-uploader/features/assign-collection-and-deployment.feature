@@ -119,3 +119,12 @@ Feature: Assign a batch to a collection and a camera location
     And a real upload is started and completes
     Then the complete metadata bundle is still written
     # The diagnostic preview remains available only on debug/metadata-preview.
+
+  @F2 @A2 @F2-5 @A2-4
+  Scenario: Every stored image carries the location assigned to its batch
+    When the batch is uploaded with "Bear Canyon" as its location
+    And the next batch is uploaded with "Coyote Wash" as its location
+    Then each upload stores the location assigned to its batch, with its id, name and coordinates
+    And every image and every observation in each upload points at that location
+    # One batch per upload, so "each batch" here is two SD cards uploaded one
+    # after the other, each to its own camera location.
