@@ -108,7 +108,7 @@ describe('the record round trip', () => {
   it('reads back everything the uploader wrote', async () => {
     await writeFlipRecord(record());
     const back = await readFlipRecord('batch-1');
-    expect(back).toEqual(record());
+    expect(back).toEqual({ ...record(), usedAt: expect.any(String) });
   });
 
   // The batch is rebuilt from this record on the way back, and there is no
@@ -165,6 +165,31 @@ describe('not keeping batches forever', () => {
     await writeFlipRecord(record({ createdAt: fortnight }));
     expect(await pruneFlipRecords(now)).toBe(0);
   });
+
+  // A batch tagged over weeks and then carried until there is a connection is
+  // not abandoned, however long ago it was handed over.
+  it('ages a batch from its last use, not from when it was handed over', async () => {
+    const now = Date.parse('2026-08-25T00:00:00.000Z');
+    const daysAgo = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000).toISOString();
+    await writeFlipRecord(record({ id: 'carried', createdAt: daysAgo(45), usedAt: daysAgo(10) }));
+    await writeFlipRecord(record({ id: 'abandoned', createdAt: daysAgo(45), usedAt: daysAgo(31) }));
+    expect(await pruneFlipRecords(now)).toBe(1);
+    expect(await flipDb.records.get('carried')).toBeDefined();
+    expect(await flipDb.records.get('abandoned')).toBeUndefined();
+  });
+
+  it('counts opening the batch and tagging it as use', async () => {
+    const old = new Date('2026-01-01T00:00:00.000Z').toISOString();
+    await writeFlipRecord(record({ id: 'opened', createdAt: old }));
+    await writeFlipRecord(record({ id: 'tagged', createdAt: old }));
+    await writeFlipRecord(record({ id: 'handed-back', createdAt: old }));
+    await writeFlipRecord(record({ id: 'untouched', createdAt: old }));
+    await readFlipRecord('opened');
+    await updateFlipTags('tagged', { 'SD/IMG_0001.JPG': [coyote] });
+    await finishFlipRecord('handed-back', {}, 'anita');
+    expect(await pruneFlipRecords()).toBe(1);
+    expect(await flipDb.records.get('untouched')).toBeUndefined();
+  });
 });
 
 describe('tag updates', () => {
@@ -200,7 +225,7 @@ describe('the hand back', () => {
 
 it('reads old records and resolves optional estimated timestamps after camera and manual time', async () => {
   await writeFlipRecord(record());
-  expect(await readFlipRecord('batch-1')).toEqual(record());
+  expect(await readFlipRecord('batch-1')).toEqual({ ...record(), usedAt: expect.any(String) });
   const f = inspected({ exifTimestamp: undefined, estimatedTimestamp: '2024-01-10T08:00:00', timestampSource: 'interpolated' });
   await writeFlipRecord(record({ files: [f] }));
   expect((await readFlipRecord('batch-1'))?.files[0]).toEqual(f);
