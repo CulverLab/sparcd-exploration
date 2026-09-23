@@ -7,7 +7,7 @@ import { AwsClient } from 'aws4fetch';
 import { verifySignature, canonicalQueryString, encodeRfc3986, sha256hex } from '../sigv4.mjs';
 import {
   makeNamespace, bucketFromPath, keyFromPath, parseBucketNames, buildListBuckets,
-  rewriteBucketName,
+  rewriteBucketName, safeKeySegments,
 } from '../namespace.mjs';
 import {
   classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey,
@@ -304,6 +304,45 @@ describe('the access table', () => {
     assert.equal(at('PutObject', media, 'identify').allow, false);
     assert.equal(at('CreateMultipartUpload', media, 'identify').allow, false);
     assert.equal(at('DeleteObject', media, 'identify').allow, false);
+  });
+
+  test('identify writes deployments.csv at the upload and in a snapshot, and nowhere else', () => {
+    const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
+    const snap = `${upload}/.sparcd-tagger-snapshots/jo%40x.edu/2026-01-01T00-00-00`;
+    assert.equal(at('PutObject', `${upload}/deployments.csv`, 'identify').allow, true);
+    assert.equal(at('PutObject', `${snap}/deployments.csv`, 'identify').allow, true);
+    for (const key of [
+      `${upload}/deployments.csv.bak`,
+      `${upload}/xdeployments.csv`,
+      `${upload}/Deployments.csv`,
+      `${upload}/sub/deployments.csv`,
+      `${snap}/sub/deployments.csv`,
+      `${base}/Uploads/deployments.csv`,
+      `${base}/deployments.csv`,
+      `Collections/00000000-0000-0000-0000-000000000000/Uploads/2026.01.01.00.00.00_jo/deployments.csv`,
+      'Settings/deployments.csv',
+      `Settings/${upload}/deployments.csv`,
+    ]) assert.equal(at('PutObject', key, 'identify').allow, false, key);
+    assert.equal(
+      decide(person('identify'), { op: 'PutObject', key: 'Settings/deployments.csv', isSettings: true, uuid, level: 'identify' }).allow,
+      false, 'settings bucket',
+    );
+  });
+
+  test('a traversal onto deployments.csv never reaches the rule', () => {
+    // The server refuses these by key shape before decide() runs, decoding
+    // each path segment first, so an escaped slash cannot smuggle one in.
+    for (const path of [
+      `${base}/Uploads/../deployments.csv`,
+      `${base}/Uploads/./deployments.csv`,
+      `${base}/Uploads/2026.01.01.00.00.00_jo/../../deployments.csv`,
+      `${base}/Uploads/..%2F2026.01.01.00.00.00_jo/deployments.csv`,
+      `${base}/Uploads/%2E%2E/deployments.csv`,
+      `${base}/Uploads/2026.01.01.00.00.00_jo%5C..%5Cdeployments.csv`,
+    ]) {
+      const key = keyFromPath(`/bucket/${path}`);
+      assert.equal(safeKeySegments(key), false, path);
+    }
   });
 
   test('upload adds media and multipart under Uploads/', () => {
