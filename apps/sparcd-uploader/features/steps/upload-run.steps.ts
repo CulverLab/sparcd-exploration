@@ -40,13 +40,14 @@ Given('the New upload section is showing the Upload step', async ({ app }) => {
 
 // --- where the batch goes --------------------------------------------------
 
-Then('it names the collection, the location and the chosen folder', async ({ app }) => {
+Then('it names the collection, the location with its id, and the chosen folder', async ({ app }) => {
   const rows = await app.page.locator('dl > div').evaluateAll((divs) =>
-    divs.map((d) => [d.querySelector('dt')?.textContent, d.querySelector('dd')?.textContent]),
+    divs.map((d) => [d.querySelector('dt')?.textContent, (d.querySelector('dd') as HTMLElement | null)?.innerText]),
   );
   expect(rows).toEqual([
     ['Collection', COLLECTION_A_NAME],
-    ['Location', 'Bear Canyon'],
+    // Names repeat across the registry, so the id rides along as in the picker.
+    ['Location', 'Bear Canyon\nBEAR1'],
     ['Folder', FOLDER],
   ]);
 });

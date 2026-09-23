@@ -27,7 +27,7 @@ Feature: Upload and publish a batch
   @unmapped
   Scenario: The Upload step names where the batch is going
     Given the upload has not been started
-    Then it names the collection, the location and the chosen folder
+    Then it names the collection, the location with its id, and the chosen folder
     And no storage path is shown
 
   @unmapped

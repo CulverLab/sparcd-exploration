@@ -356,7 +356,12 @@ export function Upload() {
               {location && (
                 <div className="flex items-baseline gap-3">
                   <dt className="text-inkSoft w-28 shrink-0">Location</dt>
-                  <dd className="text-ink min-w-0 break-words">{location.name}</dd>
+                  <dd className="min-w-0">
+                    <span className="block break-words text-ink">{location.name}</span>
+                    <span className="block break-all font-mono text-[12px] text-inkMute">
+                      {location.id}
+                    </span>
+                  </dd>
                 </div>
               )}
               {folder && (
