@@ -533,7 +533,15 @@ function makeRunner(
             return false;
           }
           if (cancelled || abort.signal.aborted) throw err;
-          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) {
+            // Classified like a failed write. The ledger keeps its `done`: the
+            // object may well be there, and the next attempt checks again.
+            fp.state = 'failed';
+            fp.error = err instanceof Error ? err.message : String(err);
+            fp.network = isTransient(err);
+            emit(true);
+            throw err;
+          }
           const wait = backoff(attempt);
           log('warn', `verify retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
           await sleep(wait);
