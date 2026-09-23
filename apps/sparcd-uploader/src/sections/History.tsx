@@ -13,12 +13,11 @@ import {
   listBatches,
   loadSession,
   discardSession,
-  fileStateCounts,
-  refusedFiles,
+  sessionTally,
   updateBatch,
   type BatchRecord,
   type LoadedSession,
-  type PersistedFileState,
+  type SessionTally,
 } from '../lib/db';
 import {
   restoreFromHandle,
@@ -32,11 +31,7 @@ import type { ProcessResponse } from '../lib/processPool';
 import { Note } from '../components/RunMonitor';
 import { PublishedUploads } from '../components/PublishedUploads';
 
-type Row = {
-  batch: BatchRecord;
-  counts: Record<PersistedFileState, number>;
-  refused: { count: number; reason?: string };
-};
+type Row = { batch: BatchRecord } & SessionTally;
 
 const stampOf = (prefix: string) => prefix.slice(prefix.lastIndexOf('/') + 1);
 
@@ -96,17 +91,26 @@ export function History() {
   const reselectRef = useRef<HTMLInputElement>(null);
   const pendingReselect = useRef<BatchRecord | null>(null);
 
+  // Only the newest refresh may land: an older one still reading the ledger
+  // would publish stale rows, and one finishing after unmount has nowhere to go.
+  const refreshSeq = useRef(0);
+  const rowsById = useRef(new Map<string, Row>());
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const batches = await listBatches();
-    const withCounts = await Promise.all(
-      batches.map(async (batch) => ({
-        batch,
-        counts: await fileStateCounts(batch.id),
-        refused: await refusedFiles(batch.id),
-      })),
+    const next = await Promise.all(
+      batches.map(async (batch) => {
+        // A finished upload's ledger no longer changes.
+        const known = rowsById.current.get(batch.id);
+        if (known?.batch.completedAt && batch.completedAt) return known;
+        return { batch, ...(await sessionTally(batch.id)) };
+      }),
     );
-    setRows(withCounts);
+    if (seq !== refreshSeq.current) return;
+    rowsById.current = new Map(next.map((row) => [row.batch.id, row]));
+    setRows(next);
   }, []);
+  useEffect(() => () => void ++refreshSeq.current, []);
 
   // Rows come from the local ledger, which a live run keeps writing to: reload
   // whenever the run changes phase, and every couple of seconds while it runs.
@@ -494,7 +498,14 @@ export function History() {
                 </p>
               )}
 
-              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && (
+              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && batch.storageUnreachable && (
+                <p className="font-body text-[12px] text-warn">
+                  Storage can't be reached, so automatic retries have stopped;{' '}
+                  <span className="text-ink">check the connection, then Resume upload.</span>
+                </p>
+              )}
+
+              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && !batch.storageUnreachable && (
                 <p className="font-body text-[12px] text-warn">
                   {total - counts.done > 0
                     ? `Interrupted with ${total - counts.done} of ${total} file${total === 1 ? '' : 's'} still to send.`

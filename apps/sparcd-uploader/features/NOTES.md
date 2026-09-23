@@ -29,7 +29,9 @@ Coverage notes for the as-built uploader feature files.
 - **AL1** (interrupted uploads continue on their own) — met, apart from the
   untestable "never stuck" criterion. A run open in the tab waits out a dropped
   connection and carries on by itself when it returns; if the browser never
-  noticed the drop, the run stops as partial and retries on a backoff timer.
+  noticed the drop, the run stops as partial and retries on a backoff timer,
+  giving up after five retries in a row that send nothing (History then says
+  storage can't be reached).
   Repeated drops still end in one upload, verified data is not resent, and
   History shows each upload as complete, as interrupted with "Resume upload"
   named as the next step, or as refused by storage with who to ask. Resuming

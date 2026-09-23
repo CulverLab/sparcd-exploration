@@ -8,6 +8,8 @@ import { History } from './sections/History';
 import { Settings } from './sections/Settings';
 import { uploadStateOf } from './lib/uploadState';
 import { cancelProcessing } from './lib/processing';
+import { planAutoRetry, type AutoRetryState } from './lib/autoRetry';
+import { updateBatch } from './lib/db';
 
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
@@ -17,9 +19,6 @@ const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefine
 // user always retypes it. Read once; a dev endpoint override wins if set.
 const persistedConnection = loadPersistedConnection();
 const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: devEndpoint } : {}) };
-
-const AUTO_RETRY_BASE_MS = 15_000;
-const AUTO_RETRY_MAX_MS = 5 * 60_000;
 
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
@@ -83,18 +82,22 @@ export function App() {
 
   // A connection can die while the browser still reports itself online, so
   // no `online` event will ever come. A run that stopped only for want of an
-  // answer is retried on a backoff timer instead.
+  // answer is retried on a backoff timer instead, until too many retries in
+  // a row get nothing through; History then says storage can't be reached.
   const autoRetryPhase = activeSnap?.autoRetry ? activeSnap.phase : null;
-  const autoRetries = useRef(0);
+  const autoRetry = useRef<AutoRetryState>({ sessionId: null, fruitless: 0 });
   useEffect(() => {
-    if (activeSnap?.phase === 'done') autoRetries.current = 0;
-    if (autoRetryPhase !== 'partial') return;
-    const delay = Math.min(AUTO_RETRY_MAX_MS, AUTO_RETRY_BASE_MS * 2 ** autoRetries.current++);
+    const snap = useStore.getState().activeSnap;
+    if (autoRetryPhase !== 'partial' || !snap) return;
+    const plan = planAutoRetry(autoRetry.current, snap);
+    autoRetry.current = plan.state;
+    void updateBatch(snap.sessionId, { storageUnreachable: plan.delay === null });
+    if (plan.delay === null) return;
     const timer = setTimeout(() => {
       if (navigator.onLine !== false) void retryPartialRun();
-    }, delay);
+    }, plan.delay);
     return () => clearTimeout(timer);
-  }, [autoRetryPhase, activeSnap?.phase, retryPartialRun]);
+  }, [autoRetryPhase, retryPartialRun]);
 
   // Hold a screen wake lock while any run is in flight (including dry runs and
   // the preparing phase). Lives here (not in Upload) so it survives the user
