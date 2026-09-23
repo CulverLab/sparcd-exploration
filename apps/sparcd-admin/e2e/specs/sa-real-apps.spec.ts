@@ -49,8 +49,8 @@ const SHARD_PORTS = /:(84(4[3-9]|5\d|6[0-2]))(\/|$)/
 /** The known-harmless refusal every app earns on sign-in. See the note below. */
 const SETTINGS_PROBE = /sparcd-settings-[^/]*\/Collections\/settings-[^/]*\/collection\.json/
 
-/** The Tagger asks every visible bucket for the species list. Only one has it. */
-const SPECIES_PROBE = /^404 HEAD .*\/Settings\/species\.json$/
+/** The Tagger asks every visible bucket for the species and location lists. Only one has them. */
+const SPECIES_PROBE = /^404 HEAD .*\/Settings\/(species|locations)\.json$/
 
 async function invite(page: Page, person: { name: string; email: string; access: string }) {
   await page.getByRole('button', { name: 'Add a person' }).click()
@@ -244,6 +244,12 @@ test('a person who can identify tags an image in the Tagger, and still cannot up
   const page = tagger.page
   const sections = page.locator('nav[aria-label="Sections"]:visible')
   await expect(sections.getByRole('button', { name: 'Browse' })).toBeVisible({ timeout: 30_000 })
+
+  // The Tagger first accepts the shared species list, then sees this
+  // collection's narrower checklist and asks the person to acknowledge the
+  // difference. That is its behaviour, not what this scenario tests.
+  const speciesChanged = page.getByRole('alertdialog', { name: 'Species vocabulary has changed' })
+  await page.addLocatorHandler(speciesChanged, () => speciesChanged.getByRole('button', { name: 'I understand' }).click())
 
   // Nothing is written without a name on it.
   await sections.getByRole('button', { name: 'Settings' }).click()
