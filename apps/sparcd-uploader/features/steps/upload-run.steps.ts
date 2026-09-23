@@ -950,3 +950,94 @@ Then('releasing the held blob lets the upload complete', async ({ app }) => {
   app.s3.releaseHeldPuts();
   await app.waitForRunPhase('done');
 });
+
+// --- connection drops (AL1) ------------------------------------------------
+
+const DROP_BATCH_SIZE = 24;
+const dropBatchNames = () => manyJpegs(DROP_BATCH_SIZE).map((s) => s.path.split('/').pop()!).sort();
+const countOf = (text: string, needle: RegExp) => (text.match(needle) ?? []).length;
+const published = (app: App) => app.s3.puts.some((p) => p.key.endsWith('UploadComplete.json'));
+
+/** Upload folders this scenario created, leaving out the seeded prior upload. */
+function batchFolders(app: App): string[] {
+  const prefix = `${BUCKET_A}/${UPLOADS_PREFIX}`;
+  const folders = new Set<string>();
+  for (const key of app.s3.objects.keys()) {
+    if (key.startsWith(prefix) && !key.includes('2026.01.02')) folders.add(key.slice(prefix.length).split('/')[0]);
+  }
+  return [...folders];
+}
+
+function storedImageNames(app: App, folder: string): string[] {
+  return [...app.s3.objects.keys()]
+    .filter((k) => k.startsWith(`${BUCKET_A}/${UPLOADS_PREFIX}${folder}/`) && k.endsWith('.JPG'))
+    .map((k) => k.split('/').pop()!)
+    .sort();
+}
+
+/** Take the whole browser offline, and wait until the run has noticed. */
+async function dropConnection(app: App): Promise<void> {
+  const before = countOf(await app.logText(), /waiting for network/g);
+  app.s3.offline = true;
+  await app.page.context().setOffline(true);
+  await expect
+    .poll(async () => countOf(await app.logText(), /waiting for network/g), { timeout: 30_000 })
+    .toBeGreaterThan(before);
+}
+
+async function restoreConnection(app: App): Promise<void> {
+  const before = countOf(await app.logText(), /network back/g);
+  app.s3.offline = false;
+  await app.page.context().setOffline(false);
+  await expect
+    .poll(async () => countOf(await app.logText(), /network back/g), { timeout: 30_000 })
+    .toBeGreaterThan(before);
+}
+
+Given('a real upload of many images is under way', async ({ app }) => {
+  await rescanFromUpload(app, manyJpegs(DROP_BATCH_SIZE));
+  // The fewest lanes and a write delay keep the run going long enough to cut
+  // it off more than once.
+  await app.pinConcurrency(4);
+  app.s3.putDelayMs = 400;
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  // Count every click from here on, so a Then can show nobody restarted it.
+  await app.page.evaluate(() => {
+    const w = window as unknown as { __clicksAfterStart: number };
+    w.__clicksAfterStart = 0;
+    document.addEventListener('click', () => { w.__clicksAfterStart++; }, true);
+  });
+  await expect.poll(() => mediaPuts(app).length, { intervals: [50] }).toBeGreaterThan(0);
+});
+
+Given('the connection drops while the upload is in progress', async ({ app }) => {
+  await dropConnection(app);
+  // Let requests already in flight settle, then check nothing new is sent.
+  await app.page.waitForTimeout(500);
+  const stalledAt = mediaPuts(app).length;
+  expect(stalledAt).toBeLessThan(DROP_BATCH_SIZE);
+  await app.page.waitForTimeout(1_000);
+  expect(mediaPuts(app).length).toBe(stalledAt);
+  await expect(app.runPhase()).toHaveText('uploading');
+  app.notes.stalledAt = stalledAt;
+});
+
+When('the connection returns', async ({ app }) => {
+  await restoreConnection(app);
+});
+
+Then('the upload continues and is published with every image', async ({ app }) => {
+  await expect.poll(() => published(app), { timeout: 120_000 }).toBe(true);
+  expect(mediaPuts(app).length).toBeGreaterThan(app.notes.stalledAt as number);
+  const [folder] = batchFolders(app);
+  expect(storedImageNames(app, folder)).toEqual(dropBatchNames());
+});
+
+Then('nothing had to be clicked to restart it', async ({ app }) => {
+  const clicks = await app.page.evaluate(
+    () => (window as unknown as { __clicksAfterStart: number }).__clicksAfterStart,
+  );
+  expect(clicks).toBe(0);
+  await app.waitForRunPhase('done', 120_000);
+});

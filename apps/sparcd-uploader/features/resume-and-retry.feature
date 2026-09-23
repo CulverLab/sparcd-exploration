@@ -47,8 +47,9 @@ Feature: Resume an interrupted upload and retry a failed one
     When it is resumed
     Then the source folder is re-attached, by permission for a remembered folder or by selecting it again
     And the upload continues from where it stopped
-    # As-built continuation is manual: the user clicks Resume. The tool does not
-    # detect connectivity returning and does not restart on its own.
+    # Resuming from History is manual because it needs the source folder back.
+    # A run still open in this tab carries on by itself when the connection
+    # returns; see upload-run.feature.
 
   @AL1 @F1 @AL1-2 @F1-5
   Scenario: Files already stored and verified are not sent again

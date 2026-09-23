@@ -182,6 +182,14 @@ Feature: Upload and publish a batch
     # Before this fix, ensureOnline logged inside the poll loop — a 5-minute
     # outage with 10 lanes produced 100 warning lines in the run monitor.
 
+  @AL1 @AL1-1
+  Scenario: An upload cut off by a dropped connection carries on by itself when the connection returns
+    Given a real upload of many images is under way
+    And the connection drops while the upload is in progress
+    When the connection returns
+    Then the upload continues and is published with every image
+    And nothing had to be clicked to restart it
+
   @unmapped
   Scenario: A run paused because the browser reports offline still completes if packets actually flow
     Given the browser's navigator.onLine flag is stuck reporting offline

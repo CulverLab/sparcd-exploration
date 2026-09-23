@@ -74,7 +74,7 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| AL1-1 | An interrupted upload continues on its own when the connection returns | partial | uploader: upload-run.feature: The run monitor shows one offline warning per outage, not one per poll tick | A live run does resume by itself when the network returns, but the scenario only waits for that inside its When step and asserts log lines; no Then states that the upload continued without a manual restart. |
+| AL1-1 | An interrupted upload continues on its own when the connection returns | covered | uploader: upload-run.feature: An upload cut off by a dropped connection carries on by itself when the connection returns | The browser goes offline mid-run and sending stops; when it comes back the run publishes every image with no click after the start. |
 | AL1-2 | Data already transferred and verified is not sent again | covered | uploader: resume-and-retry.feature: Files already stored and verified are not sent again | Verified objects are skipped; only missing or mismatched objects are sent. |
 | AL1-3 | An unattended upload is found either complete or clearly resumable | covered | uploader: resume-and-retry.feature: Uploads left running unattended are found either complete or ready to resume | A finished upload shows as complete with nothing to do; one cut off by closing the tab says how many files are left and names Resume upload. |
 | AL1-4 | An upload is never left in a silent, stuck state | untestable | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete | NOTES.md says no threshold defines when silence becomes stuck. |
@@ -138,9 +138,9 @@
 | F4 | 0 | 0 | 7 | 3 | 10 |
 | A1 | 4 | 1 | 1 | 0 | 6 |
 | A2 | 1 | 0 | 4 | 0 | 5 |
-| AL1 | 3 | 2 | 0 | 1 | 6 |
+| AL1 | 4 | 1 | 0 | 1 | 6 |
 | AL2 | 4 | 2 | 0 | 0 | 6 |
 | H1 | 3 | 0 | 1 | 2 | 6 |
 | H2 | 2 | 2 | 2 | 1 | 7 |
 | H3 | 1 | 5 | 2 | 0 | 8 |
-| Overall | 22 | 24 | 20 | 7 | 73 |
+| Overall | 23 | 23 | 20 | 7 | 73 |

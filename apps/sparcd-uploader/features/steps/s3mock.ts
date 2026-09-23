@@ -69,6 +69,13 @@ export class S3Mock {
   putDelayMs = 0;
 
   /**
+   * Refuse every signed request as a dropped connection would. Playwright's
+   * `setOffline` does not reach requests served by `page.route`, so this is
+   * what makes a write already in flight fail.
+   */
+  offline = false;
+
+  /**
    * Hold matching PUTs after storage records them but before S3 responds. This
    * lets scenarios observe or cancel a real in-flight write without racing the
    * whole upload against wall-clock timing.
@@ -206,6 +213,10 @@ export class S3Mock {
       const auth = req.headers()['authorization'] ?? '';
       if (!auth.startsWith('AWS4-HMAC')) {
         await route.fallback();
+        return;
+      }
+      if (this.offline) {
+        await route.abort('internetdisconnected');
         return;
       }
       const url = new URL(req.url());
@@ -350,6 +361,10 @@ export class S3Mock {
 
       if (method === 'PUT') {
         if (this.putDelayMs) await new Promise((r) => setTimeout(r, this.putDelayMs));
+        if (this.offline) {
+          await route.abort('internetdisconnected');
+          return;
+        }
         const body = req.postDataBuffer() ?? Buffer.alloc(0);
         const meta: Record<string, string> = {};
         for (const [h, v] of Object.entries(req.headers())) {
