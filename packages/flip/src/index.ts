@@ -52,10 +52,19 @@ export interface FlipFile {
   // must not come home looking like EXIF.
   /** The camera's own capture time, from EXIF or the video container. */
   exifTimestamp?: string;
+  /** EXIF ModifyDate is metadata-edit time, retained even after a manual correction. */
+  exifTimestampSource?: 'exif-modify';
   /** A capture time entered by hand for a file the camera left blank. */
   manualTimestamp?: string;
+  /** The sequence start entered when `timestampSource` is `spread`. Absent
+   * for a spread based on each file's modified time. */
+  manualSpreadStart?: string;
+  /** Whether a spread used a typed sequence start or each file's modified time. */
+  manualSpreadMethod?: 'sequence' | 'file-modified';
+  /** Upload timezone used to convert file modified times when the spread ran. */
+  manualSpreadTimeZone?: string;
   estimatedTimestamp?: string;
-  timestampSource?: 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified';
+  timestampSource?: 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified' | 'exif-modify';
 
   /** The worker's own sniff of the media type — authoritative over the file
    *  extension, and the value that lands in `media.csv`. */
@@ -74,7 +83,9 @@ export interface FlipFile {
  * tagger shows the same value the upload will carry.
  */
 export const captureTimestampOf = (file: FlipFile): string | undefined =>
-  file.exifTimestamp ?? file.manualTimestamp ?? file.estimatedTimestamp;
+  file.exifTimestampSource === 'exif-modify' && file.manualTimestamp
+    ? file.manualTimestamp
+    : file.exifTimestamp ?? file.manualTimestamp ?? file.estimatedTimestamp;
 
 export interface FlipRecord {
   id: string;

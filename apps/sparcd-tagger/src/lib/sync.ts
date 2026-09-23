@@ -1,9 +1,9 @@
 // The compatibility sync — the tagger's only S3 write path (P4). It turns local
 // drafts into the canonical Camtrap output the Java app, sparcd-web, and the
 // marimo explorer already read: it replaces upload-level `media.csv`,
-// `observations.csv`, and `UploadMeta.json` in place, guarded by `IfMatch`
-// against the ETags the user reviewed, after writing an immutable pre-change
-// snapshot.
+// `observations.csv`, `deployments.csv`, and `UploadMeta.json` in place,
+// guarded by `IfMatch` against the ETags the user reviewed, after writing an
+// immutable pre-change snapshot.
 //
 // Two layers:
 //   1. Pure planning — `buildSyncPlan` diffs drafts against the canonical base
@@ -25,8 +25,16 @@ import {
   javaEditStamp,
   correctedTimestamp,
   hasSpeciesPresent,
+  rewriteMediaDeploymentId,
+  rewriteObservationsDeploymentId,
+  serializeDeployments,
+  parseDeployments,
+  parseCsvRows,
+  MEDIA_COL,
+  OBS_COL,
   type MediaEdit,
   type TimeOffset,
+  type Deployment,
 } from '@sparcd/camtrap';
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
@@ -50,12 +58,14 @@ export type CanonicalState = Record<CanonicalRole, CanonicalFile>;
 const SNAPSHOT_FILE: Record<CanonicalRole, string> = {
   media: 'media.csv',
   observations: 'observations.csv',
+  deployments: 'deployments.csv',
   uploadMeta: 'UploadMeta.json',
 };
 
 const CONTENT_TYPE: Record<CanonicalRole, string> = {
   media: 'text/csv',
   observations: 'text/csv',
+  deployments: 'text/csv',
   uploadMeta: 'application/json',
 };
 
@@ -73,6 +83,10 @@ export type SyncPlan = {
   tagEdits: MediaEdit[];
   /** Images whose `media.csv` col-4 timestamp changes but whose tags don't. */
   timeEdits: MediaEdit[];
+  /** A whole-upload location correction — the wrong camera location was
+   *  recorded. Rewrites `deployments.csv` to this single row and every media/
+   *  observation row's deployment id to `locationEdit.deploymentId`. */
+  locationEdit: Deployment | null;
   summary: DiffSummary;
 };
 
@@ -105,6 +119,7 @@ export function buildSyncPlan(
   images: TagImage[],
   drafts: Record<string, DraftRecord>,
   offset: TimeOffset | null,
+  pendingLocation: Deployment | null = null,
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
@@ -116,6 +131,10 @@ export function buildSyncPlan(
     // change it didn't make.
     const d = drafts[img.key]?.dirty ? drafts[img.key] : undefined;
     const obs = d ? d.observations : img.baseObservations;
+    // A pending location correction applies to every image uniformly — a
+    // freshly-written observation row must carry the corrected deployment id,
+    // not the stale one the image loaded with.
+    const deploymentId = pendingLocation?.deploymentId ?? img.deploymentId;
 
     const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null);
     const timeChanged = !!img.baseTimestamp && corrected !== img.baseTimestamp;
@@ -136,7 +155,7 @@ export function buildSyncPlan(
 
       tagEdits.push({
         mediaId: img.key,
-        deploymentId: img.deploymentId,
+        deploymentId,
         timestamp: corrected,
         mediaTimestamp: timeChanged ? corrected : undefined,
         timestampSource,
@@ -153,7 +172,7 @@ export function buildSyncPlan(
       // here and is never handed to `mergeObservations`, so its rows survive.
       timeEdits.push({
         mediaId: img.key,
-        deploymentId: img.deploymentId,
+        deploymentId,
         timestamp: corrected,
         mediaTimestamp: corrected,
         timestampSource,
@@ -162,11 +181,11 @@ export function buildSyncPlan(
     }
   }
 
-  return { tagEdits, timeEdits, summary };
+  return { tagEdits, timeEdits, locationEdit: pendingLocation, summary };
 }
 
 export function planIsEmpty(plan: SyncPlan): boolean {
-  return plan.tagEdits.length === 0 && plan.timeEdits.length === 0;
+  return plan.tagEdits.length === 0 && plan.timeEdits.length === 0 && plan.locationEdit === null;
 }
 
 // --- Snapshot stamp --------------------------------------------------------
@@ -269,7 +288,11 @@ function isUnsupported(err: unknown): boolean {
  * Build the merged canonical bodies and which roles actually change. The merge
  * runs against `current` (verified equal to the grounded base), so unrelated
  * rows and unmodelled columns survive verbatim. `UploadMeta.json` always
- * changes — every successful sync appends its mandatory edit comment.
+ * changes — every successful sync appends its mandatory edit comment. A
+ * pending location correction rewrites every media/observation row's
+ * deployment id and replaces `deployments.csv` with the single new row —
+ * applied on top of the tag/time merge, not instead of it, so a location
+ * change and species edits in the same sync both land correctly.
  */
 async function buildWrites(
   current: CanonicalState,
@@ -279,11 +302,20 @@ async function buildWrites(
   uploadPrefix: string,
 ): Promise<PreparedWrite[]> {
   const allMediaEdits = [...plan.tagEdits, ...plan.timeEdits];
+  let mediaBody = mergeMedia(current.media.text, allMediaEdits);
+  let observationsBody = mergeObservations(current.observations.text, plan.tagEdits, {
+    observationId: (mediaId, i) => `${mediaId.slice(uploadPrefix.length)}:${i}`,
+  });
+  let deploymentsBody = current.deployments.text;
+  if (plan.locationEdit) {
+    mediaBody = rewriteMediaDeploymentId(mediaBody, plan.locationEdit.deploymentId);
+    observationsBody = rewriteObservationsDeploymentId(observationsBody, plan.locationEdit.deploymentId);
+    deploymentsBody = serializeDeployments([plan.locationEdit]);
+  }
   const bodies: Record<CanonicalRole, string> = {
-    media: mergeMedia(current.media.text, allMediaEdits),
-    observations: mergeObservations(current.observations.text, plan.tagEdits, {
-      observationId: (mediaId, i) => `${mediaId.slice(uploadPrefix.length)}:${i}`,
-    }),
+    media: mediaBody,
+    observations: observationsBody,
+    deployments: deploymentsBody,
     uploadMeta: '',
   };
   const delta = computeSpeciesDelta(current.observations.text, plan.tagEdits);
@@ -297,15 +329,18 @@ async function buildWrites(
   return prepareWrites(current, bodies);
 }
 
-/** Keep only the roles whose bytes actually change, hashing each kept body. */
+/** Keep only the roles whose bytes actually change, hashing each kept body. A
+ *  role absent from `bodies` (an old snapshot missing `deployments.csv`) is
+ *  treated as unchanged, not rewritten. */
 async function prepareWrites(
   current: CanonicalState,
-  bodies: Record<CanonicalRole, string>,
+  bodies: Partial<Record<CanonicalRole, string>>,
 ): Promise<PreparedWrite[]> {
   const out: PreparedWrite[] = [];
   for (const role of ROLE_ORDER) {
-    if (bodies[role] === current[role].text) continue; // unchanged → don't rewrite
-    out.push({ role, body: bodies[role], hash: await sha256Hex(bodies[role]) });
+    const body = bodies[role];
+    if (body === undefined || body === current[role].text) continue; // unchanged → don't rewrite
+    out.push({ role, body, hash: await sha256Hex(body) });
   }
   return out;
 }
@@ -525,8 +560,9 @@ export type RestoreParams = {
   uploadPrefix: string;
   /** Who is performing the restore — stamps the new pre-restore snapshot path. */
   user: string;
-  /** The snapshot bodies to write back, by role. */
-  bodies: Record<CanonicalRole, string>;
+  /** The snapshot bodies to write back, by role. A role absent (an old
+   *  snapshot predating that role) is left untouched rather than restored. */
+  bodies: Partial<Record<CanonicalRole, string>>;
   dryRun: boolean;
   /** A journal left by a prior partial sync/restore, to resume instead of starting fresh. */
   resumeJournal?: SyncJournal;
@@ -534,7 +570,8 @@ export type RestoreParams = {
 
 /**
  * Restore a prior snapshot: write its `media.csv` / `observations.csv` /
- * `UploadMeta.json` back verbatim through the same conditional-replacement flow
+ * `deployments.csv` / `UploadMeta.json` back verbatim through the same
+ * conditional-replacement flow
  * a sync uses. The snapshot bytes are restored exactly (no merge, no re-derived
  * `UploadMeta` tally) — an exact rollback — and `IfMatch` is taken against the
  * *current* remote ETags, so a concurrent write since the restore was started is
@@ -549,6 +586,20 @@ export async function runRestore(params: RestoreParams, io: SyncIO): Promise<Syn
   if (resumed) return resumed;
 
   const current = await io.loadCanonical();
+  // Legacy snapshots predate deployments.csv. They are safe only when every
+  // deployment referenced by their media/observations still exists in the
+  // current deployment file; otherwise restoring them would create dangling
+  // references after a later location correction.
+  if (bodies.deployments === undefined && current.deployments.text) {
+    const available = new Set(parseDeployments(current.deployments.text).map((deployment) => deployment.deploymentId));
+    const referenced = new Set([
+      ...parseCsvRows(bodies.media ?? '').map((row) => row[MEDIA_COL.deploymentId]),
+      ...parseCsvRows(bodies.observations ?? '').map((row) => row[OBS_COL.deploymentId]),
+    ].filter(Boolean));
+    if ([...referenced].some((deploymentId) => !available.has(deploymentId))) {
+      throw new Error('This snapshot predates deployment records and cannot be restored safely after a location change.');
+    }
+  }
   const writes = await prepareWrites(current, bodies);
   if (writes.length === 0) return { status: 'noop' };
 
@@ -576,6 +627,7 @@ function remoteStates(state: CanonicalState): Record<CanonicalRole, RemoteState>
   return {
     media: { etag: state.media.etag, hash: state.media.hash },
     observations: { etag: state.observations.etag, hash: state.observations.hash },
+    deployments: { etag: state.deployments.etag, hash: state.deployments.hash },
     uploadMeta: { etag: state.uploadMeta.etag, hash: state.uploadMeta.hash },
   };
 }

@@ -9,7 +9,7 @@
 // leaves a trailing newline — matched here so a round-trip is byte-stable.
 
 /** One row of `deployments.csv` — a camera location for one upload. */
-export type TimestampSource = 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified';
+export type TimestampSource = 'manual' | 'spread' | 'interpolated' | 'offset' | 'file-modified' | 'exif-modify';
 
 export type Deployment = {
   timestampIssues?: boolean;
@@ -398,6 +398,7 @@ export const DEPLOY_COL = {
   longitude: 3,
   latitude: 4,
   cameraHeight: 12,
+  timestampIssues: 15,
 } as const;
 
 export const OBS_COLUMN_COUNT = 20;
@@ -415,6 +416,7 @@ export function parseDeployments(csv: string): Deployment[] {
     longitude: Number(r[DEPLOY_COL.longitude]),
     latitude: Number(r[DEPLOY_COL.latitude]),
     elevation: Number(r[DEPLOY_COL.cameraHeight]),
+    timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
   }));
 }
 
@@ -435,14 +437,24 @@ export function parseMedia(csv: string): Media[] {
 export function parseObservations(csv: string): Observation[] {
   return parseCsvRows(csv).map((r) => {
     const rawType = r[OBS_COL.observationType] ?? '';
+    const scientificName = r[OBS_COL.scientificName] ?? '';
+    const count = Number(r[OBS_COL.count] ?? '0');
+    // Some producers (e.g. video ingestion) never populate observationType at
+    // all, leaving it empty even on rows that name a real species — infer
+    // "animal" from scientificName in that case. An explicit non-'animal'
+    // value (e.g. "human", "vehicle") is trusted as-is and stays 'blank',
+    // since other producers do use it to mean something other than blank.
+    const observationType = rawType === 'animal' || (rawType === '' && scientificName !== '' && count > 0)
+      ? 'animal'
+      : 'blank';
     return {
       observationId: r[OBS_COL.observationId] ?? '',
       mediaId: r[OBS_COL.mediaId] ?? '',
       deploymentId: r[OBS_COL.deploymentId] ?? '',
       timestamp: r[OBS_COL.timestamp] ?? '',
-      observationType: rawType === 'animal' ? 'animal' : 'blank',
-      scientificName: r[OBS_COL.scientificName] ?? '',
-      count: Number(r[OBS_COL.count] ?? '0'),
+      observationType,
+      scientificName,
+      count,
       tags: r[OBS_COL.comments] ?? '',
     };
   });
@@ -460,7 +472,7 @@ export function buildMediaComments(input: { timestampSource?: TimestampSource })
 
 export function timestampSourceFromComments(comments: string): TimestampSource | null {
   const value = parseTagMarkers(comments).find((m) => m.prefix === TIMESTAMP_PREFIX)?.value;
-  return value === 'manual' || value === 'spread' || value === 'interpolated' || value === 'offset' || value === 'file-modified' ? value : null;
+  return value === 'manual' || value === 'spread' || value === 'interpolated' || value === 'offset' || value === 'file-modified' || value === 'exif-modify' ? value : null;
 }
 
 export const COMMONNAME_PREFIX = 'COMMONNAME';
@@ -662,6 +674,28 @@ export function mergeObservations(
     }
   }
   return serializeCsvRows(out);
+}
+
+// --- Whole-upload location change -------------------------------------------
+
+/**
+ * Rewrite every row's deployment id in `media.csv` — a whole-upload location
+ * correction. Unlike `mergeMedia`, which only touches media ids present in an
+ * edit list, this touches every row unconditionally, since the wrong location
+ * was recorded for the whole upload, not just specific images.
+ */
+export function rewriteMediaDeploymentId(canonicalMediaCsv: string, newDeploymentId: string): string {
+  const rows = parseCsvRows(canonicalMediaCsv);
+  for (const row of rows) row[MEDIA_COL.deploymentId] = newDeploymentId;
+  return serializeCsvRows(rows);
+}
+
+/** Rewrite every row's deployment id in `observations.csv` — the observation
+ *  half of a whole-upload location correction (see `rewriteMediaDeploymentId`). */
+export function rewriteObservationsDeploymentId(canonicalObsCsv: string, newDeploymentId: string): string {
+  const rows = parseCsvRows(canonicalObsCsv);
+  for (const row of rows) row[OBS_COL.deploymentId] = newDeploymentId;
+  return serializeCsvRows(rows);
 }
 
 // --- UploadMeta.json delta -------------------------------------------------

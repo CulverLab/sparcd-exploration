@@ -9,9 +9,9 @@
 // orchestrator (`sync.ts`) drives the actual I/O.
 
 /** Which canonical file an object is. Order here is the write order. */
-export type CanonicalRole = 'media' | 'observations' | 'uploadMeta';
+export type CanonicalRole = 'media' | 'observations' | 'deployments' | 'uploadMeta';
 
-export const ROLE_ORDER: CanonicalRole[] = ['media', 'observations', 'uploadMeta'];
+export const ROLE_ORDER: CanonicalRole[] = ['media', 'observations', 'deployments', 'uploadMeta'];
 
 export type JournalObjectStatus = 'pending' | 'written';
 

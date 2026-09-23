@@ -8,7 +8,7 @@
 // editing one image never re-renders the whole strip.
 
 import { create } from 'zustand';
-import { shiftTimestamp } from '@sparcd/camtrap';
+import { shiftTimestamp, type Deployment } from '@sparcd/camtrap';
 import {
   db,
   draftId,
@@ -17,6 +17,7 @@ import {
   uploadId,
   getUpload,
   setUploadTimeOffset,
+  setUploadPendingLocation,
   type DraftRecord,
   type DraftObservation,
   type TimeOffsetRecord,
@@ -120,6 +121,7 @@ type DraftState = {
   loading: boolean;
   drafts: Record<string, DraftRecord>; // by mediaPath
   timeOffset: TimeOffsetRecord | null; // upload-level signed Δ for the loaded upload
+  pendingLocation: Deployment | null; // upload-level location correction for the loaded upload
 
   loadUpload: (ctx: UploadCtx) => Promise<void>;
 
@@ -150,6 +152,10 @@ type DraftState = {
   /** Set (or clear with null) the upload-level offset applied to every image.
    *  Persists to the `uploads` record so the next sync writes corrected times. */
   setTimeOffset: (ctx: UploadCtx, offset: TimeOffsetRecord | null) => void;
+  /** Set (or clear with null) the upload-level pending location correction.
+   *  Persists to the `uploads` record so the next sync rewrites deployments.csv
+   *  and every media/observation row's deployment id. */
+  setPendingLocation: (ctx: UploadCtx, location: Deployment | null) => Promise<void>;
   /** Set (or clear with null) one image's per-image corrected timestamp, on top
    *  of the upload offset. Seeds a fresh draft from base so time-only edits never
    *  drop existing canonical species rows. */
@@ -268,11 +274,12 @@ export const useDraftStore = create<DraftState>((set, get) => {
     loading: false,
     drafts: {},
     timeOffset: null,
+    pendingLocation: null,
 
     loadUpload: async (ctx) => {
       const key = uploadId(ctx.bucket, ctx.uploadPrefix);
       if (get().loadedKey === key) return;
-      set({ loading: true, loadedKey: key, drafts: {}, timeOffset: null });
+      set({ loading: true, loadedKey: key, drafts: {}, timeOffset: null, pendingLocation: null });
       const [rows, upload] = await Promise.all([
         loadDraftsForUpload(ctx.bucket, ctx.uploadPrefix),
         getUpload(ctx.bucket, ctx.uploadPrefix),
@@ -283,8 +290,14 @@ export const useDraftStore = create<DraftState>((set, get) => {
       for (const r of rows) map[r.mediaPath] = r;
       // The `uploads` record's base ETags/hashes are owned by the workspace
       // grounding step (`groundUpload`); the store only reads back the
-      // upload-level `timeOffset` it persists via `setTimeOffset`.
-      set({ loading: false, drafts: map, timeOffset: upload?.timeOffset ?? null });
+      // upload-level `timeOffset` / `pendingLocation` it persists via
+      // `setTimeOffset` / `setPendingLocation`.
+      set({
+        loading: false,
+        drafts: map,
+        timeOffset: upload?.timeOffset ?? null,
+        pendingLocation: upload?.pendingLocation ?? null,
+      });
     },
 
     addSpecies: (ctx, targets, tag) =>
@@ -311,6 +324,11 @@ export const useDraftStore = create<DraftState>((set, get) => {
       // `dirtyCount` — the active-offset indicator (ClockChip) is its signal.
       set({ timeOffset: offset });
       void setUploadTimeOffset(ctx.bucket, ctx.uploadPrefix, offset);
+    },
+
+    setPendingLocation: async (ctx, location) => {
+      set({ pendingLocation: location });
+      await setUploadPendingLocation(ctx.bucket, ctx.uploadPrefix, location);
     },
 
     setTimeOverride: (ctx, mediaPath, deploymentId, base, iso) =>

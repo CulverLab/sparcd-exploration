@@ -1,6 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import { APP_PATH, type App } from './app';
 import { writtenCsvRows } from './helpers';
+import { jpegModifyDateOnly } from './batches';
 
 // What the Tagger would have written back. Keys are the paths within the
 // chosen folder — the same ids Inspect scanned with.
@@ -99,6 +100,17 @@ When('"Tag species first" is chosen through the unified dev origin', async ({ ap
   await tagButton(app).click();
   await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
+});
+
+Given('a ModifyDate-only batch has been scanned', async ({ app }) => {
+  await app.rescan([jpegModifyDateOnly('MODIFIED.JPG', '2026:07:01 12:00:00')]);
+  await app.waitForInspected();
+});
+
+Then('the real Tagger labels the timestamp as EXIF Modified', async ({ app }) => {
+  await app.page.locator('button[title="MODIFIED.JPG"]').click();
+  await app.page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await expect(app.page.getByText('EXIF Modified', { exact: true })).toBeVisible();
 });
 
 Then('the real Tagger opens the batch written by the Uploader', async ({ app }) => {

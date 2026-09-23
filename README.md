@@ -143,6 +143,8 @@ fetches and uploads to succeed.
 
 ## Docs
 
+- [`VOCABULARY.md`](./VOCABULARY.md) — glossary of terms used consistently
+  across the tools and their code
 - Each app's `README.md` (and `plan.md` where present) — that tool's design,
   data contracts, and status
 - [`docs/design-system-field-notebook.md`](./docs/design-system-field-notebook.md)

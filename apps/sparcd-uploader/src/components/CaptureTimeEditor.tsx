@@ -3,13 +3,7 @@ import { useStore, type FileEntry } from '../store';
 import { formatNaive, naiveToInputValue, inputValueToNaive, type NaiveDateTime } from '../lib/exifTime';
 import { naiveFromMillis, naiveMillis, naturalPathCompare } from '../lib/estimateCaptureTime';
 import { spreadCaptureTimes, type SpreadOptions } from '../lib/spreadCaptureTimes';
-import {
-  useCaptureEstimates,
-  effectiveTime,
-  methodLine,
-  sourceTag,
-  spreadStartOf,
-} from '../lib/useCaptureEstimates';
+import { useCaptureEstimates, effectiveTime, methodLine, sourceTag } from '../lib/useCaptureEstimates';
 
 // Review surface for files the camera gave no capture time. Every one of them
 // already HAS a time — the interpolation rule ran the moment the batch was
@@ -74,6 +68,13 @@ export function sequenceSpread(startText: string, spacingText: string): SpreadOp
   return start && valid ? { kind: 'sequence', start, spacingSeconds } : undefined;
 }
 
+/** The literal start to remember for display, or nothing for a file-modified
+ *  spread — each of its files gets its own mtime independently, so there is
+ *  no single start to report (#256). */
+export function spreadStartFor(options: SpreadOptions | undefined): NaiveDateTime | undefined {
+  return options?.kind === 'sequence' ? options.start : undefined;
+}
+
 function Thumb({ blob }: { blob?: Blob }) {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
@@ -119,9 +120,8 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
   };
 
   const ready = files.filter((f) => f.processState === 'ready');
-  const missing = ready.filter((f) => !f.exifNaive);
-  const timed = ready.filter((f) => f.exifNaive);
-  const spreadStart = spreadStartOf(files);
+  const missing = ready.filter((f) => !f.exifNaive || f.exifTimestampSource === 'exif-modify');
+  const timed = ready.filter((f) => f.exifNaive && f.exifTimestampSource !== 'exif-modify');
 
   const folderCounts = new Map<string, number>();
   for (const f of missing) {
@@ -162,6 +162,9 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
     setManualNaiveMany(
       [...spread].map(([id, naive]) => ({ id, naive })),
       'spread',
+      useModified
+        ? { method: 'file-modified', timeZone: uploadTimeZone }
+        : { method: 'sequence', start: spreadStartFor(spreadOptions)! },
     );
   };
 
@@ -208,7 +211,7 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
       <div className="border border-ruleSoft text-inkSoft bg-paper px-3 py-2.5 font-body text-[12.5px] leading-relaxed">
         {timed.length === 0
           ? `No file in this batch has a camera capture time. File modified times were used for all ${missing.length} files, and the upload will be marked as having a known timestamp issue. Use Spread if the file dates are wrong too.`
-          : `${missing.length} files have no camera capture time. Times were estimated from neighbouring files, and this upload will be marked as having a known timestamp issue.`}
+          : `${missing.length} files need review because they have no camera capture time or only EXIF ModifyDate. Times are estimated from neighbouring files where needed, and this upload will be marked as having a known timestamp issue.`}
       </div>
 
       <div className="border border-ruleSoft bg-paper grid grid-cols-1 sm:grid-cols-[170px_minmax(0,1fr)]">
@@ -454,7 +457,7 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                     {source && (
                       <span
                         className={`inline-block font-body text-[10px] font-[600] tracking-[0.08em] uppercase px-1 ${
-                          source === 'interpolated' || source === 'offset' || source === 'file-modified'
+                          source === 'interpolated' || source === 'offset' || source === 'file-modified' || source === 'exif-modify'
                             ? 'border border-dashed border-rule text-inkMute'
                             : 'border border-accent text-accent'
                         }`}
@@ -471,22 +474,31 @@ export function CaptureTimeEditor({ files }: { files: FileEntry[] }) {
                       step={1}
                       autoFocus
                       aria-label={`Capture time for ${f.fileName}`}
-                      value={f.manualNaive ? naiveToInputValue(f.manualNaive) : ''}
+                      value={f.manualNaive
+                        ? naiveToInputValue(f.manualNaive)
+                        : f.exifTimestampSource === 'exif-modify' && f.exifNaive
+                          ? naiveToInputValue(f.exifNaive)
+                          : ''}
                       onChange={(e) => setManualNaive(f.id, inputValueToNaive(e.target.value))}
                       className={inputClass}
                     />
                   )}
                   <span className="font-body text-[11px] leading-snug text-inkMute min-w-0">
-                    {f.manualNaive && estimate ? (
-                      <button
-                        type="button"
-                        onClick={() => setManualNaive(f.id, null)}
-                        className="text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                      >
-                        ✕ back to estimate ({shortNaive(estimate.naive)})
-                      </button>
+                    {f.manualNaive && (estimate || f.exifTimestampSource === 'exif-modify') ? (
+                      <>
+                        {methodLine(f, estimate, uploadTimeZone)}{' '}
+                        <button
+                          type="button"
+                          onClick={() => setManualNaive(f.id, null)}
+                          className="text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                        >
+                          {f.exifTimestampSource === 'exif-modify'
+                            ? `· ✕ back to EXIF ModifyDate (${shortNaive(f.exifNaive!)})`
+                            : `· ✕ back to estimate (${shortNaive(estimate!.naive)})`}
+                        </button>
+                      </>
                     ) : (
-                      methodLine(f, estimate, uploadTimeZone, spreadStart)
+                      methodLine(f, estimate, uploadTimeZone)
                     )}
                   </span>
                 </div>

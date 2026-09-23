@@ -9,6 +9,7 @@
 // edit fields. They live in the v1 shape now so P4 adds no schema bump.
 
 import Dexie, { type Table } from 'dexie';
+import type { Deployment } from '@sparcd/camtrap';
 import type { CanonicalState } from './sync';
 import type { SyncJournal } from './syncJournal';
 
@@ -58,12 +59,15 @@ export interface UploadRecord {
   uploadPrefix: string;
   loadedAt: string; // ISO
   timeOffset: TimeOffsetRecord | null; // signed Δ applied to every image; null when unset
+  pendingLocation: Deployment | null; // whole-upload location correction; null when unset
 
   // P4 grounding, undefined until sync.
   mediaETag?: string;
   mediaHash?: string;
   observationsETag?: string;
   observationsHash?: string;
+  deploymentsETag?: string;
+  deploymentsHash?: string;
   uploadMetaETag?: string;
   uploadMetaHash?: string;
 }
@@ -185,9 +189,13 @@ export type UploadDraftState = 'unsynced' | 'synced';
 /**
  * One pass over a bucket's drafts → which uploads have local work, and whether
  * it is still `unsynced` (any dirty draft) or `synced` (drafts exist, all pushed).
- * Uploads with no local drafts are absent from the map; the caller treats those
- * as `local-only` — mirroring the design, where an untouched upload is local-only.
- * A full scan (no `bucket` index), but drafts are bounded by local tagging work.
+ * A second pass over `uploads` upgrades any upload with a pending whole-upload
+ * location correction to `unsynced` too — that's local work even when no
+ * per-image draft is dirty (#301 review).
+ * Uploads with neither are absent from the map; the caller treats those as
+ * `local-only` — mirroring the design, where an untouched upload is local-only.
+ * A full scan of each table (no `bucket` index), but both are bounded by local
+ * tagging work.
  */
 export async function uploadDraftStates(bucket: string): Promise<Map<string, UploadDraftState>> {
   const out = new Map<string, UploadDraftState>();
@@ -197,6 +205,11 @@ export async function uploadDraftStates(bucket: string): Promise<Map<string, Upl
       if (out.get(d.uploadPrefix) === 'unsynced') return; // dirty wins, stays unsynced
       out.set(d.uploadPrefix, d.dirty ? 'unsynced' : 'synced');
     });
+  await db.uploads
+    // Records written before location correction have no `pendingLocation`
+    // property. Treat both that legacy `undefined` and null as no correction.
+    .filter((u) => u.bucket === bucket && u.pendingLocation != null)
+    .each((u) => out.set(u.uploadPrefix, 'unsynced'));
   return out;
 }
 
@@ -226,10 +239,13 @@ export async function groundUpload(
     uploadPrefix,
     loadedAt: new Date().toISOString(),
     timeOffset: existing?.timeOffset ?? null,
+    pendingLocation: existing?.pendingLocation ?? null,
     mediaETag: base.media.etag,
     mediaHash: base.media.hash,
     observationsETag: base.observations.etag,
     observationsHash: base.observations.hash,
+    deploymentsETag: base.deployments.etag,
+    deploymentsHash: base.deployments.hash,
     uploadMetaETag: base.uploadMeta.etag,
     uploadMetaHash: base.uploadMeta.hash,
   });
@@ -255,8 +271,23 @@ export async function setUploadTimeOffset(
   const id = uploadId(bucket, uploadPrefix);
   const existing = await db.uploads.get(id);
   await db.uploads.put({
-    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString() }),
+    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), pendingLocation: null }),
     timeOffset: offset,
+  });
+}
+
+/** Set (or clear) the upload-level pending location correction — mirrors
+ *  `setUploadTimeOffset` exactly; see its doc comment. */
+export async function setUploadPendingLocation(
+  bucket: string,
+  uploadPrefix: string,
+  location: Deployment | null,
+): Promise<void> {
+  const id = uploadId(bucket, uploadPrefix);
+  const existing = await db.uploads.get(id);
+  await db.uploads.put({
+    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), timeOffset: null }),
+    pendingLocation: location,
   });
 }
 

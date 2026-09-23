@@ -45,6 +45,12 @@ Feature: Identify species before the batch is uploaded
     # No step seeds sparcd-flip directly: the Uploader creates the record, the
     # Tagger reads and updates it, and the Uploader consumes it on return.
 
+  @cross-tool
+  Scenario: The real Tagger warns when a batch has only EXIF ModifyDate
+    Given a ModifyDate-only batch has been scanned
+    When "Tag species first" is chosen through the unified dev origin
+    Then the real Tagger labels the timestamp as EXIF Modified
+
   @A1
   Scenario: Tags made in the Tagger come back on the batch
     Given a batch was tagged in the Tagger and handed back

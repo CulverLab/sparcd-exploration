@@ -30,8 +30,9 @@ function keyConfig(
 export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   const cfg = useStore((state) => state.s3Config);
   const connectionId = useStore((state) => state.connectionId);
+  const collectionKey = useStore((state) => state.selectedCollectionKey);
   const localRecord = useLocalBatch((state) => (state.status === 'ready' ? state.record : null));
-  const species = useSpecies(cfg, connectionId);
+  const species = useSpecies(cfg, connectionId, collectionKey);
   const activeProfileId = useKeyBindings((state) => state.activeProfileId);
   const activateProfile = useKeyBindings((state) => state.activateProfile);
   const stageSpecies = useKeyBindings((state) => state.stageSpecies);

@@ -30,6 +30,7 @@ import {
   readStore,
   writeStore,
   waitForDirtyDrafts,
+  waitForSyncDialogClosed,
 } from './support/flows';
 
 const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
@@ -42,6 +43,14 @@ const summaryCell = (page: Page, label: string) =>
   page.locator('div.border.text-center').filter({ hasText: label });
 
 const dialogClose = (page: Page) => page.getByRole('button', { name: 'Close', exact: true }).first();
+
+// A live sync is over once its dialog offers Close, or has already closed
+// itself (#304) — a slow refresh uses up the whole auto-close window.
+async function syncFinished(page: Page): Promise<boolean> {
+  const footerClose = page.locator('footer').getByRole('button', { name: 'Close', exact: true });
+  if (await footerClose.count()) return true;
+  return (await page.getByRole('heading', { name: 'Sync to S3' }).count()) === 0;
+}
 
 Given('an upload with local edits is open in the tagging workspace', async ({ page }) => {
   await openWorkspace(page);
@@ -103,6 +112,70 @@ Then(
     expect(obs.some((o) => o.scientificName === 'Puma concolor')).toBe(true);
   },
 );
+
+// --- Auto-close after a live sync (#304) ------------------------------------
+
+Then('the Sync dialog closes on its own, with no Close click needed', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+});
+
+Then('focus returns to the Sync opener', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Sync…', exact: true })).toBeFocused();
+});
+
+const POST_SYNC_REFRESH_DELAY_MS = 1_500;
+
+Given('the canonical refresh after a sync is delayed', async ({ s3 }) => {
+  // Preview, live planning, and post-write re-grounding read first. Delay only
+  // the fourth read: the invalidated TagImage refresh that determines when
+  // auto-close is safe.
+  s3.delayGetAfter(`${PREFIX_A}observations.csv`, 4, POST_SYNC_REFRESH_DELAY_MS);
+});
+
+Given('the refresh after the live sync will fail', async ({ s3 }) => {
+  // The preview, live sync plan, and post-write re-grounding each read this
+  // object before the invalidated TagImage query. Fail that fourth read.
+  s3.failGetsAfter(`${PREFIX_A}observations.csv`, 4);
+});
+
+When('the live sync begins', async ({ page }) => {
+  await openSyncDialog(page);
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+});
+
+Then(
+  'the Sync dialog waits for the delayed refresh and closes without another delay',
+  async ({ page, s3 }) => {
+    // The post-sync refresh is held for 1.5 seconds. Allow it to finish, then
+    // require a prompt close. A second 900ms timer would leave the completed
+    // dialog present during this short assertion window.
+    await page.waitForTimeout(2_200);
+    await expect(page.getByRole('heading', { name: 'Sync to S3' })).toHaveCount(0, {
+      timeout: 500,
+    });
+  },
+);
+
+Then('the refresh error remains available after the success close window', async ({ page, s3 }) => {
+  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: error');
+  expect(canonicalPuts(s3.puts).map((put) => put.key)).toContain(`${PREFIX_A}observations.csv`);
+  await page.waitForTimeout(1_100);
+  await expect(page.getByText('Failed to read observations.csv (HTTP 503).')).toBeVisible();
+});
+
+When('the dry-run is run', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run dry-run' }).click();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
+
+Then('the Sync dialog stays open showing the dry-run result', async ({ page }) => {
+  // Wait past the live-sync close interval. This proves a dry-run does not
+  // merely have a delayed close scheduled.
+  await page.waitForTimeout(1_100);
+  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible();
+  await expect(page.getByText('Dry-run complete — nothing was written.')).toBeVisible();
+});
 
 Then(
   "the detagged image's slot in observations.csv is a blank placeholder, not absent",
@@ -270,6 +343,7 @@ Then(
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
+      'deployments.csv',
       'UploadMeta.json',
       'manifest.json',
     ]);
@@ -293,6 +367,7 @@ Then('the snapshot is only counted as recoverable once its manifest is written',
   expect(manifest.files.map((f) => f.name)).toEqual([
     'media.csv',
     'observations.csv',
+    'deployments.csv',
     'UploadMeta.json',
   ]);
 });
@@ -364,7 +439,7 @@ Given('a sync completed and wrote the changes', async ({ page }) => {
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await dialogClose(page).click();
+  await waitForSyncDialogClosed(page);
 });
 
 Then('the images whose changes were written are no longer listed as unsaved', async ({ page }) => {
@@ -388,6 +463,143 @@ Then('the workspace reloads the upload from the newly stored files', async ({ pa
   expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000Z');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.getByText('2024-01-10 09:00')).toBeVisible();
+});
+
+// --- Species stays visible across the post-sync refresh (#306) --------------
+
+// A live sync reads `observations.csv` twice: once inside `performSync`
+// itself (re-grounding the sync-conflict base right after the write) and
+// again via `SyncDialog`'s own `invalidateQueries` call (refreshing the
+// on-screen `TagImage[]`). The delay below applies to every matching request,
+// so it holds open BOTH reads in sequence — the race this guards against
+// (a clean draft rendered against a not-yet-refreshed base) can only land in
+// the second of those two windows, not the first.
+const REFRESH_DELAY_MS = 1200;
+
+Given('the canonical refresh after a sync is held open', async ({ s3 }) => {
+  s3.delay(`${PREFIX_A}observations.csv`, REFRESH_DELAY_MS);
+});
+
+When('the sync is run without waiting for it to finish', async ({ page }) => {
+  await openSyncDialog(page);
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+});
+
+Then('the tile still shows the species before the sync completes', async ({ page, s3 }) => {
+  // Sample the tile continuously until the dialog's own cleanup (marking
+  // drafts clean, refreshing the query) has fully finished — signalled by the
+  // footer's Cancel button relabelling to Close, which only happens once
+  // `phase` reaches 'done'. "Synced — canonical files replaced." appears the
+  // instant `performSync` resolves, well before that cleanup runs, so it is
+  // NOT a usable stop condition here. A `toContainText` retry-until-match
+  // assertion would also happily wait right past a transient dropout instead
+  // of catching it — hence sampling instead of a single check.
+  const samples: string[] = [];
+  const deadline = Date.now() + REFRESH_DELAY_MS * 2 + 10000;
+  while (Date.now() < deadline) {
+    if (await syncFinished(page)) break;
+    samples.push((await gridCell(page, 'IMG002.JPG').innerText()) || '(empty)');
+    await page.waitForTimeout(100);
+  }
+  expect(await syncFinished(page)).toBe(true);
+  expect(samples.length).toBeGreaterThan(0); // the sync must have actually taken a while to observe
+  expect(samples.every((s) => s.includes('Coyote'))).toBe(true);
+  s3.delays.clear();
+});
+
+/** The corrected timestamp rendered in the Focus footer for its active frame. */
+async function focusShownTime(page: Page): Promise<string> {
+  const text = (await page.locator('div.mt-1 span.flex.flex-col').first().innerText()) ?? '';
+  return text.match(/\d{4}-\d{1,2}-\d{1,2} \d{2}:\d{2}(?::\d{2})?/)?.[0] ?? text.split('\n')[0].trim();
+}
+
+Given('Focus is showing an image with a shifted capture time', async ({ page }) => {
+  await focusFrame(page, 'IMG001.JPG');
+  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await expect.poll(async () => focusShownTime(page)).toBe('2024-01-10 09:00');
+});
+
+Then('the shifted timestamp remains visible before the sync completes', async ({ page, s3 }) => {
+  const samples: string[] = [];
+  const deadline = Date.now() + REFRESH_DELAY_MS * 2 + 10000;
+  while (Date.now() < deadline) {
+    if (await syncFinished(page)) break;
+    samples.push(await focusShownTime(page));
+    await page.waitForTimeout(100);
+  }
+  expect(await syncFinished(page)).toBe(true);
+  expect(samples.length).toBeGreaterThan(0);
+  expect(samples.every((time) => time === '2024-01-10 09:00')).toBe(true);
+  s3.delays.clear();
+});
+
+Given('the post-sync canonical refresh will fail', async ({ s3 }) => {
+  // The dialog preview, live sync plan, and post-write re-grounding each read
+  // observations.csv before the invalidated TagImage query does. Let those
+  // three reads through, then fail the refresh (and its retry).
+  s3.failGetsAfter(`${PREFIX_A}observations.csv`, 3);
+});
+
+When('the sync is run and its refresh fails', async ({ page }) => {
+  await openSyncDialog(page);
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+});
+
+Then('the synced species remains visible as an unsynced edit', async ({ page, s3 }) => {
+  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: error');
+  await expect(page.getByText('Failed to read observations.csv (HTTP 503).')).toBeVisible();
+  expect(canonicalPuts(s3.puts).map((put) => put.key)).toContain(`${PREFIX_A}observations.csv`);
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
+  const drafts = (await readStore(page, 'drafts')) as { mediaPath: string; dirty: boolean }[];
+  expect(drafts.some((draft) => draft.mediaPath.endsWith('IMG002.JPG') && draft.dirty)).toBe(true);
+});
+
+When('the sync is run and only its own post-sync refresh fails', async ({ page, s3 }) => {
+  const obsKey = `${PREFIX_A}observations.csv`;
+  // `runSyncNow` flips the header pill to "synced" between `performSync`
+  // resolving and its own `invalidateQueries` refetch. Delaying every read of
+  // observations.csv holds that refetch open long enough to arm the failure
+  // against it and against nothing earlier — a fixed read count would instead
+  // land on `performSync`'s own post-write re-grounding read.
+  s3.delay(obsKey, 2000);
+  await openSyncDialog(page);
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced', {
+    timeout: 15_000,
+  });
+  s3.delays.delete(obsKey);
+  s3.failGetsAfter(obsKey, 0);
+});
+
+Then('the sync dialog reports the refresh failure', async ({ page, s3 }) => {
+  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: error');
+  await expect(page.getByText('Failed to read observations.csv (HTTP 503).')).toBeVisible();
+  // One failure is all this scenario needs. Left standing it also poisons the
+  // workspace's own retry of the same query, which strips the whole Tag
+  // section down to a bare error message.
+  s3.getFailures.clear();
+});
+
+When('the refresh recovers and the upload refetches without a reload', async ({ page, s3 }) => {
+  const obsKey = `${PREFIX_A}observations.csv`;
+  const readsBefore = s3.readCount(obsKey);
+  // A reload would re-read the (already cleared) offset from Dexie and hide
+  // the bug; TanStack Query's focus manager refetches in place instead.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await expect.poll(() => s3.readCount(obsKey), { timeout: 15_000 }).toBeGreaterThan(readsBefore);
+  const close = dialogClose(page);
+  if (await close.count()) await close.click();
+});
+
+Then('Focus shows the stored capture time with no whole-upload shift in effect', async ({ page }) => {
+  await expect.poll(async () => focusShownTime(page)).toBe('2024-01-10 09:00');
+  await expect(page.getByText(/clock \+/)).toHaveCount(0);
 });
 
 When('the estimated timestamp is corrected', async ({ page }) => {
@@ -434,8 +646,13 @@ Then('the close and cancel controls are unavailable until it finishes', async ({
   await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible({
     timeout: 30000,
   });
-  await expect(dialogClose(page)).toBeEnabled();
+  // The delayed write has completed. Release the test-only latency before the
+  // post-sync refresh so this scenario exercises the busy controls, not the
+  // separate delayed-cleanup behavior covered above.
   s3.delays.clear();
+  // A successful live sync now closes the dialog itself; it must never offer
+  // an enabled dismissal control while the delayed write is still in flight.
+  await waitForSyncDialogClosed(page);
 });
 
 // --- Resume an interrupted sync ---------------------------------------------
@@ -525,7 +742,7 @@ Then(
     expect(await readStore(page, 'syncJournals')).toHaveLength(0);
     const drafts = (await readStore(page, 'drafts')) as { dirty: boolean }[];
     expect(drafts.some((d) => d.dirty)).toBe(true);
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
     await openSyncDialog(page);
     await expect(page.getByText(/Would write|No local edits/)).toBeVisible();
     expect(s3.puts.length).toBeGreaterThan(0);
@@ -595,7 +812,7 @@ Then(
     await page.getByRole('button', { name: 'Sync now' }).click();
     await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced');
     await record();
-    await dialogClose(page).click();
+    await waitForSyncDialogClosed(page);
 
     // conflict — someone else rewrites a canonical file.
     await focusFrame(page, 'IMG005.JPG');

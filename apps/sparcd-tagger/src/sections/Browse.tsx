@@ -44,7 +44,7 @@ export function Browse() {
 
   const collections = useCollections(cfg, connectionId);
   const uploads = useUploads(cfg, connectionId, collectionKey);
-  const species = useSpecies(cfg, connectionId); // loaded once; surfaced as a status line
+  const species = useSpecies(cfg, connectionId, collectionKey); // loaded for the selected collection
   const summaries = useUploadSummaries(cfg, connectionId, collectionKey, uploads.data);
   const draftStates = useUploadDraftStates(connectionId, collectionKey);
 
@@ -128,7 +128,7 @@ export function Browse() {
           {species.isLoading && 'Loading species vocabulary…'}
           {species.isError && `Species vocabulary unavailable: ${(species.error as Error).message}`}
           {species.data &&
-            `${species.data.species.length} species loaded from ${species.data.settingsBucket}` +
+            `${species.data.species.length} species loaded from ${species.data.sourceBucket}/${species.data.sourceKey}` +
               (species.data.skipped.length ? ` (${species.data.skipped.length} skipped)` : '')}
         </p>
       </aside>
@@ -208,13 +208,13 @@ export function Browse() {
             {!uploads.isError && uploadCount > 0 && (
               <div className="browse-upload-table bg-panel border border-rule">
                 {/* Column header */}
-                <div className="browse-upload-header browse-upload-grid hidden md:grid gap-4 px-4 py-2.5 border-b border-rule text-[11px] font-[600] tracking-[0.14em] uppercase text-inkSoft">
+                <div className={`hidden md:grid ${uploadGrid} gap-4 px-4 py-2.5 border-b border-rule text-[11px] font-[600] tracking-[0.14em] uppercase text-inkSoft`}>
                   <span data-column="date">Date</span>
                   <span data-column="upload">Upload</span>
                   <span data-column="deployment">Deployment</span>
-                  <span data-column="images" className="browse-upload-images text-right">Images</span>
-                  <span data-column="tagged" className="browse-upload-tagged">Tagged</span>
-                  <span data-column="sync" className="browse-upload-sync">Sync</span>
+                  <span data-column="images" className={`${imagesCell} text-right`}>Images</span>
+                  <span data-column="tagged" className="md:hidden browse-md:block">Tagged</span>
+                  <span data-column="sync" className={syncCell}>Sync</span>
                   <span />
                 </div>
 
@@ -242,6 +242,21 @@ export function Browse() {
   );
 }
 
+// Column tracks for the upload table, shared by the header and every row so the
+// two cannot drift. `browse-sm/md/lg` are the table's own container size steps
+// (defined in tailwind.config.ts): each adds the column whose track it just
+// made room for. Below `md` the row stacks into a single column and every cell
+// shows, which is why each supporting cell hides at `md` before its step
+// restores it.
+const uploadGrid =
+  'grid-cols-[1fr] md:grid-cols-[120px_minmax(16rem,1fr)_160px_70px] ' +
+  'browse-sm:grid-cols-[120px_minmax(16rem,1fr)_160px_140px_70px] ' +
+  'browse-md:grid-cols-[120px_minmax(16rem,1fr)_160px_minmax(0,1.2fr)_140px_70px] ' +
+  'browse-lg:grid-cols-[120px_minmax(16rem,1fr)_160px_70px_minmax(0,1.2fr)_140px_70px]';
+
+const syncCell = 'md:hidden browse-sm:block';
+const imagesCell = 'md:hidden browse-lg:block';
+
 function UploadRow({
   stamp,
   query,
@@ -261,7 +276,7 @@ function UploadRow({
   return (
     <button
       onClick={onOpen}
-      className="browse-upload-grid w-full text-left grid grid-cols-[1fr] md:grid gap-2 md:gap-4 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group"
+      className={`w-full text-left grid ${uploadGrid} gap-2 md:gap-4 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group`}
     >
       <span data-column="date" className="font-mono text-[12.5px] text-inkSoft">{date}</span>
 
@@ -274,11 +289,11 @@ function UploadRow({
         {loading ? <Skeleton w="w-24" /> : s?.deployments.length ? s.deployments.join(', ') : '—'}
       </span>
 
-      <span data-column="images" className="browse-upload-images font-mono text-[13px] text-ink text-right">
+      <span data-column="images" className={`${imagesCell} font-mono text-[13px] text-ink text-right`}>
         {loading ? <Skeleton w="w-12" /> : query?.isError ? '—' : s!.imageCount.toLocaleString()}
       </span>
 
-      <span data-column="tagged" className="browse-upload-tagged items-center gap-2.5">
+      <span data-column="tagged" className="flex md:hidden browse-md:flex items-center gap-2.5">
         {loading || query?.isError || !s ? (
           <Skeleton w="w-full" />
         ) : (
@@ -293,7 +308,7 @@ function UploadRow({
         )}
       </span>
 
-      <span data-column="sync" className="browse-upload-sync">
+      <span data-column="sync" className={syncCell}>
         <SyncPill state={draftState ?? 'local-only'} />
       </span>
 
