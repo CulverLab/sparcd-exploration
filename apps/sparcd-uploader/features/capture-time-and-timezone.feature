@@ -53,6 +53,13 @@ Feature: Establish the true capture time of every file
     And a file between two timestamped files sits midway between them
 
   @unmapped
+  Scenario: Descending camera-time neighbours are still interpolated
+    Given filename-order neighbours have descending camera times with missing files between them
+    Then the missing files show descending interpolated estimates
+    When one descending estimate is overridden by hand
+    Then clearing the override returns it to its descending estimate
+
+  @unmapped
   Scenario: The first and last files are placed ten minutes past their only neighbour
     Given the batch begins and ends with a file carrying no camera time
     Then the first file sits ten minutes before the earliest camera time
@@ -90,6 +97,17 @@ Feature: Establish the true capture time of every file
     Then the deployment is flagged as having a timestamp issue
     And each file whose time the camera did not write carries a marker saying where it came from
     And files the camera did time carry no marker
+
+  Scenario: EXIF ModifyDate is warned and can be overridden
+    Given a file whose only EXIF time is ModifyDate
+    Then it is shown as modified metadata that needs review
+    When that modified metadata time is overridden by hand
+    Then the modified metadata time is shown as a manual override
+
+  Scenario: An EXIF ModifyDate override travels in the uploader's Tagger hand-off
+    Given a file whose only EXIF time is ModifyDate
+    When that modified metadata time is overridden by hand
+    Then the hand-off gives the Tagger the overridden time
 
   @unmapped
   Scenario: Upload is never blocked by a missing capture time

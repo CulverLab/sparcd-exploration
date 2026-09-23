@@ -36,12 +36,25 @@ describe('estimateCaptureTimes', () => {
     // Each one reports its own distance from the reference, not a flat 10.
     expect(estimates.map((e) => e.offsetMinutes)).toEqual(side === 'previous' ? [10, 20, 30] : [30, 20, 10]);
   });
-  it('uses file modification time for an entire inverted run without references', () => {
+  it('interpolates an entire descending run between its camera-time neighbours', () => {
     const estimates = estimateCaptureTimes([file('1', time('20')), file('2'), file('3'), file('4', time('00'))], 'America/Phoenix');
-    for (const e of estimates.values()) expect(e).toEqual({ naive: inputValueToNaive('2024-01-10T00:30:45'), method: 'file-modified' });
+    expect([...estimates.values()]).toEqual([
+      { naive: inputValueToNaive('2024-01-10T08:13:20'), method: 'interpolated', before: '1', after: '4' },
+      { naive: inputValueToNaive('2024-01-10T08:06:40'), method: 'interpolated', before: '1', after: '4' },
+    ]);
   });
   it('renders modification times in Phoenix when there are no references', () => {
     expect(values([file('1')], 'America/Phoenix')).toEqual(['2024-01-10T00:30:45']);
+  });
+  it('does not use EXIF ModifyDate as an interpolation anchor', () => {
+    const files = [
+      file('1', time('00')),
+      file('2', time('10'), { exifTimestampSource: 'exif-modify' }),
+      file('3', time('20')),
+    ];
+    expect(estimateCaptureTimes(files, 'UTC').get('2')).toMatchObject({
+      method: 'interpolated', naive: inputValueToNaive(time('10')),
+    });
   });
   it('uses natural order and leaves input order untouched', () => {
     const files = [file('IMG_10'), file('IMG_9', time('00')), file('IMG_11', time('20'))];

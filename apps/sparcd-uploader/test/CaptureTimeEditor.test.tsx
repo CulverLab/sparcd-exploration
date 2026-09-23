@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { FileEntry } from '../src/store';
 import { inputValueToNaive } from '../src/lib/exifTime';
-import { CaptureTimeEditor, sequenceSpread } from '../src/components/CaptureTimeEditor';
+import { CaptureTimeEditor, sequenceSpread, spreadStartFor } from '../src/components/CaptureTimeEditor';
 
 const state = vi.hoisted(() => ({
   files: [] as FileEntry[], uploadTimeZone: 'UTC',
@@ -49,6 +49,29 @@ it('flags a hand-set time outside the camera-time range and keeps the bar on the
   expect(html).toMatch(/bg-warn" style="left:0%;opacity:1"/);
 });
 
+it('shows each folder\'s own spread start on its rendered capture-time card (#256)', () => {
+  state.files = [
+    {
+      id: 'folder-a/1.jpg', relPath: 'folder-a/1.jpg', fileName: '1.jpg', size: 1,
+      mediaKind: 'image', processState: 'ready', file: new File(['x'], '1.jpg'),
+      manualNaive: at('2026-07-01T08:00:00'), manualSource: 'spread',
+      manualSpreadStart: at('2026-07-01T08:00:00'),
+      manualSpreadMethod: 'sequence',
+    },
+    {
+      id: 'folder-b/1.jpg', relPath: 'folder-b/1.jpg', fileName: '1.jpg', size: 1,
+      mediaKind: 'image', processState: 'ready', file: new File(['x'], '1.jpg'),
+      manualNaive: at('2026-07-01T14:00:00'), manualSource: 'spread',
+      manualSpreadStart: at('2026-07-01T14:00:00'),
+      manualSpreadMethod: 'sequence',
+    },
+  ] as FileEntry[];
+
+  const html = renderToStaticMarkup(<CaptureTimeEditor files={state.files} />);
+  expect(html).toContain('spread from 2026-07-01 08:00:00');
+  expect(html).toContain('spread from 2026-07-01 14:00:00');
+});
+
 // Both spread fields are the user's to empty, and an empty one has no sensible
 // substitute — Apply and the summary line wait for a value rather than guess.
 describe('sequenceSpread', () => {
@@ -64,5 +87,23 @@ describe('sequenceSpread', () => {
 
   it.each(['', '0', 'abc', '1.5', '1e300', String(367 * 86_400)])('gives nothing for a spacing of %o', (spacing) => {
     expect(sequenceSpread(start, spacing)).toBeUndefined();
+  });
+});
+
+// The exact value `applySpread` stamps onto every touched file as
+// `manualSpreadStart` — the persisted ground truth "spread from" reads back
+// from, instead of re-deriving it batch-wide after the fact (#256).
+describe('spreadStartFor', () => {
+  it('is the typed start for a sequence spread', () => {
+    const options = sequenceSpread('2026-07-01T08:00:00', '30')!;
+    expect(spreadStartFor(options)).toEqual(at('2026-07-01T08:00:00'));
+  });
+
+  it('is undefined for a file-modified spread — no single start to report', () => {
+    expect(spreadStartFor({ kind: 'file-modified', timeZone: 'UTC' })).toBeUndefined();
+  });
+
+  it('is undefined when nothing describes a spread yet', () => {
+    expect(spreadStartFor(undefined)).toBeUndefined();
   });
 });

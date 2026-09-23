@@ -8,6 +8,8 @@ const testDir = defineBddConfig({
   tags: 'not @manual and not @cross-tool and not @offline',
   missingSteps: 'fail-on-gen',
 });
+const port = Number(process.env.UPLOADER_TEST_PORT ?? 5311);
+const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir,
@@ -18,7 +20,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5311',
+    baseURL,
     headless: true,
     timezoneId: 'America/New_York',
     locale: 'en-US',
@@ -26,8 +28,8 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'pnpm dev --port 5311 --strictPort',
-    url: 'http://localhost:5311/sparcd-exploration/uploader/',
+    command: `pnpm dev --port ${port} --strictPort`,
+    url: `${baseURL}/sparcd-exploration/uploader/`,
     reuseExistingServer: false,
     timeout: 120_000,
     // The dev-only endpoint prefill would otherwise override the "remembered

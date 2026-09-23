@@ -13,7 +13,7 @@ import {
   type CollectionRef,
 } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
-import { parseUploadMeta, parseDeployments } from '@sparcd/camtrap';
+import { parseUploadMeta, parseDeployments, type Deployment } from '@sparcd/camtrap';
 import { sha256Hex } from './hash';
 import type { CanonicalState, SyncIO, SnapshotManifest } from './sync';
 import type { SyncJournal, CanonicalRole } from './syncJournal';
@@ -126,6 +126,27 @@ export async function loadUploadSummary(
   };
 }
 
+/** The upload's current recorded location, straight from `deployments.csv`
+ *  (row 0 — an upload has exactly one location by convention). `null` when the
+ *  file is missing/unreadable or empty, so a display caller can degrade to "no
+ *  location on file" instead of throwing. Distinct from `loadCanonicalState`,
+ *  which grounds the sync base — this is read-only, UI-display plumbing. */
+export async function loadCurrentDeployment(
+  cfg: S3Config,
+  bucket: string,
+  uploadPrefix: string,
+): Promise<Deployment | null> {
+  const client = getClient(cfg);
+  try {
+    const rows = parseDeployments(
+      new TextDecoder().decode(await client.getObject(bucket, `${uploadPrefix}${CANONICAL_FILE.deployments}`)),
+    );
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type UploadImage = {
   key: string; // full object key
   fileName: string;
@@ -171,45 +192,54 @@ export function presignImage(cfg: S3Config, bucket: string, key: string): Promis
 const CANONICAL_FILE = {
   media: 'media.csv',
   observations: 'observations.csv',
+  deployments: 'deployments.csv',
   uploadMeta: 'UploadMeta.json',
 } as const;
 
-/** Load one canonical object with its ETag + content hash. */
-async function loadObject(
+/** Load one canonical object with its ETag + content hash, preserving raw S3
+ * errors for callers that need to distinguish a missing optional object. */
+async function loadObjectRaw(
   cfg: S3Config,
   bucket: string,
   key: string,
-  what: string,
 ): Promise<{ text: string; etag: string; hash: string }> {
+  // HEAD first for the ETag, then GET the bytes. The ETag is the IfMatch
+  // ground; a concurrent change between the two only risks a spurious sync
+  // conflict (safe-fail), never a bad write — the write re-checks IfMatch.
   const client = getClient(cfg);
-  try {
-    // HEAD first for the ETag, then GET the bytes. The ETag is the IfMatch
-    // ground; a concurrent change between the two only risks a spurious sync
-    // conflict (safe-fail), never a bad write — the write re-checks IfMatch.
-    const stat = await client.statObject(bucket, key);
-    const bytes = await client.getObject(bucket, key);
-    return {
-      text: new TextDecoder().decode(bytes),
-      etag: stat.etag ?? '',
-      hash: await sha256Hex(bytes),
-    };
-  } catch (err) {
-    throw translateReadError(err, what);
-  }
+  const stat = await client.statObject(bucket, key);
+  const bytes = await client.getObject(bucket, key);
+  return { text: new TextDecoder().decode(bytes), etag: stat.etag ?? '', hash: await sha256Hex(bytes) };
 }
 
-/** Load the three canonical files an upload grounds on, with ETags + hashes. */
+/** Load one required canonical object, translating any S3 read failure. */
+async function loadObject(cfg: S3Config, bucket: string, key: string, what: string) {
+  try { return await loadObjectRaw(cfg, bucket, key); }
+  catch (err) { throw translateReadError(err, what); }
+}
+
+/** Load the four canonical files an upload grounds on, with ETags + hashes.
+ *  `deployments.csv` is the one optional file — some uploads have none (see
+ *  `loadUploadSummary`'s same tolerance) — so a missing/unreadable one grounds
+ *  as an empty file rather than failing the whole workspace load. A location
+ *  correction on such an upload writes a brand-new `deployments.csv`. */
 export async function loadCanonicalState(
   cfg: S3Config,
   bucket: string,
   uploadPrefix: string,
 ): Promise<CanonicalState> {
-  const [media, observations, uploadMeta] = await Promise.all([
+  const [media, observations, deployments, uploadMeta] = await Promise.all([
     loadObject(cfg, bucket, `${uploadPrefix}${CANONICAL_FILE.media}`, 'media.csv'),
     loadObject(cfg, bucket, `${uploadPrefix}${CANONICAL_FILE.observations}`, 'observations.csv'),
+    loadObjectRaw(cfg, bucket, `${uploadPrefix}${CANONICAL_FILE.deployments}`).catch(
+      async (err) => {
+        if (!isNotFound(err)) throw translateReadError(err, 'deployments.csv');
+        return { text: '', etag: '', hash: await sha256Hex('') };
+      },
+    ),
     loadObject(cfg, bucket, `${uploadPrefix}${CANONICAL_FILE.uploadMeta}`, 'UploadMeta.json'),
   ]);
-  return { media, observations, uploadMeta };
+  return { media, observations, deployments, uploadMeta };
 }
 
 // --- Snapshots (P5 recovery source) ----------------------------------------
@@ -315,12 +345,20 @@ export async function listCollectionSnapshots(
   return out.filter((u) => u.snapshots.length > 0);
 }
 
-/** Load the three canonical bodies of one snapshot, to restore them in place. */
+export function isNotFound(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
+}
+
+/** Load the canonical bodies of one snapshot, to restore them in place. A
+ *  snapshot written before location-change support has no `deployments.csv`
+ *  — that role comes back absent rather than erroring, so the caller can
+ *  treat it as "leave the current location alone" instead of a read failure. */
 export async function loadSnapshotBodies(
   cfg: S3Config,
   bucket: string,
   snapshotPrefix: string,
-): Promise<Record<CanonicalRole, string>> {
+): Promise<Partial<Record<CanonicalRole, string>>> {
   const client = getClient(cfg);
   const read = async (name: string, what: string): Promise<string> => {
     try {
@@ -334,7 +372,15 @@ export async function loadSnapshotBodies(
     read(CANONICAL_FILE.observations, 'snapshot observations.csv'),
     read(CANONICAL_FILE.uploadMeta, 'snapshot UploadMeta.json'),
   ]);
-  return { media, observations, uploadMeta };
+  let deployments: string | undefined;
+  try {
+    deployments = new TextDecoder().decode(
+      await client.getObject(bucket, `${snapshotPrefix}${CANONICAL_FILE.deployments}`),
+    );
+  } catch (err) {
+    if (!isNotFound(err)) throw translateReadError(err, 'snapshot deployments.csv');
+  }
+  return { media, observations, deployments, uploadMeta };
 }
 
 /**

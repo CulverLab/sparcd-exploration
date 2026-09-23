@@ -34,6 +34,9 @@ export type ViewKind = 'grid' | 'list';
 
 type OverviewProps = {
   list: TagImage[];
+  /** Canonical positions to display. Keeping these positions lets selection and
+   * keyboard navigation remain anchored to the unfiltered upload. */
+  visibleIndices?: number[];
   grouping: BurstGrouping;
   focus: number;
   selected: Set<number>;
@@ -81,6 +84,7 @@ function useElementWidth(ref: React.RefObject<HTMLElement>): number {
 
 export function Overview({
   list,
+  visibleIndices,
   grouping,
   focus,
   selected,
@@ -102,6 +106,15 @@ export function Overview({
   const { flat, rowOfImage } = useMemo(() => {
     const items: FlatItem[] = [];
     const rowOf = new Array<number>(list.length);
+    if (visibleIndices) {
+      for (let offset = 0; offset < visibleIndices.length; offset += cols) {
+        const indices = visibleIndices.slice(offset, offset + cols);
+        const rowIdx = items.length;
+        for (const idx of indices) rowOf[idx] = rowIdx;
+        items.push({ kind: 'row', indices });
+      }
+      return { flat: items, rowOfImage: rowOf };
+    }
     for (const b of grouping.bursts) {
       if (grouping.banded) items.push({ kind: 'band', burst: b });
       for (let i = b.start; i <= b.end; i += cols) {
@@ -112,7 +125,7 @@ export function Overview({
       }
     }
     return { flat: items, rowOfImage: rowOf };
-  }, [grouping, cols, list.length]);
+  }, [grouping, cols, list.length, visibleIndices]);
 
   const virtualizer = useVirtualizer({
     count: flat.length,

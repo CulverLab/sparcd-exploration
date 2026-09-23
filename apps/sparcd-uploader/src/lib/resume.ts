@@ -348,6 +348,7 @@ export async function ensureBundle(
         relPath: rec.localPath,
         processState: 'ready',
         exifNaive: fresh.exifNaive,
+        exifTimestampSource: fresh.exifTimestampSource,
         file: attached.get(rec.localPath)!,
       });
     } else if (rec.captureTimestamp && !rec.timestampSource) {
@@ -365,8 +366,13 @@ export async function ensureBundle(
   const estimates = estimateCaptureTimes(estimateInputs, timeZone);
 
   const timeFor = (rec: FileRecord): Pick<FileRecord, 'captureTimestamp' | 'timestampSource'> => {
-    const exifNaive = inspected.get(rec.localPath)?.exifNaive;
-    if (exifNaive) return { captureTimestamp: naiveInZoneToUtcIso(exifNaive, timeZone) };
+    const fresh = inspected.get(rec.localPath);
+    if (fresh?.exifNaive) {
+      return {
+        captureTimestamp: naiveInZoneToUtcIso(fresh.exifNaive, timeZone),
+        timestampSource: fresh.exifTimestampSource,
+      };
+    }
     if (rec.captureTimestamp) return { captureTimestamp: rec.captureTimestamp, timestampSource: rec.timestampSource };
     const estimate = estimates.get(rec.localPath)!;
     return { captureTimestamp: naiveInZoneToUtcIso(estimate.naive, timeZone), timestampSource: estimate.method };

@@ -1,6 +1,6 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
-import { clipVideo, jpegAt, jpegNoTime, standardBatch } from './batches';
+import { clipVideo, jpegAt, jpegModifyDateOnly, jpegNoTime, standardBatch } from './batches';
 import { rescanFromAssign, writtenCsvRows } from './helpers';
 import { LEGACY_ZONE } from './fixtures-data';
 
@@ -149,6 +149,38 @@ Then('a file between two timestamped files sits midway between them', async ({ a
   await expect(app.page.getByText('10 min after IMG_0003.JPG (last file)')).toBeVisible();
 });
 
+Given('filename-order neighbours have descending camera times with missing files between them', async ({ app }) => {
+  await rescanFromAssign(app, [
+    jpegAt('IMG_0001.JPG', '2026:07:01 12:20:00'),
+    jpegNoTime('IMG_0002.JPG'),
+    jpegNoTime('IMG_0003.JPG'),
+    jpegAt('IMG_0004.JPG', '2026:07:01 12:00:00'),
+  ]);
+  await app.chooseDeployment('Bear Canyon');
+});
+
+Then('the missing files show descending interpolated estimates', async ({ app }) => {
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 12:13:20');
+  await expect(card(app, 'IMG_0003.JPG')).toContainText('2026-07-01 12:06:40');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+  await expect(card(app, 'IMG_0003.JPG')).toContainText('EST.');
+  await expect(app.page.getByText('between IMG_0001.JPG and IMG_0004.JPG')).toHaveCount(2);
+});
+
+When('one descending estimate is overridden by hand', async ({ app }) => {
+  await card(app, 'IMG_0002.JPG').click();
+  await overrideInput(app).fill('2026-05-05T05:05:05');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('MANUAL');
+});
+
+Then('clearing the override returns it to its descending estimate', async ({ app }) => {
+  await app.page
+    .getByRole('button', { name: '✕ back to estimate (2026-07-01 12:13:20)' })
+    .click();
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 12:13:20');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+});
+
 Given('the batch begins and ends with a file carrying no camera time', async ({ app }) => {
   await rescanFromAssign(app, [
     jpegNoTime('IMG_0000.JPG'),
@@ -260,4 +292,40 @@ Then('files the camera did time carry no marker', async ({ app }) => {
 Then('the batch can be published without anyone entering a time', async ({ app }) => {
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
+});
+
+Given('a file whose only EXIF time is ModifyDate', async ({ app }) => {
+  await rescanFromAssign(app, [jpegModifyDateOnly('MODIFIED.JPG', '2026:07:01 12:00:00')]);
+  await app.chooseDeployment('Bear Canyon');
+});
+
+Then('it is shown as modified metadata that needs review', async ({ app }) => {
+  await expect(app.page.getByRole('heading', { name: 'Capture times' })).toBeVisible();
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('MODIFIED');
+  await card(app, 'MODIFIED.JPG').click();
+  await expect(app.page.getByText('EXIF ModifyDate — review or override')).toBeVisible();
+});
+
+When('that modified metadata time is overridden by hand', async ({ app }) => {
+  const input = app.page.getByLabel('Capture time for MODIFIED.JPG');
+  if (await input.count() === 0) await card(app, 'MODIFIED.JPG').click();
+  await input.fill('2026-07-02T03:04:05');
+});
+
+Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Inspect');
+  await app.stubTagger();
+  await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  const [record] = await app.readFlipRecords();
+  expect(record.files[0]).toMatchObject({
+    exifTimestamp: '2026-07-01T12:00:00',
+    manualTimestamp: '2026-07-02T03:04:05',
+    timestampSource: 'manual',
+  });
+});
+
+Then('the modified metadata time is shown as a manual override', async ({ app }) => {
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('2026-07-02 03:04:05');
+  await expect(card(app, 'MODIFIED.JPG')).toContainText('MANUAL');
 });

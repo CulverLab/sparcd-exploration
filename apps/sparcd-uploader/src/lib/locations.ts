@@ -1,5 +1,7 @@
-// The camera-location registry — `Settings/locations.json` in the SPARC'd
-// settings bucket. Pure parsing + validation; the S3 read lives in s3.ts.
+// The camera-location registry is read from the selected collection's
+// `Collections/<UUID>/locations.json` when non-empty, with the SPARC'd
+// settings bucket's `Settings/locations.json` as the fallback. Parsing and
+// validation stay here; the S3 read lives in s3.ts.
 //
 // Shape verified against the live registry (250 entries) and the upstream
 // `Location.java` model: a JSON array of objects, each with exactly

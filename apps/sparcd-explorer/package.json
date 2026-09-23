@@ -10,6 +10,11 @@
     "build": "echo \"marimo notebooks are source; no build step\" && exit 0",
     "check": "uv run python -m compileall -q notebooks",
     "lint": "uv run python -m compileall -q notebooks",
-    "install:py": "uv sync"
+    "install:py": "uv sync",
+    "test:wasm": "node tests/remember_connection_wasm.mjs dist",
+    "test:connection": "uv run python -m unittest discover -s tests -p 'test_*.py'"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }

@@ -1,5 +1,6 @@
 import marimo
 
+
 __generated_with = "0.23.8"
 app = marimo.App(
     width="full",
@@ -15,7 +16,6 @@ def _():
     from urllib.parse import urlparse
 
     import marimo as mo
-    from minio import Minio
 
     # .env loading: only when python-dotenv is available (i.e. running locally —
     # Pyodide / WASM doesn't have it by default and has no filesystem to read).
@@ -383,7 +383,6 @@ def _():
         DEFAULT_SECRET,
         DEFAULT_SECURE,
         LOGO_DATA_URI,
-        Minio,
         SPARCD_COLLECTION_DATA_CACHE,
         THEME_CSS,
         mo,
@@ -432,19 +431,152 @@ def _(LOGO_DATA_URI, mo):
 
 
 @app.cell(hide_code=True)
-def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo):
+def _():
+    # Bridges the (non-secret) connection fields to this browser's localStorage,
+    # mirroring the Tagger/Uploader apps' "Remember me" behavior — the secret key
+    # is never persisted. anywidget runs the same in the local server and in the
+    # Pyodide/WASM export; verified directly against an exported bundle (E.11).
+    import anywidget
+    import traitlets
+
+    class StoredConnectionReader(anywidget.AnyWidget):
+        """Reads the remembered connection fields from localStorage once, on
+        mount, so the credentials form can prefill from them."""
+
+        _esm = """
+        function render({ model, el }) {
+          let stored = {};
+          try {
+            const raw = localStorage.getItem(model.get("storage_key"));
+            stored = raw ? JSON.parse(raw) : {};
+          } catch (e) {
+            /* storage unavailable (private mode) or corrupt value — treat as empty */
+          }
+          model.set("endpoint", stored.endpoint || "");
+          model.set("access_key", stored.accessKey || "");
+          model.set("secure", typeof stored.secure === "boolean" ? stored.secure : false);
+          model.save_changes();
+        }
+        export default { render };
+        """
+
+        storage_key = traitlets.Unicode("sparcd-connection").tag(sync=True)
+        endpoint = traitlets.Unicode("").tag(sync=True)
+        access_key = traitlets.Unicode("").tag(sync=True)
+        secure = traitlets.Bool(False).tag(sync=True)
+
+    class StoredConnectionWriter(anywidget.AnyWidget):
+        """Persists (or clears) the remembered connection fields whenever the
+        submitted endpoint/access key or the Remember checkbox changes."""
+
+        _esm = """
+        function render({ model, el }) {
+          function sync() {
+            const key = model.get("storage_key");
+            try {
+              if (model.get("remember")) {
+                const raw = localStorage.getItem(key);
+                const stored = raw ? JSON.parse(raw) : {};
+                localStorage.setItem(
+                  key,
+                  JSON.stringify({
+                    ...stored,
+                    endpoint: model.get("endpoint"),
+                    accessKey: model.get("access_key"),
+                    secure: model.get("secure"),
+                  }),
+                );
+              } else {
+                localStorage.removeItem(key);
+              }
+            } catch (e) {
+              /* storage unavailable (private mode / quota) — nothing to do */
+            }
+          }
+          // A re-instantiation from Python may reuse this same mounted widget
+          // rather than remounting it, so `render` can run only once while the
+          // traits keep changing — react to those updates too, not just the
+          // initial values.
+          sync();
+          model.on("change:endpoint", sync);
+          model.on("change:access_key", sync);
+          model.on("change:secure", sync);
+          model.on("change:remember", sync);
+        }
+        export default { render };
+        """
+
+        storage_key = traitlets.Unicode("sparcd-connection").tag(sync=True)
+        endpoint = traitlets.Unicode("").tag(sync=True)
+        access_key = traitlets.Unicode("").tag(sync=True)
+        secure = traitlets.Bool(False).tag(sync=True)
+        remember = traitlets.Bool(False).tag(sync=True)
+
+    return StoredConnectionReader, StoredConnectionWriter
+
+
+@app.cell(hide_code=True)
+def _(StoredConnectionReader, mo):
+    remembered = mo.ui.anywidget(StoredConnectionReader())
+    remembered
+    return (remembered,)
+
+
+@app.cell(hide_code=True)
+def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo, remembered):
     # S3 / MinIO credentials. Values prefill from .env when present, so a working
-    # local .env connects without submitting. Deployed users sign in via the form
-    # (rendered in the sidebar). This cell only defines the form; it does not display.
+    # local .env connects without submitting; failing that, from a remembered
+    # browser connection. Deployed users sign in via the form (rendered in the
+    # sidebar). This cell only defines the form; it does not display.
+    def initial_connection(default_endpoint, default_access, default_secret, default_secure, remembered):
+        """Choose browser form defaults without combining a partial secret source."""
+        has_default_connection = bool(default_endpoint and default_access and default_secret)
+        if has_default_connection:
+            return {
+                "endpoint": default_endpoint,
+                "access": default_access,
+                "secret": default_secret,
+                "secure": default_secure,
+                "remember": False,
+            }
+
+        # A remembered record always carries its endpoint alongside its secure
+        # flag, so a remembered endpoint is what tells us the flag is real
+        # rather than the reader's empty-storage default.
+        uses_remembered_endpoint = not default_endpoint and bool(remembered.endpoint)
+        uses_remembered_access = not default_access and bool(remembered.access_key)
+        return {
+            "endpoint": default_endpoint or remembered.endpoint,
+            "access": default_access or remembered.access_key,
+            "secret": "",
+            "secure": remembered.secure if uses_remembered_endpoint else default_secure,
+            "remember": uses_remembered_endpoint or uses_remembered_access,
+        }
+
+    _initial = initial_connection(
+        DEFAULT_ENDPOINT,
+        DEFAULT_ACCESS,
+        DEFAULT_SECRET,
+        DEFAULT_SECURE,
+        remembered,
+    )
+
     _endpoint_in = mo.ui.text(
-        value=DEFAULT_ENDPOINT,
+        value=_initial["endpoint"],
         label="Endpoint",
         placeholder="host[:port] or https://host",
         full_width=True,
     )
-    _access_in = mo.ui.text(value=DEFAULT_ACCESS, label="Access key", full_width=True)
-    _secret_in = mo.ui.text(value=DEFAULT_SECRET, label="Secret key", kind="password", full_width=True)
-    _secure_in = mo.ui.checkbox(value=DEFAULT_SECURE, label="Use HTTPS (when no scheme in endpoint)")
+    _access_in = mo.ui.text(value=_initial["access"], label="Access key", full_width=True)
+    _secret_in = mo.ui.text(value=_initial["secret"], label="Secret key", kind="password", full_width=True)
+    _secure_in = mo.ui.checkbox(
+        value=_initial["secure"],
+        label="Use HTTPS (when no scheme in endpoint)",
+    )
+    _remember_in = mo.ui.checkbox(
+        value=_initial["remember"],
+        label="Remember endpoint & access key on this device",
+    )
 
     creds_form = (
         mo.md("""
@@ -455,11 +587,39 @@ def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo):
         {secret}
 
         {secure}
+
+        {remember}
         """)
-        .batch(endpoint=_endpoint_in, access=_access_in, secret=_secret_in, secure=_secure_in)
+        .batch(
+            endpoint=_endpoint_in,
+            access=_access_in,
+            secret=_secret_in,
+            secure=_secure_in,
+            remember=_remember_in,
+        )
         .form(label="", bordered=False, show_clear_button=True, submit_button_label="Connect")
     )
     return (creds_form,)
+
+
+@app.cell(hide_code=True)
+def _(StoredConnectionWriter, creds_form, mo):
+    # Persists (or explicitly forgets) the submitted connection only on an
+    # actual Connect — never on the .env-driven first render — mirroring the
+    # Tagger/Uploader apps, which save at connect() time, not per keystroke.
+    _submitted = creds_form.value
+    remember_sync = None
+    if _submitted is not None:
+        remember_sync = mo.ui.anywidget(
+            StoredConnectionWriter(
+                endpoint=_submitted["endpoint"] if _submitted.get("remember") else "",
+                access_key=_submitted["access"] if _submitted.get("remember") else "",
+                secure=bool(_submitted.get("secure")),
+                remember=bool(_submitted.get("remember")),
+            )
+        )
+    remember_sync
+    return
 
 
 @app.cell(hide_code=True)
@@ -468,7 +628,6 @@ def _(
     DEFAULT_ENDPOINT,
     DEFAULT_SECRET,
     DEFAULT_SECURE,
-    Minio,
     creds_form,
     mo,
     urlparse,
@@ -502,6 +661,8 @@ def _(
             "<span>Enter S3 credentials in the sidebar to load data.</span></div>"
         )
     else:
+        from minio import Minio
+
         _raw = _creds["endpoint"]
         if "://" in _raw:
             _u = urlparse(_raw)
@@ -533,7 +694,6 @@ def _(client, mo):
     # picker can show human-readable names; surfaces S3 errors as friendly callouts.
     import json as _json
     from html import escape as _esc
-    from minio.error import S3Error as _S3Error
 
     collections_registry = []
     _connection_failed = False
@@ -552,6 +712,8 @@ def _(client, mo):
     # Skip all S3 work in that state so the registry stays empty and NO error callout
     # is shown — the connection chip already tells the user to enter credentials.
     if client is not None:
+        from minio.error import S3Error as _S3Error
+
         try:
             with mo.status.spinner(title="Reading collections…"):
                 _buckets = [b.name for b in client.list_buckets() if b.name.startswith("sparcd-")]

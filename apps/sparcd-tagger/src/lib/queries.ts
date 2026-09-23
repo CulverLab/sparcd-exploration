@@ -4,6 +4,7 @@
 
 import { useQuery, useQueries } from '@tanstack/react-query';
 import type { S3Config } from '@sparcd/types';
+import type { Deployment } from '@sparcd/camtrap';
 import {
   listCollections,
   listUploads,
@@ -12,6 +13,7 @@ import {
   listSnapshots,
   loadCanonicalState,
   loadUploadSummary,
+  loadCurrentDeployment,
   parseCollectionKey,
   type CollectionRef,
   type UploadRef,
@@ -21,6 +23,7 @@ import {
   type SnapshotRef,
 } from './s3';
 import { fetchSpecies, type SpeciesResult } from './species';
+import { fetchLocations, type LocationsResult } from './locations';
 import { buildTagImages, type TagImage } from './workspace';
 import {
   groundUpload,
@@ -145,12 +148,9 @@ export function useTagImages(
       // optimistic edit already flips its record dirty there — so a refetch that
       // resolves inside that window can't re-ground the base under active edits.
       const store = useDraftStore.getState();
-      const memDirty =
-        store.loadedKey === uploadId(bucket, uploadPrefix!) && dirtyCount(store.drafts) > 0;
-      if (
-        !existing?.mediaETag ||
-        (!memDirty && !(await hasDirtyDraftsForUpload(bucket, uploadPrefix!)))
-      ) {
+      const memDirty = store.loadedKey === uploadId(bucket, uploadPrefix!)
+        && (dirtyCount(store.drafts) > 0 || store.pendingLocation !== null);
+      if (shouldGroundUpload(existing, memDirty, await hasDirtyDraftsForUpload(bucket, uploadPrefix!))) {
         await groundUpload(bucket, uploadPrefix!, state);
       }
       return buildTagImages({
@@ -162,6 +162,16 @@ export function useTagImages(
     staleTime: 60 * 1000,
     retry: 1,
   });
+}
+
+/** Keep the canonical conflict base frozen while any local upload-level or
+ * per-image change is pending. Exported for the focused grounding regression. */
+export function shouldGroundUpload(
+  existing: { mediaETag?: string; pendingLocation?: unknown } | undefined,
+  memoryDirty: boolean,
+  persistedDirty: boolean,
+): boolean {
+  return !existing?.mediaETag || (!memoryDirty && !persistedDirty && !existing.pendingLocation);
 }
 
 /** Every upload in a collection that has a recoverable snapshot — the History
@@ -204,16 +214,47 @@ export function useUploadSnapshots(
   });
 }
 
-/** The species vocabulary from the settings bucket. It refreshes when a stale
- * tab regains focus so researchers returning to a long-lived session see the
- * current server vocabulary before continuing. */
-export function useSpecies(cfg: S3Config | null, connectionId: number) {
+/** The selected collection vocabulary, falling back to the settings registry. */
+export function useSpecies(cfg: S3Config | null, connectionId: number, collectionKey: string | null = null) {
   return useQuery<SpeciesResult>({
-    queryKey: ['species', connectionId, cfg?.endpoint],
-    queryFn: () => fetchSpecies(cfg!),
+    queryKey: ['species', connectionId, cfg?.endpoint, collectionKey],
+    queryFn: () => fetchSpecies(cfg!, collectionKey),
     enabled: !!cfg,
     staleTime: 15 * 60 * 1000,
     refetchOnWindowFocus: true,
+    retry: 1,
+  });
+}
+
+/** The camera-location registry, loaded once per connection from the settings
+ *  bucket — the same shared registry the uploader's location picker reads. */
+export function useLocations(cfg: S3Config | null, connectionId: number) {
+  return useQuery<LocationsResult>({
+    queryKey: ['locations', connectionId, cfg?.endpoint],
+    queryFn: () => fetchLocations(cfg!),
+    enabled: !!cfg,
+    staleTime: Infinity, // registry is stable for a session
+    retry: 1,
+  });
+}
+
+/** The upload's currently recorded location (for display, e.g. the Change
+ *  Location modal's "current" row) — independent of `useTagImages`, which only
+ *  grounds sync state. `null` means no `deployments.csv` row was readable. */
+export function useCurrentDeployment(
+  cfg: S3Config | null,
+  connectionId: number,
+  collectionKey: string | null,
+  uploadPrefix: string | null,
+) {
+  return useQuery<Deployment | null>({
+    queryKey: ['currentDeployment', connectionId, collectionKey, uploadPrefix],
+    queryFn: () => {
+      const { bucket } = parseCollectionKey(collectionKey!);
+      return loadCurrentDeployment(cfg!, bucket, uploadPrefix!);
+    },
+    enabled: !!cfg && !!collectionKey && !!uploadPrefix,
+    staleTime: 60 * 1000,
     retry: 1,
   });
 }

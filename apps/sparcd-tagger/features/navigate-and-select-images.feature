@@ -1,4 +1,4 @@
-# DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-tagger (src/sections/Tag.tsx — handleKey/SortBar/find-image, src/components/Overview.tsx, src/components/Cheatsheet.tsx, src/lib/selection.ts, src/lib/bursts.ts, src/lib/sortImages.ts, src/lib/imageSearch.ts).
+# DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-tagger (src/sections/Tag.tsx — handleKey/SortBar/find-image, src/components/Overview.tsx, src/components/Cheatsheet.tsx, src/components/ImageAdjustments.tsx, src/lib/selection.ts, src/lib/bursts.ts, src/lib/sortImages.ts, src/lib/imageSearch.ts).
 
 @unmapped
 Feature: Move through an upload and choose which images an action applies to
@@ -42,6 +42,54 @@ Feature: Move through an upload and choose which images an action applies to
     Then focus moves one image in that direction
     And it stops at the first and last image of the upload
     And any selection is cleared by the move
+
+  @unmapped
+  Scenario: The image filter narrows the Overview by species text
+    When the image filter is opened and searches species for "Coyote"
+    Then only the matching image remains in the Overview
+
+  @unmapped
+  Scenario: The image filter combines capture date and untagged status
+    When the image filter limits capture time to 2024-01-11 06 and untagged images
+    Then only IMG005.JPG remains in the Overview
+
+  @unmapped
+  Scenario: Filtering clears a selection with no visible images
+    Given several images are selected
+    When the image filter limits capture time to 2024-01-11 06 and untagged images
+    Then no hidden images remain selected for bulk actions
+
+  @unmapped
+  Scenario: A species key does nothing once the filter hides the last visible image
+    When the image filter limits capture time to 2024-01-11 06 and untagged images
+    And the only visible image is tagged and drops out of the filter
+    And another species key is pressed with nothing left visible
+    Then the image that dropped out carries only the species given while it was visible
+
+  @unmapped
+  Scenario: Text filtering covers filenames and timestamps and can be restricted
+    When the image filter searches all fields for "IMG002"
+    Then only "IMG002.JPG" remains in the Overview
+    When the image filter searches all fields for "2024-01-10T22:15"
+    Then only "IMG003.JPG" remains in the Overview
+    When the image filter searches filenames only for "Coyote"
+    Then no images match the image filter
+
+  @unmapped
+  Scenario: The image filter closes with Escape and returns focus to its control
+    When the image filter is opened and dismissed with Escape
+    Then the Filter control is collapsed and focused
+
+  @unmapped
+  Scenario: Focus navigation stays inside filtered images
+    When the image filter limits Focus to the 2024-01-11 06 images
+    And the next filtered image key is pressed in Focus
+    Then IMG005.JPG is the focused filtered image
+
+  @unmapped
+  Scenario: The image filter panel fits a narrow viewport
+    When the image filter is opened in a narrow viewport
+    Then the image filter panel stays within the viewport
 
   @unmapped
   Scenario: An image can be opened from the Overview and paged from the Focus view
@@ -125,3 +173,17 @@ Feature: Move through an upload and choose which images an action applies to
     Given a video is being played or scrubbed
     Then its own playback keys work and no tagging keystroke fires
     And while the sync, snapshots or time-shift dialog is open no image behind it is tagged or navigated
+
+  @unmapped
+  Scenario: The Adjust popup reserves native range keys while Tagger shortcuts still work
+    Given auto-advance is switched off in Settings
+    And a slider in the Adjust popup is focused
+    Then a species key still applies that species to the focused image
+    And Home, End, Page Up, Page Down, and arrow keys adjust the slider rather than navigating images
+    And command- or control-S still saves while the slider is focused
+
+  @unmapped
+  Scenario: Escape from a focused slider closes the Adjust popup and leaves the selection alone
+    Given a burst is selected and a slider in the Adjust popup is focused
+    When Escape is pressed with the slider focused
+    Then the Adjust popup closes and the same images are still selected

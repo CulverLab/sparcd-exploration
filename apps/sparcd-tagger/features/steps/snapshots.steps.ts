@@ -168,6 +168,7 @@ Then(
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
+      'deployments.csv',
       'UploadMeta.json',
       'manifest.json',
     ]);

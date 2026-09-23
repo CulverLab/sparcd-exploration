@@ -2,7 +2,7 @@
 // (or MP4) bytes so the Inspect worker does real EXIF/hash/decode work.
 
 import type { FileSpec } from './app';
-import { jpegWithExifDate, jpegWithoutExif, mp4WithCreationTime, textFile } from './fixtures-data';
+import { jpegWithExifDate, jpegWithExifModifyDate, jpegWithoutExif, mp4WithCreationTime, textFile } from './fixtures-data';
 
 export const FOLDER = 'SDCARD';
 
@@ -16,6 +16,12 @@ export const jpegNoTime = (name: string, salt = name): FileSpec => ({
   path: `${FOLDER}/${name}`,
   mime: 'image/jpeg',
   bytes: jpegWithoutExif(salt),
+});
+
+export const jpegModifyDateOnly = (name: string, exifDate: string, salt = name): FileSpec => ({
+  path: `${FOLDER}/${name}`,
+  mime: 'image/jpeg',
+  bytes: jpegWithExifModifyDate(exifDate, salt),
 });
 
 export const mp4At = (name: string, when: Date | null, salt = name): FileSpec => ({

@@ -240,7 +240,17 @@ export async function discoverSettingsBucket(
   );
 }
 
-export type LocationsResult = LocationsParse & { settingsBucket: string };
+export type LocationsResult = LocationsParse & {
+  /** Settings bucket when the fallback registry was used; null for collection data. */
+  settingsBucket: string | null;
+  sourceBucket: string;
+  sourceKey: string;
+};
+
+function isMissingObjectError(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e.$metadata?.httpStatusCode === 404 || e.name === 'NoSuchKey' || e.name === 'NotFound';
+}
 
 /**
  * Read + parse the location registry. Network/CORS failures surface as a
@@ -251,8 +261,33 @@ export type LocationsResult = LocationsParse & { settingsBucket: string };
 export async function fetchLocations(
   cfg: S3Config,
   settingsBucketHint?: string,
+  collectionKey?: string | null,
+  client = getClient(cfg),
 ): Promise<LocationsResult> {
-  const client = getClient(cfg);
+  if (collectionKey) {
+    const { bucket: collectionBucket, uuid } = parseCollectionKey(collectionKey);
+    const collectionPath = `Collections/${uuid}/locations.json`;
+    let collectionBytes: Uint8Array | undefined;
+    try {
+      collectionBytes = await client.getObject(collectionBucket, collectionPath);
+    } catch (err) {
+      if (!isMissingObjectError(err)) {
+        throw translateReadError(err, `"${collectionPath}" in bucket "${collectionBucket}"`);
+      }
+      // A missing collection assignment falls back to the settings list.
+    }
+    if (collectionBytes) {
+      const collectionParsed = parseLocations(new TextDecoder().decode(collectionBytes));
+      if (collectionParsed.locations.length > 0) {
+        return {
+          ...collectionParsed,
+          settingsBucket: null,
+          sourceBucket: collectionBucket,
+          sourceKey: collectionPath,
+        };
+      }
+    }
+  }
   const settingsBucket = await discoverSettingsBucket(client, settingsBucketHint);
   let bytes: Uint8Array;
   try {
@@ -262,7 +297,7 @@ export async function fetchLocations(
   }
   const text = new TextDecoder().decode(bytes);
   const parsed = parseLocations(text);
-  return { ...parsed, settingsBucket };
+  return { ...parsed, settingsBucket, sourceBucket: settingsBucket, sourceKey: LOCATIONS_KEY };
 }
 
 // Collection discovery, keying, and the `CollectionRef` shape live in

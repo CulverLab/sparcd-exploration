@@ -301,7 +301,7 @@ export function PublishedUploads() {
     [collections, collectionKey],
   );
   const { data: uploads, isLoading, refetch } = usePublishedUploads(cfg, connectionId, collection);
-  const { data: locationsData } = useLocations(cfg, connectionId);
+  const { data: locationsData } = useLocations(cfg, connectionId, collectionKey);
   const locations = locationsData?.locations ?? [];
 
   const filtered = useMemo(() => {
