@@ -25,6 +25,8 @@ and phase breakdown.
 
 ## Develop
 
+Grid tiles request `Media/<sha256>/preview-640.jpg` when the image uses the hashed layout, then fall back to the original if the preview fails. Focus view always loads the original.
+
 ```sh
 pnpm install
 pnpm --filter sparcd-tagger dev      # Vite dev server

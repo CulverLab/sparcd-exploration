@@ -1,4 +1,4 @@
-import type { Page, Locator } from '@playwright/test';
+import type { Page, Locator, Response } from '@playwright/test';
 import {
   Given,
   When,
@@ -12,7 +12,8 @@ import {
   selectCollection,
   sectionTab,
 } from './support/world';
-import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
+import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey, observationsCsv, OBS_A } from './support/data';
+import { makePng } from './support/png';
 import { adjustmentPopupPosition } from '../../src/lib/adjustmentPopupPosition';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
@@ -87,6 +88,30 @@ Then('the filmstrip thumbnails are requested at low priority', async ({ page }) 
   const thumbs = page.locator('img[fetchpriority="low"]');
   await expect(thumbs.first()).toBeVisible();
   await expect.poll(() => thumbs.evaluateAll((images) => images.some((image) => !image.complete))).toBe(true);
+});
+
+// --- Derived preview fallback -----------------------------------------------
+
+const HASHED_KEY = `Media/${'a'.repeat(64)}/IMG001.JPG`;
+
+Given('an image key uses the Media hash layout', async ({ page, s3, scratch }) => {
+  const original = mediaKey(PREFIX_A, 'IMG001.JPG');
+  s3.put(BUCKET, `${PREFIX_A}media.csv`, mediaCsv(PREFIX_A, MEDIA_A).replaceAll(original, HASHED_KEY), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_A}observations.csv`, observationsCsv(PREFIX_A, OBS_A).replaceAll(original, HASHED_KEY), 'text/csv');
+  s3.put(BUCKET, HASHED_KEY, makePng(240, 180, 1), 'image/png');
+  scratch.previewResponse = page.waitForResponse((r) => r.url().includes('preview-640.jpg'));
+  await page.reload();
+  await openWorkspace(page);
+});
+
+When('its preview image fails to load', async ({ scratch }) => {
+  expect((await (scratch.previewResponse as Promise<Response>)).status()).toBe(404);
+});
+
+Then('the tile requests the original image key', async ({ page }) => {
+  const img = gridCell(page, 'IMG001.JPG').locator('img');
+  await expect(img).toHaveAttribute('src', /IMG001\.JPG/);
+  await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
 });
 
 // --- Zoom -------------------------------------------------------------------

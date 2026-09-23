@@ -43,6 +43,9 @@
 // through the primary.
 
 import { processingComplete } from './validation';
+import { previewKeyFor } from '@sparcd/camtrap';
+import { makePreview } from './preview';
+import exifr from 'exifr';
 import { estimateCaptureTimes } from './estimateCaptureTime';
 import type { S3Config } from '@sparcd/types';
 import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
@@ -97,6 +100,8 @@ export type UploadSnapshot = {
   // Bytes credited by a verified skip rather than transferred over the wire.
   // `uploadedBytes - skippedBytes` is the only honest input to a rate.
   skippedBytes: number;
+  previewsWritten: number;
+  previewsSkipped: number;
   totalBytes: number;
   log: LogLine[];
   uploadPath?: string;
@@ -246,6 +251,8 @@ type PlanItem = {
   sha256: string;
   captureTimestamp?: string;
   mediaKind: FileRecord['mediaKind'];
+  width?: number;
+  height?: number;
   mimeType: string;
   file: File | null;
   doneAlready: boolean;
@@ -440,6 +447,8 @@ function makeRunner(
     files: [],
     uploadedBytes: 0,
     skippedBytes: 0,
+    previewsWritten: 0,
+    previewsSkipped: 0,
     totalBytes: 0,
     log: [],
     bucket: '',
@@ -471,6 +480,49 @@ function makeRunner(
     it: PlanItem,
     blobClient: SafeS3Client,
   ): Promise<void> => {
+    const writePreview = async (stat: boolean) => {
+      const key = it.mediaKind === 'image' ? previewKeyFor(it.key) : undefined;
+      if (!key || !it.file) { snap.previewsSkipped++; return; }
+      if (abort.signal.aborted) return;
+      try {
+        if (stat) {
+          try {
+            await blobClient.statObject(snap.bucket, key);
+            snap.previewsSkipped++;
+            emit(true);
+            return;
+          } catch (err) {
+            if (!isNotFound(err)) throw err;
+          }
+        }
+        let dims = it.width && it.height ? { w: it.width, h: it.height } : undefined;
+        if (!dims) {
+          const tags = await exifr.parse(it.file, { pick: ['ExifImageWidth', 'ExifImageHeight'] }).catch(() => undefined);
+          if (tags?.ExifImageWidth && tags?.ExifImageHeight) dims = { w: tags.ExifImageWidth, h: tags.ExifImageHeight };
+        }
+        const preview = await makePreview(it.file, dims);
+        if (abort.signal.aborted) return;
+        if (!preview) snap.previewsSkipped++;
+        else {
+          const body = new Uint8Array(await preview.blob.arrayBuffer());
+          for (let attempt = 0; ; attempt++) {
+            try {
+              await blobClient.writeImmutable(snap.bucket, key, body, { contentType: 'image/jpeg', signal: abort.signal });
+              snap.previewsWritten++;
+              break;
+            } catch (err) {
+              if (err instanceof PreconditionFailedError) { snap.previewsSkipped++; break; }
+              if (attempt === 2 || !isTransient(err) || abort.signal.aborted) throw err;
+              await sleep(backoff(attempt));
+            }
+          }
+        }
+      } catch (err) {
+        snap.previewsSkipped++;
+        log('warn', `preview skipped ${key}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      emit(true);
+    };
     // Shared by the pre-verify check below and the upload retry loop — a
     // whole-connection drop hits `statObject` (verify) exactly as it hits
     // `writeImmutableStream` (upload), so a resume started offline needs the
@@ -541,7 +593,7 @@ function makeRunner(
 
     if (it.doneAlready) {
       await ensureOnline();
-      if (await verifyExisting()) return;
+      if (await verifyExisting()) { await writePreview(true); return; }
     }
 
     if (!it.file) {
@@ -578,6 +630,7 @@ function makeRunner(
           attempt: fp.attempt,
         });
         emit(true);
+        await writePreview(false);
         return;
       } catch (err) {
         if (err instanceof PreconditionFailedError) {
@@ -585,6 +638,7 @@ function makeRunner(
           // accept an existing key only after the portable size/hash HEAD check.
           if (isResume && (await verifyExisting())) {
             persistFile(sessionId, it.localPath, { state: 'done' });
+            await writePreview(true);
             return;
           }
           throw err;
@@ -1184,7 +1238,7 @@ export function runStreamingUpload(
     if (!f.exifNaive && !f.manualNaive && !estimates?.has(f.id)) return false;
     enqueuedIds.add(f.id);
     const item = planItemFor(f, naming, build.timeZone, estimates ?? new Map());
-    queue.push({ ...item, doneAlready: false });
+    queue.push({ ...item, width: f.width, height: f.height, doneAlready: false });
     // Flip the display row the moment a file is actually queued, not when a
     // lane eventually dequeues it — the queue is FIFO and only `concurrency`
     // lanes drain it, so a file queued behind a large head-of-line batch
