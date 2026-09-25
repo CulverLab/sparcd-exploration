@@ -13,6 +13,8 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: uv sync --locked
         working-directory: apps/sparcd-explorer
+      - run: uv run python -m unittest discover -s tests -p 'test_*.py'
+        working-directory: apps/sparcd-explorer
       - name: Generate the Pages WASM notebook
         working-directory: apps/sparcd-explorer
         run: |

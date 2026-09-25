@@ -661,29 +661,60 @@ def _(
             "<span>Enter S3 credentials in the sidebar to load data.</span></div>"
         )
     else:
+        from html import escape as _esc_ep
         from minio import Minio
 
-        _raw = _creds["endpoint"]
-        if "://" in _raw:
-            _u = urlparse(_raw)
-            _ep = _u.netloc
-            _secure = _u.scheme == "https"
-        else:
-            _ep = _raw
-            _secure = bool(_creds["secure"])
+        def parse_endpoint(raw, default_secure):
+            """Split a form endpoint into (host[:port], secure, problem); problem is None when usable.
 
-        # Exact-site point display is a data-protection concern; gate it to the trusted host.
-        _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
-        is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
+            Takes a bare host[:port] or an http(s) URL, so localhost and custom ports work.
+            """
+            from urllib.parse import urlsplit
 
-        client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
+            raw = raw.strip()
+            try:
+                parts = urlsplit(raw if "://" in raw else f"//{raw}")
+                parts.port
+            except ValueError:
+                return raw, bool(default_secure), "the host or port is not valid"
+            secure = parts.scheme == "https" if parts.scheme else bool(default_secure)
+            if parts.scheme not in {"", "http", "https"}:
+                problem = "start with http:// or https://, or leave the scheme off"
+            elif not parts.hostname:
+                problem = "no host name, check for an extra slash"
+            elif "@" in parts.netloc:
+                problem = "put the access key in its own field, not in the endpoint"
+            elif parts.path not in {"", "/"} or parts.query or parts.fragment:
+                problem = "remove everything after the host and port"
+            else:
+                problem = None
+            return parts.netloc, secure, problem
+
+        _ep, _secure, _problem = parse_endpoint(_creds["endpoint"], _creds["secure"])
         _src = "form" if _form_value is not None else ".env"
-        from html import escape as _esc_ep
-        _connection_chip = mo.Html(
-            "<div class='sparcd-chip'><span class='led'></span>"
-            f"<span>Connected to <span class='host'>{_esc_ep(_ep)}</span></span>"
-            f"<span class='src'>· {'https' if _secure else 'http'} · from {_src}</span></div>"
-        )
+
+        # An unusable endpoint gets no client, so the registry cell stays quiet and this
+        # chip is the one place that explains what to fix.
+        if _problem:
+            client = None
+            is_wildcats_s3_endpoint = False
+            _connection_chip = mo.Html(
+                "<div class='sparcd-chip'><span class='led' style='background:var(--warn);"
+                "box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);'></span>"
+                f"<span>Invalid endpoint <span class='host'>{_esc_ep(_creds['endpoint'])}</span></span>"
+                f"<span class='src'>· {_esc_ep(_problem)}</span></div>"
+            )
+        else:
+            # Exact-site point display is a data-protection concern; gate it to the trusted host.
+            _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
+            is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
+
+            client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
+            _connection_chip = mo.Html(
+                "<div class='sparcd-chip'><span class='led'></span>"
+                f"<span>Valid endpoint <span class='host'>{_esc_ep(_ep)}</span></span>"
+                f"<span class='src'>· {'https' if _secure else 'http'} · from {_src}</span></div>"
+            )
     _connection_chip
     return client, is_wildcats_s3_endpoint
 
