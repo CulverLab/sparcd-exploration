@@ -34,18 +34,22 @@ class ParseEndpointTest(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(parse_endpoint(raw, default_secure), (endpoint, secure, None))
 
-    def test_unusable_endpoints_name_the_problem(self):
+    def test_unusable_endpoints_say_what_is_wrong(self):
         cases = {
-            "https:///wildcats.sparcd.arizona.edu": "no host name",
-            "https://": "no host name",
-            ":9000": "no host name",
-            "localhost:abc": "port",
-            "localhost:99999": "port",
-            "https://[::1": "not valid",
-            "https://user:pass@example.com": "access key",
-            "ftp://wildcats.sparcd.arizona.edu": "http:// or https://",
-            "https://wildcats.sparcd.arizona.edu/bucket": "after the host",
-            "https:/wildcats.sparcd.arizona.edu": "after the host",
+            "https:///wildcats.sparcd.arizona.edu": "two slashes after “https:”",
+            "https:/wildcats.sparcd.arizona.edu": "two slashes after “https:”",
+            "https:wildcats.sparcd.arizona.edu": "two slashes after “https:”",
+            "https://": "server name is missing",
+            ":9000": "server name is missing",
+            "wildcats. sparcd.arizona.edu": "Remove the spaces",
+            "localhost:abc": "number after the “:”",
+            "localhost:99999": "number after the “:”",
+            "https://[::1": "doesn't look like a web address",
+            "ftp://wildcats.sparcd.arizona.edu": "instead of ftp://",
+            "https://user:pass@example.com": "“@” and everything before it",
+            "wildcats.sparcd.arizona.edu\tx": "Remove the spaces",
+            "https://wildcats.sparcd.arizona.edu/minio/": "Remove “/minio/” from the end",
+            "wildcats.sparcd.arizona.edu?": "Remove “?” from the end",
         }
         for raw, fragment in cases.items():
             with self.subTest(raw=raw):

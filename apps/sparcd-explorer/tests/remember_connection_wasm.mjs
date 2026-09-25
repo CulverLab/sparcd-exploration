@@ -90,8 +90,8 @@ try {
   console.log('Remembered Explorer connection WASM check passed.');
   await endpoint.fill('https:///shared.example');
   await page.getByRole('button', { name: 'Connect' }).click();
-  await expect(page.getByText('Invalid endpoint')).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText('no host name, check for an extra slash')).toBeVisible();
+  await expect(page.getByText("The Endpoint doesn't look right.")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Use exactly two slashes after “https:”.')).toBeVisible();
   console.log('Invalid endpoint WASM check passed.');
 } finally {
   await browser.close();
