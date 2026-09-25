@@ -639,8 +639,8 @@ def _(
     # Cached collections belong to the connection that loaded them. Any other one,
     # including the .env connection after the form is cleared, starts clean.
     _connection = (
-        (_form_value["endpoint"], _form_value["access"]) if _form_value is not None
-        else (DEFAULT_ENDPOINT, DEFAULT_ACCESS)
+        (_form_value["endpoint"], _form_value["access"], _form_value["secure"]) if _form_value is not None
+        else (DEFAULT_ENDPOINT, DEFAULT_ACCESS, DEFAULT_SECURE)
     )
     if SPARCD_COLLECTION_DATA_CACHE.get("connection") != _connection:
         SPARCD_COLLECTION_DATA_CACHE.clear()
