@@ -1548,7 +1548,8 @@ def _(locations, observations_filtered, pl):
             _obs_with_hex
             .group_by("h3_id")
             .agg(
-                pl.col("scientific_name").filter(pl.col("scientific_name").str.len_chars() >= 3).n_unique().alias("species_richness"),
+                # Distinct common names, the same count as the map panel and stat card.
+                pl.col("tags").str.extract_all(r"COMMONNAME:[^\]]+").explode().drop_nulls().n_unique().alias("species_richness"),
                 pl.col("media_path").n_unique().alias("checklists"),
                 pl.col("timestamp").max().alias("most_recent"),
             )
@@ -2028,7 +2029,6 @@ def _(
             _sci_clean.group_by("scientific_name").len()
             .rename({"len": "images"}).sort("images", descending=True)
         )
-        _distinct_species = _species_counts.height
 
         import re as _re_card
         _pat_card = _re_card.compile(r"COMMONNAME:([^\]]+)")
@@ -2042,6 +2042,7 @@ def _(
             pl.DataFrame({"common_name": list(_cn_counts.keys()), "images": list(_cn_counts.values())})
             .sort("images", descending=True)
         )
+        _distinct_species = len(_cn_counts)
 
         _dates = _obs_loc.filter(pl.col("timestamp").str.len_chars() >= 10)["timestamp"]
         _date_range_str = "—"
@@ -2412,7 +2413,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(applied_filters, locations, mo, observations_filtered):
+def _(applied_filters, locations, mo, observations_filtered, pl):
     # Stat row (E.4): Sites, Images, Tagged %, Species — respecting current search.
     # Replaces every debug string.
     import re as _re_stat
@@ -2422,12 +2423,14 @@ def _(applied_filters, locations, mo, observations_filtered):
     _tagged = int(locations["tagged_image_count"].sum()) if locations.height else 0
     _tagged_pct = f"{(_tagged / _images * 100):.0f}%" if _images else "—"
 
-    # Species = distinct common-name tags, matching the map dashboard's count.
+    # Species = distinct common-name tags at the sites on the map, matching the map
+    # dashboard's count. Location 0000 and sites without coordinates are left out.
     # (Do not also union scientific_name — that's a separate namespace and would
     # double-count any observation carrying both.)
     _pat = _re_stat.compile(r"COMMONNAME:([^\]]+)")
     _species = set()
-    for _t in observations_filtered["tags"].to_list():
+    _map_deployments = [d for ds in locations["deployment_ids"].to_list() for d in ds] if locations.height else []
+    for _t in observations_filtered.filter(pl.col("deployment_id").is_in(_map_deployments))["tags"].to_list():
         if _t:
             _species.update(_pat.findall(_t))
 
