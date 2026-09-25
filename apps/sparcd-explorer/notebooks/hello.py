@@ -823,7 +823,7 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
     DEPLOY_COLS = ["deployment_id", "location_id", "location_name",
                    "longitude", "latitude", "_d5", "_d6", "_d7",
                    "_d8", "_d9", "_d10", "_d11", "elevation"]
-    MEDIA_COLS = ["media_path", "deployment_id", "_p2", "_p3", "_p4",
+    MEDIA_COLS = ["media_path", "deployment_id", "_p2", "_p3", "timestamp",
                   "_p5", "file_name", "mime_type"]
     OBS_COLS = ["_p0", "deployment_id", "_p2", "media_path", "timestamp",
                 "_p5", "_p6", "_p7", "scientific_name", "count",
@@ -923,17 +923,19 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
 
 
 @app.cell(hide_code=True)
-def _(deployments, mo, observations, pl):
+def _(deployments, media, mo, observations, pl):
     # Query filters, batched into ONE form (D). Nothing recomputes while the user
     # adjusts controls; only "Search" applies them. Option lists are derived from
     # loaded observations/deployments and rebuild on collection load (that's fine).
     import datetime as _dt
     import re as _re
 
-    _ts = observations.filter(pl.col("timestamp").str.len_chars() >= 10)["timestamp"]
-    if _ts.len() > 0:
-        _min_d = _dt.date.fromisoformat(_ts.min()[:10])
-        _max_d = _dt.date.fromisoformat(_ts.max()[:10])
+    # Media timestamps too: images without observation rows are dated by them.
+    _all_ts = pl.concat([observations["timestamp"], media["timestamp"]])
+    _days = _all_ts.str.slice(0, 10).str.to_date("%Y-%m-%d", strict=False).drop_nulls()
+    if _days.len() > 0:
+        _min_d = _days.min()
+        _max_d = _days.max()
     else:
         _min_d = _dt.date(2010, 1, 1)
         _max_d = _dt.date(2030, 12, 31)
@@ -951,10 +953,10 @@ def _(deployments, mo, observations, pl):
     _site_options = sorted({v for v in deployments["location_id"].to_list() if v and v != "0000"})
     _range_options = sorted({v[:3] for v in _site_options if len(v) >= 3})
     _year_options = sorted(
-        {str(v)[:4] for v in observations["timestamp"].to_list() if v and len(str(v)) >= 4}
+        {str(v)[:4] for v in _all_ts.to_list() if v and len(str(v)) >= 4}
     )
     _month_options = sorted(
-        {str(v)[5:7] for v in observations["timestamp"].to_list() if v and len(str(v)) >= 7}
+        {str(v)[5:7] for v in _all_ts.to_list() if v and len(str(v)) >= 7}
     )
     _elev = deployments.filter(pl.col("elevation").is_not_null())["elevation"]
     if _elev.len() > 0:
@@ -1182,15 +1184,19 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
     _obs_scope = observations.filter(pl.col("deployment_id").is_in(_deployment_ids))
     _media_scope = media.filter(pl.col("deployment_id").is_in(_deployment_ids))
 
-    _obs_dated = _obs_scope.filter(
-        (pl.col("timestamp").str.len_chars() < 10)
-        | ((pl.col("timestamp").str.slice(0, 10) >= _d_start_s)
-           & (pl.col("timestamp").str.slice(0, 10) <= _d_end_s))
-    )
-    if _years:
-        _obs_dated = _obs_dated.filter(pl.col("timestamp").str.slice(0, 4).is_in(list(_years)))
-    if _months:
-        _obs_dated = _obs_dated.filter(pl.col("timestamp").str.slice(5, 2).is_in(list(_months)))
+    def _dated(col):
+        # Undated rows pass the date range but not a year or month pick.
+        _ts = pl.col(col)
+        _ok = (_ts.str.len_chars() < 10) | (
+            (_ts.str.slice(0, 10) >= _d_start_s) & (_ts.str.slice(0, 10) <= _d_end_s)
+        )
+        if _years:
+            _ok = _ok & _ts.str.slice(0, 4).is_in(list(_years))
+        if _months:
+            _ok = _ok & _ts.str.slice(5, 2).is_in(list(_months))
+        return _ok
+
+    _obs_dated = _obs_scope.filter(_dated("timestamp"))
 
     if not _included and not _excluded:
         observations_filtered = _obs_dated
@@ -1208,13 +1214,14 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
         _mask = [_keep_row(t) for t in _obs_dated["tags"].to_list()]
         observations_filtered = _obs_dated.filter(pl.Series("_keep", _mask))
 
-    # Keep untagged media in the totals: a path stays if it survived the species
-    # filter OR if it never appears in any dated observation (untagged frame).
+    # An image stays when one of its observations passes the filters. An image
+    # with no observation rows has no species, so an include filter drops it;
+    # otherwise its media.csv timestamp decides.
     _kept_paths = observations_filtered["media_path"].unique().to_list()
-    _dated_obs_paths = _obs_dated["media_path"].unique().to_list()
+    _observed_paths = _obs_scope["media_path"].unique().to_list()
     media_filtered = _media_scope.filter(
         pl.col("media_path").is_in(_kept_paths)
-        | ~pl.col("media_path").is_in(_dated_obs_paths)
+        | (~pl.col("media_path").is_in(_observed_paths) & _dated("timestamp") & pl.lit(not _included))
     )
     # From here on an observation is an identification. A placeholder row (no
     # species, no tags) only records that the image exists: the uploader writes one
@@ -1223,10 +1230,8 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
     observations_filtered = observations_filtered.filter(
         (pl.col("scientific_name") != "") | (pl.col("tags") != "")
     )
-    # Derive from media_filtered so never-tagged deployments (media but zero
-    # observations) stay visible on the map and in the stat cards; sites whose
-    # observations all fail the species/date filters still drop out unless they
-    # also have untagged frames preserved by the C.2 filter above.
+    # Derive from media_filtered so sites whose images are all untagged stay on
+    # the map and in the stat cards.
     query_deployment_ids = media_filtered["deployment_id"].unique().to_list()
     applied_filters = {
         "include": sorted(_included),
