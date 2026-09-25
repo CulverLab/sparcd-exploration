@@ -1464,8 +1464,17 @@ def _(deployments, locations, observations_filtered, pl):
     # longitude by cos(lat0) removes the meridian convergence, then the inverse
     # stretch restores it so cells read as hexagons at the data's latitude. Taken
     # from every loaded site, not the search results, so a search never moves the grid.
-    _anchor = deployments.filter((pl.col("location_id") != "0000") & (pl.col("latitude").abs() <= 90))
-    _lat0 = float(_anchor["latitude"].mean()) if _anchor.height else 0.0
+    # Each site counts once, with swapped coordinates corrected as the locations
+    # cell does.
+    _anchor = (
+        deployments.filter(pl.col("location_id") != "0000")
+        .unique(["location_id", "latitude", "longitude"])
+        .select(
+            pl.when(pl.col("latitude").abs() > 90).then(pl.col("longitude")).otherwise(pl.col("latitude"))
+        )
+        .to_series()
+    )
+    _lat0 = float(_anchor.mean()) if _anchor.len() else 0.0
     _cos_lat0 = _hexmath.cos(_hexmath.radians(_lat0)) or 1.0
 
     def _latlng_to_cell(lat, lng):
