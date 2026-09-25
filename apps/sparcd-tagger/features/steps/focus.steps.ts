@@ -13,7 +13,6 @@ import {
   sectionTab,
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
-import { adjustmentPopupPosition } from '../../src/lib/adjustmentPopupPosition';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
 
@@ -359,6 +358,11 @@ When('the adjustment panel is opened', async ({ page }) => {
 const adjustmentPanel = (page: Page): Locator => page.getByRole('dialog', { name: 'Image adjustments' });
 const focusedImage = (page: Page): Locator => page.locator('.react-transform-component img');
 
+type Box = { x: number; y: number; width: number; height: number };
+
+const intersects = (a: Box, b: Box) =>
+  a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
 Then('the adjustment panel leaves the Focus navigation usable', async ({ page }) => {
   const [panel, navigation] = await Promise.all([
     adjustmentPanel(page).boundingBox(),
@@ -366,7 +370,7 @@ Then('the adjustment panel leaves the Focus navigation usable', async ({ page })
   ]);
   expect(panel).not.toBeNull();
   expect(navigation).not.toBeNull();
-  expect(panel!.x + panel!.width <= navigation!.x || navigation!.x + navigation!.width <= panel!.x).toBe(true);
+  expect(intersects(panel!, navigation!)).toBe(false);
   const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label'), {
     x: navigation!.x + navigation!.width / 2,
     y: navigation!.y + navigation!.height / 2,
@@ -409,35 +413,93 @@ Then('focusing another control dismisses it', async ({ page }) => {
 });
 
 When('the focused image moves while the adjustment panel is open', async ({ page, scratch }) => {
-  scratch.adjustmentBeforeMove = await adjustmentPanel(page).boundingBox();
+  const [panel, media] = await Promise.all([
+    adjustmentPanel(page).boundingBox(),
+    focusedImage(page).boundingBox(),
+  ]);
+  scratch.adjustmentBeforeMove = { panel, media };
   await transformContent(page.locator('body')).first().evaluate((element) => {
     (element as HTMLElement).style.transform = 'translate(40px, 0px) scale(1)';
   });
 });
 
+/** Which slot the panel took, named the way the placement rule thinks of them. */
+const placementOf = (panel: Box, media: Box) => {
+  if (panel.x + panel.width <= media.x) return 'left of the image';
+  if (panel.x >= media.x + media.width) return 'right of the image';
+  if (panel.y + panel.height <= media.y) return 'over the image';
+  if (panel.y >= media.y + media.height) return 'under the image';
+  return 'on the image';
+};
+
+/**
+ * Where the panel may not go, read off the rendered page rather than off the
+ * placement function the app itself uses — asking that for the expected answer
+ * would make any placement pass.
+ */
+async function expectPanelClearOfEverything(page: Page) {
+  await expect
+    .poll(async () => {
+      const [panel, media, species, viewport] = await Promise.all([
+        adjustmentPanel(page).boundingBox(),
+        focusedImage(page).boundingBox(),
+        page.locator('[data-testid="species-panel"]').boundingBox(),
+        page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
+      ]);
+      if (!panel || !media) return ['no panel or media'];
+      const problems: string[] = [];
+      if (intersects(panel, media)) problems.push('covers the image');
+      // Only beside the image is the species list a rail the panel must dodge;
+      // narrow layouts stack it below the fold.
+      if (species && species.x >= media.x + media.width && intersects(panel, species))
+        problems.push('covers the species list');
+      if (
+        panel.x < 0 ||
+        panel.y < 0 ||
+        panel.x + panel.width > viewport.width ||
+        panel.y + panel.height > viewport.height
+      )
+        problems.push('leaves the window');
+      return problems;
+    })
+    .toEqual([]);
+}
+
 Then('the adjustment panel follows the focused image', async ({ page, scratch }) => {
-  const before = scratch.adjustmentBeforeMove as { x: number; y: number };
-  await expect.poll(async () => {
-    const [panel, media, focus, viewport] = await Promise.all([
-      adjustmentPanel(page).boundingBox(),
-      focusedImage(page).boundingBox(),
-      page.locator('[data-testid="focus-drop-zone"]').boundingBox(),
-      page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
-    ]);
-    if (!panel || !media) return Infinity;
-    const blocked = focus && focus.x > 0
-      ? [{ left: 0, right: focus.x, top: focus.y, width: focus.x, height: focus.height }]
-      : [];
-    const expected = adjustmentPopupPosition(
-      { left: media.x, right: media.x + media.width, top: media.y, width: media.width, height: media.height },
-      { left: 0, right: panel.width, top: 0, width: panel.width, height: panel.height },
-      viewport,
-      blocked,
-    );
-    return Math.abs(panel.x - expected.left) + Math.abs(panel.y - expected.top);
-  }).toBeLessThanOrEqual(1);
-  const after = await adjustmentPanel(page).boundingBox();
-  expect(Math.abs(after!.x - before.x) + Math.abs(after!.y - before.y)).toBeGreaterThan(5);
+  const before = scratch.adjustmentBeforeMove as { panel: Box; media: Box };
+  await expect
+    .poll(async () => {
+      const panel = await adjustmentPanel(page).boundingBox();
+      return panel ? Math.abs(panel.x - before.panel.x) + Math.abs(panel.y - before.panel.y) : 0;
+    })
+    .toBeGreaterThan(5);
+  const [panel, media] = await Promise.all([
+    adjustmentPanel(page).boundingBox(),
+    focusedImage(page).boundingBox(),
+  ]);
+  const shift = media!.x - before.media.x;
+  expect(shift).toBeGreaterThan(5);
+  const was = placementOf(before.panel, before.media);
+  const now = placementOf(panel!, media!);
+  if (now === was) {
+    expect(Math.abs(panel!.x - before.panel.x - shift)).toBeLessThanOrEqual(2);
+  } else {
+    // Moving the image right only ever closes the gap on its right, so that is
+    // the one slot the panel may be pushed out of.
+    expect(was).toBe('right of the image');
+    expect(['left of the image', 'over the image', 'under the image']).toContain(now);
+  }
+  await expectPanelClearOfEverything(page);
+});
+
+When('the adjustment panel is opened on a phone-sized screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await adjustToggle(page).click();
+  await expect(page.getByLabel('Brightness')).toBeVisible();
+});
+
+Then('the adjustment panel stays clear of the image and inside the window', async ({ page }) => {
+  await expectPanelClearOfEverything(page);
 });
 
 Then('keyboard focus enters the adjustment panel', async ({ page }) => {

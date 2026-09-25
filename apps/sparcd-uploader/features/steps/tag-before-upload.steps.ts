@@ -261,9 +261,7 @@ When('a dry run of it is started', async ({ app }) => {
 });
 
 Then('all stored objects pass the final review', async ({ app }) => {
-  await expect(
-    app.page.getByText(/final review: all \d+ objects confirmed/),
-  ).toBeVisible();
+  await expect.poll(() => app.logText()).toMatch(/final review: all \d+ objects confirmed/);
 });
 
 Then('nothing about the hand-off is left on this machine', async ({ app }) => {

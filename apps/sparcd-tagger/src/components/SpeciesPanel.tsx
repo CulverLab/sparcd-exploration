@@ -17,6 +17,7 @@ export type SpeciesPanelProps = {
   onFilterChange: (v: string) => void;
   filterRef: RefObject<HTMLInputElement>;
   bindingFor: (scientificName: string) => string | null;
+  keyConflictFor: (scientificName: string) => string | null; // why the key is dead, when another species claims it too
   capturingFor: string | null;
   onStartCapture: (scientificName: string) => void;
   onClearKey: (scientificName: string) => void;
@@ -62,7 +63,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
   );
 
   return (
-    <div className="h-full flex flex-col border-l border-rule bg-panel min-h-0">
+    <div data-testid="species-panel" className="h-full flex flex-col border-l border-rule bg-panel min-h-0">
       {props.selectionCount > 1 && (
         <div className="px-3 py-1.5 bg-mark border-b border-rule text-[12px] font-mono text-accent">
           Applying to {props.selectionCount} selected images
@@ -93,6 +94,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
             common={s.commonName}
             scientific={s.scientificName}
             badge={props.bindingFor(s.scientificName)}
+            badgeConflict={props.keyConflictFor(s.scientificName)}
             capturing={props.capturingFor === s.scientificName}
             applied={props.appliedSet.has(s.scientificName)}
             selected={props.selectedSpecies === s.scientificName}
@@ -132,6 +134,7 @@ type RowProps = {
   common: string;
   scientific: string;
   badge?: string | null;
+  badgeConflict?: string | null;
   capturing?: boolean;
   applied?: boolean; // already on the focused image → ✓, clicking is a NO-OP add
   selected?: boolean;
@@ -248,10 +251,18 @@ function Row(p: RowProps) {
               </button>
             )}
             {p.badge && (
-              <kbd className="px-1.5 h-5 min-w-5 grid place-items-center border border-ink text-[11px] font-mono uppercase text-ink">
+              <kbd
+                className={`px-1.5 h-5 min-w-5 grid place-items-center border text-[11px] font-mono uppercase ${
+                  p.badgeConflict
+                    ? 'border-inkMute text-inkMute line-through'
+                    : 'border-ink text-ink'
+                }`}
+                title={p.badgeConflict ?? undefined}
+              >
                 {p.badge}
               </kbd>
             )}
+            {p.badge && p.badgeConflict && <span className="sr-only">{p.badgeConflict}</span>}
           </>
         )}
       </div>

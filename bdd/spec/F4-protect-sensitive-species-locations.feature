@@ -20,23 +20,23 @@ Feature: Never expose the location of endangered species
     Given a species is designated as sensitive
     And images of that species have been uploaded from a camera location
 
-  @F4 @security
+  @F4 @security @F4-1
   Scenario: Precise sensitive locations are invisible to anyone outside the authorized members
     When someone who is not an authorized member of the collection views the data
     Then the precise location of the sensitive-species images is not shown to them
 
-  @F4 @security
+  @F4 @security @F4-2
   Scenario: Precise sensitive locations are absent from exports and reports
     When an unauthorized user obtains an export or report drawn from the collection
     Then the precise location of sensitive-species records does not appear anywhere in it
 
-  @F4 @security
+  @F4 @security @F4-3
   Scenario: A precise sensitive location cannot be recovered indirectly
     Given an unauthorized user has whatever data they are permitted to see
     When they examine image metadata, file names, file paths, identifiers and aggregated results
     Then none of these lets them determine the precise location of a sensitive-species record
 
-  @F4 @security
+  @F4 @security @F4-4
   Scenario: Permission to view or identify images does not by itself reveal sensitive locations
     Given a user is authorized to view and identify images in the collection
     And that user has not been explicitly authorized for sensitive locations
@@ -44,34 +44,34 @@ Feature: Never expose the location of endangered species
     Then they can carry out identification
     But the precise location of those images is not disclosed to them
 
-  @F4 @security
+  @F4 @security @F4-5
   Scenario: Frank is told the protection state before he commits to an upload
     Given Frank is preparing an upload that may include a sensitive species or location
     When he reaches the point of committing the upload
     Then he is shown whether the location of that upload will be protected
     And he can see this before the upload is committed, not only afterwards
 
-  @F4 @security
+  @F4 @security @F4-6
   Scenario: Protection cannot be removed silently
     When a sensitive designation is removed, or a protected location is made visible
     Then the change requires appropriate authorization
     And the change is recorded together with who made it
     And it does not take effect without being visible to the collection's authorized members
 
-  @F4 @security
+  @F4 @security @F4-7
   Scenario: A single compromised account cannot widen sensitive-location exposure
     Given one account has been compromised or acts maliciously
     When that account attempts to reach sensitive locations beyond its authorized scope
     Then no sensitive location outside that account's authorized scope is disclosed
 
-  @F4 @security
+  @F4 @security @F4-8
   Scenario: Data in unauthorized collections cannot be read, changed or deleted
     Given a user is not authorized for a collection
     When they attempt to read, modify or delete that collection's data
     Then the attempt is refused
     And no part of it is carried out
 
-  @F4 @security
+  @F4 @security @F4-9
   Scenario: Original uploaded data survives every later change
     Given images and their original upload record exist in a collection
     When a later change is made to that upload's data
@@ -79,7 +79,7 @@ Feature: Never expose the location of endangered species
     And it is not overwritten without a trace
     And the change is traceable to the person who made it
 
-  @F4 @security
+  @F4 @security @F4-10
   Scenario: An action outside a user's permissions is refused outright
     Given a user attempts an action their permissions do not allow
     When the attempt is processed
