@@ -724,8 +724,8 @@ def _(
             _connection_chip = mo.Html(
                 "<div class='sparcd-callout'>"
                 "<div class='t'>The Endpoint doesn't look right.</div>"
-                f"<div>{_esc_ep(_problem)} It should look like <b>wildcats.sparcd.arizona.edu</b> "
-                "or <b>https://wildcats.sparcd.arizona.edu</b>.</div>"
+                f"<div>{_esc_ep(_problem)} It should look like <b>server.example.org</b> "
+                "or <b>https://server.example.org</b>, with your server's name.</div>"
                 f"<div class='d'>You entered: {_esc_ep(_creds['endpoint'])}</div>"
                 "</div>"
             )
