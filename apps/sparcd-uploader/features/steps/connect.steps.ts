@@ -65,6 +65,9 @@ Then('the New upload, History and Settings sections become reachable', async ({ 
 Then('a batch can be dropped and inspected with no connection', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
+  // Unfolding the file list draws the rows before their thumbnails; wait for
+  // those too, or the "intact" comparison later sees them appear.
+  await expect.poll(async () => (await app.listedFiles()).every((f) => f.hasThumbnail)).toBe(true);
   const files = await app.listedFiles();
   expect(files).toHaveLength(standardBatch().length);
   for (const file of files) {
