@@ -1291,12 +1291,8 @@ def _(
         _locations_raw
         .join(_image_counts, on=["bucket", "upload"], how="left")
         .join(_obs_counts, on=["bucket", "upload"], how="left")
-        # One row per location even when its coordinates drift between uploads;
-        # plot it at the newest upload's coordinates (upload folders start with a stamp).
-        .group_by("mountain_range", "location_id", "location_name")
+        .group_by("mountain_range", "location_id", "location_name", "latitude", "longitude")
         .agg(
-            pl.col("latitude").sort_by("upload").last(),
-            pl.col("longitude").sort_by("upload").last(),
             pl.col("deployment_id").unique().alias("deployment_ids"),
             pl.col("elevation").mean().round(0).alias("elevation"),
             pl.col("image_count").sum().fill_null(0).alias("image_count"),
