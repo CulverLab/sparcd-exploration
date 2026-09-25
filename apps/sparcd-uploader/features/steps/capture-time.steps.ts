@@ -319,6 +319,7 @@ Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.expectStep('Inspect');
   await app.stubTagger();
   await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  await app.page.waitForURL(/\/tagger\/\?batch=/);
   const [record] = await app.readFlipRecords();
   expect(record.files[0]).toMatchObject({
     exifTimestamp: '2026-07-01T12:00:00',

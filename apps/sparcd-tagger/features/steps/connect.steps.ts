@@ -419,7 +419,11 @@ Given('there are no unsaved local edits', async ({ page }) => {
 
 When('Disconnect is chosen', async ({ page }) => {
   await openSettings(page);
+  // Disconnect wipes local state and reloads the same URL; the connect gate
+  // renders before the reload, so later storage reads would race it.
+  const reloaded = page.waitForEvent('load');
   await page.locator('main').getByRole('button', { name: 'Disconnect' }).click();
+  await reloaded;
 });
 
 Then(
