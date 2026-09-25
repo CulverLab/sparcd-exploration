@@ -2112,7 +2112,7 @@ def _(
         _selected_media = (
             media_filtered
             .filter(pl.col("deployment_id").is_in(_dep_ids))
-            .select("media_path", "file_name", "deployment_id", "bucket")
+            .select("media_path", "file_name", "mime_type", "deployment_id", "bucket")
             .unique(subset=["bucket", "media_path"])
             .join(_dep_locations, on="deployment_id", how="left")
         )
@@ -2233,8 +2233,8 @@ def _(
     from datetime import timedelta
     from html import escape
 
-    def _presign_row(bucket: str, path: str) -> str:
-        return client.presigned_get_object(bucket, path, expires=timedelta(minutes=30))
+    def _presign_row(bucket: str, path: str, expires=timedelta(minutes=30)) -> str:
+        return client.presigned_get_object(bucket, path, expires=expires)
 
     def _parse_tags(raw: str) -> str:
         if not raw:
@@ -2273,9 +2273,17 @@ def _(
             "width:100%;aspect-ratio:4/3;object-fit:cover;display:block;"
             "background:var(--mark,#ead8a3);border:1px solid var(--ruleSoft,#cfc4a8);"
         )
+        # Videos keep their own shape inside the tile instead of being cropped to 4:3.
+        _video_style = _img_style.replace("object-fit:cover", "object-fit:contain")
         _tiles = []
         for _row in _page_df.iter_rows(named=True):
-            _url = _presign_row(_row["bucket"], _row["media_path"])
+            _is_video = (_row.get("mime_type") or "").startswith("video/")
+            # A video keeps requesting ranges as it plays and seeks, so its URL has to
+            # outlast a long stay on the page, not just the first load.
+            _url = _presign_row(
+                _row["bucket"], _row["media_path"],
+                timedelta(hours=12) if _is_video else timedelta(minutes=30),
+            )
             _tag = _parse_tags(_row.get("tags") or "")
             _sci = _row.get("scientific_name") or ""
             _ts = (_row.get("timestamp") or "").replace("T", " ")[:19]
@@ -2283,10 +2291,15 @@ def _(
             _u = escape(_url, quote=True)
             _f = escape(_row["file_name"])
             _m = escape(_caption) if _caption else "&nbsp;"
+            if _is_video:
+                _media = f"<video src='{_u}' controls preload='metadata' playsinline style='{_video_style}'></video>"
+            else:
+                _media = (
+                    f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
+                    f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                )
             _tiles.append(
-                f"<figure style='{_fig_style}'>"
-                f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
-                f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                f"<figure style='{_fig_style}'>{_media}"
                 "<figcaption style='font-size:12px;line-height:1.3;'>"
                 f"<div class='fname' style='font-weight:600;color:var(--ink,#1c1a14);'>{_f}</div>"
                 f"<div class='caption' style='color:var(--inkMute,#6b6555);word-break:break-word;'>{_m}</div>"
@@ -2296,7 +2309,7 @@ def _(
         _grid = f"<div class='sparcd-grid' style='{_grid_style}'>" + "".join(_tiles) + "</div>"
         _caption_line = mo.Html(
             f"<div class='sparcd-note'>Images {_start + 1}–{_end} of {selected_total} (tagged only). "
-            "Click a thumbnail to open the full image in a new tab.</div>"
+            "Click a thumbnail to open the full image in a new tab. Videos play in their tile.</div>"
         )
         thumbnail_grid = mo.vstack([page_controls, _caption_line, mo.Html(_grid)])
 
