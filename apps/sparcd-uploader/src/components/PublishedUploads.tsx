@@ -23,10 +23,11 @@ import {
   type EditResult,
 } from '../lib/publishedEdit';
 import { locationToDeployment, type Location } from '../lib/locations';
-import { javaEditStamp } from '@sparcd/camtrap';
+import { javaEditStamp, parseDeployments } from '@sparcd/camtrap';
 import { formatUploadHeader } from '../lib/uploadDisplay';
 import { DeploymentPicker } from './DeploymentPicker';
 import { Note } from './RunMonitor';
+import { timeZoneForCoords } from '../lib/coords';
 
 const stampOf = (prefix: string) => prefix.replace(/\/$/, '').split('/').pop() ?? prefix;
 
@@ -126,13 +127,22 @@ function UploadCard({
       const roles = ['deployments', 'media', 'observations'] as const;
       const fresh = await loadPublishedCanonical(cfg, collection.bucket, upload.prefix, [...roles]);
       const deployment = locationToDeployment(loc, uuid);
+      const previousDeployment = parseDeployments(fresh.deployments!.text)[0];
       const next = restampDeployment(
         {
           deployments: fresh.deployments!.text,
           media: fresh.media!.text,
           observations: fresh.observations!.text,
         },
-        { fromDeploymentId: upload.deploymentId ?? undefined, toDeploymentId: deployment.deploymentId, location: deployment },
+        {
+          fromDeploymentId: upload.deploymentId ?? previousDeployment?.deploymentId,
+          toDeploymentId: deployment.deploymentId,
+          location: deployment,
+          fromTimeZone: previousDeployment
+            ? timeZoneForCoords(previousDeployment.latitude, previousDeployment.longitude)
+            : undefined,
+          toTimeZone: timeZoneForCoords(deployment.latitude, deployment.longitude),
+        },
       );
       const result = await runPublishedEdit(
         {

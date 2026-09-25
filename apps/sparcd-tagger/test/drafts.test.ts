@@ -182,7 +182,7 @@ describe('draft store — add-only over a base multi-species image', () => {
     );
     const drafts = useDraftStore.getState().drafts;
     expect(Object.keys(drafts)).toEqual([PATH]);
-    expect(drafts[PATH].timeOverride).toBe('2024-01-10T11:15:00.000Z');
+    expect(drafts[PATH].timeOverride).toBe('2024-01-10T11:15:00.000+00:00');
     expect(drafts[PATH].observations.map((o) => o.scientificName)).toEqual([
       'Odocoileus hemionus',
       'Canis latrans',

@@ -43,7 +43,7 @@ export type UploadItem = {
   size: number;
   sha256: string;
   timestampSource?: TimestampSource;
-  captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing ISO capture time (post-tz), media.csv col 4
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload

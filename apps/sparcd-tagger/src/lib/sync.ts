@@ -25,17 +25,18 @@ import {
   javaEditStamp,
   correctedTimestamp,
   hasSpeciesPresent,
-  rewriteMediaDeploymentId,
-  rewriteObservationsDeploymentId,
   serializeDeployments,
   parseDeployments,
   parseCsvRows,
+  serializeCsvRows,
+  rebaseCaptureTimestamp,
   MEDIA_COL,
   OBS_COL,
   type MediaEdit,
   type TimeOffset,
   type Deployment,
 } from '@sparcd/camtrap';
+import tzlookup from 'tz-lookup';
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 import { sha256Hex } from './hash';
@@ -284,6 +285,31 @@ function isUnsupported(err: unknown): boolean {
   return (err as { name?: string })?.name === 'ConditionalPutUnsupportedError';
 }
 
+function rewriteDeploymentAndRebase(
+  csv: string,
+  deploymentColumn: number,
+  timestampColumn: number,
+  fromDeploymentId: string | undefined,
+  toDeploymentId: string,
+  fromTimeZone: string | undefined,
+  toTimeZone: string,
+): string {
+  const rows = parseCsvRows(csv);
+  for (const row of rows) {
+    if (fromDeploymentId !== undefined && row[deploymentColumn] !== fromDeploymentId) continue;
+    const timestamp = row[timestampColumn] ?? '';
+    if (timestamp && fromTimeZone && fromTimeZone !== toTimeZone) {
+      try {
+        row[timestampColumn] = rebaseCaptureTimestamp(timestamp, fromTimeZone, toTimeZone);
+      } catch {
+        // Preserve malformed legacy values while still correcting the location.
+      }
+    }
+    row[deploymentColumn] = toDeploymentId;
+  }
+  return serializeCsvRows(rows);
+}
+
 /**
  * Build the merged canonical bodies and which roles actually change. The merge
  * runs against `current` (verified equal to the grounded base), so unrelated
@@ -308,8 +334,30 @@ async function buildWrites(
   });
   let deploymentsBody = current.deployments.text;
   if (plan.locationEdit) {
-    mediaBody = rewriteMediaDeploymentId(mediaBody, plan.locationEdit.deploymentId);
-    observationsBody = rewriteObservationsDeploymentId(observationsBody, plan.locationEdit.deploymentId);
+    const currentDeployment = parseDeployments(current.deployments.text)[0];
+    const fromDeploymentId = currentDeployment?.deploymentId;
+    const fromTimeZone = currentDeployment
+      ? tzlookup(currentDeployment.latitude, currentDeployment.longitude)
+      : undefined;
+    const toTimeZone = tzlookup(plan.locationEdit.latitude, plan.locationEdit.longitude);
+    mediaBody = rewriteDeploymentAndRebase(
+      mediaBody,
+      MEDIA_COL.deploymentId,
+      MEDIA_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      fromTimeZone,
+      toTimeZone,
+    );
+    observationsBody = rewriteDeploymentAndRebase(
+      observationsBody,
+      OBS_COL.deploymentId,
+      OBS_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      fromTimeZone,
+      toTimeZone,
+    );
     deploymentsBody = serializeDeployments([plan.locationEdit]);
   }
   const bodies: Record<CanonicalRole, string> = {

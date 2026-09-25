@@ -5,6 +5,7 @@
 // needs, kept pure so they can be unit-tested without React or Dexie.
 
 import type { TimeOffsetRecord } from './db';
+import { normalizeCaptureTimestamp } from '@sparcd/camtrap';
 
 /** The earliest already-corrected timestamp among the bulk targets — the anchor a
  *  selection-scoped shift previews against. It MUST be the corrected time (not the
@@ -55,19 +56,18 @@ export function formatOffsetDelta(o: TimeOffsetRecord | null | undefined): strin
 
 // Accepts a space or `T` separator, an optional seconds field, and an optional
 // trailing `.sss` + `Z`/offset — the shape `PerImageTime` seeds its edit box
-// with `corrected`, which is now a full ISO 8601 UTC string, so a user who
-// commits without touching the text must still round-trip cleanly.
-const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})?$/;
+// with `corrected`, so a user who commits without touching the text must still
+// round-trip cleanly without dropping its offset.
+const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?(Z|[+-]\d{2}:?\d{2})?$/;
 
-/** Normalize a user-typed corrected timestamp to a full ISO 8601 UTC string
- *  (the form `media.csv` / `observations.csv` col 4 now stores). Returns null on
- *  a shape or range violation so the caller can reject the edit instead of
- *  writing junk. A bare `YYYY-MM-DDTHH:mm:ss` with no offset is treated as
- *  already UTC (matching what `corrected` displays), not the browser's zone. */
+/** Normalize a user-typed corrected timestamp to the offset-bearing ISO 8601
+ *  form stored in media.csv / observations.csv. Returns null on a shape or
+ *  range violation so the caller can reject the edit instead of writing junk.
+ *  A bare value is treated as +00:00, never as the browser's zone. */
 export function normalizeTimestampInput(raw: string): string | null {
   const m = INPUT_RE.exec(raw.trim());
   if (!m) return null;
-  const [, y, mo, d, h, mi, s] = m;
+  const [, y, mo, d, h, mi, s, fraction = '', zone = '+00:00'] = m;
   const month = Number(mo);
   const day = Number(d);
   const hour = Number(h);
@@ -81,5 +81,11 @@ export function normalizeTimestampInput(raw: string): string | null {
   // date into the following month.
   const probe = new Date(Date.UTC(Number(y), month - 1, day));
   if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
-  return new Date(Date.UTC(Number(y), month - 1, day, hour, min, sec)).toISOString();
+  try {
+    return normalizeCaptureTimestamp(
+      `${y}-${mo}-${d}T${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${fraction.padEnd(3, '0')}${zone}`,
+    );
+  } catch {
+    return null;
+  }
 }

@@ -215,7 +215,7 @@ Then('exactly that selected image receives a time override', async ({ page }) =>
   }[];
   expect(drafts).toHaveLength(1);
   expect(drafts[0].mediaPath).toMatch(/IMG002\.JPG$/);
-  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:30.000Z');
+  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:30.000+00:00');
 });
 
 Then('the unselected frames are unchanged', async ({ page }) => {
@@ -323,7 +323,7 @@ Then('those frames are skipped', async ({ page }) => {
       drafts.map((d) => [d.mediaPath.split('/').pop()!, d.timeOverride]),
     ) as Record<string, string | null>;
   };
-  await expect.poll(overrides).toEqual({ 'IMG005.JPG': '2024-01-11T07:00:30.000Z' });
+  await expect.poll(overrides).toEqual({ 'IMG005.JPG': '2024-01-11T07:00:30.000+00:00' });
 });
 
 Then('the dialog states that they are', async ({ page }) => {
@@ -462,7 +462,7 @@ Then(
     await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
     const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
     expect(media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!.timestamp).toBe(
-      '2024-01-10T09:00:00.000Z',
+      '2024-01-10T09:00:00.000+00:00',
     );
     expect(media.find((m) => m.mediaId.endsWith('VID001.MP4'))!.timestamp).toBe('');
   },
@@ -499,7 +499,7 @@ Then(
     await expect(page.getByText(/^was /)).toHaveCount(0);
     const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
     expect(media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!.timestamp).toBe(
-      '2024-01-10T09:00:00.000Z',
+      '2024-01-10T09:00:00.000+00:00',
     );
   },
 );

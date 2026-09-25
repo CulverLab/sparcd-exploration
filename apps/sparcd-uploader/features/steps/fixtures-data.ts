@@ -45,6 +45,7 @@ const loc = (
  */
 export const RAW_LOCATIONS: RawLocation[] = [
   loc('Bear Canyon', 'BEAR1', 32.4, -110.7, 1200),
+  loc('Hudson Park', 'HUD1', 40.7, -74.0, 10),
   loc('Coyote Wash', 'COY2', 32.1, -110.9, 900),
   loc(USED_LOCATION_NAME, USED_LOCATION_ID, 31.9, -111.2, 1500),
   loc('Elk Meadow', 'DUP9', 33.0, -110.0, 2000),
@@ -61,6 +62,7 @@ export const RAW_LOCATIONS: RawLocation[] = [
 
 export const VALID_LOCATION_NAMES = [
   'Bear Canyon',
+  'Hudson Park',
   'Coyote Wash',
   'Deer Springs',
   'Elk Meadow',
@@ -178,7 +180,15 @@ export function seedDefaultStorage(s3: S3Mock): void {
 export function seedPriorUpload(s3: S3Mock): void {
   s3.put(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}deployments.csv`, deploymentsCsv(UUID_A, USED_LOCATION_ID, USED_LOCATION_NAME), { contentType: 'text/csv' });
   s3.put(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}media.csv`, mediaCsv(UUID_A, USED_LOCATION_ID, PRIOR_UPLOAD_PREFIX, ['IMG_0001.JPG', 'IMG_0002.JPG']), { contentType: 'text/csv' });
-  s3.put(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}observations.csv`, '', { contentType: 'text/csv' });
+  s3.put(
+    BUCKET_A,
+    `${PRIOR_UPLOAD_PREFIX}observations.csv`,
+    csvRow([
+      `${PRIOR_UPLOAD_PREFIX}obs-1`, `${UUID_A}:${USED_LOCATION_ID}`, `${PRIOR_UPLOAD_PREFIX}IMG_0001.JPG`, 'obs-1',
+      '2026-01-02T09:00:00', 'animal', 'Panthera onca', '1', '', '', '', '', '', '', '', '', '', '', '', '',
+    ]),
+    { contentType: 'text/csv' },
+  );
   s3.put(
     BUCKET_A,
     `${PRIOR_UPLOAD_PREFIX}UploadMeta.json`,

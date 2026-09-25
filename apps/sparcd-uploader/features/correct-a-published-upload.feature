@@ -32,6 +32,7 @@ Feature: Correct a published upload
     When a different location is chosen for a published upload
     Then the deployment row is rewritten with that location's identifier, name, coordinates and elevation
     And the deployment reference on every media and observation row is updated to match
+    And the media and observation timestamps are rebased to the new location offset
     And no other column or row in those files is changed
 
   @unmapped

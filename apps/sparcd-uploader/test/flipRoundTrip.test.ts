@@ -164,8 +164,8 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   expect(commentsFor(bundle.mediaCsv, '3-spread.jpg')).toBe('[TIMESTAMP:spread]');
   expect(commentsFor(bundle.mediaCsv, '4-none.jpg')).toBe('[TIMESTAMP:offset]');
   expect(commentsFor(bundle.mediaCsv, '5-modified.jpg')).toBe('[TIMESTAMP:manual]');
-  expect(bundle.mediaCsv).toContain('2026-07-01T12:08:00.000Z');
-  expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000Z');
+  expect(bundle.mediaCsv).toContain('2026-07-01T12:08:00.000+00:00');
+  expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000+00:00');
   expect(bundle.deploymentsCsv.split(',')[15]).toBe('"true"'); // timestamp_issues
 });
 

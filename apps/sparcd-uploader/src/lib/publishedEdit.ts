@@ -28,6 +28,7 @@ import {
   serializeDeployments,
   parseCsvRows,
   serializeCsvRows,
+  rebaseCaptureTimestamp,
   MEDIA_COL,
   OBS_COL,
   DEPLOY_COL,
@@ -96,6 +97,9 @@ export type RestampInput = {
   toDeploymentId: string;
   /** The chosen location's full deployment row (re-points coords/name too). */
   location: Deployment;
+  /** IANA zones for rebasing capture timestamps during a location correction. */
+  fromTimeZone?: string;
+  toTimeZone?: string;
 };
 
 /** Re-stamp one CSV's deployment_id column, touching only rows that match. */
@@ -107,12 +111,36 @@ function restampCsv(csv: string, col: number, from: string | undefined, to: stri
   return serializeCsvRows(rows);
 }
 
+function restampTimestamps(
+  csv: string,
+  deploymentColumn: number,
+  timestampColumn: number,
+  fromDeploymentId: string | undefined,
+  fromTimeZone: string | undefined,
+  toTimeZone: string | undefined,
+): string {
+  if (!fromTimeZone || !toTimeZone || fromTimeZone === toTimeZone) return csv;
+  const rows = parseCsvRows(csv);
+  for (const row of rows) {
+    if (fromDeploymentId !== undefined && row[deploymentColumn] !== fromDeploymentId) continue;
+    const value = row[timestampColumn] ?? '';
+    if (!value) continue;
+    try {
+      row[timestampColumn] = rebaseCaptureTimestamp(value, fromTimeZone, toTimeZone);
+    } catch {
+      // Preserve malformed legacy values; the surrounding deployment edit can
+      // still be applied without inventing a timestamp.
+    }
+  }
+  return serializeCsvRows(rows);
+}
+
 /**
  * Re-stamp `deployment_id` consistently across the three CSVs to fix a
- * misassigned camera site. Touches ONLY the deployment_id column in `media.csv`
- * and `observations.csv`; the matching `deployments.csv` row is re-serialized
- * from the chosen location (re-pointing deployment_id + location_id/name/coords/
- * elevation — the full correction). Every unrelated row/byte is preserved.
+ * misassigned camera site. Matching media and observation rows also have their
+ * capture timestamps rebased when the location timezone changes; every other
+ * column and unrelated row is preserved. The matching deployment row is
+ * re-serialized from the chosen location (the full correction).
  */
 export function restampDeployment(
   csv: { deployments: string; media: string; observations: string },
@@ -139,12 +167,21 @@ export function restampDeployment(
 
   return {
     deployments: serializeCsvRows(out),
-    media: restampCsv(csv.media, MEDIA_COL.deploymentId, opts.fromDeploymentId, opts.toDeploymentId),
-    observations: restampCsv(
-      csv.observations,
-      OBS_COL.deploymentId,
-      opts.fromDeploymentId,
+    media: restampTimestamps(
+      restampCsv(csv.media, MEDIA_COL.deploymentId, opts.fromDeploymentId, opts.toDeploymentId),
+      MEDIA_COL.deploymentId,
+      MEDIA_COL.timestamp,
       opts.toDeploymentId,
+      opts.fromTimeZone,
+      opts.toTimeZone,
+    ),
+    observations: restampTimestamps(
+      restampCsv(csv.observations, OBS_COL.deploymentId, opts.fromDeploymentId, opts.toDeploymentId),
+      OBS_COL.deploymentId,
+      OBS_COL.timestamp,
+      opts.toDeploymentId,
+      opts.fromTimeZone,
+      opts.toTimeZone,
     ),
   };
 }

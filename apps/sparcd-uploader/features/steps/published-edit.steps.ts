@@ -135,7 +135,7 @@ When('a different location is chosen for a published upload', async ({ app }) =>
   const card = cardFor(app, 'priorperson');
   await card.getByRole('button', { name: 'Correct location' }).click();
   await card.locator('button[aria-haspopup="listbox"]').click();
-  await card.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: 'Bear Canyon' }).first().click();
+  await card.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: 'Hudson Park' }).first().click();
   await card.getByRole('button', { name: 'Re-stamp', exact: true }).click();
   await expect(app.page.getByText('Applied. The published upload is updated.')).toBeVisible();
 });
@@ -144,12 +144,12 @@ Then(
   "the deployment row is rewritten with that location's identifier, name, coordinates and elevation",
   async ({ app }) => {
     const csv = app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}deployments.csv`)!;
-    expect(csv).toContain(`"${UUID_A}:BEAR1"`);
-    expect(csv).toContain('"BEAR1"');
-    expect(csv).toContain('"Bear Canyon"');
-    expect(csv).toContain('"-110.700000"');
-    expect(csv).toContain('"32.400000"');
-    expect(csv).toContain('"1200.000000"');
+    expect(csv).toContain(`"${UUID_A}:HUD1"`);
+    expect(csv).toContain('"HUD1"');
+    expect(csv).toContain('"Hudson Park"');
+    expect(csv).toContain('"-74.000000"');
+    expect(csv).toContain('"40.700000"');
+    expect(csv).toContain('"10.000000"');
     expect(csv.split('\n').filter((l) => l.trim())).toHaveLength(1);
   },
 );
@@ -159,9 +159,9 @@ Then(
   async ({ app }) => {
     const media = app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}media.csv`)!;
     for (const row of media.split('\n').filter((l) => l.trim())) {
-      expect(row.split(',')[1]).toBe(`"${UUID_A}:BEAR1"`);
+      expect(row.split(',')[1]).toBe(`"${UUID_A}:HUD1"`);
     }
-    expect(app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}observations.csv`)).toBe('');
+    expect(app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}observations.csv`)).toContain(`"${UUID_A}:HUD1"`);
   },
 );
 
@@ -174,10 +174,17 @@ Then('no other column or row in those files is changed', async ({ app }) => {
     const a = after[i].split(',');
     expect(a).toHaveLength(b.length);
     for (let c = 0; c < b.length; c++) {
-      if (c === 1) continue; // the deployment_id column is the one being corrected
+      if (c === 1 || c === 4) continue; // deployment_id and capture timestamp are intentionally rebased
       expect(a[c]).toBe(b[c]);
     }
   }
+});
+
+Then('the media and observation timestamps are rebased to the new location offset', async ({ app }) => {
+  const media = app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}media.csv`)!;
+  const observations = app.s3.text(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}observations.csv`)!;
+  expect(media).toContain('"2026-01-02T09:00:00.000-05:00"');
+  expect(observations).toContain('"2026-01-02T09:00:00.000-05:00"');
 });
 
 // --- snapshots -------------------------------------------------------------
