@@ -1450,7 +1450,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(locations, observations_filtered, pl):
+def _(deployments, locations, observations_filtered, pl):
     # Pure-Python hexagonal binning (pointy-top axial grid). Replaces the `h3`
     # package, which is a compiled Cython extension with no Pyodide/wasm wheel —
     # `import h3` fails in the deployed WASM bundle. This keeps the same hex
@@ -1462,8 +1462,19 @@ def _(locations, observations_filtered, pl):
     _SQRT3 = _hexmath.sqrt(3.0)
     # Reference latitude to keep hexes visually regular on the map: projecting
     # longitude by cos(lat0) removes the meridian convergence, then the inverse
-    # stretch restores it so cells read as hexagons at the data's latitude.
-    _lat0 = float(locations["latitude"].mean()) if locations.height else 0.0
+    # stretch restores it so cells read as hexagons at the data's latitude. Taken
+    # from every loaded site, not the search results, so a search never moves the grid.
+    # Each site counts once, with swapped coordinates corrected as the locations
+    # cell does.
+    _anchor = (
+        deployments.filter(pl.col("location_id") != "0000")
+        .unique(["location_id", "latitude", "longitude"])
+        .select(
+            pl.when(pl.col("latitude").abs() > 90).then(pl.col("longitude")).otherwise(pl.col("latitude"))
+        )
+        .to_series()
+    )
+    _lat0 = float(_anchor.mean()) if _anchor.len() else 0.0
     _cos_lat0 = _hexmath.cos(_hexmath.radians(_lat0)) or 1.0
 
     def _latlng_to_cell(lat, lng):
@@ -1483,11 +1494,13 @@ def _(locations, observations_filtered, pl):
             _rz = -_rx - _ry
         return f"{int(_rx)}:{int(_rz)}"
 
-    def _cell_to_ring(cid):
+    def _cell_center(cid):
         _q_str, _r_str = cid.split(":")
         _q, _r = int(_q_str), int(_r_str)
-        _cx = HEX_SIZE_DEG * (_SQRT3 * _q + _SQRT3 / 2.0 * _r)
-        _cy = HEX_SIZE_DEG * (1.5 * _r)
+        return HEX_SIZE_DEG * (_SQRT3 * _q + _SQRT3 / 2.0 * _r), HEX_SIZE_DEG * (1.5 * _r)
+
+    def _cell_to_ring(cid):
+        _cx, _cy = _cell_center(cid)
         _ring = []
         for _i in range(6):
             _ang = _hexmath.radians(60 * _i - 30)
@@ -1560,8 +1573,12 @@ def _(locations, observations_filtered, pl):
                 pl.col("location_id").n_unique().alias("camera_count"),
                 pl.col("location_id").alias("location_ids"),
                 pl.col("location_name").alias("location_names"),
-                pl.col("latitude").mean().alias("center_lat"),
-                pl.col("longitude").mean().alias("center_lng"),
+            )
+            # The hex's own centre. An average of site coordinates is the exact site
+            # when a hex holds one, and the map centres on these.
+            .with_columns(
+                pl.col("h3_id").map_elements(lambda h: _cell_center(h)[1], return_dtype=pl.Float64).alias("center_lat"),
+                pl.col("h3_id").map_elements(lambda h: _cell_center(h)[0] / _cos_lat0, return_dtype=pl.Float64).alias("center_lng"),
             )
         )
 
