@@ -1294,14 +1294,24 @@ def _(
         .group_by("mountain_range", "location_id", "location_name", "latitude", "longitude")
         .agg(
             pl.col("deployment_id").unique().alias("deployment_ids"),
+            pl.col("upload").unique().alias("uploads"),
             pl.col("elevation").mean().round(0).alias("elevation"),
             pl.col("image_count").sum().fill_null(0).alias("image_count"),
             pl.col("tagged_image_count").sum().fill_null(0).alias("tagged_image_count"),
         )
         .sort("location_name")
+        # One key per table row. Two sites can share a location id (and so a
+        # deployment_id), so selection and drill-downs go by this key and by upload.
+        .with_columns(
+            pl.concat_str(
+                [pl.col("location_id"), pl.col("location_name"),
+                 pl.col("latitude").cast(pl.Utf8), pl.col("longitude").cast(pl.Utf8)],
+                separator="|",
+            ).alias("site_key")
+        )
     )
 
-    _locations_table = locations.drop("deployment_ids")
+    _locations_table = locations.drop("deployment_ids", "uploads", "site_key")
     if elevation_unit.value == "feet":
         _locations_table = _locations_table.with_columns(
             (pl.col("elevation") * 3.28084).round(0).alias("elevation_ft")
@@ -1509,6 +1519,7 @@ def _(locations, observations_filtered, pl):
                 "h3_id": [],
                 "camera_count": [],
                 "location_ids": [],
+                "site_keys": [],
                 "location_names": [],
                 "center_lat": [],
                 "center_lng": [],
@@ -1521,6 +1532,7 @@ def _(locations, observations_filtered, pl):
                 "h3_id": pl.Utf8,
                 "camera_count": pl.Int64,
                 "location_ids": pl.List(pl.Utf8),
+                "site_keys": pl.List(pl.Utf8),
                 "location_names": pl.List(pl.Utf8),
                 "center_lat": pl.Float64,
                 "center_lng": pl.Float64,
@@ -1540,13 +1552,13 @@ def _(locations, observations_filtered, pl):
             .alias("h3_id")
         )
 
-        _dep_to_hex = {}
+        _upload_to_hex = {}
         for _row in _loc_with_hex.iter_rows(named=True):
-            for _d in _row["deployment_ids"]:
-                _dep_to_hex[_d] = _row["h3_id"]
+            for _u in _row["uploads"]:
+                _upload_to_hex[_u] = _row["h3_id"]
 
         _obs_with_hex = observations_filtered.with_columns(
-            pl.col("deployment_id").replace_strict(_dep_to_hex, default=None).alias("h3_id")
+            pl.col("upload").replace_strict(_upload_to_hex, default=None).alias("h3_id")
         ).filter(pl.col("h3_id").is_not_null())
 
         _obs_agg = (
@@ -1562,8 +1574,9 @@ def _(locations, observations_filtered, pl):
             _loc_with_hex
             .group_by("h3_id")
             .agg(
-                pl.col("location_id").n_unique().alias("camera_count"),
+                pl.col("site_key").n_unique().alias("camera_count"),
                 pl.col("location_id").alias("location_ids"),
+                pl.col("site_key").alias("site_keys"),
                 pl.col("location_name").alias("location_names"),
                 pl.col("latitude").mean().alias("center_lat"),
                 pl.col("longitude").mean().alias("center_lng"),
@@ -1691,17 +1704,18 @@ def _(
         if _display_mode == "points":
             _hex_lookup = {}
             for _r in hex_summary.iter_rows(named=True):
-                for _lid in _r["location_ids"]:
-                    _hex_lookup[_lid] = _r
+                for _key in _r["site_keys"]:
+                    _hex_lookup[_key] = _r
             _point_rows = [
                 {
                     "location_id": _r["location_id"],
                     "location_name": _r["location_name"],
+                    "site_key": _r["site_key"],
                     "lat": _r["latitude"],
                     "lon": _r["longitude"],
-                    "species_richness": _hex_lookup.get(_r["location_id"], {}).get("species_richness", 0),
-                    "checklists": _hex_lookup.get(_r["location_id"], {}).get("checklists", 0),
-                    "most_recent": _hex_lookup.get(_r["location_id"], {}).get("most_recent", "—"),
+                    "species_richness": _hex_lookup.get(_r["site_key"], {}).get("species_richness", 0),
+                    "checklists": _hex_lookup.get(_r["site_key"], {}).get("checklists", 0),
+                    "most_recent": _hex_lookup.get(_r["site_key"], {}).get("most_recent", "—"),
                 }
                 for _r in locations.iter_rows(named=True)
             ]
@@ -1712,7 +1726,7 @@ def _(
                     mode="markers",
                     marker=dict(size=14, color="#5f3b24", opacity=0.9),
                     customdata=[
-                        (r["location_id"], r["location_name"], r["species_richness"], r["checklists"], r["most_recent"])
+                        (r["location_id"], r["location_name"], r["species_richness"], r["checklists"], r["most_recent"], r["site_key"])
                         for r in _point_rows
                     ],
                     hovertemplate=(
@@ -1788,6 +1802,8 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
     _v = camera_map.value if (camera_map is not None and hasattr(camera_map, "value")) else []
     _display_mode = map_display_mode.value if is_wildcats_s3_endpoint else "hex"
 
+    # Holds the locations' site_key values, not bare location ids, so a click on one
+    # of two sites sharing an id selects only that site.
     selected_location_ids = []
     if _v:
         if _display_mode == "points":
@@ -1795,7 +1811,7 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
             for _p in _v:
                 _cd = _p.get("customdata")
                 if _cd:
-                    _lid = _cd[0] if isinstance(_cd, (list, tuple)) else _cd
+                    _lid = _cd[5]
                     if _lid not in _seen:
                         _seen.add(_lid)
                         selected_location_ids.append(_lid)
@@ -1814,7 +1830,7 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
                     _hex_ids.append(_hex_id_list[_idx])
             _seen = set()
             for _r in hex_summary.filter(pl.col("h3_id").is_in(_hex_ids)).iter_rows(named=True):
-                for _lid in _r["location_ids"]:
+                for _lid in _r["site_keys"]:
                     if _lid not in _seen:
                         _seen.add(_lid)
                         selected_location_ids.append(_lid)
@@ -1868,8 +1884,8 @@ def _(
             )
         return "".join(_rows)
 
-    def _species_list(dep_ids):
-        _obs = observations_filtered.filter(pl.col("deployment_id").is_in(dep_ids))
+    def _species_list(uploads):
+        _obs = observations_filtered.filter(pl.col("upload").is_in(uploads))
         _pat = _re.compile(r"COMMONNAME:([^\]]+)")
         _counts = {}
         for _row in _obs.select("tags", "media_path").iter_rows(named=True):
@@ -1879,9 +1895,8 @@ def _(
         return sorted(_counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
 
     if selected_location_ids:
-        _selected = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _selected["deployment_ids"].to_list() for d in ds]
-        _species = _species_list(_dep_ids)
+        _selected = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _species = _species_list([u for us in _selected["uploads"].to_list() for u in us])
         _species_rows = "".join(
             _card_row(_html.escape(name), count)
             for name, count in _species[:12]
@@ -1904,8 +1919,7 @@ def _(
             + _chart
         )
     else:
-        _dep_ids = [d for ds in locations["deployment_ids"].to_list() for d in ds] if locations.height else []
-        _species = _species_list(_dep_ids)
+        _species = _species_list([u for us in locations["uploads"].to_list() for u in us])
         _species_rows = "".join(
             _card_row(_html.escape(name), count)
             for name, count in _species[:10]
@@ -1947,7 +1961,7 @@ def _(locations, mo, pl, selected_location_ids):
     else:
         from html import escape as _esc
 
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
         _names = ", ".join(_esc(n) for n in _rows["location_name"].to_list())
         _img = int(_rows["image_count"].sum())
         _tag = int(_rows["tagged_image_count"].sum())
@@ -2015,10 +2029,10 @@ def _(
     if not selected_location_ids:
         location_summary_card = mo.md("")
     else:
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _rows["deployment_ids"].to_list() for d in ds]
-        _media_loc = media_filtered.filter(pl.col("deployment_id").is_in(_dep_ids)).unique("media_path")
-        _obs_loc = observations_filtered.filter(pl.col("deployment_id").is_in(_dep_ids))
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _uploads = [u for us in _rows["uploads"].to_list() for u in us]
+        _media_loc = media_filtered.filter(pl.col("upload").is_in(_uploads)).unique("media_path")
+        _obs_loc = observations_filtered.filter(pl.col("upload").is_in(_uploads))
 
         _total = _media_loc.height
         _tagged = _obs_loc["media_path"].unique().len()
@@ -2097,24 +2111,25 @@ def _(
         selected_images_all = pl.DataFrame()
         selected_total = 0
     else:
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _rows["deployment_ids"].to_list() for d in ds]
-        _dep_locations = pl.DataFrame([
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _uploads = [u for us in _rows["uploads"].to_list() for u in us]
+        _upload_locations = pl.DataFrame([
             {
-                "deployment_id": d,
+                "upload": u,
                 "mountain_range": r["mountain_range"],
                 "location_id": r["location_id"],
                 "location_name": r["location_name"],
             }
             for r in _rows.iter_rows(named=True)
-            for d in r["deployment_ids"]
+            for u in r["uploads"]
         ])
         _selected_media = (
             media_filtered
-            .filter(pl.col("deployment_id").is_in(_dep_ids))
-            .select("media_path", "file_name", "mime_type", "deployment_id", "bucket")
+            .filter(pl.col("upload").is_in(_uploads))
+            .select("media_path", "file_name", "mime_type", "deployment_id", "bucket", "upload")
             .unique(subset=["bucket", "media_path"])
-            .join(_dep_locations, on="deployment_id", how="left")
+            .join(_upload_locations, on="upload", how="left")
+            .drop("upload")
         )
         _selected_keys = set(_selected_media.select("bucket", "media_path").iter_rows())
         import re as _re_events
