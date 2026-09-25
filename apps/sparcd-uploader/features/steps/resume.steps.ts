@@ -2,7 +2,12 @@ import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
 import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batches';
 import { BUCKET_A, UUID_A } from './fixtures-data';
-import { FAILING_FILE, producePartialRun as basePartialRun, writtenCsvRows } from './helpers';
+import {
+  FAILING_FILE,
+  producePartialRun as basePartialRun,
+  produceFatalRun as baseFatalRun,
+  writtenCsvRows,
+} from './helpers';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
 const METADATA_NAMES = ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json', 'UploadComplete.json'];
@@ -35,6 +40,12 @@ function uploadFolders(app: App): string[] {
 /** A partial run, remembering which upload folder it claimed. */
 async function producePartialRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
   await basePartialRun(app, specs);
+  app.notes.uploadFolder = uploadFolders(app).find((f) => !f.startsWith('2026.01.02'))!;
+}
+
+/** A run that stopped on a fatal refusal, remembering the folder it claimed. */
+async function produceFatalRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
+  await baseFatalRun(app, specs);
   app.notes.uploadFolder = uploadFolders(app).find((f) => !f.startsWith('2026.01.02'))!;
 }
 
@@ -322,6 +333,23 @@ Then('exactly one upload exists in the destination', async ({ app }) => {
   expect(uploadFolders(app).filter((f) => !f.startsWith('2026.01.02'))).toHaveLength(1);
 });
 
+Given('a real upload failed outright', async ({ app }) => {
+  await produceFatalRun(app);
+});
+
+Then('"Resume upload" is offered', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload' })).toBeVisible();
+});
+
+When('the refusal is cleared and "Resume upload" is chosen', async ({ app }) => {
+  app.s3.putHooks.length = 0;
+  await app.page.getByRole('button', { name: 'Resume upload' }).click();
+});
+
+Then('the upload completes', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
+});
+
 When('a failed upload is retried or resumed', async ({ app }) => {
   await producePartialRun(app);
   app.s3.putHooks.length = 0;
@@ -476,7 +504,7 @@ Given('a resume is running', async ({ app }) => {
 });
 
 Then(
-  'the same per-file progress, byte totals and activity log are shown as for a fresh upload',
+  'the same per-file progress and byte totals are shown, and the same run log is kept, as for a fresh upload',
   async ({ app }) => {
     await expect(app.page.getByText(/[\d.]+ (B|KB|MB|GB) \/ [\d.]+ (B|KB|MB|GB)/)).toBeVisible();
     await expect(app.page.locator('div[data-index]').first()).toBeVisible();
