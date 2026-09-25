@@ -2112,7 +2112,7 @@ def _(
         _selected_media = (
             media_filtered
             .filter(pl.col("deployment_id").is_in(_dep_ids))
-            .select("media_path", "file_name", "deployment_id", "bucket")
+            .select("media_path", "file_name", "mime_type", "deployment_id", "bucket")
             .unique(subset=["bucket", "media_path"])
             .join(_dep_locations, on="deployment_id", how="left")
         )
@@ -2283,10 +2283,15 @@ def _(
             _u = escape(_url, quote=True)
             _f = escape(_row["file_name"])
             _m = escape(_caption) if _caption else "&nbsp;"
+            if (_row.get("mime_type") or "").startswith("video/"):
+                _media = f"<video src='{_u}' controls preload='metadata' playsinline style='{_img_style}'></video>"
+            else:
+                _media = (
+                    f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
+                    f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                )
             _tiles.append(
-                f"<figure style='{_fig_style}'>"
-                f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
-                f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                f"<figure style='{_fig_style}'>{_media}"
                 "<figcaption style='font-size:12px;line-height:1.3;'>"
                 f"<div class='fname' style='font-weight:600;color:var(--ink,#1c1a14);'>{_f}</div>"
                 f"<div class='caption' style='color:var(--inkMute,#6b6555);word-break:break-word;'>{_m}</div>"
