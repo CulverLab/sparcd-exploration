@@ -13,6 +13,7 @@ import {
   sectionTab,
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
+import { makePng } from './support/png';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
 
@@ -259,6 +260,111 @@ Then('no zoom or pan state carries over from the previous image', async ({ page 
   const t = await readTransform(page.locator('body'));
   expect(t).toEqual({ x: 0, y: 0, scale: 1 });
 });
+
+// --- Differing image shapes -------------------------------------------------
+
+const SHAPES = [
+  { file: 'IMG001.JPG', w: 240, h: 420 },
+  { file: 'IMG002.JPG', w: 640, h: 360 },
+  { file: 'IMG003.JPG', w: 1200, h: 200 },
+];
+
+type Examination = {
+  natural: { w: number; h: number };
+  objectFit: string;
+  fitted: Transform;
+  enlarged: Transform;
+  dragged: Transform;
+  shoved: { t: Transform; box: { width: number; height: number } }[];
+};
+
+Given(
+  'the upload holds a portrait, a landscape and a panorama image of differing sizes',
+  async ({ page, s3 }) => {
+    SHAPES.forEach((s, i) =>
+      s3.put(BUCKET, mediaKey(PREFIX_A, s.file), makePng(s.w, s.h, i + 100), 'image/png'),
+    );
+    await page.reload();
+    await openWorkspace(page);
+    await enterFocusView(page);
+  },
+);
+
+When('each of them is examined closely in the Focus view', async ({ page, scratch }) => {
+  const body = page.locator('body');
+  const exams: Examination[] = [];
+  for (const shape of SHAPES) {
+    await page.locator('button').filter({ hasText: shape.file }).first().click();
+    const img = page.locator('.react-transform-component img').first();
+    await expect
+      .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
+      .toBe(shape.w);
+    const [natural, objectFit] = await img.evaluate((el: HTMLImageElement) => [
+      { w: el.naturalWidth, h: el.naturalHeight },
+      getComputedStyle(el).objectFit,
+    ] as const);
+    await settle(body);
+    const fitted = await readTransform(body);
+    await zoomToLimit(body);
+    const enlarged = await readTransform(body);
+
+    const pane = transformWrapper(body).first();
+    const box = (await pane.boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx - 60, cy - 40, { steps: 12 });
+    await page.mouse.up();
+    await settle(body);
+    const dragged = await readTransform(body);
+
+    const shoved: Examination['shoved'] = [];
+    for (const [dx, dy] of [
+      [4000, 4000],
+      [-8000, -8000],
+    ] as const) {
+      await page.mouse.move(cx, cy);
+      await page.mouse.down();
+      await page.mouse.move(cx + dx, cy + dy, { steps: 10 });
+      await page.mouse.up();
+      await settle(body);
+      shoved.push({ t: await readTransform(body), box });
+    }
+    exams.push({ natural, objectFit, fitted, enlarged, dragged, shoved });
+  }
+  scratch.exams = exams;
+});
+
+Then('each opens whole and undistorted at the fitted size', async ({ scratch }) => {
+  const exams = scratch.exams as Examination[];
+  exams.forEach((e, i) => {
+    expect(e.natural).toEqual({ w: SHAPES[i].w, h: SHAPES[i].h });
+    expect(e.objectFit).toBe('contain');
+    expect(e.fitted).toEqual({ x: 0, y: 0, scale: 1 });
+  });
+});
+
+Then('each can be enlarged up to six times its fitted size', async ({ scratch }) => {
+  for (const e of scratch.exams as Examination[]) expect(e.enlarged.scale).toBeCloseTo(6, 1);
+});
+
+Then(
+  'each can be dragged around once enlarged without moving beyond its edges',
+  async ({ scratch }) => {
+    for (const e of scratch.exams as Examination[]) {
+      expect(e.dragged.scale).toBeCloseTo(e.enlarged.scale, 2);
+      expect(Math.abs(e.dragged.x - e.enlarged.x) + Math.abs(e.dragged.y - e.enlarged.y)).toBeGreaterThan(5);
+      // Same bounds and fudge as "it cannot be dragged beyond the edges of the image".
+      for (const { t, box } of e.shoved) {
+        expect(t.x).toBeLessThanOrEqual(1);
+        expect(t.y).toBeLessThanOrEqual(1);
+        expect(t.x).toBeGreaterThanOrEqual(-(t.scale - 1) * box.width - 1);
+        expect(t.y).toBeGreaterThanOrEqual(-(t.scale - 1) * box.height - 3);
+      }
+    }
+  },
+);
 
 // --- Virtualization ---------------------------------------------------------
 

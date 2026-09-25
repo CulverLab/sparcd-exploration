@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { parseObservations } from '@sparcd/camtrap';
 import {
   Given,
   When,
@@ -20,16 +21,18 @@ import {
   speciesBadge,
   ghostRow,
   positionReadout,
+  listRow,
 } from './support/world';
 import {
   BUCKET,
   PREFIX_A,
+  PREFIX_C,
   SETTINGS_BUCKET,
   SPECIES_JSON,
   observationsCsv,
   OBS_A,
 } from './support/data';
-import { readStore, waitForDirtyDrafts } from './support/flows';
+import { readStore, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
 
 const VOCAB = [
   { common: 'Coyote', scientific: 'Canis latrans' },
@@ -998,4 +1001,39 @@ Then("the collection's stored files are unchanged until a sync is run", async ({
   expect(s3.puts).toHaveLength(0);
   expect(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).toBe(observationsCsv(PREFIX_A, OBS_A));
   await expect(positionReadout(page)).toBeVisible();
+});
+
+// --- Leaving an image untagged ----------------------------------------------
+
+Given('its first image is focused', async ({ page }) => {
+  await focusFrame(page, 'IMG001.JPG');
+});
+
+When('focus moves on to the next image without a species being applied', async ({ page }) => {
+  await page.keyboard.press('ArrowDown');
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAttribute('aria-current', 'true');
+});
+
+When('a species is applied to that next image', async ({ page }) => {
+  await speciesApply(page, 'Canis latrans').click();
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
+});
+
+Then('the image left behind still reads as untagged', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+  await page.getByRole('button', { name: '☰ List' }).click();
+  await expect(listRow(page, 'IMG001.JPG').locator('[data-column="species"]')).toHaveText('untagged');
+});
+
+Then('the stored observations record no species for the image left behind', async ({ s3 }) => {
+  const obs = parseObservations(s3.text(BUCKET, `${PREFIX_C}observations.csv`));
+  expect(obs.some((o) => o.mediaId.endsWith('IMG002.JPG') && o.scientificName === 'Canis latrans')).toBe(true);
+  const left = obs.filter((o) => o.mediaId.endsWith('IMG001.JPG'));
+  expect(left.length).toBeGreaterThan(0);
+  for (const o of left) {
+    expect(o.scientificName).toBe('');
+    expect(o.observationType).toBe('blank');
+  }
+  const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_C}UploadMeta.json`)) as { imagesWithSpecies: number };
+  expect(meta.imagesWithSpecies).toBe(1);
 });

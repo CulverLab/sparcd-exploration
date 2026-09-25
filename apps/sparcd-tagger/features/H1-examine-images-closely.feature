@@ -58,6 +58,14 @@ Feature: Examine an image closely enough to catch every species
     Then the new image is shown fitted to the pane
     And no zoom or pan state carries over from the previous image
 
+  @H1 @H1-6
+  Scenario: Zoom and pan behave the same on portrait, landscape and panorama images
+    Given the upload holds a portrait, a landscape and a panorama image of differing sizes
+    When each of them is examined closely in the Focus view
+    Then each opens whole and undistorted at the fitted size
+    And each can be enlarged up to six times its fitted size
+    And each can be dragged around once enlarged without moving beyond its edges
+
   @H1
   Scenario: The focused image is prioritized over delayed filmstrip thumbnails
     Given filmstrip thumbnail downloads are delayed

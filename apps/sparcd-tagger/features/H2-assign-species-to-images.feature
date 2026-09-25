@@ -349,3 +349,14 @@ Feature: Assign species to images in an upload
     Then the identifications are kept in this browser
     And the workspace reports how many local edits are unsaved
     And the collection's stored files are unchanged until a sync is run
+
+  @H2 @H2-6
+  Scenario: An image left without a species stays untagged after moving on and syncing
+    Given an upload with only uploader-written blank rows is open in the tagging workspace
+    And a tagger identity has been set in Settings
+    And its first image is focused
+    When focus moves on to the next image without a species being applied
+    And a species is applied to that next image
+    And the sync is run
+    Then the image left behind still reads as untagged
+    And the stored observations record no species for the image left behind
