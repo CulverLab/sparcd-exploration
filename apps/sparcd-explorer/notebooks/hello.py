@@ -1247,8 +1247,12 @@ def _(
     show_species_columns,
 ):
     # Normalize deployments; attach image counts using the FILTERED media/observations.
+    # Every upload to a location writes its own deployments.csv row under the same
+    # deployment_id, so keep one row per deployment or the joined image counts
+    # get summed once per upload.
     _locations_raw = (
         deployments
+        .unique(subset=["bucket", "deployment_id"], keep="last", maintain_order=True)
         .with_columns(
             pl.when(pl.col("latitude").abs() > 90)
             .then(pl.col("longitude"))
