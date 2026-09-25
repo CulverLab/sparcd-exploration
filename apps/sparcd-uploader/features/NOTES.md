@@ -26,10 +26,16 @@ Coverage notes for the as-built uploader feature files.
   collection" criterion is **not**: as-built *any* location in the registry can
   be assigned; locations the collection has already used are merely sorted to
   the top. Flagged in a trailing comment on that scenario.
-- **AL1** (interrupted uploads continue on their own) — partly met: verified
-  data is not resent, and an interrupted upload is always visibly "open", never
-  silently stuck. **Continuation is manual** — the user clicks Resume; there is
-  no connectivity watcher and no automatic restart. Flagged in a comment.
+- **AL1** (interrupted uploads continue on their own) — met, apart from the
+  untestable "never stuck" criterion. A run open in the tab waits out a dropped
+  connection and carries on by itself when it returns; if the browser never
+  noticed the drop, the run stops as partial and retries on a backoff timer,
+  giving up after five retries in a row that send nothing (History then says
+  storage can't be reached).
+  Repeated drops still end in one upload, verified data is not resent, and
+  History shows each upload as complete, as interrupted with "Resume upload"
+  named as the next step, or as refused by storage with who to ask. Resuming
+  from History is still a click, because it needs the source folder back.
 - **AL2** (retry to the same destination) — met, and the strongest-covered story:
   the upload folder and object paths are reused verbatim, done objects are
   skipped after a size + fingerprint check, and location/identity are never

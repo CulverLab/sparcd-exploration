@@ -341,6 +341,60 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(snap.error).toMatch(/file failures/);
   });
 
+  it('stops as a retryable partial run when files get no answer while the browser reports online', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession(Array.from({ length: 15 }, () => 'pending'));
+      mocks.client = makeClient(session.files);
+      mocks.client.writeImmutableStream.mockImplementation(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(4) },
+        (snap) => { last = snap; },
+      );
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('partial');
+      expect(snap.autoRetry).toBe(true);
+      expect(snap.files.every((f) => f.state === 'failed' && f.network)).toBe(true);
+      // Ten files spend their retries; the rest are not tried at all.
+      expect(mocks.client.writeImmutableStream.mock.calls.length).toBeLessThan(15 * 5);
+      expect(mocks.client.listObjects).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('classifies a verify that gets no answer as a lost connection, not a refusal', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession(Array.from({ length: 15 }, () => 'done'));
+      mocks.client = makeClient(session.files);
+      mocks.client.statObject.mockImplementation(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(4) },
+        (snap) => { last = snap; },
+      );
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('partial');
+      expect(snap.autoRetry).toBe(true);
+      const failed = snap.files.filter((f) => f.state === 'failed');
+      expect(failed.length).toBeGreaterThanOrEqual(10);
+      expect(failed.every((f) => f.network)).toBe(true);
+      expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('aborts immediately on systemic access failures', async () => {
     expect(new PreconditionFailedError('x')).toBeInstanceOf(Error);
     const session = makeSession(Array.from({ length: 3 }, () => 'pending'));

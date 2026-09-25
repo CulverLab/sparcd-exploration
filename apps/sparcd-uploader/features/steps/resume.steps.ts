@@ -1,9 +1,10 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
-import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batches';
+import { FOLDER, jpegAt, manyJpegs, publishableBatch, slowPublishableBatch } from './batches';
 import { BUCKET_A, UUID_A } from './fixtures-data';
 import {
   FAILING_FILE,
+  produceCompleteRun,
   producePartialRun as basePartialRun,
   produceFatalRun as baseFatalRun,
   writtenCsvRows,
@@ -152,6 +153,53 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
   await expect(app.page.getByText('open', { exact: true })).toHaveCount(1);
 });
+
+// --- found in the morning --------------------------------------------------
+
+Given('one upload finished while nobody was watching', async ({ app }) => {
+  await produceCompleteRun(app);
+});
+
+Given('a second upload was cut off part-way while nobody was watching', async ({ app }) => {
+  // Upload folders are stamped to the second; start the next run in a new one.
+  await app.page.waitForTimeout(1_100);
+  await app.page.getByRole('button', { name: 'Next batch' }).click();
+  await app.dropFolder(manyJpegs(4, 'NIGHT'));
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.continueToUpload();
+  // Two files land; the rest are still in flight when the tab goes away.
+  let media = 0;
+  app.s3.holdPut = (_bucket, key) =>
+    !METADATA_NAMES.some((n) => key.endsWith(n)) && ++media > 2;
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await expect
+    .poll(async () => (await app.readFileRecords())
+      .filter((f) => String(f.remoteKey).includes('NIGHT') && f.state === 'done').length)
+    .toBe(2);
+  await app.reopen();
+  app.s3.releaseHeldPuts();
+  app.s3.holdPut = undefined;
+});
+
+Then('the finished upload is shown as complete with nothing left to do', async ({ app }) => {
+  const row = app.page.locator('li').filter({ has: app.page.getByText('complete', { exact: true }) });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByRole('button', { name: 'Resume upload' })).toHaveCount(0);
+  await expect(row).not.toContainText('Interrupted');
+});
+
+Then(
+  'the cut-off upload says how many files are still to send and names "Resume upload" as the next step',
+  async ({ app }) => {
+    const row = app.page.locator('li').filter({ has: app.page.getByText('open', { exact: true }) });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Interrupted with 2 of 4 files still to send. Resume upload to finish it.');
+    await expect(row.getByRole('button', { name: 'Resume upload' })).toBeEnabled();
+  },
+);
 
 // --- resuming --------------------------------------------------------------
 
@@ -340,6 +388,19 @@ Given('a real upload failed outright', async ({ app }) => {
 Then('"Resume upload" is offered', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume upload' })).toBeVisible();
 });
+
+Then(
+  'History says storage refused the file and to ask an administrator before resuming',
+  async ({ app }) => {
+    await app.gotoSection('History');
+    const row = app.page.locator('li').filter({ has: app.page.getByText('open', { exact: true }) });
+    await expect(row).toContainText(
+      'Storage refused 1 file (Access Denied); ask your administrator to fix that, then Resume upload.',
+    );
+    await expect(row).not.toContainText('Interrupted');
+    await app.gotoSection('New upload');
+  },
+);
 
 When('the refusal is cleared and "Resume upload" is chosen', async ({ app }) => {
   app.s3.putHooks.length = 0;

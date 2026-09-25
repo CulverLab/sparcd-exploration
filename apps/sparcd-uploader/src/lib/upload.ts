@@ -83,6 +83,8 @@ export type FileProgress = {
   state: FileState;
   attempt: number;
   error?: string;
+  // Failed because the request never got an answer, not because storage said no.
+  network?: boolean;
 };
 
 export type LogLine = { kind: 'put' | 'info' | 'warn' | 'error'; text: string };
@@ -105,6 +107,9 @@ export type UploadSnapshot = {
   metadataBundleSha256?: string;
   lanes?: number; // live blob-lane target, so the UI can show what adaptive settled on
   error?: string;
+  // A partial run whose every failure was a lost connection: nothing needs
+  // fixing, so the app retries it on its own.
+  autoRetry?: boolean;
 };
 
 /**
@@ -531,7 +536,15 @@ function makeRunner(
             return false;
           }
           if (cancelled || abort.signal.aborted) throw err;
-          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) {
+            // Classified like a failed write. The ledger keeps its `done`: the
+            // object may well be there, and the next attempt checks again.
+            fp.state = 'failed';
+            fp.error = err instanceof Error ? err.message : String(err);
+            fp.network = isTransient(err);
+            emit(true);
+            throw err;
+          }
           const wait = backoff(attempt);
           log('warn', `verify retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
           await sleep(wait);
@@ -599,7 +612,13 @@ function makeRunner(
         if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) {
           fp.state = 'failed';
           fp.error = msg;
-          persistFile(sessionId, it.localPath, { state: 'failed', lastError: msg, attempt: fp.attempt });
+          fp.network = isTransient(err);
+          persistFile(sessionId, it.localPath, {
+            state: 'failed',
+            lastError: msg,
+            attempt: fp.attempt,
+            refused: !fp.network,
+          });
           log('error', `failed ${it.key}: ${msg}`);
           throw err;
         }
@@ -610,6 +629,28 @@ function makeRunner(
         if (attempt >= 2) blobClient = client;
       }
     }
+  };
+
+  // Once enough files have failed for want of an answer, the connection is
+  // down in a way `navigator.onLine` did not notice. The rest of the batch is
+  // marked unsent without touching the network, so the run ends `partial`
+  // with its ledger intact and the app can pick it up again on its own.
+  const markNotSent = (sessionId: string, fp: FileProgress, it: PlanItem) => {
+    fp.state = 'failed';
+    fp.error = 'not sent: connection lost';
+    fp.network = true;
+    persistFile(sessionId, it.localPath, { state: 'failed', lastError: fp.error, refused: false });
+    emit(true);
+  };
+  const stallMessage =
+    `connection lost: ${MAX_FILE_FAILURES} files got no answer from storage — stopping here; ` +
+    'the upload picks up again on its own';
+
+  const endPartial = (failed: number, published: string) => {
+    log('warn', `${failed} files failed — metadata not ${published}; retry the failed files to complete the upload`);
+    snap.autoRetry = snap.files.every((f) => f.state !== 'failed' || f.network);
+    snap.phase = 'partial';
+    emit(true);
   };
 
   /**
@@ -791,6 +832,7 @@ function makeRunner(
   // re-stamp; resumes skip).
   const runOnce = async (plan: RunPlan): Promise<void> => {
     abort = new AbortController(); // fresh signal per attempt
+    let stalled = false;
     snap.sessionId = plan.sessionId;
     snap.bucket = plan.bucket;
     snap.collectionUuid = plan.collectionUuid;
@@ -831,6 +873,7 @@ function makeRunner(
       let next = 0;
       let fatal: unknown = null;
       let fileFailures = 0;
+      let networkFailures = 0;
       const laneTarget = () => Math.min(currentTarget(), plan.items.length);
 
       const lane = async (index: number, pump: () => void): Promise<void> => {
@@ -840,8 +883,13 @@ function makeRunner(
           const i = next++;
           if (i >= plan.items.length) return;
           const it = plan.items[i];
+          const fp = byId.get(it.id)!;
+          if (stalled) {
+            if (!it.doneAlready) markNotSent(plan.sessionId, fp, it);
+            continue;
+          }
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it, blobClientFor(i));
+            await processItem(plan.sessionId, fp, it, blobClientFor(i));
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -850,6 +898,13 @@ function makeRunner(
                 abort.abort(); // stop sibling lanes' in-flight requests at once
               }
               return;
+            }
+            if (fp.network) {
+              if (++networkFailures >= MAX_FILE_FAILURES && !stalled) {
+                stalled = true;
+                log('warn', stallMessage);
+              }
+              continue;
             }
             fileFailures++;
             if (fileFailures >= MAX_FILE_FAILURES && !fatal) {
@@ -880,16 +935,13 @@ function makeRunner(
 
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun) await finalReview(plan.sessionId, plan.uploadPath, plan.items);
+    // With the connection down the review listing cannot answer either; the
+    // next attempt reviews whatever it confirms.
+    if (!dryRun && !stalled) await finalReview(plan.sessionId, plan.uploadPath, plan.items);
 
     const failed = snap.files.filter((f) => f.state === 'failed').length;
     if (failed > 0) {
-      log(
-        'warn',
-        `${failed} files failed — metadata not written; retry the failed files to complete the upload`,
-      );
-      snap.phase = 'partial';
-      emit(true);
+      endPartial(failed, 'written');
       return;
     }
 
@@ -972,6 +1024,8 @@ function makeRunner(
 
     let fatal: unknown = null;
     let fileFailures = 0;
+    let networkFailures = 0;
+    let stalled = false;
     // Every item the pool actually pulled, for the batched final review.
     const pulled: PlanItem[] = [];
     // A failure that kills the run has to stop both kinds of waiting: sibling
@@ -1013,6 +1067,10 @@ function makeRunner(
         if (idx >= 0) snap.files[idx] = fp;
         else snap.files.push(fp);
         emit(true);
+        if (stalled) {
+          markNotSent(seed.sessionId, fp, it);
+          continue;
+        }
         if (dryRun) {
           fp.state = 'done';
           fp.loaded = it.size;
@@ -1029,6 +1087,13 @@ function makeRunner(
           if (isRunFatalBlobError(err)) {
             fail(err);
             return;
+          }
+          if (fp.network) {
+            if (++networkFailures >= MAX_FILE_FAILURES && !stalled) {
+              stalled = true;
+              log('warn', stallMessage);
+            }
+            continue;
           }
           fileFailures++;
           if (fileFailures >= MAX_FILE_FAILURES) {
@@ -1060,7 +1125,7 @@ function makeRunner(
     if (fatal) throw fatal;
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun) await finalReview(seed.sessionId, seed.uploadPath, pulled);
+    if (!dryRun && !stalled) await finalReview(seed.sessionId, seed.uploadPath, pulled);
 
     // The blob loop only exits normally (no fatal/cancel) once the queue is
     // closed and drained — the caller only closes it once every file in the
@@ -1075,12 +1140,7 @@ function makeRunner(
 
     const failed = snap.files.filter((f) => f.state === 'failed').length;
     if (failed > 0) {
-      log(
-        'warn',
-        `${failed} files failed — metadata not published; retry the failed files to complete the upload`,
-      );
-      snap.phase = 'partial';
-      emit(true);
+      endPartial(failed, 'published');
       return;
     }
 

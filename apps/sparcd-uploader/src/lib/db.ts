@@ -59,6 +59,9 @@ export interface BatchRecord {
   // Structured-cloned into IndexedDB on Chromium when permission was granted;
   // absent when the access mode is `reselect-required`.
   dirHandle?: FileSystemDirectoryHandle;
+  // Set when the app stopped retrying on its own because storage could not be
+  // reached; cleared as soon as a later attempt gets a file through.
+  storageUnreachable?: boolean;
 }
 
 export interface FileRecord {
@@ -83,6 +86,10 @@ export interface FileRecord {
   mimeType?: string;
   remoteETag?: string;
   lastError?: string;
+  // Set when storage answered and said no (a 4xx such as AccessDenied), as
+  // opposed to the request never getting an answer. Resuming alone cannot fix
+  // a refusal, so History names a different next step for it.
+  refused?: boolean;
   // Species applied in the tagger before this batch was ever uploaded. Not
   // indexed, so it needs no schema bump; persisted so a batch interrupted days
   // after tagging still publishes the identifications it left with.
@@ -161,11 +168,14 @@ export async function listResumable(): Promise<BatchRecord[]> {
   return (await listBatches()).filter((b) => !b.completedAt);
 }
 
-/** Per-state file tallies for a session — drives the History progress line. */
-export async function fileStateCounts(
-  sessionId: string,
-): Promise<Record<PersistedFileState, number>> {
-  const rows = await db.files.where('sessionId').equals(sessionId).toArray();
+export type SessionTally = {
+  counts: Record<PersistedFileState, number>;
+  // Files storage refused outright in the last attempt, with the first reason given.
+  refused: { count: number; reason?: string };
+};
+
+/** Per-state file tallies for a session, in one pass — drives the History row. */
+export async function sessionTally(sessionId: string): Promise<SessionTally> {
   const counts: Record<PersistedFileState, number> = {
     'awaiting-processing': 0,
     pending: 0,
@@ -173,8 +183,19 @@ export async function fileStateCounts(
     done: 0,
     failed: 0,
   };
-  for (const r of rows) counts[r.state]++;
-  return counts;
+  const refused: SessionTally['refused'] = { count: 0 };
+  await db.files.where('sessionId').equals(sessionId).each((r) => {
+    counts[r.state]++;
+    if (r.state === 'failed' && r.refused) {
+      refused.count++;
+      refused.reason ??= r.lastError;
+    }
+  });
+  return { counts, refused };
+}
+
+export async function fileStateCounts(sessionId: string): Promise<Record<PersistedFileState, number>> {
+  return (await sessionTally(sessionId)).counts;
 }
 
 export type LoadedSession = {

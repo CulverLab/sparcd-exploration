@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
 import { FOLDER, manyJpegs, publishableBatch, sameNameSubfolderBatch, slowPublishableBatch, standardBatch } from './batches';
-import { FAILING_FILE, rescanFromUpload, writtenCsvRows } from './helpers';
+import { FAILING_FILE, rescanFromUpload, writtenBody, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
@@ -949,4 +949,160 @@ Then('the browser wake lock was requested', async ({ app }) => {
 Then('releasing the held blob lets the upload complete', async ({ app }) => {
   app.s3.releaseHeldPuts();
   await app.waitForRunPhase('done');
+});
+
+// --- connection drops (AL1) ------------------------------------------------
+
+const DROP_BATCH_SIZE = 24;
+const dropBatchNames = () => manyJpegs(DROP_BATCH_SIZE).map((s) => s.path.split('/').pop()!).sort();
+const published = (app: App) => app.s3.puts.some((p) => p.key.endsWith('UploadComplete.json'));
+
+/** Upload folders this scenario created, leaving out the seeded prior upload. */
+function batchFolders(app: App): string[] {
+  const prefix = `${BUCKET_A}/${UPLOADS_PREFIX}`;
+  const folders = new Set<string>();
+  for (const key of app.s3.objects.keys()) {
+    if (key.startsWith(prefix) && !key.includes('2026.01.02')) folders.add(key.slice(prefix.length).split('/')[0]);
+  }
+  return [...folders];
+}
+
+function storedImageNames(app: App, folder: string): string[] {
+  return [...app.s3.objects.keys()]
+    .filter((k) => k.startsWith(`${BUCKET_A}/${UPLOADS_PREFIX}${folder}/`) && k.endsWith('.JPG'))
+    .map((k) => k.split('/').pop()!)
+    .sort();
+}
+
+// The writes the connection drops cut off, one per drop.
+const CUT_OFF = ['IMG_0004.JPG', 'IMG_0010.JPG', 'IMG_0016.JPG'];
+
+const gatedKey = (app: App, name: string) => app.s3.gated.find((k) => k.endsWith(`/${name}`));
+const logCount = async (app: App, text: string) => (await app.logText()).split(text).length - 1;
+
+/**
+ * Wait until the write for `name` is held at the mock, take the browser
+ * offline, then let that write go so it fails as a dropped connection would.
+ * Returns once the run has parked that file to wait for the network.
+ */
+async function cutOff(app: App, name: string): Promise<void> {
+  await expect.poll(() => gatedKey(app, name), { timeout: 60_000 }).toBeTruthy();
+  const key = gatedKey(app, name)!;
+  const waitsBefore = await logCount(app, `waiting for network to retry ${key}`);
+  app.s3.offline = true;
+  await app.page.context().setOffline(true);
+  app.s3.releaseGatedPut(key);
+  await expect.poll(() => app.s3.refusedOffline).toContain(`${BUCKET_A}/${key}`);
+  expect(app.s3.has(BUCKET_A, key)).toBe(false);
+  await expect
+    .poll(() => logCount(app, `waiting for network to retry ${key}`), { timeout: 30_000 })
+    .toBeGreaterThan(waitsBefore);
+  await expect(app.runPhase()).toHaveText('uploading');
+  app.notes.cutOffKey = key;
+}
+
+async function restoreConnection(app: App): Promise<void> {
+  const key = app.notes.cutOffKey as string;
+  const backBefore = await logCount(app, `network back, retrying ${key}`);
+  app.s3.offline = false;
+  await app.page.context().setOffline(false);
+  await expect.poll(() => logCount(app, `network back, retrying ${key}`)).toBeGreaterThan(backBefore);
+}
+
+/** Stop holding writes, letting any still at the gate through. */
+function openGate(app: App): void {
+  app.s3.gatePut = undefined;
+  for (const key of app.s3.gated) app.s3.releaseGatedPut(key);
+}
+
+Given('a real upload of many images is under way', async ({ app }) => {
+  await rescanFromUpload(app, manyJpegs(DROP_BATCH_SIZE));
+  await app.pinConcurrency(4);
+  const held = new Set<string>();
+  app.s3.gatePut = (_bucket, key) => {
+    const name = key.split('/').pop()!;
+    if (!CUT_OFF.includes(name) || held.has(name)) return false;
+    held.add(name);
+    return true;
+  };
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  // Count every click from here on, so a Then can show nobody restarted it.
+  await app.page.evaluate(() => {
+    const w = window as unknown as { __clicksAfterStart: number };
+    w.__clicksAfterStart = 0;
+    document.addEventListener('click', () => { w.__clicksAfterStart++; }, true);
+  });
+});
+
+Given('the connection drops while the upload is in progress', async ({ app }) => {
+  await cutOff(app, CUT_OFF[0]);
+});
+
+When('the connection returns', async ({ app }) => {
+  await restoreConnection(app);
+  openGate(app);
+});
+
+When('storage stops answering while the browser still reports being online', async ({ app }) => {
+  await expect.poll(() => gatedKey(app, CUT_OFF[0]), { timeout: 60_000 }).toBeTruthy();
+  app.s3.offline = true;
+  openGate(app);
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(true);
+});
+
+Then('the run stops as partial and says it picks up again on its own', async ({ app }) => {
+  await app.waitForRunPhase('partial', 120_000);
+  expect(await app.logText()).toContain('the upload picks up again on its own');
+});
+
+When('storage answers again', async ({ app }) => {
+  app.s3.offline = false;
+});
+
+Then('the upload continues and is published with every image', async ({ app }) => {
+  await expect.poll(() => published(app), { timeout: 120_000 }).toBe(true);
+  const [folder] = batchFolders(app);
+  expect(storedImageNames(app, folder)).toEqual(dropBatchNames());
+});
+
+Then('nothing had to be clicked to restart it', async ({ app }) => {
+  const clicks = await app.page.evaluate(
+    () => (window as unknown as { __clicksAfterStart: number }).__clicksAfterStart,
+  );
+  expect(clicks).toBe(0);
+  await app.waitForRunPhase('done', 120_000);
+});
+
+When('the connection drops and returns three times during the upload', async ({ app }) => {
+  for (const name of CUT_OFF) {
+    await cutOff(app, name);
+    expect(published(app)).toBe(false);
+    await restoreConnection(app);
+  }
+});
+
+When('the upload finally completes', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
+});
+
+Then('the collection holds the batch in exactly one upload folder', async ({ app }) => {
+  const folders = batchFolders(app);
+  expect(folders).toHaveLength(1);
+  expect(storedImageNames(app, folders[0])).toEqual(dropBatchNames());
+});
+
+Then('History lists that upload once, as complete', async ({ app }) => {
+  expect(await app.readBatchRecords()).toHaveLength(1);
+  await app.gotoSection('History');
+  await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
+  await expect(app.page.getByText('open', { exact: true })).toHaveCount(0);
+});
+
+Then('every image appears exactly once in the stored media.csv', async ({ app }) => {
+  expect(app.s3.puts.filter((p) => p.key.endsWith('media.csv'))).toHaveLength(1);
+  const [folder] = batchFolders(app);
+  expect(app.s3.text(BUCKET_A, `${UPLOADS_PREFIX}${folder}/media.csv`)).toBe(writtenBody(app, 'media.csv'));
+  const names = writtenCsvRows(app, 'media.csv').map((r) => r[6]).filter((n) => n.endsWith('.JPG'));
+  expect(names.sort()).toEqual(dropBatchNames());
 });
