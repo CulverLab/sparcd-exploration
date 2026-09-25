@@ -54,10 +54,20 @@ describe('replaceIfUnchanged — the reviewed conditional canonical overwrite', 
     expect(res.etag).toBe('"new-etag"');
     expect(sent).toHaveLength(1);
     expect(sent[0].name).toBe('PutObjectCommand');
-    expect(sent[0].input.IfMatch).toBe('"old-etag"');
+    expect(sent[0].input.IfMatch).toBe('old-etag');
     expect(sent[0].input.ContentType).toBe('text/csv');
     // No IfNoneMatch — this is a conditional *replace*, not an immutable write.
     expect(sent[0].input.IfNoneMatch).toBeUndefined();
+  });
+
+  it.each([
+    ['"abc123"', 'abc123'],
+    ['abc123', 'abc123'],
+    ['W/"abc123"', 'abc123'],
+  ])('sends If-Match %s unquoted as %s', async (etag, expected) => {
+    const { client, sent } = stubClient(() => ({ ETag: '"new"' }));
+    await client.replaceIfUnchanged('sparcd-x', 'k', 'b', { etag });
+    expect(sent[0].input.IfMatch).toBe(expected);
   });
 
   it('throws ConditionalReplaceConflictError on a stale ETag (412) — no fallback PUT', async () => {
@@ -75,7 +85,7 @@ describe('replaceIfUnchanged — the reviewed conditional canonical overwrite', 
     // Exactly one attempt, and it carried IfMatch. The wrapper never retries
     // without the precondition (that would be a silent overwrite).
     expect(sent).toHaveLength(1);
-    expect(sent[0].input.IfMatch).toBe('"stale"');
+    expect(sent[0].input.IfMatch).toBe('stale');
   });
 
   it('throws ConditionalPutUnsupportedError when the backend ignores IfMatch (501)', async () => {
