@@ -17,50 +17,50 @@ Feature: Confirm species already identified in existing uploads
     Given an image already carries identifications made by someone else
     And Harold has access to the collection that image belongs to
 
-  @H3
+  @H3 @H3-1
   Scenario: Existing identifications are shown when Harold opens the image
     When Harold opens the image
     Then the species already identified on it are shown to him
     And the counts recorded for each of those species are shown to him
 
-  @H3
+  @H3 @H3-2
   Scenario: Harold can confirm an existing identification
     When Harold confirms an existing identification
     Then the identification remains as it was
     And the record shows that it has been reviewed
 
-  @H3
+  @H3 @H3-3
   Scenario: Harold can correct an existing identification
     When Harold corrects an existing identification
     Then the corrected species is what the image now carries
     And the record shows that a correction was made
 
-  @H3
+  @H3 @H3-4
   Scenario: Harold can remove an existing identification
     When Harold removes an existing identification
     Then the image no longer carries that identification
     And the record shows that it was removed
 
-  @H3
+  @H3 @H3-5
   Scenario: A review records who carried it out
     When Harold confirms or corrects an existing identification
     Then the record shows that a review took place
     And it shows that Harold was the reviewer
 
-  @H3
+  @H3 @H3-6
   Scenario: The original identifier's work remains attributable
     Given an identification was originally made by another person
     When Harold reviews it
     Then who originally made the identification remains visible
     And Harold's review is recorded in addition to it, not in place of it
 
-  @H3 @security
+  @H3 @security @H3-7
   Scenario: A review does not destroy the original uploaded data
     When Harold corrects or removes an existing identification
     Then the original uploaded image and its upload record are unchanged
     And the change is traceable to Harold
 
-  @H3 @unmapped
+  @H3 @unmapped @H3-8
   Scenario: Harold can tell reviewed identifications from unreviewed ones
     Given some identifications on the upload have been reviewed and others have not
     When Harold looks at the upload

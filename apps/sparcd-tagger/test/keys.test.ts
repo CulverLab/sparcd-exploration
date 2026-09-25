@@ -7,6 +7,7 @@ import {
   diffSpecies,
   effectiveKey,
   normalizeBindableEventKey,
+  resolveSpeciesKeys,
   normalizeEventKey,
   normalizeJavaKeyCode,
 } from '../src/lib/keys';
@@ -129,5 +130,41 @@ describe('species configuration reconciliation', () => {
       'a',
       'b',
     ]);
+  });
+});
+
+describe('resolveSpeciesKeys', () => {
+  const species = [
+    { scientificName: 'a', commonName: 'Alpha', keyBinding: 'D' },
+    { scientificName: 'b', commonName: 'Beta', keyBinding: 'K' },
+    { scientificName: 'c', commonName: 'Gamma', keyBinding: 'D' },
+  ];
+
+  it('withholds a key two vocabulary defaults both claim', () => {
+    const { byKey, shared } = resolveSpeciesKeys(species, {});
+    expect(byKey.get('d')).toBeUndefined();
+    expect(shared.get('d')?.map((s) => s.scientificName)).toEqual(['a', 'c']);
+    expect(byKey.get('k')?.scientificName).toBe('b');
+  });
+
+  it('does not let a local override beat a vocabulary default', () => {
+    const { byKey, shared } = resolveSpeciesKeys(species, { b: 'd' });
+    expect(byKey.get('d')).toBeUndefined();
+    expect(shared.get('d')?.map((s) => s.scientificName)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('restores the key when an override clears one claimant off it', () => {
+    for (const cleared of [null, ''] as const) {
+      const { byKey, shared } = resolveSpeciesKeys(species, { c: cleared });
+      expect(byKey.get('d')?.scientificName).toBe('a');
+      expect(shared.size).toBe(0);
+    }
+  });
+
+  it('restores the key to the remaining owner once the others move off it', () => {
+    const { byKey, shared } = resolveSpeciesKeys(species, { c: 'j' });
+    expect(byKey.get('d')?.scientificName).toBe('a');
+    expect(byKey.get('j')?.scientificName).toBe('c');
+    expect(shared.size).toBe(0);
   });
 });

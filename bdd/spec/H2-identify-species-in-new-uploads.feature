@@ -16,44 +16,44 @@ Feature: Identify species in new uploads
     Given a new upload contains untagged images
     And Harold has access to the collection that upload belongs to
 
-  @H2
+  @H2 @H2-1
   Scenario: An assigned species is saved and visible to others with access
     When Harold assigns a species to an untagged image
     Then that identification is saved
     And other people with access to the collection can see it on that image
 
-  @H2
+  @H2 @H2-2
   Scenario: An image can carry more than one species
     Given an image contains more than one species
     When Harold assigns each of those species to the image
     Then the image carries all of the species he assigned
     And none of them replaces another
 
-  @H2
+  @H2 @H2-3
   Scenario: Identifications are attributed to the person who made them
     When Harold assigns a species to an image
     Then the identification records that Harold made it
     And another identifier's work on other images is not attributed to Harold
 
-  @H2 @unmapped
+  @H2 @unmapped @H2-4
   Scenario: Only species valid for the collection can be assigned
     When Harold assigns a species to an image
     Then he can choose only from the species available for that collection
 
-  @H2
+  @H2 @H2-5
   Scenario: An image Harold has identified is no longer counted as untagged
     Given Harold has assigned at least one species to a previously untagged image
     When the upload's remaining work is looked at
     Then that image is no longer counted among the untagged images
 
-  @H2
+  @H2 @H2-6
   Scenario: Harold can leave an image he cannot identify without tagging it
     Given Harold cannot identify the species in an image
     When he moves on to the next image
     Then the image remains marked as untagged
     And no species is recorded for it
 
-  @H2 @security
+  @H2 @security @H2-7
   Scenario: Identifying an image does not by itself reveal a protected location
     Given the image comes from a location designated as sensitive
     And Harold is not explicitly authorized for sensitive locations

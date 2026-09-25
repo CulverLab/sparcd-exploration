@@ -697,7 +697,7 @@ export class App {
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.waitForCollections();
     await this.chooseDeployment(opts.deployment ?? 'Bear Canyon');
-    if (opts.uploader !== undefined) await this.setUploader(opts.uploader);
+    await this.setUploader(opts.uploader ?? 'Ada Lovelace');
     if (opts.description !== undefined) await this.setDescription(opts.description);
     await this.continueToUpload();
   }
