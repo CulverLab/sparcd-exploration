@@ -42,6 +42,11 @@ describe('formatTime', () => {
     expect(formatTime(ISO, '24h-seconds', 'en-US')).toBe('13:24:05');
     expect(formatTime(ISO, '12h-seconds', 'en-US')).toBe('1:24:05 PM');
   });
+
+  it('keeps late-night and midnight values in 24-hour form', () => {
+    expect(formatTime('2026-09-11T22:15:10.000Z', '24h-seconds', 'en-US')).toBe('22:15:10');
+    expect(formatTime('2026-09-11T00:05:10.000Z', '24h-seconds', 'en-US')).toBe('00:05:10');
+  });
 });
 
 describe('formatDateTime', () => {

@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
+import { formatDateTime24 } from '@sparcd/camtrap';
 import { useStore } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import {
@@ -449,7 +450,7 @@ export function History() {
                     {stampOf(batch.uploadPrefix)}
                   </p>
                   <p className="font-body text-[12px] text-inkSoft truncate">
-                    {batch.targetBucket} · {new Date(batch.startedAt).toLocaleString()}
+                    {batch.targetBucket} · {formatDateTime24(batch.startedAt)}
                   </p>
                 </div>
                 <Badge batch={batch} />

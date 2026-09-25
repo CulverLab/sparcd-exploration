@@ -33,6 +33,12 @@ Feature: Resume an interrupted upload and retry a failed one
     And it shows how many of its files are done and how many failed
     And only uploads whose metadata was published are marked complete
 
+  @AL1
+  Scenario: History renders a late batch start with a 24-hour clock
+    Given a completed upload started late in the day is recorded
+    When History is opened
+    Then History shows the batch start as "2026-09-11 22:15:10"
+
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History

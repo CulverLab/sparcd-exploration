@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatUploadDate, formatUploadHeader } from '../src/lib/uploadDisplay';
-import type { UploadMetaJson } from '@sparcd/camtrap';
+import { formatDateTime24, type UploadMetaJson } from '@sparcd/camtrap';
 
 const meta: UploadMetaJson = {
   uploadUser: 'Jane Doe',
@@ -27,5 +27,10 @@ describe('uploadDisplay', () => {
     expect(formatUploadDate(undefined)).toBe('unknown date');
     const drifted = { ...meta, uploadUser: '', uploadDate: undefined } as unknown as UploadMetaJson;
     expect(formatUploadHeader(drifted)).toBe('(unknown uploader) on unknown date');
+  });
+
+  it('formats late upload instants with a 24-hour clock', () => {
+    expect(formatDateTime24('2026-09-11T22:15:10.000Z', 'UTC')).toBe('2026-09-11 22:15:10');
+    expect(formatDateTime24('2026-09-11T00:05:10.000Z', 'UTC')).toBe('2026-09-11 00:05:10');
   });
 });

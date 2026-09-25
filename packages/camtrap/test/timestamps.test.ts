@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { buildMediaComments, timestampSourceFromComments, serializeMedia, parseMedia, mergeMedia, parseCsvRows, type TimestampSource } from '../src/index';
+import { buildMediaComments, timestampSourceFromComments, serializeMedia, parseMedia, mergeMedia, parseCsvRows, formatDateTime24, type TimestampSource } from '../src/index';
 
 it.each<TimestampSource>(['manual', 'spread', 'interpolated', 'offset', 'file-modified', 'exif-modify'])('round trips %s', (timestampSource) => {
   expect(timestampSourceFromComments(buildMediaComments({ timestampSource }))).toBe(timestampSource);
@@ -33,4 +33,9 @@ it('changes an estimated timestamp marker to manual without losing other comment
   expect(row.timestamp).toBe('new');
   expect(row.comments).toBe('[TIMESTAMP:manual] note [UPLOADER:kept]');
   expect(timestampSourceFromComments(row.comments ?? '')).toBe('manual');
+});
+
+it('formats midnight and late-night instants with a 24-hour clock', () => {
+  expect(formatDateTime24('2026-09-11T00:05:10.000Z', 'UTC')).toBe('2026-09-11 00:05:10');
+  expect(formatDateTime24('2026-09-11T22:15:10.000Z', 'UTC')).toBe('2026-09-11 22:15:10');
 });
