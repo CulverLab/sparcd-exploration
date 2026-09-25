@@ -50,6 +50,17 @@ class SearchFiltersTest(unittest.TestCase):
     def test_include_filter_leaves_untagged_images_out(self):
         self.assertEqual(sites_and_images({"include_common": ["Owl"]}), (1, 2))
 
+    def test_malformed_media_date_leaves_the_date_bounds_alone(self):
+        s3 = collection().upload(
+            "u3",
+            deployments=[deployment("CCC01", "Charlie", 34.0, -112.0)],
+            media=[media("u3", "odd.jpg", "CCC01", "0000-00-00T00:00:00")],
+        )
+        ns, _ = run_explorer(s3)
+
+        bounds = ns["SEARCH_DEFAULTS"]
+        self.assertEqual((bounds["date_start"], bounds["date_end"]), (date(2018, 6, 15), date(2024, 12, 1)))
+
 
 if __name__ == "__main__":
     unittest.main()

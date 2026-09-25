@@ -937,10 +937,10 @@ def _(deployments, media, mo, observations, pl):
 
     # Media timestamps too: images without observation rows are dated by them.
     _all_ts = pl.concat([observations["timestamp"], media["timestamp"]])
-    _ts = _all_ts.filter(_all_ts.str.len_chars() >= 10)
-    if _ts.len() > 0:
-        _min_d = _dt.date.fromisoformat(_ts.min()[:10])
-        _max_d = _dt.date.fromisoformat(_ts.max()[:10])
+    _days = _all_ts.str.slice(0, 10).str.to_date("%Y-%m-%d", strict=False).drop_nulls()
+    if _days.len() > 0:
+        _min_d = _days.min()
+        _max_d = _days.max()
     else:
         _min_d = _dt.date(2010, 1, 1)
         _max_d = _dt.date(2030, 12, 31)
