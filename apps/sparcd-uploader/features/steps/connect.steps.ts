@@ -65,6 +65,9 @@ Then('the New upload, History and Settings sections become reachable', async ({ 
 Then('a batch can be dropped and inspected with no connection', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
+  // Unfolding the file list draws the rows before their thumbnails; wait for
+  // those too, or the "intact" comparison later sees them appear.
+  await expect.poll(async () => (await app.listedFiles()).every((f) => f.hasThumbnail)).toBe(true);
   const files = await app.listedFiles();
   expect(files).toHaveLength(standardBatch().length);
   for (const file of files) {
@@ -89,7 +92,7 @@ Then('it shows the connection screen instead of a collection picker', async ({ a
 
 Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await expect.poll(() => app.listedFiles()).toEqual(app.notes.deferredFiles);
 });
 
@@ -224,7 +227,7 @@ Given('the connected uploader is inspecting a held file', async ({ app }) => {
   });
   await app.holdInspect('BIG_CLIP.MP4');
   await app.dropFolder(slowPublishableBatch());
-  await expect.poll(() => app.batchSummary()).toMatch(/processing/);
+  await expect.poll(() => app.pendingCount()).toBeGreaterThan(0);
 });
 
 When('one of them disconnects', async ({ app }) => {
@@ -258,7 +261,7 @@ Then('its in-progress batch, chosen collection and chosen deployment are cleared
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
 Then('the live upload stops without publishing metadata', async ({ app }) => {

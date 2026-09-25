@@ -13,6 +13,10 @@ Feature: Choose the folder of media to upload
     Given the uploader is connected
     And the New upload section is showing the Files step
 
+  @unmapped
+  Scenario: The drop area names both ways to hand over a folder
+    Then the drop area asks for a folder to be dropped, or for Choose folder to be clicked to browse
+
   @F1
   Scenario: Only JPEG images and MP4 videos are taken from the chosen folder
     When a folder is chosen that also contains other files
@@ -43,6 +47,7 @@ Feature: Choose the folder of media to upload
   Scenario: A device that cannot select whole folders offers individual files
     Given the browser cannot present a folder picker
     Then the drop area offers to choose individual photos or videos instead
+    # Its title and button both name that action; nothing mentions a folder.
     And it states that whole-folder selection is desktop-only
 
   @unmapped

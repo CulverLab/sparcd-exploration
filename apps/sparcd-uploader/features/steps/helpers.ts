@@ -5,7 +5,7 @@ import { publishableBatch, standardBatch } from './batches';
 /** Replace the batch without leaving the connection, ending back on Assign. */
 export async function rescanFromAssign(app: App, specs: FileSpec[], opts: { raw?: boolean } = {}): Promise<void> {
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs, opts);
   await app.continueToAssign();
   await app.waitForCollections();
@@ -72,7 +72,7 @@ export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<voi
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs);
   await app.page.getByRole('button', { name: 'Continue' }).click();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();

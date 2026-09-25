@@ -105,7 +105,7 @@ Then('the connection is ended and the in-progress batch is cleared', async ({ ap
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
 Then("this machine's recorded upload sessions are left in place", async ({ app }) => {

@@ -26,8 +26,29 @@ Feature: Inspect the scanned batch before assigning it
   @unmapped
   Scenario: The batch summary reports how much is left to examine
     Given files are still being examined
-    Then the summary shows the file count, total size, and how many are still processing
+    Then the summary shows how many of the files are processed, and their total size
     And it shows how many files need attention and how many carry warnings
+
+  @unmapped
+  Scenario: The per-file list stays folded until asked for
+    Then the summary line is showing and the per-file list is hidden
+    When "Show files" is chosen
+    Then the per-file list is shown
+    When "Hide files" is chosen
+    Then the summary line is showing and the per-file list is hidden
+
+  @unmapped
+  Scenario: A new batch starts with the per-file list folded
+    When "Show files" is chosen
+    And "Start over" is chosen
+    And another folder is dropped
+    Then the summary line is showing and the per-file list is hidden
+
+  @unmapped
+  Scenario: Choosing a problem count unfolds the list, filtered to those files
+    Given one file fails to be examined
+    When the count of files needing attention is chosen
+    Then the per-file list is shown with only that file in it
 
   @unmapped
   Scenario: A file that cannot be examined blocks the batch

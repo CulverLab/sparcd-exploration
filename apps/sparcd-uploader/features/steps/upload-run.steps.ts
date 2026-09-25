@@ -30,12 +30,30 @@ Given(
   async ({ app }) => {
     await app.connect();
     await app.dropFolder(publishableBatch());
-    await expect(app.fileListPane()).toBeVisible();
+    await expect(app.fileListToggle()).toBeVisible();
   },
 );
 
 Given('the New upload section is showing the Upload step', async ({ app }) => {
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+});
+
+// --- where the batch goes --------------------------------------------------
+
+Then('it names the collection, the location with its id, and the chosen folder', async ({ app }) => {
+  const rows = await app.page.locator('dl > div').evaluateAll((divs) =>
+    divs.map((d) => [d.querySelector('dt')?.textContent, (d.querySelector('dd') as HTMLElement | null)?.innerText]),
+  );
+  expect(rows).toEqual([
+    ['Collection', COLLECTION_A_NAME],
+    // Names repeat across the registry, so the id rides along as in the picker.
+    ['Location', 'Bear Canyon\nBEAR1'],
+    ['Folder', FOLDER],
+  ]);
+});
+
+Then('no storage path is shown', async ({ app }) => {
+  await expect(app.page.getByText(/Collections\//)).toHaveCount(0);
 });
 
 // --- dry run ---------------------------------------------------------------
@@ -881,8 +899,8 @@ When('"Next batch" is chosen', async ({ app }) => {
 
 Then('the wizard returns to the Files step with an empty batch', async ({ app }) => {
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
-  await expect(app.fileListPane()).toHaveCount(0);
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
+  await expect(app.fileListToggle()).toHaveCount(0);
 });
 
 Then(

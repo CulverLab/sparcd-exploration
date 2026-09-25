@@ -507,17 +507,23 @@ export class App {
     return this.page.locator('[aria-label^="Scanned files"]');
   }
 
+  /** Inspect keeps the file list folded behind this toggle until asked. */
+  fileListToggle(): Locator {
+    return this.page.getByRole('button', { name: /^(Show|Hide) files$/ });
+  }
+
+  async showFileList(): Promise<void> {
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    if ((await this.fileListToggle().getAttribute('aria-expanded')) === 'false') {
+      await this.fileListToggle().click();
+    }
+    await expect(this.fileListPane()).toBeVisible();
+  }
+
   /** Wait until every file in the batch has finished the Inspect worker pass. */
   async waitForInspected(): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
-    await this.page.waitForFunction(
-      () => {
-        const t = document.body.innerText;
-        return !/\d+\s+processing/.test(t) && !t.includes('Processing…') && !t.includes('Queued');
-      },
-      undefined,
-      { timeout: 30_000 },
-    );
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => this.pendingCount(), { timeout: 30_000 }).toBe(0);
   }
 
   /** One row per file currently drawn in the (virtualised) Inspect list. */
@@ -535,6 +541,7 @@ export class App {
       species: string;
     }[]
   > {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       if (!root) return [];
@@ -568,6 +575,7 @@ export class App {
 
   /** Rows the virtualiser has actually drawn — the whole point of virtualising. */
   async drawnRowCount(): Promise<number> {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       return root ? root.querySelectorAll('div[style*="translateY"]').length : 0;
@@ -576,6 +584,7 @@ export class App {
 
   /** Step to a row with J and drop it with D — the list's keyboard affordances. */
   async dropFileFromList(index: number): Promise<void> {
+    await this.showFileList();
     await this.fileListPane().focus();
     for (let i = 0; i < index; i++) await this.page.keyboard.press('j');
     await this.page.keyboard.press('d');
@@ -597,19 +606,25 @@ export class App {
     );
   }
 
-  /** The Inspect summary line ("N files · 1.2 KB · 1 warnings"). */
+  /** The Inspect summary line ("2 of 4 files processed · 1.2 KB · 1 warnings"). */
   async batchSummary(): Promise<string> {
     return this.page.evaluate(() => {
       const p = Array.from(document.querySelectorAll('p')).find((el) =>
-        /\d+\s*files\s*·/.test(el.textContent ?? ''),
+        /\d+\s*of\s*\d+\s*files processed\s*·/.test(el.textContent ?? ''),
       );
       return p?.textContent ?? '';
     });
   }
 
   async fileCount(): Promise<number> {
-    const m = /(\d+)\s*files/.exec(await this.batchSummary());
+    const m = /of\s*(\d+)\s*files/.exec(await this.batchSummary());
     return m ? Number(m[1]) : 0;
+  }
+
+  /** Files the Inspect worker pass has not finished yet. */
+  async pendingCount(): Promise<number> {
+    const m = /(\d+)\s*of\s*(\d+)\s*files processed/.exec(await this.batchSummary());
+    return m ? Number(m[2]) - Number(m[1]) : Number.NaN;
   }
 
   /** Read one IndexedDB store, retrying the Settings logout reload once. */
@@ -677,7 +692,7 @@ export class App {
   async walkToUploadStep(
     opts: { deployment?: string; uploader?: string; description?: string } = {},
   ): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.waitForCollections();
@@ -692,9 +707,9 @@ export class App {
     await this.page.getByRole('button', { name: 'Back' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.page.getByRole('button', { name: 'Back' }).click();
-    await expect(this.fileListPane()).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
     await this.rescan(this.lastSpecs);
-    await expect(this.fileListPane()).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.continueToUpload();
