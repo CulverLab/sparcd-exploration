@@ -452,6 +452,59 @@ Then('the previous species is left without one', async ({ page }) => {
   await expect(speciesBadge(page, 'Canis latrans')).toHaveCount(0);
 });
 
+Given('the vocabulary gives two species the same key', async ({ page, s3 }) => {
+  const vocabulary = JSON.parse(SPECIES_JSON) as Record<string, unknown>[];
+  vocabulary.find((entry) => entry.scientificName === 'Puma concolor')!.keyBinding = 'D';
+  s3.put(SETTINGS_BUCKET, SPECIES_KEY, JSON.stringify(vocabulary), 'application/json');
+  // Start from a bare profile so the duplicate arrives as the vocabulary's own
+  // defaults rather than as a server change waiting to be acknowledged.
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await connect(page);
+  await selectCollection(page);
+  await openUpload(page);
+  await expect(speciesBadge(page, 'Puma concolor')).toHaveText('D');
+});
+
+When('the shared key is pressed', async ({ page }) => {
+  await page.keyboard.press('d');
+});
+
+Then('neither of the two species is recorded on the image', async ({ page }) => {
+  await expect(gridCell(page, 'IMG002.JPG')).not.toContainText('Mule Deer');
+  await expect(gridCell(page, 'IMG002.JPG')).not.toContainText('Mountain Lion');
+  expect(await draftSpecies(page, 'IMG002.JPG')).toEqual([]);
+});
+
+Then('both of their rows mark the key as shared', async ({ page }) => {
+  for (const scientific of ['Odocoileus hemionus', 'Puma concolor']) {
+    await expect(speciesBadge(page, scientific)).toHaveText('D');
+    await expect(speciesBadge(page, scientific)).toHaveAttribute(
+      'title',
+      /^Key shared with .+; pick a new key$/,
+    );
+    await expect(speciesBadge(page, scientific)).toHaveClass(/line-through/);
+    await expect(
+      speciesRow(page, scientific).getByText(/^Key shared with .+; pick a new key$/),
+    ).toBeVisible();
+  }
+});
+
+When('one of the two is given a key of its own', async ({ page }) => {
+  await speciesAssignKey(page, 'Puma concolor').click();
+  await page.keyboard.press('k');
+  await expect(speciesBadge(page, 'Puma concolor')).toHaveText('K');
+});
+
+Then('the shared key applies the species that kept it', async ({ page }) => {
+  await page.keyboard.press('d');
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Mule Deer');
+});
+
+Then('no row marks a key as shared', async ({ page }) => {
+  await expect(page.locator('div.group kbd[title]')).toHaveCount(0);
+});
+
 When('its key is assigned to a different species', async ({ page }) => {
   await speciesAssignKey(page, 'Pecari tajacu').click();
   await page.keyboard.press('d');

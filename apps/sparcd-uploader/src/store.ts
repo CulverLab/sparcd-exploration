@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { S3Config } from '@sparcd/types';
 import {
-  loadPersistedConnection,
   loadSessionConnection,
   saveSharedConnection,
   clearSharedConnection,
@@ -269,10 +268,6 @@ function getFileIndex(files: FileEntry[]): Map<string, number> {
   return fileIndexById;
 }
 
-// Read once at module init for the initial uploaderUser default below (the
-// access key is non-secret, so it's safe to have persisted).
-const initialPersisted = loadPersistedConnection();
-
 // This tab's own session, if it has one — same tab, so a BrandSwitcher hop to
 // another SPARC'd tool or a reload lands straight back in the app. Nothing is
 // cached yet at module init, so unlike the cross-tab handler below this needs
@@ -330,10 +325,7 @@ export const useStore = create<UploaderState>()(
       dirHandle: null,
       fileAccessMode: 'reselect-required',
       flipId: null,
-      // Defaults to the connected access key (the closest thing to a "login
-      // name" this app has) — but only ever as a fill-in for blank; a value the
-      // user typed or already had is never overwritten.
-      uploaderUser: initialPersisted?.accessKey ?? '',
+      uploaderUser: '',
       selectedLocationKey: null,
       selectedBucket: null,
       uploadDescription: '',
@@ -362,7 +354,6 @@ export const useStore = create<UploaderState>()(
           loginDeferred: false,
           selectedLocationKey: null,
           selectedBucket: null,
-          uploaderUser: s.uploaderUser || config.accessKey,
         }));
       },
       setLoginDeferred: (value) => set({ loginDeferred: value }),
@@ -767,7 +758,7 @@ subscribeSharedConnection((cfg) => {
     const run = current.activeRun;
     useStore.setState((s) => ({
       ...disconnectedState(s),
-      ...(cfg ? { s3Config: cfg, uploaderUser: cfg.accessKey } : {}),
+      ...(cfg ? { s3Config: cfg } : {}),
     }));
     run?.cancel();
     return;
@@ -776,6 +767,5 @@ subscribeSharedConnection((cfg) => {
     s3Config: cfg,
     connectionId: s.connectionId + 1,
     loginDeferred: false,
-    uploaderUser: s.uploaderUser || cfg.accessKey,
   }));
 }, () => useStore.getState().s3Config);

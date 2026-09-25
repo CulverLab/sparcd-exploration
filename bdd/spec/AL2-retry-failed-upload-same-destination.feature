@@ -19,37 +19,37 @@ Feature: Retry a failed upload to the same destination
     And that attempt had a collection and a location assigned
     And species had been identified on some of the images
 
-  @AL2
+  @AL2 @AL2-1
   Scenario: The retry targets the same collection and location as the original attempt
     When Alice retries the failed upload
     Then the retry targets the same collection as the original attempt
     And it targets the same location as the original attempt
 
-  @AL2
+  @AL2 @AL2-2
   Scenario: The destination ends up with exactly one upload
     When the retry completes
     Then the destination contains exactly one upload for that batch
     And there is no duplicate upload of the same batch
 
-  @AL2
+  @AL2 @AL2-3
   Scenario: No leftover partial data from the failed attempt remains
     When the retry completes
     Then no partial data from the failed attempt remains in the destination
     And the images present are those of the completed retry
 
-  @AL2
+  @AL2 @AL2-4
   Scenario: Retrying does not require re-entering the location
     When Alice retries the failed upload
     Then she is not required to choose the collection or location again
 
-  @AL2
+  @AL2 @AL2-5
   Scenario: Retrying does not require re-identifying species already tagged
     Given Alice had identified species on images in the failed attempt
     When she retries the upload
     Then she is not required to identify those species again
     And when the retry completes, those identifications are present in the destination
 
-  @AL2
+  @AL2 @AL2-6
   Scenario: A retry cannot be misdirected to a different destination by accident
     When Alice retries the failed upload
     Then the retry cannot silently land in a collection or location other than the original attempt's

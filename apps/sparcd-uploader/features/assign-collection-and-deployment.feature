@@ -13,7 +13,7 @@ Feature: Assign a batch to a collection and a camera location
     Given a scanned batch has passed the Inspect step
     And the New upload section is showing the Assign step
 
-  @F2 @A2
+  @F2 @A2 @A2-3
   Scenario: The batch cannot be uploaded until a camera location is assigned
     Given no deployment location has been chosen
     Then the Continue button is disabled

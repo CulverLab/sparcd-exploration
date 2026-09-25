@@ -80,7 +80,7 @@ Feature: Identify species before the batch is uploaded
     # A page load is not a user gesture, so the browser is within its rights to
     # refuse; the click is the gesture.
 
-  @A1
+  @A1 @A1-2
   Scenario: The upload carries the images and the identifications together
     Given a batch was tagged in the Tagger and handed back
     When it is published
@@ -103,7 +103,7 @@ Feature: Identify species before the batch is uploaded
     When a dry run of it is started
     Then the hand-off is still on this machine
 
-  @A1
+  @A1 @A1-3
   Scenario: An untagged file is accepted and published as untagged
     Given a batch was tagged in the Tagger and handed back
     When it is published
