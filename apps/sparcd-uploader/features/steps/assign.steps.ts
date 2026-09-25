@@ -320,6 +320,7 @@ type PublishedBatch = { prefix: string; location: string; files: number };
 
 async function uploadAt(app: App, location: string): Promise<void> {
   await app.chooseDeployment(location);
+  await app.setUploader('Ada Lovelace');
   await app.continueToUpload();
   await app.dryRunCheckbox().uncheck();
   await app.startRun();
