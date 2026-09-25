@@ -140,7 +140,7 @@ Feature: Upload and publish a batch
     Given a run is in progress
     Then each file shows its own state and percentage
     And the batch shows bytes uploaded against the total, and counts of done, skipped and failed files
-    And an activity log records each retry, each warning and each metadata write as it happens
+    And the run log records each retry, each warning and each metadata write
     # Correction: a real upload does not log successful blob writes at all — the
     # log carries retries, warnings, skips, and the five metadata writes. The
     # per-object "PUT …" listing only appears in a dry run.
@@ -160,7 +160,7 @@ Feature: Upload and publish a batch
   Scenario: A momentary failure is retried before the file is given up on
     Given a file's upload fails with a network error, a server error or a clock-skew rejection
     Then it is retried up to five attempts with an increasing, randomized delay
-    And the retry is recorded in the activity log
+    And the retry is recorded in the run log
 
   @unmapped
   Scenario: A transient error during the resume verify pass is retried rather than counted as a file failure
@@ -173,11 +173,11 @@ Feature: Upload and publish a batch
     # the systemic abort — the same problem #35 fixed on the upload path.
 
   @unmapped
-  Scenario: The run monitor shows one offline warning per outage, not one per poll tick
+  Scenario: The run records one offline warning per outage, not one per poll tick
     Given a run pauses because the network is reported offline
-    Then the activity log records the offline wait exactly once
+    Then the run log records the offline wait exactly once
     When the network returns
-    Then the activity log records the recovery exactly once
+    Then the run log records the recovery exactly once
     And no further offline entries appear for that outage
     # Before this fix, ensureOnline logged inside the poll loop — a 5-minute
     # outage with 10 lanes produced 100 warning lines in the run monitor.
@@ -255,6 +255,6 @@ Feature: Upload and publish a batch
     Given the browser wake lock API is available in this session
     And the first media blob is held at the mock
     When a real upload is started
-    Then the activity log has the preparing-upload entry
+    Then the run log has the preparing-upload entry
     And the browser wake lock was requested
     And releasing the held blob lets the upload complete

@@ -83,19 +83,55 @@ export function effectiveKey(
   return resolved && !/^\d$/.test(resolved) ? resolved : null;
 }
 
+function ownersByKey<T extends SpeciesKeyConfig>(
+  species: readonly T[],
+  overrides: KeyOverrides,
+): Map<string, T[]> {
+  const owners = new Map<string, T[]>();
+  for (const candidate of species) {
+    const key = effectiveKey(candidate.scientificName, candidate.keyBinding, overrides);
+    if (!key) continue;
+    const held = owners.get(key);
+    if (held) held.push(candidate);
+    else owners.set(key, [candidate]);
+  }
+  return owners;
+}
+
 export function conflictingKeyOwners(
   species: readonly SpeciesKeyConfig[],
   targetScientificName: string,
   key: string,
   overrides: KeyOverrides,
 ): string[] {
-  return species
-    .filter(
-      (candidate) =>
-        candidate.scientificName !== targetScientificName &&
-        effectiveKey(candidate.scientificName, candidate.keyBinding, overrides) === key,
-    )
+  return (ownersByKey(species, overrides).get(key) ?? [])
+    .filter((candidate) => candidate.scientificName !== targetScientificName)
     .map((candidate) => candidate.scientificName);
+}
+
+export type ResolvedKeys<T> = {
+  /** Keys owned by exactly one species — the only ones that act. */
+  byKey: Map<string, T>;
+  /** Keys claimed by two or more species; nobody gets them until one gives way. */
+  shared: Map<string, T[]>;
+};
+
+/**
+ * A key a second species also claims belongs to neither. A server default and a
+ * local override collide on equal terms: silently letting one win is how a
+ * volunteer ends up tagging the wrong animal.
+ */
+export function resolveSpeciesKeys<T extends SpeciesKeyConfig>(
+  species: readonly T[],
+  overrides: KeyOverrides,
+): ResolvedKeys<T> {
+  const byKey = new Map<string, T>();
+  const shared = new Map<string, T[]>();
+  for (const [key, owners] of ownersByKey(species, overrides)) {
+    if (owners.length > 1) shared.set(key, owners);
+    else byKey.set(key, owners[0]);
+  }
+  return { byKey, shared };
 }
 
 export function diffSpecies(
