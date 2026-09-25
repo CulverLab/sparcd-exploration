@@ -234,6 +234,17 @@ Feature: Assign species to images in an upload
     And the previous species is left without one
 
   @H2
+  Scenario: A key two species in the vocabulary both claim applies neither
+    Given the vocabulary gives two species the same key
+    And an image is focused
+    When the shared key is pressed
+    Then neither of the two species is recorded on the image
+    And both of their rows mark the key as shared
+    When one of the two is given a key of its own
+    Then the shared key applies the species that kept it
+    And no row marks a key as shared
+
+  @H2
   Scenario: A duplicate vocabulary key can be kept with its existing species
     Given the species vocabulary carries a key binding for a species
     When its key is assigned to a different species

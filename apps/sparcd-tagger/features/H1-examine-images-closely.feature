@@ -107,6 +107,12 @@ Feature: Examine an image closely enough to catch every species
     Then the adjustment panel leaves the Focus navigation usable
     And it stays in the viewport when neither side fits
 
+  @unmapped
+  Scenario: Adjustment controls stay off the image on a phone
+    Given the focused item is a still image
+    When the adjustment panel is opened on a phone-sized screen
+    Then the adjustment panel stays clear of the image and inside the window
+
   @H1
   Scenario: Adjustment controls follow the focused image
     Given the focused item is a still image

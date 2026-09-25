@@ -229,40 +229,7 @@ function Telemetry({ snap }: { snap: UploadSnapshot }) {
   );
 }
 
-const LOG_TONE = {
-  put: 'text-inkSoft',
-  info: 'text-inkSoft',
-  warn: 'text-warn',
-  error: 'text-warn',
-} as const;
-
-function LogPanel({ snap }: { snap: UploadSnapshot }) {
-  const ref = useRef<HTMLDivElement>(null);
-  // Keep the newest line in view as the run progresses.
-  useEffect(() => {
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [snap.version]);
-
-  const tail = snap.log.slice(-400);
-  return (
-    <div
-      ref={ref}
-      className="max-h-48 sm:max-h-none sm:h-[24dvh] overflow-auto overscroll-contain border border-ruleSoft bg-paper px-3 py-2 font-mono text-[11.5px] leading-[1.55]"
-    >
-      {tail.map((l, i) => (
-        <div key={i} className={`break-all ${LOG_TONE[l.kind]}`}>
-          {l.kind === 'put' ? '· ' : ''}
-          {l.text}
-        </div>
-      ))}
-      {snap.log.length === 0 && <span className="text-inkMute">No activity yet.</span>}
-    </div>
-  );
-}
-
 export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
-  const [showLog, setShowLog] = useState(false);
   const counts = snap.files.reduce(
     (a, f) => ((a[f.state] = (a[f.state] ?? 0) + 1), a),
     {} as Record<FileState, number>,
@@ -338,19 +305,6 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
       {snap.phase === 'error' && <Note tone="warn" message={snap.error ?? 'Upload failed.'} />}
 
       <ProgressList snap={snap} />
-
-      <button
-        type="button"
-        onClick={() => setShowLog((v) => !v)}
-        aria-expanded={showLog}
-        className="sm:hidden flex w-full items-center justify-between min-h-11 px-3 border border-ruleSoft bg-paper font-mono text-[11px] uppercase tracking-[0.12em] text-inkSoft"
-      >
-        <span>Activity log</span>
-        <span aria-hidden>{showLog ? '−' : '+'}</span>
-      </button>
-      <div className={`${showLog ? 'block' : 'hidden'} sm:block`}>
-        <LogPanel snap={snap} />
-      </div>
     </section>
   );
 }

@@ -115,14 +115,6 @@ function saveDisplayPreferences(preferences: DisplayPreferences) {
   }
 }
 
-function clearDisplayPreferences() {
-  try {
-    localStorage.removeItem(DISPLAY_PREFERENCES_KEY);
-  } catch {
-    // Disconnect still clears the active connection and in-memory preferences.
-  }
-}
-
 function loadAutoAdvance(): boolean {
   try {
     const stored = localStorage.getItem(AUTO_ADVANCE_KEY);
@@ -243,7 +235,6 @@ export const useStore = create<TaggerState>()(
     disconnect: () => {
       clearClientCache();
       clearSharedConnection();
-      clearDisplayPreferences();
       clearAutoAdvance();
       clearTaggerUser();
       set((s) => ({
@@ -253,7 +244,6 @@ export const useStore = create<TaggerState>()(
         selectedCollectionKey: null,
         selectedUploadPrefix: null,
         taggerUser: '',
-        ...defaultDisplayPreferences,
         autoAdvanceOnTag: true,
       }));
     },

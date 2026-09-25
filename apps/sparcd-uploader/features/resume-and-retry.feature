@@ -95,7 +95,7 @@ Feature: Resume an interrupted upload and retry a failed one
     And when they all land, the metadata for that same upload folder is published
     And exactly one upload exists in the destination
 
-  @AL2 @AL2-4
+  @AL2
   Scenario: Retrying does not require choosing the location again
     When a failed upload is retried or resumed
     Then the collection, deployment, uploader identity and timezone are not asked for again
@@ -130,7 +130,7 @@ Feature: Resume an interrupted upload and retry a failed one
   @unmapped
   Scenario: A resume in progress can be watched and cancelled
     Given a resume is running
-    Then the same per-file progress, byte totals and activity log are shown as for a fresh upload
+    Then the same per-file progress and byte totals are shown, and the same run log is kept, as for a fresh upload
     And no other upload can be resumed while one is running
     And the resume can be cancelled
 

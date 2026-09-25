@@ -565,7 +565,7 @@ Given('a resume is running', async ({ app }) => {
 });
 
 Then(
-  'the same per-file progress, byte totals and activity log are shown as for a fresh upload',
+  'the same per-file progress and byte totals are shown, and the same run log is kept, as for a fresh upload',
   async ({ app }) => {
     await expect(app.page.getByText(/[\d.]+ (B|KB|MB|GB) \/ [\d.]+ (B|KB|MB|GB)/)).toBeVisible();
     await expect(app.page.locator('div[data-index]').first()).toBeVisible();
