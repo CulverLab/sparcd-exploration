@@ -236,12 +236,14 @@ Feature: Upload and publish a batch
     Given a run is in progress
     Then the Back button is disabled
 
-  @unmapped
-  Scenario: The next batch from the same site keeps the previous choices
+  @US-007
+  Scenario: The next batch starts with assignment details cleared
     Given a real upload has completed
     When "Next batch" is chosen
     Then the wizard returns to the Files step with an empty batch
-    And the collection, deployment, uploader identity, description and timezone of the previous batch are kept
+    And the next batch has no collection, deployment, description or timezone selected
+    And the uploader identity is still filled in
+    And continuing without a timezone is disabled
 
   @unmapped
   Scenario: The screen wake lock is held while a dry run is in progress

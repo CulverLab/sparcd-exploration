@@ -886,21 +886,39 @@ Then('the wizard returns to the Files step with an empty batch', async ({ app })
 });
 
 Then(
-  'the collection, deployment, uploader identity, description and timezone of the previous batch are kept',
+  'the next batch has no collection, deployment, description or timezone selected',
   async ({ app }) => {
     await app.dropFolder(standardBatch());
     await app.waitForInspected();
     await app.continueToAssign();
     await app.waitForCollections();
-    await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
-    await expect(app.deploymentTrigger()).toContainText('Bear Canyon');
+    await expect(app.collectionTrigger()).toContainText('Select a target collection');
+    await expect(app.page.getByText('Select a target collection first.')).toBeVisible();
+    await app.collectionTrigger().click();
+    await app.page.getByRole('option').filter({ hasText: COLLECTION_A_NAME }).first().click();
+    await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
       app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
-    ).toHaveValue('July retrieval');
-    await expect(app.timeZoneSelect()).toHaveValue('America/Phoenix');
+    ).toHaveValue('');
+    await expect(app.timeZoneSelect()).toHaveValue('');
+    await app.chooseDeployment('Bear Canyon');
+    await app.timeZoneSelect().selectOption({ label: 'Select a timezone…' });
+    await expect(app.timeZoneSelect()).toHaveValue('');
   },
 );
+
+Then('the uploader identity is still filled in', async ({ app }) => {
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
+});
+
+Then('continuing without a timezone is disabled', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.page.getByRole('status').filter({ hasText: 'Select a timezone first' })).toBeVisible();
+  await expect(app.page.locator('#upload-timezone-help')).toContainText(
+    'Select a timezone before continuing.',
+  );
+});
 
 // --- wake lock and preparing phase -------------------------------------------
 
