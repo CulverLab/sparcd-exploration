@@ -88,6 +88,11 @@ try {
     throw new Error(`${error.message}\nRemembered record after unchecked submit: ${stored}\nWASM diagnostics:\n${diagnostics.join('\n') || '<none>'}`);
   }
   console.log('Remembered Explorer connection WASM check passed.');
+  await endpoint.fill('https:///shared.example');
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await expect(page.getByText("The Endpoint doesn't look right.")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Use exactly two slashes after “https:”.')).toBeVisible();
+  console.log('Invalid endpoint WASM check passed.');
 } finally {
   await browser.close();
   server.closeAllConnections();

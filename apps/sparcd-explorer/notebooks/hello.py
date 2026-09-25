@@ -652,38 +652,88 @@ def _(
     # credentials. Instead, with no usable credentials we define client=None and let
     # the data cells degrade to empty-schema dataframes, so the whole app (and the
     # sidebar above all) always renders.
-    if not _creds or not _creds.get("endpoint") or not _creds.get("access") or not _creds.get("secret"):
+    _missing = [
+        _name
+        for _key, _name in (("endpoint", "endpoint"), ("access", "access key"), ("secret", "secret key"))
+        if not (_creds or {}).get(_key, "").strip()
+    ]
+    if _missing:
         client = None
         is_wildcats_s3_endpoint = False
+        _need = " and ".join([", ".join(_missing[:-1]), _missing[-1]] if len(_missing) > 1 else _missing)
         _connection_chip = mo.Html(
             "<div class='sparcd-chip'><span class='led' style='background:var(--warn);"
             "box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);'></span>"
-            "<span>Enter S3 credentials in the sidebar to load data.</span></div>"
+            f"<span>Enter your {_need} in the sidebar to load data.</span></div>"
         )
     else:
+        from html import escape as _esc_ep
         from minio import Minio
 
-        _raw = _creds["endpoint"]
-        if "://" in _raw:
-            _u = urlparse(_raw)
-            _ep = _u.netloc
-            _secure = _u.scheme == "https"
+        def parse_endpoint(raw, default_secure):
+            """Check a typed endpoint; returns (host[:port], secure, problem), problem None when usable.
+
+            Accepts a bare name with an optional :port, or an http(s) address, so localhost
+            and custom ports work. Each problem describes what is in the text, in plain words,
+            because the people signing in are not expected to know URL syntax.
+            """
+            import re
+            from urllib.parse import urlsplit
+
+            raw = raw.strip()
+            scheme = re.match(r"([a-z][a-z0-9+.-]*):(/*)", raw, re.IGNORECASE)
+            # "localhost:9000" matches too; with no slashes it is a name and a number.
+            if scheme and not scheme[2] and scheme[1].lower() not in {"http", "https"}:
+                scheme = None
+            secure = scheme[1].lower() == "https" if scheme else bool(default_secure)
+            if any(c.isspace() for c in raw):
+                return raw, secure, "Remove the spaces."
+            if scheme and scheme[1].lower() not in {"http", "https"}:
+                return raw, secure, f"Start it with https:// instead of {scheme[0]}"
+            if scheme and scheme[2] != "//":
+                return raw, secure, f"Use exactly two slashes after “{scheme[1]}:”."
+            try:
+                parts = urlsplit(raw if scheme else f"//{raw}")
+            except ValueError:
+                return raw, secure, "This doesn't look like a web address."
+            rest = raw[raw.index("//") + 2 + len(parts.netloc):] if scheme else raw[len(parts.netloc):]
+            try:
+                parts.port
+            except ValueError:
+                return raw, secure, "The number after the “:” isn't valid."
+            if not parts.hostname:
+                return raw, secure, "The server name is missing."
+            if "@" in parts.netloc:
+                return raw, secure, "Remove the “@” and everything before it."
+            if rest not in {"", "/"}:
+                return raw, secure, f"Remove “{rest}” from the end."
+            return parts.netloc, secure, None
+
+        _ep, _secure, _problem = parse_endpoint(_creds["endpoint"], _creds["secure"])
+
+        # An unusable endpoint gets no client, so the registry cell stays quiet and this
+        # is the one place that explains what to fix.
+        if _problem:
+            client = None
+            is_wildcats_s3_endpoint = False
+            _connection_chip = mo.Html(
+                "<div class='sparcd-callout'>"
+                "<div class='t'>The Endpoint doesn't look right.</div>"
+                f"<div>{_esc_ep(_problem)} It should look like <b>server.example.org</b> "
+                "or <b>https://server.example.org</b>, with your server's name.</div>"
+                f"<div class='d'>You entered: {_esc_ep(_creds['endpoint'])}</div>"
+                "</div>"
+            )
         else:
-            _ep = _raw
-            _secure = bool(_creds["secure"])
+            # Exact-site point display is a data-protection concern; gate it to the trusted host.
+            _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
+            is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
 
-        # Exact-site point display is a data-protection concern; gate it to the trusted host.
-        _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
-        is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
-
-        client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
-        _src = "form" if _form_value is not None else ".env"
-        from html import escape as _esc_ep
-        _connection_chip = mo.Html(
-            "<div class='sparcd-chip'><span class='led'></span>"
-            f"<span>Connected to <span class='host'>{_esc_ep(_ep)}</span></span>"
-            f"<span class='src'>· {'https' if _secure else 'http'} · from {_src}</span></div>"
-        )
+            client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
+            _connection_chip = mo.Html(
+                "<div class='sparcd-chip'><span class='led'></span>"
+                f"<span>Endpoint OK: <span class='host'>{_esc_ep(_ep)}</span></span></div>"
+            )
     _connection_chip
     return client, is_wildcats_s3_endpoint
 
@@ -718,20 +768,19 @@ def _(client, mo):
             with mo.status.spinner(title="Reading collections…"):
                 _buckets = [b.name for b in client.list_buckets() if b.name.startswith("sparcd-")]
         except _S3Error as exc:
-            _detail = exc.code or exc.message or str(exc)
-            _hint = (
-                "Check the endpoint, access key, secret key, and HTTPS setting."
-                if exc.code in {"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"}
-                else "Check the endpoint, credentials, and network access."
-            )
-            _callout = _error_callout("Could not connect to S3.", _hint, "S3 response", _detail)
+            _hint = {
+                "InvalidAccessKeyId": "The access key wasn't recognized. Check it for typos.",
+                "SignatureDoesNotMatch": "The secret key doesn't match the access key. Check it for typos.",
+                "AccessDenied": "This account isn't allowed to see collections. Ask your SPARC'd administrator.",
+            }.get(exc.code, "Check the endpoint, access key, and secret key.")
+            _callout = _error_callout("Couldn't sign in.", _hint, "For support", exc.code or exc.message or str(exc))
             _connection_failed = True
             _buckets = []
         except Exception as exc:
             _callout = _error_callout(
-                "Could not connect to S3.",
-                "Check the endpoint, credentials, and network access.",
-                "Error",
+                "Couldn't reach the server.",
+                "Check the endpoint and your internet connection.",
+                "For support",
                 str(exc),
             )
             _connection_failed = True
@@ -740,9 +789,9 @@ def _(client, mo):
         if not _buckets and not _connection_failed:
             _callout = mo.Html(
                 "<div class='sparcd-callout'>"
-                "<div class='t'>No accessible SPARC'd collections found.</div>"
-                "<div>Check that the endpoint, access key, secret key, and HTTPS setting match an "
-                "account with access to the Educational Test collection.</div>"
+                "<div class='t'>No collections found.</div>"
+                "<div>You're signed in, but this account can't see any SPARC'd collections. "
+                "Ask your SPARC'd administrator for access.</div>"
                 "</div>"
             )
 
