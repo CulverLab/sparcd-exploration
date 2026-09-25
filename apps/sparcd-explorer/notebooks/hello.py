@@ -744,8 +744,8 @@ def _(
                 signin_problem = {
                     "fields": ["endpoint"],
                     "title": "The endpoint doesn't look right.",
-                    "message": f"{_problem} It should look like wildcats.sparcd.arizona.edu "
-                    "or https://wildcats.sparcd.arizona.edu.",
+                    "message": f"{_problem} It should look like server.example.org "
+                    "or https://server.example.org, with your server's name.",
                 }
             else:
                 # Exact-site point display is a data-protection concern; gate it to the trusted host.
