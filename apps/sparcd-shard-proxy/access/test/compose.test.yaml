@@ -1,0 +1,23 @@
+# MinIO as the upstream for the access-proxy integration run. Loopback only,
+# on a host port Docker picks, so a run never collides with a dev stack.
+# The image comes from Quay: Docker Hub stopped serving minio/minio.
+
+name: sparcd-access-test
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: accesstestkey
+      MINIO_ROOT_PASSWORD: accesstestsecret
+    ports:
+      - "127.0.0.1::9000"
+    # `up --wait` needs a healthcheck to have anything to wait for. `mc` ships
+    # in the server image, and `mc ready` is the check MinIO documents.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 40
+      start_period: 3s
