@@ -641,9 +641,15 @@ def _(
     # Build the MinIO client from the submitted credentials, falling back to .env
     # defaults on first load. Renders a compact connection chip.
     _form_value = creds_form.value
-    if _form_value is not None:
-        # A Connect starts clean, so rows cached from another server never show.
+    # Cached collections belong to the connection that loaded them. Any other one,
+    # including the .env connection after the form is cleared, starts clean.
+    _connection = (
+        (_form_value["endpoint"], _form_value["access"]) if _form_value is not None
+        else (DEFAULT_ENDPOINT, DEFAULT_ACCESS)
+    )
+    if SPARCD_COLLECTION_DATA_CACHE.get("connection") != _connection:
         SPARCD_COLLECTION_DATA_CACHE.clear()
+        SPARCD_COLLECTION_DATA_CACHE["connection"] = _connection
     if _form_value is None:
         _creds = {
             "endpoint": DEFAULT_ENDPOINT,
@@ -889,21 +895,21 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         _dep_buckets += [bucket] * len(rows)
                         _dep_uploads += [up] * len(rows)
                     except Exception as _exc:
-                        _skip(up.removeprefix(prefix).rstrip("/"), "deployments.csv", _exc)
+                        _skip(up.rstrip("/"), "deployments.csv", _exc)
                     try:
                         rows = _read_csv(bucket, up + "media.csv")
                         _media_rows += rows
                         _media_buckets += [bucket] * len(rows)
                         _media_uploads += [up] * len(rows)
                     except Exception as _exc:
-                        _skip(up.removeprefix(prefix).rstrip("/"), "media.csv", _exc)
+                        _skip(up.rstrip("/"), "media.csv", _exc)
                     try:
                         rows = _read_csv(bucket, up + "observations.csv")
                         _obs_rows += rows
                         _obs_buckets += [bucket] * len(rows)
                         _obs_uploads += [up] * len(rows)
                     except Exception as _exc:
-                        _skip(up.removeprefix(prefix).rstrip("/"), "observations.csv", _exc)
+                        _skip(up.rstrip("/"), "observations.csv", _exc)
 
         deployments = (
             _to_df(_dep_rows, _dep_buckets, _dep_uploads, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
@@ -944,7 +950,7 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
 
         _load_note = mo.Html(
             "<div class='sparcd-callout'>"
-            f"<div class='t'>{len(_cached['skipped'])} upload(s) could not be read in full.</div>"
+            "<div class='t'>Some collection data could not be read.</div>"
             "<div>Rows from these files are missing from everything below.</div>"
             + "".join(
                 f"<div class='d'>{_esc_skip(_where)}: {_esc_skip(', '.join(_what))}</div>"
