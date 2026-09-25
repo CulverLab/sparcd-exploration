@@ -633,6 +633,7 @@ def _(
     DEFAULT_ENDPOINT,
     DEFAULT_SECRET,
     DEFAULT_SECURE,
+    SPARCD_COLLECTION_DATA_CACHE,
     creds_form,
     mo,
     urlparse,
@@ -640,6 +641,9 @@ def _(
     # Build the MinIO client from the submitted credentials, falling back to .env
     # defaults on first load. Renders a compact connection chip.
     _form_value = creds_form.value
+    if _form_value is not None:
+        # A Connect starts clean, so rows cached from another server never show.
+        SPARCD_COLLECTION_DATA_CACHE.clear()
     if _form_value is None:
         _creds = {
             "endpoint": DEFAULT_ENDPOINT,
@@ -799,11 +803,14 @@ def _(collections_registry, mo):
 
 
 @app.cell(hide_code=True)
-def _(DEFAULT_COLLECTION_BUCKETS, collection_load_form):
+def _(DEFAULT_COLLECTION_BUCKETS, SPARCD_COLLECTION_DATA_CACHE, collection_load_form):
     # Selected buckets + their prefixes. Falls back to the default until the form
     # is submitted, so the app loads a collection on first render.
     _submitted = collection_load_form.value
     BUCKETS = list((_submitted or {}).get("collections") or DEFAULT_COLLECTION_BUCKETS)
+    if _submitted is not None:
+        # Pressing Load re-reads the collection, so tagging done since shows up.
+        SPARCD_COLLECTION_DATA_CACHE.pop(tuple(BUCKETS), None)
     UPLOADS_PREFIXES = [
         (b, f"Collections/{b.removeprefix('sparcd-')}/Uploads/")
         for b in BUCKETS
@@ -853,6 +860,10 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
     _media_rows, _media_buckets, _media_uploads = [], [], []
     _obs_rows, _obs_buckets, _obs_uploads = [], [], []
     total_uploads = 0
+    _skipped = {}
+
+    def _skip(where, what, exc):
+        _skipped.setdefault(where, []).append(f"{what} ({getattr(exc, 'code', None) or type(exc).__name__})")
 
     _cache = SPARCD_COLLECTION_DATA_CACHE
     _cache_key = tuple(BUCKETS)
@@ -867,7 +878,8 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         for o in client.list_objects(bucket, prefix=prefix, recursive=False)
                         if o.is_dir and o.object_name != prefix
                     ]
-                except Exception:
+                except Exception as _exc:
+                    _skip(bucket, "listing uploads", _exc)
                     uploads = []
                 total_uploads += len(uploads)
                 for up in uploads:
@@ -876,22 +888,22 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         _dep_rows += rows
                         _dep_buckets += [bucket] * len(rows)
                         _dep_uploads += [up] * len(rows)
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _skip(up.removeprefix(prefix).rstrip("/"), "deployments.csv", _exc)
                     try:
                         rows = _read_csv(bucket, up + "media.csv")
                         _media_rows += rows
                         _media_buckets += [bucket] * len(rows)
                         _media_uploads += [up] * len(rows)
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _skip(up.removeprefix(prefix).rstrip("/"), "media.csv", _exc)
                     try:
                         rows = _read_csv(bucket, up + "observations.csv")
                         _obs_rows += rows
                         _obs_buckets += [bucket] * len(rows)
                         _obs_uploads += [up] * len(rows)
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        _skip(up.removeprefix(prefix).rstrip("/"), "observations.csv", _exc)
 
         deployments = (
             _to_df(_dep_rows, _dep_buckets, _dep_uploads, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
@@ -916,6 +928,7 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
             "media": media,
             "observations": observations,
             "total_uploads": total_uploads,
+            "skipped": _skipped,
         }
         _cache[_cache_key] = _cached
 
@@ -923,7 +936,23 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
     media = _cached["media"]
     observations = _cached["observations"]
     total_uploads = _cached["total_uploads"]
-    None
+
+    # Name what couldn't be read instead of dropping it silently.
+    _load_note = None
+    if _cached["skipped"]:
+        from html import escape as _esc_skip
+
+        _load_note = mo.Html(
+            "<div class='sparcd-callout'>"
+            f"<div class='t'>{len(_cached['skipped'])} upload(s) could not be read in full.</div>"
+            "<div>Rows from these files are missing from everything below.</div>"
+            + "".join(
+                f"<div class='d'>{_esc_skip(_where)}: {_esc_skip(', '.join(_what))}</div>"
+                for _where, _what in _cached["skipped"].items()
+            )
+            + "</div>"
+        )
+    _load_note
     return deployments, media, observations, pl
 
 
