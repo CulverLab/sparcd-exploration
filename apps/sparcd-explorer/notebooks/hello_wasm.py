@@ -1221,6 +1221,13 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
         pl.col("media_path").is_in(_kept_paths)
         | ~pl.col("media_path").is_in(_dated_obs_paths)
     )
+    # From here on an observation is an identification. A placeholder row (no
+    # species, no tags) only records that the image exists: the uploader writes one
+    # per untagged image, the tagger writes one when every tag is removed, and
+    # sparcd-web writes one per uploaded image. Counting it would mark the image tagged.
+    observations_filtered = observations_filtered.filter(
+        (pl.col("scientific_name") != "") | (pl.col("tags") != "")
+    )
     # Derive from media_filtered so never-tagged deployments (media but zero
     # observations) stay visible on the map and in the stat cards; sites whose
     # observations all fail the species/date filters still drop out unless they
