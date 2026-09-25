@@ -4,7 +4,7 @@
 // handles are left out because Node has nothing to structured-clone them from.
 
 import 'fake-indexeddb/auto';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   flipDb,
   mergeTags,
@@ -108,7 +108,7 @@ describe('the record round trip', () => {
   it('reads back everything the uploader wrote', async () => {
     await writeFlipRecord(record());
     const back = await readFlipRecord('batch-1');
-    expect(back).toEqual(record());
+    expect(back).toEqual({ ...record(), usedAt: expect.any(String) });
   });
 
   // The batch is rebuilt from this record on the way back, and there is no
@@ -165,6 +165,53 @@ describe('not keeping batches forever', () => {
     await writeFlipRecord(record({ createdAt: fortnight }));
     expect(await pruneFlipRecords(now)).toBe(0);
   });
+
+  // A batch tagged over weeks and then carried until there is a connection is
+  // not abandoned, however long ago it was handed over.
+  it('ages a batch from its last use, not from when it was handed over', async () => {
+    const now = Date.parse('2026-08-25T00:00:00.000Z');
+    const daysAgo = (d: number) => new Date(now - d * 24 * 60 * 60 * 1000).toISOString();
+    await writeFlipRecord(record({ id: 'carried', createdAt: daysAgo(45), usedAt: daysAgo(10) }));
+    await writeFlipRecord(record({ id: 'abandoned', createdAt: daysAgo(45), usedAt: daysAgo(31) }));
+    expect(await pruneFlipRecords(now)).toBe(1);
+    expect(await flipDb.records.get('carried')).toBeDefined();
+    expect(await flipDb.records.get('abandoned')).toBeUndefined();
+  });
+
+  it('counts opening the batch and tagging it as use', async () => {
+    const old = new Date('2026-01-01T00:00:00.000Z').toISOString();
+    await writeFlipRecord(record({ id: 'opened', createdAt: old }));
+    await writeFlipRecord(record({ id: 'tagged', createdAt: old }));
+    await writeFlipRecord(record({ id: 'handed-back', createdAt: old }));
+    await writeFlipRecord(record({ id: 'untouched', createdAt: old }));
+    await readFlipRecord('opened');
+    await updateFlipTags('tagged', { 'SD/IMG_0001.JPG': [coyote] });
+    await finishFlipRecord('handed-back', {}, 'anita');
+    expect(await pruneFlipRecords()).toBe(1);
+    expect(await flipDb.records.get('untouched')).toBeUndefined();
+  });
+
+  // Opened on day 1, tagged on day 20, swept on day 45: only the tag write
+  // keeps it inside the 30 days.
+  it.each([
+    ['a per-image save', (id: string) => updateFlipTags(id, { 'SD/IMG_0001.JPG': [coyote] })],
+    ['the hand-back', (id: string) => finishFlipRecord(id, { 'SD/IMG_0001.JPG': [coyote] }, 'anita')],
+  ])('keeps a batch whose last use was %s', async (_, tag) => {
+    const day = (d: number) => Date.parse('2026-08-01T00:00:00.000Z') + d * 24 * 60 * 60 * 1000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(day(0));
+      await writeFlipRecord(record({ createdAt: new Date().toISOString() }));
+      vi.setSystemTime(day(1));
+      await readFlipRecord('batch-1');
+      vi.setSystemTime(day(20));
+      await tag('batch-1');
+      expect(await pruneFlipRecords(day(45))).toBe(0);
+      expect((await flipDb.records.get('batch-1'))!.tags['SD/IMG_0001.JPG']).toEqual([coyote]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('tag updates', () => {
@@ -200,7 +247,7 @@ describe('the hand back', () => {
 
 it('reads old records and resolves optional estimated timestamps after camera and manual time', async () => {
   await writeFlipRecord(record());
-  expect(await readFlipRecord('batch-1')).toEqual(record());
+  expect(await readFlipRecord('batch-1')).toEqual({ ...record(), usedAt: expect.any(String) });
   const f = inspected({ exifTimestamp: undefined, estimatedTimestamp: '2024-01-10T08:00:00', timestampSource: 'interpolated' });
   await writeFlipRecord(record({ files: [f] }));
   expect((await readFlipRecord('batch-1'))?.files[0]).toEqual(f);

@@ -1,10 +1,12 @@
 // The page-driving helper every step goes through. Keeps the Gherkin steps
 // declarative: they say what happened, this says how.
 
+import { fileURLToPath } from 'node:url';
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { S3Mock } from './s3mock';
 
 export const APP_PATH = '/sparcd-exploration/uploader/';
+const FLIP_MODULE = fileURLToPath(new URL('../../../../packages/flip/src/index.ts', import.meta.url));
 export const S3_ORIGIN = `http://localhost:${process.env.UPLOADER_TEST_PORT ?? 5311}`;
 export const ACCESS_KEY = 'AKIATESTKEY0001';
 export const SECRET_KEY = 'test-secret-key';
@@ -355,6 +357,21 @@ export class App {
         db.close();
       },
       { id, patch },
+    );
+  }
+
+  /**
+   * The Tagger's own hand-back write, through the real `@sparcd/flip` module
+   * served by the dev server — so it stamps the record exactly as the Tagger
+   * would, last-used time included.
+   */
+  async finishFlipRecord(id: string, tags: Record<string, unknown>, taggerUser: string): Promise<void> {
+    await this.page.evaluate(
+      async ({ url, id, tags, taggerUser }) => {
+        const flip = await import(/* @vite-ignore */ url);
+        await flip.finishFlipRecord(id, tags, taggerUser);
+      },
+      { url: `${APP_PATH}@fs${FLIP_MODULE}`, id, tags, taggerUser },
     );
   }
 

@@ -92,7 +92,10 @@ export interface FlipRecord {
   /** Schema version. A record this build does not understand is treated as
    *  absent rather than guessed at, so a future v2 can never be misread. */
   v: 1;
-  createdAt: string; // ISO; drives the pruning sweep below
+  createdAt: string; // ISO
+  /** ISO; bumped on every read and tag write, and what the pruning sweep ages
+   *  from. Absent on a record neither tool has touched since it was written. */
+  usedAt?: string;
   returnUrl: string; // where the tagger sends the user back to
   /** Present when the browser granted a durable folder handle. Its presence is
    *  the only thing anything branches on — no handle means thumbnails only,
@@ -141,14 +144,17 @@ export async function writeFlipRecord(record: FlipRecord): Promise<void> {
  */
 export async function readFlipRecord(id: string): Promise<FlipRecord | undefined> {
   const rec = await flipDb.records.get(id);
-  return rec?.v === 1 ? rec : undefined;
+  if (rec?.v !== 1) return undefined;
+  const usedAt = new Date().toISOString();
+  await flipDb.records.update(id, { usedAt });
+  return { ...rec, usedAt };
 }
 
 export async function deleteFlipRecord(id: string): Promise<void> {
   await flipDb.records.delete(id);
 }
 
-/** How long an abandoned hand-off is kept. */
+/** How long a hand-off nobody opens or tags is kept. */
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
@@ -157,13 +163,17 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * one the moment its batch publishes, so what this sweeps up is the batches
  * that were started and abandoned. Without it the store only ever grows.
  *
- * A full scan, because `createdAt` is not indexed — the store holds one row per
- * hand-off a person has personally started, so there is nothing here worth an
- * index for.
+ * Aged from last use, not creation: a batch tagged over three weeks and then
+ * carried for two more until there is a connection is not abandoned, and its
+ * tags exist nowhere else until it uploads.
+ *
+ * A full scan, because neither timestamp is indexed — the store holds one row
+ * per hand-off a person has personally started, so there is nothing here worth
+ * an index for.
  */
 export async function pruneFlipRecords(now = Date.now()): Promise<number> {
   const cutoff = new Date(now - MAX_AGE_MS).toISOString();
-  return flipDb.records.filter((r) => r.createdAt < cutoff).delete();
+  return flipDb.records.filter((r) => (r.usedAt ?? r.createdAt) < cutoff).delete();
 }
 
 // Sweep on first import, in both tools. Nothing waits on it and nothing depends
@@ -183,7 +193,7 @@ export async function updateFlipTags(
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
     if (!rec) return;
-    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, partial) });
+    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, partial), usedAt: new Date().toISOString() });
   });
 }
 
@@ -196,6 +206,6 @@ export async function finishFlipRecord(
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
     if (!rec) return;
-    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, tags), taggerUser });
+    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, tags), taggerUser, usedAt: new Date().toISOString() });
   });
 }

@@ -1,6 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
-import { standardBatch } from './batches';
-import { reconnectAndReturnToAssign } from './helpers';
+import type { App } from './app';
+import { jpegAt, standardBatch } from './batches';
+import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign } from './helpers';
 import {
   BUCKET_A,
   BUCKET_B,
@@ -311,4 +312,57 @@ Then('the complete metadata bundle is still written', async ({ app }) => {
   expect(metadata.find((put) => put.key.endsWith('UploadMeta.json'))?.body).toContain(
     '"uploadUser": "ada-lovelace"',
   );
+});
+
+// --- the stored location ---------------------------------------------------
+
+type PublishedBatch = { prefix: string; location: string; files: number };
+
+async function uploadAt(app: App, location: string): Promise<void> {
+  await app.chooseDeployment(location);
+  await app.setUploader('Ada Lovelace');
+  await app.continueToUpload();
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+  const uploads = (app.notes.uploads ??= []) as PublishedBatch[];
+  uploads.push({ prefix: publishedUploads(app).at(-1)!, location, files: app.lastSpecs.length });
+}
+
+When('the batch is uploaded with {string} as its location', async ({ app }, location: string) => {
+  await uploadAt(app, location);
+});
+
+When('the next batch is uploaded with {string} as its location', async ({ app }, location: string) => {
+  // Upload folders are stamped to the second, so a second upload inside the
+  // same second would claim the first one's folder. Moving the page clock a
+  // minute ahead puts the next stamp in a later second by construction.
+  await app.page.clock.setSystemTime(Date.now() + 60_000);
+  await app.page.getByRole('button', { name: 'Next batch' }).click();
+  await app.dropFolder([
+    jpegAt('IMG_0101.JPG', '2026:07:08 06:00:00'),
+    jpegAt('IMG_0102.JPG', '2026:07:08 06:05:00'),
+  ]);
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await uploadAt(app, location);
+});
+
+Then(
+  'each upload stores the location assigned to its batch, with its id, name and coordinates',
+  async ({ app }) => {
+    const uploads = app.notes.uploads as PublishedBatch[];
+    expect(publishedUploads(app)).toEqual(uploads.map((u) => u.prefix));
+    expect(new Set(uploads.map((u) => u.prefix)).size).toBe(2);
+    for (const u of uploads) expectStoredAtLocation(app, u.prefix, u.location);
+  },
+);
+
+Then('every image and every observation in each upload points at that location', async ({ app }) => {
+  for (const u of app.notes.uploads as PublishedBatch[]) {
+    const { media, observations } = expectStoredAtLocation(app, u.prefix, u.location);
+    expect(media).toHaveLength(u.files);
+    expect(new Set(observations.map((r) => r[3]))).toEqual(new Set(media.map((r) => r[0])));
+  }
 });
