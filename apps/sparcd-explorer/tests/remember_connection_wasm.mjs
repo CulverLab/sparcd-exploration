@@ -29,6 +29,13 @@ try {
   page.on('response', (response) => {
     if (response.status() >= 400) diagnostics.push(`response ${response.status()}: ${response.url()}`);
   });
+  // Every sign-in to the fake store is turned down for a wrong access key, so the
+  // sign-in message and field highlight can be checked without a real server.
+  await page.context().route('https://shared.example/**', (route) => route.fulfill({
+    status: 403,
+    headers: { 'content-type': 'application/xml', 'access-control-allow-origin': '*' },
+    body: '<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidAccessKeyId</Code><Message>The Access Key Id you provided does not exist in our records.</Message></Error>',
+  }));
   await page.addInitScript(() => localStorage.setItem('sparcd-connection', JSON.stringify({ endpoint: 'shared.example', accessKey: 'shared-access', secure: true, region: 'us-west-2', forcePathStyle: true })));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // Marimo's WASM renderer renders the supplied labels visually, but omits them
@@ -88,11 +95,22 @@ try {
     throw new Error(`${error.message}\nRemembered record after unchecked submit: ${stored}\nWASM diagnostics:\n${diagnostics.join('\n') || '<none>'}`);
   }
   console.log('Remembered Explorer connection WASM check passed.');
+  const outline = (field) => field.evaluate((input) => getComputedStyle(input).outlineStyle);
   await endpoint.fill('https:///shared.example');
   await page.getByRole('button', { name: 'Connect' }).click();
-  await expect(page.getByText("The Endpoint doesn't look right.")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText('Use exactly two slashes after “https:”.')).toBeVisible();
+  await expect(sidebar.getByText("The endpoint doesn't look right.")).toBeVisible({ timeout: 10_000 });
+  await expect(sidebar.getByText('Use exactly two slashes after “https:”.')).toBeVisible();
+  await expect(endpoint).toHaveValue('https:///shared.example');
+  await assert.equal(await outline(endpoint), 'solid', 'the endpoint field is highlighted');
+  await assert.equal(await outline(textFields.nth(1)), 'none', 'the access key field is not highlighted');
   console.log('Invalid endpoint WASM check passed.');
+  await endpoint.fill('shared.example');
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await expect(sidebar.getByText("The access key wasn't recognized.", { exact: false })).toBeVisible({ timeout: 30_000 });
+  await expect(textFields.nth(1)).toHaveValue('shared-access');
+  await assert.equal(await outline(textFields.nth(1)), 'solid', 'the access key field is highlighted');
+  await assert.equal(await outline(endpoint), 'none', 'the endpoint field is no longer highlighted');
+  console.log('Wrong access key WASM check passed.');
 } finally {
   await browser.close();
   server.closeAllConnections();
