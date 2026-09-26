@@ -40,7 +40,7 @@ jobs:
         run: pnpm --filter sparcd-shard-proxy test
 
       # ubuntu-latest ships Docker and the compose plugin, the same way the
-      # uploader benchmark job already relies on them. The MinIO image comes
-      # from Quay: Docker Hub stopped serving minio/minio.
+      # uploader benchmark job already relies on them. The MinIO image is
+      # pgsty/minio, a community fork: MinIO stopped publishing images.
       - name: End to end against a loopback MinIO
         run: pnpm --filter sparcd-shard-proxy test:integration
