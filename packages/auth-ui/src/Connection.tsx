@@ -15,6 +15,8 @@ export type ConnectionProps = {
   /** `remember` reflects the "Remember me" checkbox at submit time — the
    *  caller decides what to persist (never the secret key) based on it. */
   onConnect: (config: S3Config, remember: boolean) => void;
+  /** Initial state for Remember when there is no remembered connection. */
+  defaultRemember?: boolean;
   /** When provided, offers a secondary "Login later" action so a caller can
    *  let someone proceed without a connection until one is actually needed. */
   onSkip?: () => void;
@@ -40,6 +42,7 @@ export function Connection({
   toolName,
   initialConfig,
   onConnect,
+  defaultRemember = false,
   onSkip,
   embedded,
 }: ConnectionProps) {
@@ -49,7 +52,7 @@ export function Connection({
   // Reflects reality by default: pre-filled fields mean a connection is
   // already being remembered, so the box starts checked to match — not an
   // opt-in surprise for anyone already relying on the pre-fill today.
-  const [remember, setRemember] = useState(!!initialConfig?.endpoint);
+  const [remember, setRemember] = useState(!!initialConfig?.endpoint || defaultRemember);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Overrides are undefined until the user explicitly sets one.
