@@ -30,12 +30,22 @@ try {
     if (response.status() >= 400) diagnostics.push(`response ${response.status()}: ${response.url()}`);
   });
   // Every sign-in to the fake store is turned down for a wrong access key, so the
-  // sign-in message and field highlight can be checked without a real server.
-  await page.context().route('https://shared.example/**', (route) => route.fulfill({
-    status: 403,
-    headers: { 'content-type': 'application/xml', 'access-control-allow-origin': '*' },
-    body: '<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidAccessKeyId</Code><Message>The Access Key Id you provided does not exist in our records.</Message></Error>',
-  }));
+  // sign-in message and field highlight can be checked without a real server. A CORS
+  // preflight, if the browser sends one, is allowed so the error itself gets through.
+  await page.context().route('https://shared.example/**', (route) => route.request().method() === 'OPTIONS'
+    ? route.fulfill({
+      status: 204,
+      headers: {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET',
+        'access-control-allow-headers': route.request().headers()['access-control-request-headers'] ?? '',
+      },
+    })
+    : route.fulfill({
+      status: 403,
+      headers: { 'content-type': 'application/xml', 'access-control-allow-origin': '*' },
+      body: '<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidAccessKeyId</Code><Message>The Access Key Id you provided does not exist in our records.</Message></Error>',
+    }));
   await page.addInitScript(() => localStorage.setItem('sparcd-connection', JSON.stringify({ endpoint: 'shared.example', accessKey: 'shared-access', secure: true, region: 'us-west-2', forcePathStyle: true })));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // Marimo's WASM renderer renders the supplied labels visually, but omits them
