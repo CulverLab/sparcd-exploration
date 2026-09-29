@@ -4,6 +4,7 @@ import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batche
 import { BUCKET_A, UUID_A } from './fixtures-data';
 import {
   FAILING_FILE,
+  produceCompleteRun as baseCompleteRun,
   producePartialRun as basePartialRun,
   produceFatalRun as baseFatalRun,
   writtenCsvRows,
@@ -117,6 +118,34 @@ Given('an upload was interrupted before its metadata was published', async ({ ap
   await producePartialRun(app);
 });
 
+Given('a completed upload started late in the day is recorded', async ({ app }) => {
+  await baseCompleteRun(app);
+  const [batch] = await app.readBatchRecords();
+  expect(batch).toBeTruthy();
+  await app.page.evaluate(async (id) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const tx = db.transaction('batches', 'readwrite');
+    const store = tx.objectStore('batches');
+    const request = store.get(id);
+    await new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => {
+        store.put({ ...(request.result as Record<string, unknown>), startedAt: '2026-09-11T22:15:10-04:00' });
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }, batch.id);
+});
+
 When('History is opened', async ({ app }) => {
   await app.gotoSection('History');
 });
@@ -124,6 +153,10 @@ When('History is opened', async ({ app }) => {
 Then('that upload is listed as open', async ({ app }) => {
   await expect(app.page.getByText('open', { exact: true })).toBeVisible();
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(0);
+});
+
+Then('History shows the batch start as {string}', async ({ app }, expected: string) => {
+  await expect(app.page.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeVisible();
 });
 
 Then('it shows how many of its files are done and how many failed', async ({ app }) => {

@@ -3,7 +3,7 @@
 // is stored as local-time integer fields (consistent with the prefix stamp), so
 // render them directly — never via a JS Date, which would re-interpret the zone.
 
-import type { UploadDate, UploadMetaJson } from '@sparcd/camtrap';
+import { formatDateTime24, type UploadDate, type UploadMetaJson } from '@sparcd/camtrap';
 
 const p2 = (n: number) => String(n).padStart(2, '0');
 
@@ -22,4 +22,9 @@ export function formatUploadDate(d: UploadDate | undefined | null): string {
 /** `<uploader> on <date>` — mirrors the Java entry header (lblHeader). */
 export function formatUploadHeader(meta: UploadMetaJson): string {
   return `${meta.uploadUser || '(unknown uploader)'} on ${formatUploadDate(meta.uploadDate)}`;
+}
+
+/** The timestamp shown for a History batch, kept beside the other display paths. */
+export function formatHistoryBatchStart(startedAt: Date | string, timeZone?: string): string {
+  return formatDateTime24(startedAt, timeZone);
 }

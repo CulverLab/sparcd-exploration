@@ -66,7 +66,7 @@ try {
     '-e', 'MINIO_ROOT_USER=minioadmin',
     '-e', 'MINIO_ROOT_PASSWORD=minioadmin',
     '-e', 'MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:5316',
-    'quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z', 'server', '/data',
+    'docker.io/coollabsio/minio@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9', 'server', '/data',
   ]);
   containerStarted = true;
   await waitFor(`${minioOrigin}/minio/health/ready`, 'MinIO');

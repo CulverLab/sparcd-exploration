@@ -854,6 +854,24 @@ export function correctedTimestamp(
   return original;
 }
 
+/** Format an instant as a local `YYYY-MM-DD HH:mm:ss` string with a 24-hour clock. */
+export function formatDateTime24(value: Date | string, timeZone?: string): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return 'unknown date';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day} ${byType.hour}:${byType.minute}:${byType.second}`;
+}
+
 // --- Validators ------------------------------------------------------------
 
 /**
