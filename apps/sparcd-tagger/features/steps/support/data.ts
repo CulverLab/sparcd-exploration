@@ -328,8 +328,8 @@ export const LOCATIONS_JSON = JSON.stringify(
     {
       nameProperty: NEW_LOCATION_NAME,
       idProperty: NEW_LOCATION_ID,
-      latProperty: 31.7,
-      lngProperty: -110.4,
+      latProperty: 40.7,
+      lngProperty: -74.0,
       elevationProperty: 1300,
     },
     {

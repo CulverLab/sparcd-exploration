@@ -98,12 +98,12 @@ const META_CSV = serializeUploadMeta(
   }),
 );
 
-async function canonical(): Promise<CanonicalState> {
+async function canonical(over: Partial<Record<'media' | 'observations' | 'deployments' | 'uploadMeta', string>> = {}): Promise<CanonicalState> {
   return {
-    media: { text: MEDIA_CSV, etag: '"media-1"', hash: await sha256Hex(MEDIA_CSV) },
-    observations: { text: OBS_CSV, etag: '"obs-1"', hash: await sha256Hex(OBS_CSV) },
-    deployments: { text: DEPLOYMENTS_CSV, etag: '"dep-1"', hash: await sha256Hex(DEPLOYMENTS_CSV) },
-    uploadMeta: { text: META_CSV, etag: '"meta-1"', hash: await sha256Hex(META_CSV) },
+    media: { text: over.media ?? MEDIA_CSV, etag: '"media-1"', hash: await sha256Hex(over.media ?? MEDIA_CSV) },
+    observations: { text: over.observations ?? OBS_CSV, etag: '"obs-1"', hash: await sha256Hex(over.observations ?? OBS_CSV) },
+    deployments: { text: over.deployments ?? DEPLOYMENTS_CSV, etag: '"dep-1"', hash: await sha256Hex(over.deployments ?? DEPLOYMENTS_CSV) },
+    uploadMeta: { text: over.uploadMeta ?? META_CSV, etag: '"meta-1"', hash: await sha256Hex(over.uploadMeta ?? META_CSV) },
   };
 }
 
@@ -542,6 +542,34 @@ describe('runSync — location correction (issue #279)', () => {
     expect(rows.every((r) => r.deploymentId === NEW_DEPLOYMENT.deploymentId)).toBe(true);
     expect(rows.find((r) => r.scientificName === 'Canis latrans')).toBeTruthy();
     expect(rows.find((r) => r.scientificName === 'Puma concolor')).toBeTruthy();
+  });
+
+  it('preserves unrelated deployments and rows when the target deployment already exists', async () => {
+    const target = { ...NEW_DEPLOYMENT };
+    const other: Deployment = {
+      deploymentId: 'uuid:OTHER', locationId: 'OTHER', locationName: 'Other',
+      latitude: 32, longitude: -111, elevation: 900,
+    };
+    const otherMedia = mediaRow('Collections/uuid/Uploads/2024.01.15.10.00.00/OTHER.JPG', '2024-01-10T08:01:00');
+    otherMedia[MEDIA_COL.deploymentId] = other.deploymentId;
+    const otherObs = obsRow(otherMedia[MEDIA_COL.mediaId], '2024-01-10T08:01:00', 'Puma concolor');
+    otherObs[OBS_COL.deploymentId] = other.deploymentId;
+    const cur = await canonical({
+      media: serializeCsvRows([...parseCsvRows(MEDIA_CSV), otherMedia]),
+      observations: serializeCsvRows([...parseCsvRows(OBS_CSV), otherObs]),
+      deployments: serializeDeployments([CURRENT_DEPLOYMENT, target, other]),
+    });
+    const { io, rec } = fakeIO(cur);
+    const plan = buildSyncPlan(IMAGES, {}, null, target);
+    const res = await runSync(
+      { bucket: 'sparcd-x', uploadPrefix: PREFIX, user: 'jg', base: baseFrom(cur), plan, dryRun: false },
+      io,
+    );
+    expect(res.status).toBe('synced');
+    const written = rec.replaces.find((r) => r.key.endsWith('deployments.csv'))!;
+    expect(parseDeployments(written.body).map((d) => d.deploymentId)).toEqual([target.deploymentId, other.deploymentId]);
+    const media = parseCsvRows(rec.replaces.find((r) => r.key.endsWith('media.csv'))!.body);
+    expect(media.find((row) => row[MEDIA_COL.mediaId].endsWith('OTHER.JPG'))?.[MEDIA_COL.deploymentId]).toBe(other.deploymentId);
   });
 });
 

@@ -43,7 +43,7 @@ export type UploadItem = {
   size: number;
   sha256: string;
   timestampSource?: TimestampSource;
-  captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing ISO capture time (post-tz), media.csv col 4
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload
@@ -305,6 +305,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       bucket,
       uploadPath,
       description,
+      captureTimeZone: timeZone,
     }),
   );
 
@@ -385,11 +386,12 @@ export async function buildBundleFromRecords(input: {
   bucket: string;
   uploaderSlug: string;
   description: string;
+  timeZone?: string;
   uploadPath: string;
   startedAt: Date;
   files: ResolvedFileRecord[];
 }): Promise<ResumeBundle> {
-  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt, files } = input;
+  const { location, collectionUuid, bucket, uploaderSlug, description, timeZone, uploadPath, startedAt, files } = input;
   const deployment = locationToDeployment(location, collectionUuid);
 
   deployment.timestampIssues = files.some((f) => !!f.timestampSource);
@@ -443,6 +445,7 @@ export async function buildBundleFromRecords(input: {
       bucket,
       uploadPath,
       description,
+      captureTimeZone: timeZone,
     }),
   );
 

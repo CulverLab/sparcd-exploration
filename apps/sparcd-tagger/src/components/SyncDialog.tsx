@@ -29,11 +29,13 @@ export function SyncDialog({
   ctx,
   images,
   drafts,
+  timeZone,
   onClose,
 }: {
   ctx: UploadCtx;
   images: TagImage[];
   drafts: Record<string, DraftRecord>;
+  timeZone?: string;
   onClose: () => void;
 }) {
   const cfg = useStore((s) => s.s3Config);
@@ -73,7 +75,8 @@ export function SyncDialog({
     uploadPrefix: ctx.uploadPrefix,
     user,
     images,
-    drafts,
+      drafts,
+      timeZone,
   });
 
   // Preview on open — a forced dry-run that computes the diff and detects a

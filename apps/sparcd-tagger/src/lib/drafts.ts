@@ -180,6 +180,7 @@ type DraftState = {
     ctx: UploadCtx,
     targets: BulkTimeTarget[],
     delta: TimeOffsetRecord,
+    timeZone?: string,
   ) => void;
 
   /** Flush every pending debounced Dexie write now (manual Cmd/Ctrl+S confirm). */
@@ -337,13 +338,13 @@ export const useDraftStore = create<DraftState>((set, get) => {
     setQuestionableMany: (ctx, targets, value) =>
       mutateMany(ctx, targets, { questionable: value }),
 
-    applyTimeOffsetToSelection: (ctx, targets, delta) => {
+    applyTimeOffsetToSelection: (ctx, targets, delta, timeZone) => {
       // Precompute the new absolute override per image (delta on top of the
       // already-corrected time), keyed by media path so the shared mutateMany
       // reducer — which only sees `prev` — can look each one up.
       const overrideByPath: Record<string, string> = {};
       for (const t of targets) {
-        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta);
+        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta, timeZone);
       }
       mutateMany(
         ctx,

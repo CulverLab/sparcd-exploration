@@ -28,6 +28,7 @@ import {
   serializeDeployments,
   parseCsvRows,
   serializeCsvRows,
+  rebaseCaptureTimestamp,
   MEDIA_COL,
   OBS_COL,
   DEPLOY_COL,
@@ -96,6 +97,11 @@ export type RestampInput = {
   toDeploymentId: string;
   /** The chosen location's full deployment row (re-points coords/name too). */
   location: Deployment;
+  /** IANA zones for rebasing capture timestamps during a location correction. */
+  fromTimeZone?: string;
+  /** Persisted uploader zone for legacy `Z` values; coordinates are only a fallback. */
+  legacyTimeZone?: string;
+  toTimeZone?: string;
 };
 
 /** Re-stamp one CSV's deployment_id column, touching only rows that match. */
@@ -107,26 +113,52 @@ function restampCsv(csv: string, col: number, from: string | undefined, to: stri
   return serializeCsvRows(rows);
 }
 
+function restampTimestamps(
+  csv: string,
+  deploymentColumn: number,
+  timestampColumn: number,
+  fromDeploymentId: string | undefined,
+  fromTimeZone: string | undefined,
+  toTimeZone: string | undefined,
+): string {
+  if (!fromTimeZone || !toTimeZone || fromTimeZone === toTimeZone) return csv;
+  const rows = parseCsvRows(csv);
+  for (const row of rows) {
+    if (fromDeploymentId !== undefined && row[deploymentColumn] !== fromDeploymentId) continue;
+    const value = row[timestampColumn] ?? '';
+    if (!value) continue;
+    try {
+      row[timestampColumn] = rebaseCaptureTimestamp(value, fromTimeZone, toTimeZone);
+    } catch {
+      // Preserve malformed legacy values; the surrounding deployment edit can
+      // still be applied without inventing a timestamp.
+    }
+  }
+  return serializeCsvRows(rows);
+}
+
 /**
  * Re-stamp `deployment_id` consistently across the three CSVs to fix a
- * misassigned camera site. Touches ONLY the deployment_id column in `media.csv`
- * and `observations.csv`; the matching `deployments.csv` row is re-serialized
- * from the chosen location (re-pointing deployment_id + location_id/name/coords/
- * elevation — the full correction). Every unrelated row/byte is preserved.
+ * misassigned camera site. Matching media and observation rows also have their
+ * capture timestamps rebased when the location timezone changes; every other
+ * column and unrelated row is preserved. The matching deployment row is
+ * re-serialized from the chosen location (the full correction).
  */
 export function restampDeployment(
   csv: { deployments: string; media: string; observations: string },
   opts: RestampInput,
 ): { deployments: string; media: string; observations: string } {
+  if (opts.fromDeploymentId !== undefined && opts.fromDeploymentId === opts.toDeploymentId) return csv;
   // deployments.csv: replace only the row(s) for the old deployment with the
   // chosen location's full row; any unrelated deployment rows survive verbatim.
   const depRows = parseCsvRows(csv.deployments);
   const correctedRow = parseCsvRows(serializeDeployments([opts.location]))[0];
+  const targetExists = depRows.some((row) => row[DEPLOY_COL.deploymentId] === opts.toDeploymentId);
   const out: string[][] = [];
   let placed = false;
   for (const row of depRows) {
     if (opts.fromDeploymentId === undefined || row[DEPLOY_COL.deploymentId] === opts.fromDeploymentId) {
-      if (!placed) {
+      if (!placed && !targetExists) {
         out.push(correctedRow);
         placed = true;
       }
@@ -135,13 +167,32 @@ export function restampDeployment(
       out.push(row);
     }
   }
-  if (!placed) out.push(correctedRow); // empty/unmatched file → write the corrected row
+  if (!placed && !targetExists) out.push(correctedRow); // empty/unmatched file → write the corrected row
 
   return {
     deployments: serializeCsvRows(out),
-    media: restampCsv(csv.media, MEDIA_COL.deploymentId, opts.fromDeploymentId, opts.toDeploymentId),
+    media: restampCsv(
+      restampTimestamps(
+        csv.media,
+        MEDIA_COL.deploymentId,
+        MEDIA_COL.timestamp,
+        opts.fromDeploymentId,
+        opts.legacyTimeZone ?? opts.fromTimeZone,
+        opts.toTimeZone,
+      ),
+      MEDIA_COL.deploymentId,
+      opts.fromDeploymentId,
+      opts.toDeploymentId,
+    ),
     observations: restampCsv(
-      csv.observations,
+      restampTimestamps(
+        csv.observations,
+        OBS_COL.deploymentId,
+        OBS_COL.timestamp,
+        opts.fromDeploymentId,
+        opts.legacyTimeZone ?? opts.fromTimeZone,
+        opts.toTimeZone,
+      ),
       OBS_COL.deploymentId,
       opts.fromDeploymentId,
       opts.toDeploymentId,

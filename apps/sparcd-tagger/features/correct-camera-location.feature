@@ -68,6 +68,7 @@ Feature: Correct the camera location recorded for an upload
     And the dry-run setting has been switched off
     When the sync is run live
     Then every image's deployment is the new location
+    And media and observation timestamps are rebased to the new location offset
     And the workspace toolbar no longer shows a pending location change
 
   @unmapped

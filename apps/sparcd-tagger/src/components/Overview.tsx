@@ -47,6 +47,7 @@ type OverviewProps = {
   onDrill?: (i: number) => void;
   /** A spatial drop affects this image only, regardless of selection. */
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
+  timeZone?: string;
 };
 
 const BAND_H = 30;
@@ -93,6 +94,7 @@ export function Overview({
   onSelectBurst,
   onDrill,
   onDropSpecies,
+  timeZone,
 }: OverviewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(parentRef);
@@ -178,6 +180,7 @@ export function Overview({
                   onPick={onPick}
                   onDrill={onDrill}
                   onDropSpecies={onDropSpecies}
+                  timeZone={timeZone}
                   narrow={width < DETAILED_LIST_MIN_WIDTH}
                 />
               ) : (
@@ -259,6 +262,7 @@ function ListCell({
   onDrill,
   onDropSpecies,
   narrow,
+  timeZone,
 }: {
   img: TagImage;
   index: number;
@@ -268,6 +272,7 @@ function ListCell({
   onDrill?: (i: number) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
   narrow?: boolean;
+  timeZone?: string;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const timeOffset = useDraftStore((s) => s.timeOffset);
@@ -276,7 +281,7 @@ function ListCell({
   const eff = effectiveOf(img, draft);
   const isVideo = isVideoImage(img);
   const species = summarize(eff.observations) || 'untagged';
-  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null);
+  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null, timeZone);
   const timestampDisplay = timestamp ? formatDateTime(timestamp, dateFormat, timeFormat) : null;
   const edited = isEditedFromBase(eff);
   const rowLabel = [

@@ -4,11 +4,11 @@
 // no zone. The camera wrote them in *its* local time; the uploading machine's
 // zone is irrelevant. We capture the components verbatim (never letting
 // `new Date(localString)` reinterpret them in the browser's zone), then
-// interpret them in a user-chosen IANA zone to get the true UTC instant. The
-// result is emitted as a full ISO 8601 UTC timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`)
-// — matching how sparcd-web itself stamps observation timestamps
-// (`datetime.now(UTC).isoformat()` in `camtrap_utils.py`) — the shape media.csv
-// col 4 and observations.csv col 4 now carry.
+// interpret them in a user-chosen IANA zone. The result is emitted as an ISO
+// 8601 local timestamp with the numeric offset (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`),
+// which is the shape media.csv col 4 and observations.csv col 4 carry.
+
+import { captureTimestampInZone } from '@sparcd/camtrap';
 
 /** Naive EXIF wall-clock with no zone — the components as written by the camera. */
 export type NaiveDateTime = {
@@ -121,17 +121,10 @@ export function partsInZone(utcMs: number, timeZone: string): NaiveDateTime {
   };
 }
 
-// Difference, in milliseconds, between the wall-clock `partsInZone` produced for
-// `utcMs` and the wall-clock we *wanted* (`target`). Subtracting it from the
-// UTC guess steers toward the offset that makes the zone show `target`.
-function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
-  return Date.UTC(produced.year, produced.month - 1, produced.day, produced.hour, produced.minute, produced.second) -
-    Date.UTC(target.year, target.month - 1, target.day, target.hour, target.minute, target.second);
-}
-
 /**
- * Interpret naive wall-clock components AS IF in `timeZone`, returning the true
- * UTC instant as a full ISO 8601 string (`YYYY-MM-DDTHH:mm:ss.sssZ`).
+ * Interpret naive wall-clock components AS IF in `timeZone`, returning an ISO
+ * 8601 timestamp that preserves the wall-clock value and carries the zone's
+ * numeric offset (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`).
  *
  * DST-correct without a heavy dependency: start from a UTC guess equal to the
  * components, ask Intl what wall-clock that guess shows in `timeZone`, and
@@ -142,11 +135,5 @@ function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
  * the two-pass fixed point lands on — pinned by tests, never throws.
  */
 export function naiveInZoneToUtcIso(n: NaiveDateTime, timeZone: string): string {
-  let guess = Date.UTC(n.year, n.month - 1, n.day, n.hour, n.minute, n.second);
-  guess -= deltaMs(partsInZone(guess, timeZone), n);
-  // Second pass: if the first correction crossed a DST boundary, the offset at
-  // the corrected instant may differ; re-correct from there.
-  guess -= deltaMs(partsInZone(guess, timeZone), n);
-
-  return new Date(guess).toISOString();
+  return captureTimestampInZone(formatNaive(n), timeZone);
 }

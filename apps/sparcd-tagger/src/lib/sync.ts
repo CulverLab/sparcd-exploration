@@ -25,17 +25,18 @@ import {
   javaEditStamp,
   correctedTimestamp,
   hasSpeciesPresent,
-  rewriteMediaDeploymentId,
-  rewriteObservationsDeploymentId,
   serializeDeployments,
   parseDeployments,
   parseCsvRows,
+  serializeCsvRows,
+  rebaseCaptureTimestamp,
   MEDIA_COL,
   OBS_COL,
   type MediaEdit,
   type TimeOffset,
   type Deployment,
 } from '@sparcd/camtrap';
+import tzlookup from 'tz-lookup';
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 import { sha256Hex } from './hash';
@@ -120,6 +121,7 @@ export function buildSyncPlan(
   drafts: Record<string, DraftRecord>,
   offset: TimeOffset | null,
   pendingLocation: Deployment | null = null,
+  timeZone?: string,
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
@@ -136,7 +138,7 @@ export function buildSyncPlan(
     // not the stale one the image loaded with.
     const deploymentId = pendingLocation?.deploymentId ?? img.deploymentId;
 
-    const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null);
+    const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null, timeZone);
     const timeChanged = !!img.baseTimestamp && corrected !== img.baseTimestamp;
     // A Tagger correction replaces an uploader estimate with a user-provided
     // time. Keep the marker so downstream readers still know the camera did
@@ -284,13 +286,58 @@ function isUnsupported(err: unknown): boolean {
   return (err as { name?: string })?.name === 'ConditionalPutUnsupportedError';
 }
 
+function rewriteDeploymentAndRebase(
+  csv: string,
+  deploymentColumn: number,
+  timestampColumn: number,
+  fromDeploymentId: string | undefined,
+  toDeploymentId: string,
+  fromTimeZone: string | undefined,
+  toTimeZone: string,
+): string {
+  const rows = parseCsvRows(csv);
+  for (const row of rows) {
+    if (fromDeploymentId !== undefined && row[deploymentColumn] !== fromDeploymentId) continue;
+    const timestamp = row[timestampColumn] ?? '';
+    if (timestamp && fromTimeZone && fromTimeZone !== toTimeZone) {
+      try {
+        row[timestampColumn] = rebaseCaptureTimestamp(timestamp, fromTimeZone, toTimeZone);
+      } catch {
+        // Preserve malformed legacy values while still correcting the location.
+      }
+    }
+    row[deploymentColumn] = toDeploymentId;
+  }
+  return serializeCsvRows(rows);
+}
+
+function replaceDeploymentRow(csv: string, fromDeploymentId: string | undefined, replacement: string[]): string {
+  const rows = parseCsvRows(csv);
+  const replacementId = replacement[0] ?? '';
+  const targetExists = rows.some((row) => row[0] === replacementId);
+  const out: string[][] = [];
+  let placed = false;
+  for (const row of rows) {
+    if (fromDeploymentId === undefined || row[0] === fromDeploymentId) {
+      if (!placed && !targetExists) {
+        out.push(replacement);
+        placed = true;
+      }
+    } else {
+      out.push(row);
+    }
+  }
+  if (!placed && !targetExists) out.push(replacement);
+  return serializeCsvRows(out);
+}
+
 /**
  * Build the merged canonical bodies and which roles actually change. The merge
  * runs against `current` (verified equal to the grounded base), so unrelated
  * rows and unmodelled columns survive verbatim. `UploadMeta.json` always
  * changes — every successful sync appends its mandatory edit comment. A
- * pending location correction rewrites every media/observation row's
- * deployment id and replaces `deployments.csv` with the single new row —
+ * pending location correction rewrites matching media/observation rows and
+ * replaces the matching deployment row while preserving other deployments —
  * applied on top of the tag/time merge, not instead of it, so a location
  * change and species edits in the same sync both land correctly.
  */
@@ -308,9 +355,33 @@ async function buildWrites(
   });
   let deploymentsBody = current.deployments.text;
   if (plan.locationEdit) {
-    mediaBody = rewriteMediaDeploymentId(mediaBody, plan.locationEdit.deploymentId);
-    observationsBody = rewriteObservationsDeploymentId(observationsBody, plan.locationEdit.deploymentId);
-    deploymentsBody = serializeDeployments([plan.locationEdit]);
+    const currentDeployment = parseDeployments(current.deployments.text)[0];
+    const fromDeploymentId = currentDeployment?.deploymentId;
+    const fromTimeZone = currentDeployment
+      ? tzlookup(currentDeployment.latitude, currentDeployment.longitude)
+      : undefined;
+    const toTimeZone = tzlookup(plan.locationEdit.latitude, plan.locationEdit.longitude);
+    const legacyTimeZone = parseUploadMeta(current.uploadMeta.text).captureTimeZone ?? fromTimeZone;
+    mediaBody = rewriteDeploymentAndRebase(
+      mediaBody,
+      MEDIA_COL.deploymentId,
+      MEDIA_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      legacyTimeZone,
+      toTimeZone,
+    );
+    observationsBody = rewriteDeploymentAndRebase(
+      observationsBody,
+      OBS_COL.deploymentId,
+      OBS_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      legacyTimeZone,
+      toTimeZone,
+    );
+    const replacement = parseCsvRows(serializeDeployments([plan.locationEdit]))[0];
+    deploymentsBody = replaceDeploymentRow(current.deployments.text, fromDeploymentId, replacement);
   }
   const bodies: Record<CanonicalRole, string> = {
     media: mediaBody,

@@ -40,7 +40,8 @@ export function PerImageTime({
   };
 
   const commit = () => {
-    const iso = normalizeTimestampInput(text);
+    const existingOffset = corrected.match(/(Z|[+-]\d{2}:?\d{2})$/)?.[1];
+    const iso = normalizeTimestampInput(text, existingOffset);
     if (!iso) {
       setInvalid(true);
       return;

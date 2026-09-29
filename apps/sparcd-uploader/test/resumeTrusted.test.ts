@@ -291,15 +291,14 @@ describe('ensureBundle capture times', () => {
 
     const res = await ensureBundle(batch, { bundle: null, files }, resolved, attachedFor(files.map((f) => f.localPath)));
     expect(res.ok).toBe(true);
-    // Phoenix is UTC-7 year round: 08:05 local → 15:05Z, midway between its
-    // two neighbours.
+    // Phoenix is UTC-7 year round: the 08:05 local midpoint retains that offset.
     const csv = attachBundle.mock.calls[0][0].mediaCsv as string;
-    expect(csv).toContain('2024-01-10T15:05:00.000Z');
+    expect(csv).toContain('2024-01-10T08:05:00.000-07:00');
     expect(csv).toContain('[TIMESTAMP:interpolated]');
     const persisted = updateFileRecords.mock.calls[0][0] as FileRecord[];
     const gap = persisted.find((r) => r.localPath === 't/IMG_0002.JPG')!;
     expect(gap.timestampSource).toBe('interpolated');
-    expect(gap.captureTimestamp).toBe('2024-01-10T15:05:00.000Z');
+    expect(gap.captureTimestamp).toBe('2024-01-10T08:05:00.000-07:00');
   });
 
   it('retains ModifyDate provenance when rebuilding a bundle after interrupted inspection', async () => {

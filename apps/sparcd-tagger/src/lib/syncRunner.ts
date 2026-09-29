@@ -26,6 +26,7 @@ export type SyncArgs = {
   user: string;
   images: TagImage[];
   drafts: Record<string, DraftRecord>;
+  timeZone?: string;
   dryRun: boolean;
 };
 
@@ -35,7 +36,7 @@ export type SyncArgs = {
  * writes. On a successful live write it re-grounds on the new canonical state.
  */
 export async function performSync(args: SyncArgs): Promise<SyncResult> {
-  const { cfg, bucket, uploadPrefix, user, images, drafts, dryRun } = args;
+  const { cfg, bucket, uploadPrefix, user, images, drafts, dryRun, timeZone } = args;
 
   // The workspace grounds on load; ground here too as a fallback so a sync is
   // never run against a missing base. `deploymentsETag === undefined` (as
@@ -50,7 +51,7 @@ export async function performSync(args: SyncArgs): Promise<SyncResult> {
     base = await getUpload(bucket, uploadPrefix);
   }
 
-  const plan = buildSyncPlan(images, drafts, base?.timeOffset ?? null, base?.pendingLocation ?? null);
+  const plan = buildSyncPlan(images, drafts, base?.timeOffset ?? null, base?.pendingLocation ?? null, timeZone);
   const resumeJournal = await loadSyncJournal(bucket, uploadPrefix);
 
   const io = makeSyncIO(cfg, bucket, uploadPrefix, {
