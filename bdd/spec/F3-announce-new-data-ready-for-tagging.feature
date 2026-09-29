@@ -16,12 +16,12 @@ Feature: Announce that new data is ready to be tagged
   Background:
     Given Frank has uploaded a batch of images to a collection
 
-  @F3
+  @F3 @F3-1
   Scenario: The identification team can see that new untagged data is available
     When the upload completes
     Then the people responsible for identifying that collection can see that new, untagged data is available
 
-  @F3
+  @F3 @F3-2
   Scenario: The announcement says what was uploaded
     When the upload completes
     Then the announcement identifies the collection
@@ -29,25 +29,25 @@ Feature: Announce that new data is ready to be tagged
     And it states how many images were uploaded
     And it states the date of the upload
 
-  @F3
+  @F3 @F3-3
   Scenario: A failed upload announces nothing
     Given the upload failed before completing
     When Frank looks at what the identification team was told
     Then no announcement of new data was made for that upload
 
-  @F3
+  @F3 @F3-4
   Scenario: An abandoned upload announces nothing
     Given Frank abandoned the upload before completing it
     Then no announcement of new data was made for that upload
 
-  @F3 @security
+  @F3 @security @F3-5
   Scenario: An announcement does not reveal a protected location
     Given the upload includes images from a location designated as sensitive
     When the announcement reaches someone not authorized for that sensitive location
     Then the announcement does not disclose the precise sensitive location
     And it does not disclose the sensitive species designation for that location
 
-  @F3
+  @F3 @F3-6
   Scenario: Frank can add his own notes to the announcement
     When Frank announces the upload
     Then he can include free-text notes for the identification team

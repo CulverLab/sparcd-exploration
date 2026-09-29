@@ -15,39 +15,39 @@ Feature: Examine images closely to catch every species
   Background:
     Given Harold is viewing an image in a collection he has access to
 
-  @H1
+  @H1 @H1-1
   Scenario: Detail becomes legible well beyond the fit-to-screen size
     When Harold zooms into the image
     Then detail that was not legible at fit-to-screen size becomes clearly legible
     And he can continue enlarging well past the fit-to-screen size
 
-  @H1
+  @H1 @H1-2
   Scenario: Harold can move around an enlarged image
     Given Harold has zoomed in so that only part of the image is shown
     When he moves around the enlarged image
     Then he can reach any part of the image, including its edges and corners
 
-  @H1
+  @H1 @H1-3
   Scenario: Harold can return to seeing the whole image
     Given Harold has zoomed into the image
     When he zooms back out
     Then he can see the whole image again
 
-  @H1
+  @H1 @H1-4
   Scenario: Zooming and panning stay responsive on a small, low-powered laptop
     Given Harold is working on a small, low-powered laptop
     When he zooms and moves around images repeatedly
     Then the view keeps up with his input without stalling
     And responsiveness does not degrade as he works through many images in a session
 
-  @H1
+  @H1 @H1-5
   Scenario: Moving to another image does not carry over a confusing zoom state
     Given Harold has zoomed into a region of one image
     When he moves to another image
     Then the new image is not left in a zoom state carried over from the previous one
     And he can see what he is looking at without first having to correct the view
 
-  @H1
+  @H1 @H1-6
   Scenario: Close examination works on images of differing sizes and shapes
     Given the collection contains images of differing sizes and proportions
     When Harold examines each of them closely

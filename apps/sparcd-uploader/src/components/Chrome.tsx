@@ -72,7 +72,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
           })}
         </nav>
 
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-3">
           <StatePill state={uploadState} />
           {s3Config && (
             <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />

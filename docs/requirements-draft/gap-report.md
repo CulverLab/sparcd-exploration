@@ -2,7 +2,7 @@
 
 # Gap report: specified behavior vs. as-built behavior
 
-Inputs: `spec-features/` (11 story feature files, 73 scenarios), `as-built/uploader/`
+Inputs: `bdd/spec/` (11 story feature files, 73 scenarios), `as-built/uploader/`
 (9 files, 106 scenarios), `as-built/tagger/` (11 files, 122 scenarios), `use-cases/`
 (3 use cases, 41 NFRs) and the four `NOTES.md` files.
 
@@ -258,7 +258,7 @@ Definition of done: BDD scenarios tagged `@H3` pass.
 
 ## 4. Not expressible in BDD
 
-Merged residue from `spec-features/NOTES.md` §1–2, the 41 NFRs in the three use cases,
+Merged residue from `bdd/spec/NOTES.md` §1–2, the 41 NFRs in the three use cases,
 and the as-built NOTES. These belong in the SRS, the use cases, or a policy document —
 not in a `.feature` file.
 

@@ -9,8 +9,9 @@ Feature: Correct the camera location recorded for an upload
   """
   As-built flow: cameras occasionally get logged under the wrong location.
   The tagger can correct the whole upload's recorded location by picking a
-  replacement from the same shared `Settings/locations.json` registry the
-  uploader reads — there is no way to create a new location. The correction
+  replacement from the same registry the uploader reads — the collection's
+  own list, or `Settings/locations.json` when it has none. There is no way
+  to create a new location from either app. The correction
   is held alongside the original until a sync writes it: `deployments.csv` is
   replaced and every media/observation row's deployment id is rewritten.
   """
