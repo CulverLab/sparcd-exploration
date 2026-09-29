@@ -86,6 +86,7 @@ export function History() {
   // True while the fallback <input> picker is open. Separate from the shared
   // preparation lock because a cancelled native picker may fire no change event.
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [offlineResumeOverride, setOfflineResumeOverride] = useState(false);
   const pickerOpenRef = useRef(false);
   const pickerCleanupRef = useRef<(() => void) | null>(null);
   const reselectRef = useRef<HTMLInputElement>(null);
@@ -118,6 +119,9 @@ export function History() {
 
   const running = activeSessionId !== null;
   const online = useOnline();
+  useEffect(() => {
+    if (online) setOfflineResumeOverride(false);
+  }, [online]);
 
   const launch = useCallback(
     (
@@ -477,16 +481,28 @@ export function History() {
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
                 {!batch.completedAt && (
-                  <button
-                    disabled={activeRunReserved || preparation !== null || pickerOpen}
-                    title={!online ? "You're offline" : undefined}
-                    onClick={() => void beginResume(batch)}
-                    className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
-                      activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    {isPreparing ? 'Verifying…' : 'Resume'}
-                  </button>
+                  <>
+                    <button
+                      disabled={(!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen}
+                      title={!online && !offlineResumeOverride ? "You're offline — reconnect or choose Try resume anyway" : undefined}
+                      onClick={() => void beginResume(batch)}
+                      className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
+                        (!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {isPreparing ? 'Verifying…' : 'Resume'}
+                    </button>
+                    {!online && !offlineResumeOverride && (
+                      <button
+                        type="button"
+                        onClick={() => setOfflineResumeOverride(true)}
+                        title="Allow Resume despite the browser offline signal"
+                        className="border border-warn text-warn min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                      >
+                        Try resume anyway
+                      </button>
+                    )}
+                  </>
                 )}
                 <button
                   disabled={(running && isActive) || isPreparing}

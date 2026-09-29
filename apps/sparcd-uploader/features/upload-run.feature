@@ -162,6 +162,17 @@ Feature: Upload and publish a batch
     Then it is retried up to five attempts with an increasing, randomized delay
     And the retry is recorded in the run log
 
+  @F1 @F1-4
+  Scenario: Upload availability is visible as the browser goes offline and online
+    Given the upload has not been started
+    When the browser reports offline before upload
+    Then the upload status says it is offline and real upload is disabled
+    And dry run remains available while offline
+    When the operator allows a real upload while offline
+    Then the real upload action is available despite the offline signal
+    When the browser reports online again
+    Then the upload status says it is online and real upload is enabled
+
   @unmapped
   Scenario: A transient error during the resume verify pass is retried rather than counted as a file failure
     Given a resumed run is verifying files already stored in a previous session

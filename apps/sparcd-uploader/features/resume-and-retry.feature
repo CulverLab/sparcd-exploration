@@ -76,6 +76,20 @@ Feature: Resume an interrupted upload and retry a failed one
     And when they all land, the metadata for that same upload folder is published
     And exactly one upload exists in the destination
 
+  @F1 @F1-4
+  Scenario: Offline status gates retry
+    Given a real upload finished as partial with some files failed
+    When the browser reports offline before upload
+    Then the retry action is disabled while offline
+
+  @F1 @F1-4
+  Scenario: Offline status gates History Resume until reconnecting
+    Given an open upload is listed in History
+    When the browser reports offline before upload
+    Then History Resume is disabled while offline
+    When the browser reports online again
+    Then History Resume is enabled after reconnecting
+
   @AL2 @AL2-4
   Scenario: Resuming a run that failed outright completes that same upload
     Given a real upload failed outright

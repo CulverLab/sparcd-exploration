@@ -107,6 +107,70 @@ Then('dry run is switched off by default', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
 });
 
+When('the browser reports offline before upload', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+  });
+});
+
+Then('the upload status says it is offline and real upload is disabled', async ({ app }) => {
+  await expect(app.page.locator('#upload-connectivity-status')).toContainText(
+    'Offline — real uploads paused; dry runs remain available',
+  );
+  const start = app.page.getByRole('button', { name: 'Start upload' });
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+  await expect(app.page.getByRole('button', { name: 'Try real upload anyway' })).toBeVisible();
+});
+
+When('the operator allows a real upload while offline', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Try real upload anyway' }).click();
+});
+
+Then('the real upload action is available despite the offline signal', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(app.page.locator('#upload-connectivity-status')).toContainText(
+    'Offline — trying a real upload; the browser signal may be stale',
+  );
+});
+
+Then('dry run remains available while offline', async ({ app }) => {
+  await expect(app.dryRunCheckbox()).toBeEnabled();
+  await app.dryRunCheckbox().check();
+  await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeEnabled();
+  await app.dryRunCheckbox().uncheck();
+});
+
+Then('the retry action is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Retry failed files' })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try real upload anyway' })).toBeVisible();
+});
+
+Then('History Resume is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try resume anyway' })).toBeVisible();
+});
+
+Then('History Resume is enabled after reconnecting', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume' })).toBeEnabled();
+});
+
+When('the browser reports online again', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+  });
+});
+
+Then('the upload status says it is online and real upload is enabled', async ({ app }) => {
+  await expect(app.page.locator('#upload-connectivity-status')).toHaveText(
+    'Online — network detected; real uploads can be attempted',
+  );
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).not.toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+});
+
 When('the operator opts into a dry run', async ({ app }) => {
   await app.dryRunCheckbox().check();
 });

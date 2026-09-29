@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
+import { useOnline } from '@sparcd/auth-ui';
 import { deleteFlipRecord } from '@sparcd/flip';
 import { useStore } from '../store';
 import { useLocations } from '../lib/useLocations';
@@ -66,6 +66,48 @@ function AdaptiveInfo() {
   );
 }
 
+const uploadConnectivityStatusId = 'upload-connectivity-status';
+
+function UploadConnectivityStatus({
+  online,
+  offlineOverride,
+  onAllowOfflineUpload,
+}: {
+  online: boolean;
+  offlineOverride: boolean;
+  onAllowOfflineUpload: () => void;
+}) {
+  const message = online
+    ? 'Online — network detected; real uploads can be attempted'
+    : offlineOverride
+      ? 'Offline — trying a real upload; the browser signal may be stale'
+      : 'Offline — real uploads paused; dry runs remain available';
+
+  return (
+    <div
+      id={uploadConnectivityStatusId}
+      aria-live="polite"
+      aria-atomic="true"
+      className={`flex items-center gap-2 border px-3 py-2.5 font-body text-[13px] ${
+        online ? 'border-ruleSoft bg-panel text-inkSoft' : 'border-warn/40 bg-paper text-warn'
+      }`}
+    >
+      <span aria-hidden className={`h-2 w-2 rounded-full ${online ? 'bg-accent' : 'bg-warn'}`} />
+      <span>{message}</span>
+      {!online && !offlineOverride && (
+        <button
+          type="button"
+          onClick={onAllowOfflineUpload}
+          aria-describedby={uploadConnectivityStatusId}
+          className="ml-auto shrink-0 border border-warn px-2 py-1 font-[600] text-[12px] text-warn hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+        >
+          Try real upload anyway
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Upload() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
@@ -120,6 +162,11 @@ export function Upload() {
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
+  const [offlineOverride, setOfflineOverride] = useState(false);
+  useEffect(() => {
+    if (online) setOfflineOverride(false);
+  }, [online]);
+  const realUploadAllowed = online || offlineOverride;
 
 
   // Run and snapshot live in the store so they survive section navigation —
@@ -329,7 +376,11 @@ export function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
-      <OfflineBanner message="You're offline — the dry run still works, but a real upload won't until your connection is back." />
+      <UploadConnectivityStatus
+        online={online}
+        offlineOverride={offlineOverride}
+        onAllowOfflineUpload={() => setOfflineOverride(true)}
+      />
       {/* Run configuration. A resume handed off from History replays a persisted
           bundle with no Assign state behind it, so the options collapse away. */}
       <section className="space-y-3">
@@ -483,16 +534,20 @@ export function Upload() {
           ) : (snap?.phase === 'partial' || snap?.phase === 'error') && !snap.dryRun ? (
             <button
               onClick={retryFailed}
-              title={!online ? "You're offline" : undefined}
-              className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              disabled={!realUploadAllowed}
+              title={!realUploadAllowed ? "You're offline — reconnect or choose Try real upload anyway" : undefined}
+              aria-describedby={!realUploadAllowed ? uploadConnectivityStatusId : undefined}
+              className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}
             >
               {snap.phase === 'error' ? 'Resume upload' : 'Retry failed files'}
             </button>
           ) : (
             <button
               onClick={start}
-              title={!effectiveDryRun && !online ? "You're offline" : undefined}
-              className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              disabled={!effectiveDryRun && !realUploadAllowed}
+              title={!effectiveDryRun && !realUploadAllowed ? "You're offline — reconnect or choose Try real upload anyway" : undefined}
+              aria-describedby={!effectiveDryRun && !realUploadAllowed ? uploadConnectivityStatusId : undefined}
+              className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!effectiveDryRun && !realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}
             >
               {effectiveDryRun ? 'Start dry run' : 'Start upload'}
             </button>
