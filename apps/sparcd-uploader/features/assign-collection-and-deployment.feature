@@ -57,9 +57,39 @@ Feature: Assign a batch to a collection and a camera location
     When the deployment list is shown
     Then those already-used locations are listed first
     And the list states how many of the registry's locations that collection has used
-    # Deviation from the story: as-built ANY location in the registry can be
-    # assigned, not only locations valid for the chosen collection. The
-    # already-used set is an ordering hint, not a restriction.
+    # Historical deployments only order locations that remain in the current
+    # collection-specific allowed list.
+
+  @F2 @F2-1
+  Scenario: Only locations valid for the chosen collection can be assigned
+    Given the chosen collection has a collection-specific location list
+    When the deployment list is shown
+    Then only the collection-specific locations are offered
+
+  @F2 @F2-2
+  Scenario: A location outside the collection cannot be assigned
+    Given the chosen collection has a collection-specific location list
+    When an outside collection location is searched
+    Then the outside location is not offered and assignment remains unavailable
+
+  @F2 @F2-1
+  Scenario: Changing collections clears a location that is no longer allowed
+    Given the collections have different collection-specific location lists
+    And a collection-specific location is selected
+    When the user switches to the other collection
+    Then the previous location is cleared because it is not allowed for the new collection
+
+  @A2 @A2-1
+  Scenario: Only locations valid for Anita's chosen collection can be assigned
+    Given the chosen collection has a collection-specific location list
+    When the deployment list is shown
+    Then only the collection-specific locations are offered
+
+  @A2 @A2-2
+  Scenario: A location outside Anita's collection cannot be assigned
+    Given the chosen collection has a collection-specific location list
+    When an outside collection location is searched
+    Then the outside location is not offered and assignment remains unavailable
 
   @unmapped
   Scenario: The location list can be searched

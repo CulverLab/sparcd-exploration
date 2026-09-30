@@ -232,7 +232,7 @@ describe('store persistence', () => {
     useStore.getState().setUploaderUser('Ada Lovelace');
     useStore.getState().setUploadDescription('Sky Island transect');
     useStore.getState().setSelectedBucket('bucket::uuid');
-    useStore.getState().setSelectedLocationKey('loc-7');
+      useStore.getState().setSelectedLocationId('loc-7');
     useStore.getState().setUploadTimeZone('America/Phoenix');
     useStore.getState().setDryRun(false);
     useStore.getState().setConcurrencyMode('manual');
@@ -248,7 +248,7 @@ describe('store persistence', () => {
       uploaderUser: 'Ada Lovelace',
       uploadDescription: 'Sky Island transect',
       selectedBucket: 'bucket::uuid',
-      selectedLocationKey: 'loc-7',
+      selectedLocationId: 'loc-7',
       uploadTimeZone: 'America/Phoenix',
       dryRun: false,
       concurrencyMode: 'manual',

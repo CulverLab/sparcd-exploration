@@ -74,7 +74,10 @@ function UploadCard({
   const edits = Array.isArray(upload.meta.editComments) ? upload.meta.editComments : [];
   const [mode, setMode] = useState<'none' | 'description' | 'deployment'>('none');
   const [description, setDescription] = useState(upload.meta.description ?? '');
-  const [locationKey, setLocationKey] = useState<string | null>(null);
+  // DeploymentPicker is keyed by the authoritative location ID. Published
+  // corrections must use the same identity as new assignments so a selected
+  // location can be resolved after the picker changed from composite keys.
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [showEdits, setShowEdits] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ tone: 'mute' | 'warn'; message: string } | null>(null);
@@ -118,7 +121,7 @@ function UploadCard({
 
   async function saveDeployment() {
     if (!cfg) return;
-    const loc = locations.find((l) => l.key === locationKey);
+    const loc = locations.find((l) => l.id === locationId);
     if (!loc) return;
     setBusy(true);
     setNote(null);
@@ -261,13 +264,13 @@ function UploadCard({
         <div className="space-y-2 pt-1">
           <DeploymentPicker
             locations={locations}
-            value={locationKey}
-            onChange={setLocationKey}
+            value={locationId}
+            onChange={setLocationId}
             elevationUnit={elevationUnit}
           />
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <button
-              disabled={busy || !locationKey}
+              disabled={busy || !locationId}
               onClick={() => void saveDeployment()}
               className="bg-ink text-paper border border-ink min-h-[44px] px-4 py-1 sm:min-h-0 sm:px-3 text-[13px] font-body font-[600] hover:opacity-90 disabled:opacity-40"
             >

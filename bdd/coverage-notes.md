@@ -16,8 +16,8 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| F2-1 | Only locations valid for the chosen collection can be assigned | partial | uploader: assign-collection-and-deployment.feature: Locations the chosen collection has already used are offered first | Collection locations are prioritized, not enforced. |
-| F2-2 | A location outside the collection cannot be assigned | missing | — | Outside locations are allowed rather than refused. |
+| F2-1 | Only locations valid for the chosen collection can be assigned | covered | uploader: assign-collection-and-deployment.feature: Only locations valid for the chosen collection can be assigned; Changing collections clears a location that is no longer allowed | The collection-specific list is the only source offered for new assignments; historical deployments only order entries that remain allowed, and a collection switch clears an invalid persisted selection. |
+| F2-2 | A location outside the collection cannot be assigned | covered | uploader: assign-collection-and-deployment.feature: A location outside the collection cannot be assigned | Outside locations are absent from the picker, and the assignment remains unavailable. |
 | F2-3 | An upload cannot be finalized while any batch is missing a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | The single-batch gate requires a location but does not handle or name multiple batches. |
 | F2-4 | An upload can be finalized once every batch has a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | A located single batch continues; all batches in a multi-batch upload are not checked. |
 | F2-5 | Each stored image carries the location Frank assigned to its batch | partial | uploader: upload-run.feature: Every file in the batch is stored under one upload folder in the collection | Deployment metadata is stored, but image locations are not compared with the assignment. |
@@ -64,8 +64,8 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| A2-1 | Only locations valid for her collection can be assigned | missing | uploader: assign-collection-and-deployment.feature: Locations the chosen collection has already used are offered first | Used locations come first, but every registry location remains selectable. |
-| A2-2 | A location outside her collection cannot be assigned | missing | — | The uploader does not refuse registry locations outside the collection. |
+| A2-1 | Only locations valid for her collection can be assigned | covered | uploader: assign-collection-and-deployment.feature: Only locations valid for Anita's chosen collection can be assigned | Anita receives the same collection-scoped assignment list. |
+| A2-2 | A location outside her collection cannot be assigned | covered | uploader: assign-collection-and-deployment.feature: A location outside Anita's collection cannot be assigned | Outside locations are absent from the picker, and the assignment remains unavailable. |
 | A2-3 | The upload cannot be finalized without a location | covered | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | Continue is disabled and explains that a deployment is required. |
 | A2-4 | The stored location matches what Anita assigned | missing | — | No scenario compares every stored image with the assigned location. |
 | A2-5 | The location applies to the identifications she already made | missing | — | No scenario ties pre-upload identifications to the assigned location. |
