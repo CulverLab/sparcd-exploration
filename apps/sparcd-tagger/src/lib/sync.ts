@@ -164,6 +164,7 @@ export function buildSyncPlan(
           count: Math.max(1, o.count),
           commonName: o.commonName || undefined,
           requestedSpecies: o.requestedSpecies || undefined,
+          classifiedBy: o.classifiedBy,
         })),
       });
     } else if (timeChanged) {

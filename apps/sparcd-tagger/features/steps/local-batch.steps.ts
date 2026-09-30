@@ -156,6 +156,13 @@ Then('no connection screen is shown', async ({ page }) => {
   await expect(page.locator('#endpoint')).toHaveCount(0);
 });
 
+Given('the local batch identity is set to Anita', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#user').fill('anita');
+  await page.getByRole('button', { name: 'Tag', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Done · back to Uploader' })).toBeEnabled();
+});
+
 Then('the images are listed ready to tag', async ({ page }) => {
   for (const name of FILES) await expect(gridCell(page, name)).toBeVisible();
 });
@@ -172,7 +179,8 @@ Then('it offers "Done · back to Uploader"', async ({ page }) => {
 });
 
 Then('there is no Browse, History, Sync or Snapshots', async ({ page }) => {
-  await expect(page.locator('nav[aria-label="Sections"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Browse', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Sync…' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Snapshots…' })).toHaveCount(0);
 });

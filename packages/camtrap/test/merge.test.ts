@@ -8,6 +8,7 @@ import {
   parseUploadMeta,
   serializeUploadMeta,
   parseObservations,
+  serializeCsvRows,
 } from '../src/index';
 import { fixture } from './fixtures';
 
@@ -115,5 +116,18 @@ describe('zero-count filtering (sparcd-web parity)', () => {
       detagged: 1,
       retagged: 0,
     });
+  });
+});
+
+describe('classified_by provenance', () => {
+  it('carries existing attribution onto replacement rows', () => {
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, k('IMG001.JPG'), '2024-01-10T08:00:00', '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', '', '', '', '', '', 'anita', '', '', ''],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, commonName: 'Coyote', classifiedBy: 'anita' }],
+    }]));
+    expect(out[0].classifiedBy).toBe('anita');
   });
 });

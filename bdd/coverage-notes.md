@@ -57,7 +57,7 @@
 | A1-2 | Images and their tags enter the system in a single upload | covered | uploader: tag-before-upload.feature: The upload carries the images and the identifications together | Images and applied species are published in one pass. |
 | A1-3 | Untagged images are accepted and marked as untagged | covered | uploader: tag-before-upload.feature: An untagged file is accepted and published as untagged | Tagged and untagged files publish together; untagged files have no species row. |
 | A1-4 | An upload with no tags at all is still accepted | covered | uploader: upload-run.feature: A batch with no species identifications is accepted and recorded as untagged | A wholly untagged batch publishes with placeholder rows and a zero-tag count. |
-| A1-5 | Tags made before upload are attributed to Anita | missing | — | No scenario attributes a pre-upload identification to its maker. |
+| A1-5 | Tags made before upload are attributed to Anita | covered | uploader: tag-before-upload.feature: Tags made before upload are attributed to the person who made them | The pre-upload Tagger identity is carried through the Flip handoff and written to observations.csv classified_by. |
 | A1-6 | Tags are not lost while waiting for a connection | partial | tagger: local-batch.feature: Coming back to the batch resumes the tagging | Tags survive reopening, but no scenario waits days and verifies uploaded data. |
 
 ## A2
