@@ -10,8 +10,17 @@ import {
   gridCell,
   sectionTab,
   enterFocusView,
+  focusFrame,
+  speciesApply,
 } from './support/world';
-import { LOCATION_NAME, DEPLOYMENT } from './support/data';
+import {
+  BUCKET,
+  DEPLOYMENT,
+  LOCATION_NAME,
+  PREFIX_A,
+  SETTINGS_BUCKET,
+} from './support/data';
+import { runLiveSync } from './support/flows';
 
 const SENSITIVITY_WORDS =
   /sensitiv|protected species|redact|coarsen|withheld|obfuscat|restricted location/i;
@@ -20,12 +29,53 @@ Given('the tagger is connected with credentials that can read a collection', asy
   await openAppConnected(page);
 });
 
+Given('the connected account cannot read exact coordinates', async ({ s3 }) => {
+  s3.exactLocations = false;
+});
+
+Given('the connected account can read exact coordinates', async ({ s3 }) => {
+  s3.exactLocations = true;
+});
+
 Then(
   'each upload shows the location name\\(s\\) recorded in its deployment file',
   async ({ page }) => {
     await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
   },
 );
+
+Then('the location identity and elevation remain visible but its precise coordinates do not', async ({ page, s3 }) => {
+  await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
+  await selectCollection(page);
+  await openUpload(page);
+  await enterFocusView(page);
+  await page.getByRole('button', { name: 'Change location' }).click();
+  await expect(page.getByRole('heading', { name: /Change location/ })).toBeVisible();
+  await expect(page.locator('body')).toContainText('SAN15');
+  await page.getByRole('button', { name: 'Select a location…' }).click();
+  await expect(page.locator('body')).toContainText('1200 m');
+  const body = await page.locator('body').innerText();
+  expect(body).not.toMatch(/31\.500000|-110\.200000/);
+  expect(s3.servedBody(SETTINGS_BUCKET, 'Settings/locations.json') ?? '').not.toMatch(/31\.5|-110\.2/);
+  expect(s3.servedBody(BUCKET, `${PREFIX_A}deployments.csv`) ?? '').not.toMatch(/31\.500000|-110\.200000/);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+});
+
+When('the user identifies the focused image and syncs it', async ({ page }) => {
+  await focusFrame(page, 'IMG002.JPG');
+  await speciesApply(page, 'Canis latrans').click();
+  await runLiveSync(page);
+});
+
+Then('the identification is saved', async ({ s3 }) => {
+  expect(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).toContain('Canis latrans');
+});
+
+Then('the saved identification does not disclose precise coordinates', async ({ page, s3 }) => {
+  expect(s3.servedBody(BUCKET, `${PREFIX_A}deployments.csv`) ?? '').not.toMatch(/31\.500000|-110\.200000/);
+  expect(await page.locator('body').innerText()).not.toMatch(/31\.500000|-110\.200000/);
+});
 
 Then('no location is withheld on the grounds of the species in the images', async ({ page }) => {
   // The upload carries a Mountain Lion identification; its location is shown in
@@ -80,7 +130,7 @@ Then('no species is treated as sensitive', async ({ page }) => {
 });
 
 Then(
-  'no location is hidden, coarsened or withheld from any connected user',
+  'no location is hidden, coarsened or withheld when the connected account has exact-coordinate permission',
   async ({ page }) => {
     await enterFocusView(page);
     await expect(page.locator('body')).toContainText(DEPLOYMENT.split(':').pop()!);
@@ -88,6 +138,15 @@ Then(
     await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
   },
 );
+
+Then('the exact coordinates remain available to the authorized account', async ({ page, s3 }) => {
+  await page.getByRole('button', { name: 'Change location' }).click();
+  await expect(page.getByRole('heading', { name: /Change location/ })).toBeVisible();
+  await expect.poll(() => s3.servedBody(SETTINGS_BUCKET, 'Settings/locations.json') ?? '').toMatch(/31\.5/);
+  await expect.poll(() => s3.servedBody(SETTINGS_BUCKET, 'Settings/locations.json') ?? '').toMatch(/-110\.2/);
+  await expect.poll(() => s3.servedBody(BUCKET, `${PREFIX_A}deployments.csv`) ?? '').toMatch(/31\.500000/);
+  await expect.poll(() => s3.servedBody(BUCKET, `${PREFIX_A}deployments.csv`) ?? '').toMatch(/-110\.200000/);
+});
 
 When('an image is displayed', async ({ page }) => {
   await selectCollection(page);

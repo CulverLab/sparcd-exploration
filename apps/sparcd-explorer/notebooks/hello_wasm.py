@@ -901,7 +901,6 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 pl.col("longitude").cast(pl.Float64, strict=False),
                 pl.col("elevation").cast(pl.Float64, strict=False),
             )
-            .filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
         )
         media = (
             _to_df(_media_rows, _media_buckets, _media_uploads, MEDIA_COLS + [f"_m{i}" for i in range(50)])
@@ -1272,7 +1271,6 @@ def _(
         .rename({"lat_fixed": "latitude", "lng_fixed": "longitude"})
         .filter(pl.col("deployment_id").is_in(query_deployment_ids))
         .filter(pl.col("location_id") != "0000")
-        .filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
         .with_columns(pl.col("location_id").str.slice(0, 3).alias("mountain_range"))
     )
 
@@ -1313,6 +1311,8 @@ def _(
         import math as _math
 
         def _latlon_to_utm(lat, lon):
+            if lat is None or lon is None:
+                return {"utm_zone": None, "utm_easting": None, "utm_northing": None}
             _zone = int((lon + 180) / 6) + 1
             _hemisphere = "N" if lat >= 0 else "S"
             _a = 6378137.0
@@ -1361,7 +1361,7 @@ def _(
             _scale = 10 ** _coord_digits
 
             def _truncate_coord(v):
-                return int(v * _scale) / _scale
+                return None if v is None else int(v * _scale) / _scale
 
             _locations_table = _locations_table.with_columns(
                 pl.col(_coord_cols[0]).map_elements(_truncate_coord, return_dtype=pl.Float64),
@@ -1531,7 +1531,7 @@ def _(locations, observations_filtered, pl):
             },
         )
     else:
-        _loc_with_hex = locations.with_columns(
+        _loc_with_hex = locations.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null()).with_columns(
             pl.struct(["latitude", "longitude"])
             .map_elements(
                 lambda s: _latlng_to_cell(s["latitude"], s["longitude"]),
@@ -1703,7 +1703,7 @@ def _(
                     "checklists": _hex_lookup.get(_r["location_id"], {}).get("checklists", 0),
                     "most_recent": _hex_lookup.get(_r["location_id"], {}).get("most_recent", "—"),
                 }
-                for _r in locations.iter_rows(named=True)
+                for _r in locations.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null()).iter_rows(named=True)
             ]
             camera_fig = go.Figure(
                 go.Scattermap(

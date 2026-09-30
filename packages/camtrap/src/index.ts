@@ -16,8 +16,8 @@ export type Deployment = {
   deploymentId: string; // "<collection-uuid>:<location-id>"
   locationId: string;
   locationName: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   elevation: number; // metres; serialized into the v016 `camera_height` column
 };
 
@@ -74,7 +74,7 @@ function csvRow(fields: string[]): string {
 
 // SPARC'd writes coordinates / camera geometry with six decimals; integer-ish
 // fields (uncertainty, interval, heading) stay bare. Matches the live bytes.
-const f6 = (n: number): string => n.toFixed(6);
+const f6 = (n: number | null): string => n === null ? '' : n.toFixed(6);
 
 /** Serialize `deployments.csv` (one row per deployment), v016 23-column shape. */
 export function serializeDeployments(deployments: Deployment[]): string {
@@ -409,12 +409,17 @@ export const DEPLOY_COLUMN_COUNT = 23;
 
 /** Parse `deployments.csv` into typed rows (note: longitude precedes latitude). */
 export function parseDeployments(csv: string): Deployment[] {
+  const coordinate = (value: string | undefined): number | null => {
+    if (value === undefined || value.trim() === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
   return parseCsvRows(csv).map((r) => ({
     deploymentId: r[DEPLOY_COL.deploymentId] ?? '',
     locationId: r[DEPLOY_COL.locationId] ?? '',
     locationName: r[DEPLOY_COL.locationName] ?? '',
-    longitude: Number(r[DEPLOY_COL.longitude]),
-    latitude: Number(r[DEPLOY_COL.latitude]),
+    longitude: coordinate(r[DEPLOY_COL.longitude]),
+    latitude: coordinate(r[DEPLOY_COL.latitude]),
     elevation: Number(r[DEPLOY_COL.cameraHeight]),
     timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
   }));

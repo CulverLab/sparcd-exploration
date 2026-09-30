@@ -69,6 +69,13 @@ describe('id-is-not-unique contract', () => {
     expect(locations.every((l) => l.id === 'DUP')).toBe(true);
   });
 
+  it('keeps a coordinate-redacted location selectable by id', () => {
+    const { locations, skipped } = parseLocations(doc([raw({ latProperty: null, lngProperty: null })]));
+    expect(skipped).toHaveLength(0);
+    expect(locations[0]).toMatchObject({ id: 'SAN15', latitude: null, longitude: null });
+    expect(locationToDeployment(locations[0], '8dbd9c43-5c3d-411d-8778-617d4693c69b').latitude).toBeNull();
+  });
+
   it('collapses exact duplicates (same id AND coordinates)', () => {
     const { locations, skipped } = parseLocations(
       doc([raw({ idProperty: 'DUP' }), raw({ idProperty: 'DUP' })]),
@@ -86,9 +93,11 @@ describe('locationToDeployment → shared camtrap serializer', () => {
 
     const [back] = parseDeployments(serializeDeployments([dep]));
     expect(back.locationId).toBe('SAN15');
-    expect(back.longitude).toBeCloseTo(-110.2, 5);
-    expect(back.latitude).toBeCloseTo(31.5, 5);
-    expect(validateCoordinates(back.latitude, back.longitude)).toBeNull();
+    expect(back.longitude).not.toBeNull();
+    expect(back.latitude).not.toBeNull();
+    expect(back.longitude!).toBeCloseTo(-110.2, 5);
+    expect(back.latitude!).toBeCloseTo(31.5, 5);
+    expect(validateCoordinates(back.latitude!, back.longitude!)).toBeNull();
   });
 
   it('restampDeployment builds toDeploymentId via locationToDeployment and round-trips', () => {

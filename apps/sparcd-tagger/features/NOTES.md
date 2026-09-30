@@ -47,9 +47,14 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
   diff is content-based, so re-applying an identical identification produces
   no change and therefore no "reviewed by / reviewed at" trace. H3's third
   criterion is not satisfied.
-- **F4 — not addressed by this tool.** No sensitive-species concept exists
-  anywhere in the tagger. Locations are shown to any connected user. Captured
-  honestly in `F4-location-visibility.feature` so the gap is on the record.
+- **F4 — coordinate redaction is enforced by the access proxy.** The Tagger
+  has no sensitive-species concept and does not make the authorization decision;
+  the proxy removes exact coordinates for accounts without `exactLocations`.
+  `F4-location-visibility.feature` covers the Tagger's behavior with redacted
+  location data, including `@F4-4`, while
+  `H2-protected-location-identification.feature` covers `@H2-7`. The proxy
+  integration tests cover the authorization boundary and the Tagger BDD mock
+  applies the same response policy to its browser requests.
 - **M2 (constraint) — largely supported.** Original files are never destroyed:
   every write is preceded by an immutable snapshot, replacement is conditional
   on the version read, conflicts refuse the write outright, and snapshots can

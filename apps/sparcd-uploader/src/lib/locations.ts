@@ -19,8 +19,8 @@ export const LOCATIONS_KEY = 'Settings/locations.json';
 export type RawLocation = {
   nameProperty: string;
   idProperty: string;
-  latProperty: number;
-  lngProperty: number;
+  latProperty: number | null;
+  lngProperty: number | null;
   elevationProperty: number;
 };
 
@@ -34,8 +34,8 @@ export type Location = {
   key: string;
   id: string;
   name: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   elevation: number;
 };
 
@@ -60,8 +60,8 @@ const ELEVATION_UNSET = -20000;
 function invalidReason(o: Location): string | null {
   if (!o.name) return 'empty name';
   if (!o.id) return 'empty id';
-  if (!(o.latitude >= -85 && o.latitude <= 85)) return `latitude ${o.latitude} out of [-85, 85]`;
-  if (!(o.longitude >= -180 && o.longitude <= 180))
+  if (o.latitude !== null && !(o.latitude >= -85 && o.latitude <= 85)) return `latitude ${o.latitude} out of [-85, 85]`;
+  if (o.longitude !== null && !(o.longitude >= -180 && o.longitude <= 180))
     return `longitude ${o.longitude} out of [-180, 180]`;
   if (o.elevation === ELEVATION_UNSET) return 'elevation unset';
   return null;
@@ -74,7 +74,8 @@ function coerce(entry: unknown): { ok: true; value: RawLocation } | { ok: false;
     if (typeof o[k] !== 'string') return { ok: false, reason: `${k} is not a string` };
   }
   for (const k of ['latProperty', 'lngProperty', 'elevationProperty'] as const) {
-    if (typeof o[k] !== 'number' || !Number.isFinite(o[k]))
+    const redactedCoordinate = (k === 'latProperty' || k === 'lngProperty') && o[k] === null;
+    if ((!redactedCoordinate && typeof o[k] !== 'number') || (typeof o[k] === 'number' && !Number.isFinite(o[k])))
       return { ok: false, reason: `${k} is not a finite number` };
   }
   return {
@@ -82,8 +83,8 @@ function coerce(entry: unknown): { ok: true; value: RawLocation } | { ok: false;
     value: {
       nameProperty: o.nameProperty as string,
       idProperty: o.idProperty as string,
-      latProperty: o.latProperty as number,
-      lngProperty: o.lngProperty as number,
+      latProperty: o.latProperty as number | null,
+      lngProperty: o.lngProperty as number | null,
       elevationProperty: o.elevationProperty as number,
     },
   };
@@ -117,7 +118,7 @@ export function parseLocations(text: string): LocationsParse {
     }
     const id = c.value.idProperty.trim();
     const loc: Location = {
-      key: `${id}|${c.value.latProperty},${c.value.lngProperty}`,
+      key: `${id}|${c.value.latProperty ?? ''},${c.value.lngProperty ?? ''}`,
       id,
       name: c.value.nameProperty.trim(),
       latitude: c.value.latProperty,

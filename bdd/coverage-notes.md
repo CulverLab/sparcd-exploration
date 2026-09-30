@@ -38,10 +38,10 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| F4-1 | Precise sensitive locations are invisible to anyone outside the authorized members | missing | tagger: F4-location-visibility.feature: The tagger applies no species-based or location-based restriction | The tagger reveals locations allowed by the credentials. |
+| F4-1 | Precise sensitive locations are invisible to anyone outside the authorized members | covered | tagger: F4-location-visibility.feature: Precise coordinates remain hidden without coordinate permission; access proxy integration: settings and collection coordinate redaction | The access proxy enforces `exactLocations`; Tagger coverage verifies location identity/elevation remain usable while coordinates are absent. |
 | F4-2 | Precise sensitive locations are absent from exports and reports | missing | — | No export or report scenario removes precise sensitive locations. |
 | F4-3 | A precise sensitive location cannot be recovered indirectly | untestable | — | NOTES.md calls this a universal negative over an open set of channels. |
-| F4-4 | Permission to view or identify images does not by itself reveal sensitive locations | missing | tagger: F4-location-visibility.feature: The tagger applies no species-based or location-based restriction | Identification access triggers no location protection. |
+| F4-4 | Permission to view or identify images does not by itself reveal sensitive locations | covered | tagger: F4-location-visibility.feature: Identify access does not reveal protected coordinates; access proxy integration: coordinate redaction by membership | The Tagger mock exercises the `exactLocations` boundary: identify and sync succeed while location JSON and deployments remain coordinate-free. |
 | F4-5 | Frank is told the protection state before he commits to an upload | missing | — | No scenario shows protection state before upload. |
 | F4-6 | Protection cannot be removed silently | missing | — | No scenario authorizes and audits removal of protection. |
 | F4-7 | A single compromised account cannot widen sensitive-location exposure | untestable | — | NOTES.md classifies this as an architectural authorization property. |
@@ -113,7 +113,7 @@
 | H2-4 | Only species valid for the collection can be assigned | missing | tagger: H2-assign-species-to-images.feature: The species list is browsable, not only searchable | The loaded vocabulary is not constrained per collection. |
 | H2-5 | An image Harold has identified is no longer counted as untagged | covered | tagger: H2-assign-species-to-images.feature: Dragging a species tile onto the focused image adds it at count one | The image tile changes from untagged to the assigned species. |
 | H2-6 | Harold can leave an image he cannot identify without tagging it | partial | tagger: H3-review-existing-identifications.feature: Existing identifications are shown on the images that carry them | Untagged images display correctly, but moving on without recording a species is not tested. |
-| H2-7 | Identifying an image does not by itself reveal a protected location | missing | tagger: F4-location-visibility.feature: The tagger applies no species-based or location-based restriction | The tagger has no sensitive-location restriction. |
+| H2-7 | Identifying an image does not by itself reveal a protected location | covered | tagger: H2-protected-location-identification.feature: Identifying a new-upload image does not reveal its protected location; access proxy integration: identify writes with coordinate redaction | A user with identify access can save an observation while the deployment response omits exact coordinates. |
 
 ## H3
 
