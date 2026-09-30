@@ -235,13 +235,13 @@ export function blankObservationsCsv(prefix: string, specs: MediaSpec[]): string
     .join('\n');
 }
 
-export function deploymentsCsv(timestampIssues = false): string {
+export function deploymentsCsv(timestampIssues = false, redactedCoordinates = false): string {
   const cells: string[] = [];
   cells[0] = DEPLOYMENT;
   cells[1] = 'SAN15';
   cells[2] = LOCATION_NAME;
-  cells[3] = '-110.200000';
-  cells[4] = '31.500000';
+  cells[3] = redactedCoordinates ? '' : '-110.200000';
+  cells[4] = redactedCoordinates ? '' : '31.500000';
   cells[12] = '1200.000000';
   cells[15] = timestampIssues ? 'true' : 'false';
   return row(cells, DEPLOY_WIDTH);

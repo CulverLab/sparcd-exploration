@@ -13,6 +13,14 @@ describe('parseDeployments reads timestampIssues', () => {
     const [d] = parseDeployments(fixture('java-v016', 'deployments.csv'));
     expect(typeof d.timestampIssues).toBe('boolean');
   });
+
+  it('preserves a redacted deployment with blank coordinates', () => {
+    const [d] = parseDeployments('"u:l","l","Bear Canyon","","","0","","","","","","0","1200"\n');
+    expect(d.locationName).toBe('Bear Canyon');
+    expect(d.longitude).toBeNull();
+    expect(d.latitude).toBeNull();
+    expect(d.elevation).toBe(1200);
+  });
 });
 
 describe('rewriteMediaDeploymentId', () => {

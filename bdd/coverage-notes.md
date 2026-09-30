@@ -38,7 +38,7 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| F4-1 | Precise sensitive locations are invisible to anyone outside the authorized members | missing | tagger: F4-location-visibility.feature: The tagger applies no species-based or location-based restriction | The tagger reveals locations allowed by the credentials. |
+| F4-1 | Precise sensitive locations are invisible to anyone outside the authorized members | covered | tagger: F4-location-visibility.feature: Precise coordinates remain hidden without coordinate permission; access proxy integration: settings and collection coordinate redaction | The access proxy enforces `exactLocations`; Tagger coverage verifies location identity/elevation remain usable while coordinates are absent. |
 | F4-2 | Precise sensitive locations are absent from exports and reports | missing | — | No export or report scenario removes precise sensitive locations. |
 | F4-3 | A precise sensitive location cannot be recovered indirectly | untestable | — | NOTES.md calls this a universal negative over an open set of channels. |
 | F4-4 | Permission to view or identify images does not by itself reveal sensitive locations | missing | tagger: F4-location-visibility.feature: The tagger applies no species-based or location-based restriction | Identification access triggers no location protection. |

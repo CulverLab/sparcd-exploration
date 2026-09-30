@@ -11,7 +11,15 @@ import {
   sectionTab,
   enterFocusView,
 } from './support/world';
-import { LOCATION_NAME, DEPLOYMENT } from './support/data';
+import {
+  BUCKET,
+  DEPLOYMENT,
+  LOCATION_NAME,
+  LOCATIONS_JSON,
+  PREFIX_A,
+  SETTINGS_BUCKET,
+  deploymentsCsv,
+} from './support/data';
 
 const SENSITIVITY_WORDS =
   /sensitiv|protected species|redact|coarsen|withheld|obfuscat|restricted location/i;
@@ -20,12 +28,38 @@ Given('the tagger is connected with credentials that can read a collection', asy
   await openAppConnected(page);
 });
 
+Given('the connected account cannot read exact coordinates', async ({ s3 }) => {
+  const locations = JSON.parse(LOCATIONS_JSON).map((entry: Record<string, unknown>) => ({
+    ...entry,
+    latProperty: null,
+    lngProperty: null,
+  }));
+  s3.put(SETTINGS_BUCKET, 'Settings/locations.json', JSON.stringify(locations), 'application/json');
+  s3.put(BUCKET, `${PREFIX_A}deployments.csv`, deploymentsCsv(false, true), 'text/csv');
+});
+
 Then(
   'each upload shows the location name\\(s\\) recorded in its deployment file',
   async ({ page }) => {
     await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
   },
 );
+
+Then('the location identity and elevation remain visible but its precise coordinates do not', async ({ page }) => {
+  await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
+  await selectCollection(page);
+  await openUpload(page);
+  await enterFocusView(page);
+  await page.getByRole('button', { name: 'Change location' }).click();
+  await expect(page.getByRole('heading', { name: /Change location/ })).toBeVisible();
+  await expect(page.locator('body')).toContainText('SAN15');
+  await page.getByRole('button', { name: 'Select a location…' }).click();
+  await expect(page.locator('body')).toContainText('1200 m');
+  const body = await page.locator('body').innerText();
+  expect(body).not.toMatch(/31\.500000|-110\.200000/);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+});
 
 Then('no location is withheld on the grounds of the species in the images', async ({ page }) => {
   // The upload carries a Mountain Lion identification; its location is shown in
@@ -80,7 +114,7 @@ Then('no species is treated as sensitive', async ({ page }) => {
 });
 
 Then(
-  'no location is hidden, coarsened or withheld from any connected user',
+  'no location is hidden, coarsened or withheld when the connected account has exact-coordinate permission',
   async ({ page }) => {
     await enterFocusView(page);
     await expect(page.locator('body')).toContainText(DEPLOYMENT.split(':').pop()!);

@@ -26,7 +26,15 @@ importers:
 
   apps/sparcd-home: {}
 
-  apps/sparcd-shard-proxy: {}
+  apps/sparcd-shard-proxy:
+    dependencies:
+      aws4fetch:
+        specifier: ^1.0.20
+        version: 1.0.20
+    devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1058.0
+        version: 3.1058.0
 
   apps/sparcd-tagger:
     dependencies:
@@ -999,6 +1007,9 @@ packages:
     hasBin: true
     peerDependencies:
       postcss: ^8.1.0
+
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   baseline-browser-mapping@2.10.33:
     resolution: {integrity: sha512-bA6+tcSLpz2tIEdDXZPpPTIuxBcC4+w6SieaYyfigIa4h8GlFxbA17v22Vx3JUtuZQj9SgOsnbK+aTBzyDyEuw==}
@@ -2492,6 +2503,8 @@ snapshots:
       picocolors: 1.1.1
       postcss: 8.5.15
       postcss-value-parser: 4.2.0
+
+  aws4fetch@1.0.20: {}
 
   baseline-browser-mapping@2.10.33: {}
 
