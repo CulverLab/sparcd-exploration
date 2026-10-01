@@ -8,6 +8,9 @@ import {
   parseUploadMeta,
   serializeUploadMeta,
   parseObservations,
+  serializeCsvRows,
+  buildObservationComments,
+  removedSpeciesFromComments,
 } from '../src/index';
 import { fixture } from './fixtures';
 
@@ -94,6 +97,29 @@ describe('no accidental data loss', () => {
     expect(detagged.observationType).toBe('blank');
     expect(detagged.scientificName).toBe('');
   });
+
+  it('serializes and parses explicit removed-species markers', () => {
+    const comments = buildObservationComments({
+      removedSpecies: ['Puma concolor', 'Canis latrans'],
+    });
+    expect(comments).toBe('[REMOVED:Puma concolor][REMOVED:Canis latrans]');
+    expect(removedSpeciesFromComments(comments)).toEqual(['Puma concolor', 'Canis latrans']);
+  });
+
+  it('keeps removal provenance on a full detag placeholder row', () => {
+    const mediaId = k('IMG004.JPG');
+    const canonical = fixture('java-v016', 'observations.csv');
+    const merged = parseObservations(mergeObservations(canonical, [{
+      mediaId,
+      deploymentId: DEP,
+      timestamp: '2024-01-10T22:15:00',
+      removedSpecies: ['Puma concolor'],
+      observations: [],
+    }]));
+    const row = merged.find((o) => o.mediaId === mediaId)!;
+    expect(row.observationType).toBe('blank');
+    expect(row.tags).toContain('[REMOVED:Puma concolor]');
+  });
 });
 
 describe('zero-count filtering (sparcd-web parity)', () => {
@@ -115,5 +141,41 @@ describe('zero-count filtering (sparcd-web parity)', () => {
       detagged: 1,
       retagged: 0,
     });
+  });
+});
+
+describe('classified_by provenance', () => {
+  it('carries existing attribution onto replacement rows', () => {
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, k('IMG001.JPG'), '2024-01-10T08:00:00', '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', '', '', '', '', '', 'anita', '', '', ''],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, commonName: 'Coyote', classifiedBy: 'anita' }],
+    }]));
+    expect(out[0].classifiedBy).toBe('anita');
+  });
+
+  // #368: a review (confirm or correction) records who and when — col 17
+  // round-trips the same way col 16 (classified_by) already does.
+  it('writes and reads back classification_timestamp alongside classified_by', () => {
+    // Column order per OBS_COL: id, deploymentId, sequenceId, mediaId,
+    // timestamp, observationType, cameraSetup, taxonId, scientificName,
+    // count, countNew, lifeStage, sex, behaviour, individualId,
+    // classificationMethod, classifiedBy, classificationTimestamp,
+    // classificationConfidence, comments.
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, '', k('IMG001.JPG'), '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', '', '', '', '', '', 'anita', '2024-01-10T09:00:00.000Z', '', ''],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{
+        scientificName: 'Canis latrans', count: 1, commonName: 'Coyote',
+        classifiedBy: 'harold', classificationTimestamp: '2024-01-20T14:30:00.000Z',
+      }],
+    }]));
+    expect(out).toHaveLength(1); // the edit replaces the row, not appends alongside it
+    expect(out[0].classifiedBy).toBe('harold');
+    expect(out[0].classificationTimestamp).toBe('2024-01-20T14:30:00.000Z');
   });
 });

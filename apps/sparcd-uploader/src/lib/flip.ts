@@ -116,6 +116,7 @@ const toFileEntry = (f: FlipFile, file: File, record: FlipRecord): FileEntry => 
   height: f.height,
   thumbnail: f.thumb,
   preTags: record.tags[f.relPath] ?? [],
+  preTaggerUser: record.taggerUser,
 });
 
 // The inverse of `formatNaive` — the record carries the wall-clock as text, and

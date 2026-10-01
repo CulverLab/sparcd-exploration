@@ -13,7 +13,7 @@ Feature: Review, correct and remove identifications that already exist
   — whether they came from the desktop app, sparcd-web or an earlier tagger
   sync — and shows them on each image. They can be corrected, re-counted or
   removed; the changes reach the stored files only through a sync, which is
-  stamped with the tagger identity.
+  stamped with the connected account that performs the sync.
 
   Background:
     Given an upload with existing identifications is open in the tagging workspace
@@ -47,6 +47,13 @@ Feature: Review, correct and remove identifications that already exist
     Then only that species is dropped
     And the remaining species and their counts are preserved
 
+  @H3 @H3-4
+  Scenario: Removing an existing species records the removal
+    Given the focused image carries several species
+    When one of them is removed
+    And a live sync is run
+    Then the removed species is absent from the stored image and marked as removed
+
   @H3
   Scenario: Every identification on an image can be cleared at once
     Given the focused image carries at least one species
@@ -72,24 +79,31 @@ Feature: Review, correct and remove identifications that already exist
     # the canonical files a sync writes, so it does not travel to other users
     # and its drafts stay listed as unsaved after a sync. Flag for review.
 
-  @H3
-  Scenario: A review that changes nothing leaves the stored data untouched
+  @H3 @H3-2
+  Scenario: A confirmation records who reviewed it and when, even though nothing changes
     Given an existing identification is re-applied unchanged
     When a sync is previewed
-    Then no change is reported for that image
-    # As-built: confirming a prior identification without altering it records
-    # nothing — there is no "confirmed by" or review timestamp. The H3
-    # criterion "a confirmation records that a review took place and by whom"
-    # is NOT met for a pure confirmation. Flag for review.
+    Then the preview reports one confirmed image and no other change
+    When that sync is run live
+    Then the confirmed image's stored identification is stamped with the reviewer and the time of the review
+    # #368 (Q12): a review records the reviewer and the date even when
+    # nothing changes. Re-applying an already-present species — the existing
+    # apply gesture — is how a reviewer confirms it.
 
   @H3
   Scenario: A correction is attributed to the person who synced it
     Given identifications were corrected locally
     When a live sync is run
-    Then the upload's metadata gains an edit comment carrying the tagger identity and the time of the edit
+    Then the upload's metadata gains an edit comment carrying the connected account and the time of the edit
     And the pre-change snapshot of the upload is filed under that same identity
-    # The identity is free text typed in Settings; it is not verified against
-    # the credentials used to connect. Flag for review.
+
+  @H3 @H3-5
+  Scenario: Both a confirmation and a correction record their own reviewer and timestamp
+    Given an existing identification is re-applied unchanged
+    And identifications were corrected locally
+    When a live sync is run
+    Then the confirmed image's stored identification is stamped with the reviewer and the time of the review
+    And the corrected image's stored identification is stamped with the reviewer and the time of the review
 
   @H3
   Scenario: An image edited locally is distinguishable from one that is not

@@ -56,6 +56,20 @@ describe('addObservation', () => {
     const next = addObservation([], tag('Canis latrans', 0));
     expect(next[0].count).toBe(1);
   });
+
+  it('keeps the editor identity on a newly added observation', () => {
+    const next = addObservation([], { ...tag('Canis latrans'), classifiedBy: 'harold' });
+    expect(next[0].classifiedBy).toBe('harold');
+  });
+
+  it('preserves existing attribution when a legacy re-apply has no metadata', () => {
+    const next = addObservation(
+      [{ ...tag('Canis latrans'), classifiedBy: 'fielduser', classificationTimestamp: '2024-01-01T00:00:00.000Z' }],
+      tag('Canis latrans'),
+    );
+    expect(next[0].classifiedBy).toBe('fielduser');
+    expect(next[0].classificationTimestamp).toBe('2024-01-01T00:00:00.000Z');
+  });
 });
 
 describe('incrementObservation', () => {
@@ -151,9 +165,11 @@ describe('draft store — add-only over a base multi-species image', () => {
 
   it('removeSpecies removes one and keeps the others', () => {
     useDraftStore.getState().removeSpecies(CTX, PATH, DEP, BASE, 'Canis latrans');
-    expect(useDraftStore.getState().drafts[PATH].observations.map((o) => o.scientificName)).toEqual([
+    const draft = useDraftStore.getState().drafts[PATH];
+    expect(draft.observations.map((o) => o.scientificName)).toEqual([
       'Odocoileus hemionus',
     ]);
+    expect(draft.removedSpecies).toEqual(['Canis latrans']);
   });
 
   it('setSpeciesCount sets one species count on an image seeded from base', () => {
@@ -191,7 +207,9 @@ describe('draft store — add-only over a base multi-species image', () => {
 
   it('detag clears all observations', () => {
     useDraftStore.getState().detag(CTX, [target()]);
-    expect(useDraftStore.getState().drafts[PATH].observations).toEqual([]);
+    const draft = useDraftStore.getState().drafts[PATH];
+    expect(draft.observations).toEqual([]);
+    expect(draft.removedSpecies).toEqual(['Odocoileus hemionus', 'Canis latrans']);
   });
 
   it('addSpecies over a selection adds to every target (add-only, no toggle)', () => {

@@ -59,13 +59,21 @@ export type AppliedTag = {
   count: number; // floored to ≥1
   requestedSpecies?: string;
   freeTags?: string;
+  /** Identity captured when the edit is made, before a later account switch. */
+  classifiedBy?: string;
+  /** ISO timestamp paired with classifiedBy — when that attribution was made. */
+  classificationTimestamp?: string;
 };
 
 // --- Pure array transforms (exported for unit tests) -----------------------
 
-/** Add-only: applying a species already present is a NO-OP (no dup, no count
- *  change). Mutual exclusivity: applying Ghost replaces the whole set; applying
- *  a real species first clears any Ghost. Order is preserved (append last). */
+/** Add-only: applying a species already present leaves its content untouched
+ *  (no dup, no count change) but DOES refresh its attribution — re-applying an
+ *  already-present species is how a reviewer confirms an existing
+ *  identification, and that confirmation must still be recorded (#368), even
+ *  though nothing about the species/count changes. Mutual exclusivity:
+ *  applying Ghost replaces the whole set; applying a real species first clears
+ *  any Ghost. Order is preserved (append last). */
 export function addObservation(obs: DraftObservation[], tag: AppliedTag): DraftObservation[] {
   const next: DraftObservation = {
     scientificName: tag.scientificName,
@@ -73,10 +81,34 @@ export function addObservation(obs: DraftObservation[], tag: AppliedTag): DraftO
     count: Math.max(1, tag.count),
     requestedSpecies: tag.requestedSpecies ?? '',
     freeTags: tag.freeTags ?? '',
+    classifiedBy: tag.classifiedBy?.trim() || undefined,
+    classificationTimestamp: tag.classificationTimestamp,
   };
-  if (isGhost(next)) return [next]; // Ghost replaces all real species
+  if (isGhost(next)) {
+    const existingGhost = obs.find((o) => isGhost(o));
+    return [
+      existingGhost
+        ? {
+            ...next,
+            classifiedBy: next.classifiedBy ?? existingGhost.classifiedBy,
+            classificationTimestamp: next.classificationTimestamp ?? existingGhost.classificationTimestamp,
+          }
+        : next,
+    ]; // Ghost replaces all real species
+  }
   const withoutGhost = obs.filter((o) => !isGhost(o)); // a real species clears Ghost
-  if (withoutGhost.some((o) => o.scientificName === next.scientificName)) return withoutGhost; // NO-OP
+  const existing = withoutGhost.find((o) => o.scientificName === next.scientificName);
+  if (existing) {
+    return withoutGhost.map((o) =>
+      o === existing
+      ? {
+          ...o,
+          classifiedBy: next.classifiedBy ?? o.classifiedBy,
+          classificationTimestamp: next.classificationTimestamp ?? o.classificationTimestamp,
+        }
+        : o,
+    );
+  }
   return [...withoutGhost, next];
 }
 
@@ -301,22 +333,55 @@ export const useDraftStore = create<DraftState>((set, get) => {
     },
 
     addSpecies: (ctx, targets, tag) =>
-      mutateMany(ctx, targets, (prev) => ({ observations: addObservation(prev.observations, tag) })),
+      mutateMany(ctx, targets, (prev) => {
+        const alreadyPresent = prev.observations.some((o) => o.scientificName === tag.scientificName);
+        const wasCanonical = targets.some((target) =>
+          target.mediaPath === prev.mediaPath &&
+          target.base?.observations.some((o) => o.scientificName === tag.scientificName),
+        );
+        const confirmed = alreadyPresent && wasCanonical && tag.scientificName !== GHOST.label;
+        const confirmedSpecies = confirmed
+          ? [...new Set([...(prev.confirmedSpecies ?? []), tag.scientificName])]
+          : prev.confirmedSpecies;
+        const removedSpecies = (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName);
+        return { observations: addObservation(prev.observations, tag), confirmedSpecies, removedSpecies };
+      }),
 
     incrementSpecies: (ctx, targets, tag) =>
-      mutateMany(ctx, targets, (prev) => ({ observations: incrementObservation(prev.observations, tag) })),
+      mutateMany(ctx, targets, (prev) => ({
+        observations: incrementObservation(prev.observations, tag),
+        removedSpecies: (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName),
+      })),
 
     removeSpecies: (ctx, mediaPath, deploymentId, base, sci) =>
-      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => ({
-        observations: removeObservation(prev.observations, sci),
-      })),
+      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
+        const wasCanonical = base?.observations.some((o) => o.scientificName === sci) ?? false;
+        const removedSpecies = wasCanonical
+          ? [...new Set([...(prev.removedSpecies ?? []), sci])]
+          : prev.removedSpecies;
+        return {
+          observations: removeObservation(prev.observations, sci),
+          confirmedSpecies: (prev.confirmedSpecies ?? []).filter((name) => name !== sci),
+          removedSpecies,
+        };
+      }),
 
     setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count) =>
       mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => ({
         observations: setObservationCount(prev.observations, sci, count),
       })),
 
-    detag: (ctx, targets) => mutateMany(ctx, targets, { observations: [] }),
+    detag: (ctx, targets) => mutateMany(ctx, targets, (prev) => {
+      const canonical = targets.find((target) => target.mediaPath === prev.mediaPath)?.base?.observations ?? [];
+      const removedSpecies = canonical
+        .filter((o) => prev.observations.some((current) => current.scientificName === o.scientificName))
+        .map((o) => o.scientificName);
+      return {
+        observations: [],
+        confirmedSpecies: [],
+        removedSpecies: [...new Set([...(prev.removedSpecies ?? []), ...removedSpecies])],
+      };
+    }),
 
     setTimeOffset: (ctx, offset) => {
       // Optimistic Zustand update (hot path) + durable Dexie mirror. Unlike a
@@ -426,7 +491,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
           clearTimeout(timer);
           pending.delete(rec.id);
         }
-        const clean = { ...rec, dirty: false };
+        const clean = { ...rec, dirty: false, confirmedSpecies: undefined, removedSpecies: undefined };
         next[path] = clean;
         changed.push(clean);
       }

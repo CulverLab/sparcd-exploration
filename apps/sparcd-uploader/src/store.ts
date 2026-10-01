@@ -75,6 +75,8 @@ export type FileEntry = ScannedFile & {
   // opaquely: the uploader displays it read-only and emits it as observation
   // rows, and never edits it.
   preTags?: FlipObservation[];
+  /** Person who applied the pre-upload tags in the Tagger. */
+  preTaggerUser?: string;
 };
 
 type UploaderState = {

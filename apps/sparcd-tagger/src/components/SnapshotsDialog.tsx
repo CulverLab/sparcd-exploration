@@ -18,7 +18,7 @@ function uploadNameOf(uploadPrefix: string): string {
 // pre-change snapshot of the canonical files; this dialog lists the recoverable
 // ones for the current upload and restores a chosen snapshot back in place
 // through the same conditional-replacement flow the sync uses — dry-run-first,
-// conflict-aware, and gated on the dry-run toggle + a Tagger identity exactly
+// conflict-aware, and gated on the dry-run toggle + a connected account exactly
 // like a sync, because a live restore writes to S3.
 
 type Phase = 'previewing' | 'preview' | 'running' | 'done';
@@ -239,7 +239,7 @@ function RestorePane({
 
         {!user && !error && (
           <p className="text-warn font-mono text-[13px] border border-warn px-3 py-2">
-            Set a Tagger identity in Settings first — a restore stamps a fresh audit snapshot path.
+            Connect with a storage username first — it supplies the attribution and fresh audit snapshot path.
           </p>
         )}
 

@@ -66,6 +66,8 @@ function ready(
     exifNaive?: NaiveDateTime;
     exifTimestampSource?: 'exif-modify';
     manualNaive?: NaiveDateTime;
+    preTags?: FlipObservation[];
+    preTaggerUser?: string;
     mediaKind?: FileEntry['mediaKind'];
   } = {},
 ): FileEntry {
@@ -86,6 +88,8 @@ function ready(
     exifNaive: 'exifNaive' in opts ? opts.exifNaive : naive(),
     exifTimestampSource: opts.exifTimestampSource,
     manualNaive: opts.manualNaive,
+    preTags: opts.preTags,
+    preTaggerUser: opts.preTaggerUser,
   };
 }
 
@@ -117,6 +121,15 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     expect(rows[0].count).toBe(0); // blank column reads back as 0
     // Observation timestamp matches the media row's EXIF-derived capture time.
     expect(rows[0].timestamp).toBe(parseMedia(b.mediaCsv)[0].timestamp);
+  });
+
+  it('writes the pre-upload tagger identity as classified_by', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{ scientificName: 'Canis latrans', commonName: 'Coyote', count: 1, requestedSpecies: '', freeTags: '' }],
+      preTaggerUser: 'anita',
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('anita');
   });
 
   it('media.csv carries the DST-corrected full ISO capture time in col 4', async () => {
