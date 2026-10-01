@@ -47,6 +47,7 @@ export type UploadItem = {
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload
+  preTaggerUser?: string;
 };
 
 export type BundlePreview = {
@@ -88,6 +89,7 @@ function observationRowsFor(
     deploymentId: string;
     timestamp: string;
     preTags?: FlipObservation[];
+    preTaggerUser?: string;
   },
   untagged: () => Observation[],
 ): Observation[] {
@@ -109,6 +111,8 @@ function observationRowsFor(
       requestedSpecies: o.requestedSpecies || undefined,
       extra: parseTagMarkers(o.freeTags),
     }),
+    classifiedBy: (o.classifiedBy ?? file.preTaggerUser) || undefined,
+    classificationTimestamp: o.classificationTimestamp,
   }));
 }
 
@@ -211,6 +215,7 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
     mediaKind: f.mediaKind,
     mimeType: mimeFor(f),
     preTags: f.preTags,
+    preTaggerUser: f.preTaggerUser,
   };
 }
 
@@ -277,6 +282,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
         deploymentId: deployment.deploymentId,
         timestamp: it.captureTimestamp ?? '',
         preTags: it.preTags,
+        preTaggerUser: it.preTaggerUser,
       },
       () => [
         {
@@ -359,6 +365,7 @@ export type ResolvedFileRecord = {
   captureTimestamp?: string;
   mimeType?: string;
   preTags?: FlipObservation[];
+  preTaggerUser?: string;
 };
 
 export type ResumeBundle = {
@@ -415,6 +422,7 @@ export async function buildBundleFromRecords(input: {
         deploymentId: deployment.deploymentId,
         timestamp: f.captureTimestamp ?? '',
         preTags: f.preTags,
+        preTaggerUser: f.preTaggerUser,
       },
       () => [
         {

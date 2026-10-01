@@ -81,6 +81,7 @@ type PendingKeyConflict = {
 
 export function Tag() {
   const cfg = useStore((s) => s.s3Config);
+  const taggerUser = useStore((s) => s.taggerUser);
   const connectionId = useStore((s) => s.connectionId);
   const collectionKey = useStore((s) => s.selectedCollectionKey);
   const uploadPrefix = useStore((s) => s.selectedUploadPrefix);
@@ -504,7 +505,7 @@ export function Tag() {
     // species to other frames, so it advances its focused image once.
     const shouldAdvance =
       autoAdvanceOnTag && !!current && (selected.size > 0 || !carriesSpecies(current, tag.scientificName));
-    addSpeciesFn(ctx, targets, tag);
+    addSpeciesFn(ctx, targets, { ...tag, classifiedBy: taggerUser.trim() || undefined, classificationTimestamp: new Date().toISOString() });
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();
   };
@@ -526,7 +527,7 @@ export function Tag() {
           base: { observations: image.baseObservations },
         },
       ],
-      tag,
+      { ...tag, classifiedBy: taggerUser.trim() || undefined, classificationTimestamp: new Date().toISOString() },
     );
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();
@@ -538,7 +539,7 @@ export function Tag() {
     const targets = targetsOf();
     if (!targets.length) return;
     const shouldAdvance = autoAdvanceOnTag && !!current;
-    incrementSpeciesFn(ctx, targets, tag);
+    incrementSpeciesFn(ctx, targets, { ...tag, classifiedBy: taggerUser.trim() || undefined, classificationTimestamp: new Date().toISOString() });
     if (tag.scientificName) pushRecent(tag.scientificName);
     if (shouldAdvance) advanceFocus();
   };
@@ -1267,7 +1268,16 @@ export function Tag() {
           observations={observations}
           disabled={!current}
           onSetCount={(sci, n) =>
-            current && setSpeciesCountFn(ctx, current.key, current.deploymentId, currentBase, sci, n)
+            current && setSpeciesCountFn(
+              ctx,
+              current.key,
+              current.deploymentId,
+              currentBase,
+              sci,
+              n,
+              taggerUser.trim() || undefined,
+              new Date().toISOString(),
+            )
           }
           onRemove={(sci) =>
             current && removeSpeciesFn(ctx, current.key, current.deploymentId, currentBase, sci)

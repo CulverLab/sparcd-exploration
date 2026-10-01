@@ -441,7 +441,7 @@ Then('the stored capture times are unchanged', async ({ s3 }) => {
 
 Then('the sync preview counts how many images would have a corrected time', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSyncDialog(page);
   await expect(
@@ -470,7 +470,7 @@ Then(
 
 Given('a whole-upload shift was written to the stored files by a sync', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await timeShiftButton(page).click();
   await bump(uploadShiftModal(page), 'Hour', 1);

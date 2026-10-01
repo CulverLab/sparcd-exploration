@@ -22,6 +22,8 @@ export type DraftObservation = {
   count: number; // ≥1 always
   requestedSpecies: string; // free-text request → [REQUESTED_SPECIES:…]; '' otherwise
   freeTags: string; // extra raw markers, preserved verbatim (per-observation)
+  classifiedBy?: string; // canonical attribution, preserved when rows are replaced
+  classificationTimestamp?: string; // ISO; when classifiedBy last reviewed this row
 };
 
 /** One image's local edit. `id` = `${bucket}::${uploadPrefix}::${mediaPath}`.
@@ -36,6 +38,8 @@ export interface DraftRecord {
 
   // The full intended species set for this image, in apply order.
   observations: DraftObservation[];
+  /** Species explicitly re-applied as a confirmation since the last sync. */
+  confirmedSpecies?: string[];
   questionable: boolean;
   timeOverride: string | null; // per-image corrected ISO timestamp; null when unset
 

@@ -13,6 +13,7 @@ Feature: Tag a batch that has not been uploaded yet
 
   Background:
     Given the Uploader has handed over a batch of images
+    And the local batch identity is set to Anita
 
   @A1
   Scenario: The workspace opens with no connection at all

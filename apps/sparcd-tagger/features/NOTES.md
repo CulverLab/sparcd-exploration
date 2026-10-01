@@ -37,10 +37,10 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 - **H2 — met, with one caveat.** Multi-species per image, counts, Ghost for
   empty frames, requested-species free text, per-species keys (including keys
   inherited from `species.json`), and bulk apply across a selection. The
-  caveat is attribution: identifications are attributed to a free-text
-  "Tagger identity" typed in Settings, stamped into the snapshot path and the
-  `UploadMeta.json` edit comment. It is not derived from or checked against
-  the credentials used to connect.
+  caveat is attribution: connected sessions derive the classifier from the
+  storage username (the access key) and stamp it into new observation rows,
+  the snapshot path and the `UploadMeta.json` edit comment. A disconnected
+  local Uploader handoff uses its session-scoped handoff identity instead.
 - **H3 — partially met.** Existing identifications from any source (Java
   desktop app, sparcd-web, an earlier tagger sync) are shown with counts, and
   can be corrected or removed. **A pure confirmation records nothing** — the
@@ -84,9 +84,10 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 2. **Confirmation of prior work leaves no trace** (see H3 above). If the
    director wants "Harold reviewed this upload on this date", something must
    be recorded that a content diff cannot produce.
-3. **Identity is unverified free text.** Anything typed in Settings becomes
-   the attribution and the snapshot folder name. Two people sharing a browser
-   are distinguished only by remembering to change it.
+3. **Connected identity follows credentials.** The connected storage username
+   becomes attribution and the snapshot folder name, and the Settings field is
+   read-only. Disconnected local Uploader handoffs retain a separate,
+   session-scoped handoff identity because no storage account is connected.
 4. **Dry-run defaults to off, per session.** It is a shared preference for
    syncs and snapshot restores and is not persisted; a page reload restores
    the live-write default.

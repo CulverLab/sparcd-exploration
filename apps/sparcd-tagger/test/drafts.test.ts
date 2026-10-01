@@ -56,6 +56,20 @@ describe('addObservation', () => {
     const next = addObservation([], tag('Canis latrans', 0));
     expect(next[0].count).toBe(1);
   });
+
+  it('keeps the editor identity on a newly added observation', () => {
+    const next = addObservation([], { ...tag('Canis latrans'), classifiedBy: 'harold' });
+    expect(next[0].classifiedBy).toBe('harold');
+  });
+
+  it('preserves existing attribution when a legacy re-apply has no metadata', () => {
+    const next = addObservation(
+      [{ ...tag('Canis latrans'), classifiedBy: 'fielduser', classificationTimestamp: '2024-01-01T00:00:00.000Z' }],
+      tag('Canis latrans'),
+    );
+    expect(next[0].classifiedBy).toBe('fielduser');
+    expect(next[0].classificationTimestamp).toBe('2024-01-01T00:00:00.000Z');
+  });
 });
 
 describe('incrementObservation', () => {
@@ -84,6 +98,18 @@ describe('incrementObservation', () => {
       ['Odocoileus hemionus', 3],
       ['Canis latrans', 4],
     ]);
+  });
+
+  it('refreshes attribution when incrementing an existing species', () => {
+    const next = incrementObservation(
+      [{ ...obs('Canis latrans', 1), classifiedBy: 'fielduser' }],
+      { ...tag('Canis latrans'), classifiedBy: 'harold', classificationTimestamp: '2024-01-20T14:30:00.000Z' },
+    );
+    expect(next[0]).toMatchObject({
+      count: 2,
+      classifiedBy: 'harold',
+      classificationTimestamp: '2024-01-20T14:30:00.000Z',
+    });
   });
 
   it('clears Ghost when a real species is incremented', () => {

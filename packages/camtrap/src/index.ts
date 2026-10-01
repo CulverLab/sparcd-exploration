@@ -47,6 +47,8 @@ export type Observation = {
   scientificName: string;
   count?: number; // undefined → column written blank (no species identified)
   tags: string; // concatenated [PREFIX:value] markers
+  classifiedBy?: string;
+  classificationTimestamp?: string; // ISO; when classifiedBy last reviewed this row
 };
 
 /** All three collections for one upload bundle. */
@@ -169,8 +171,8 @@ export function serializeObservations(observations: Observation[]): string {
         '', // 13 behaviour
         '', // 14 individual_id
         '', // 15 classification_method
-        '', // 16 classified_by
-        '', // 17 classification_timestamp
+        o.classifiedBy ?? '', // 16 classified_by
+        o.classificationTimestamp ?? '', // 17 classification_timestamp
         '', // 18 classification_confidence
         o.tags, // 19 comments ([COMMONNAME:…])
       ]),
@@ -456,6 +458,8 @@ export function parseObservations(csv: string): Observation[] {
       scientificName,
       count,
       tags: r[OBS_COL.comments] ?? '',
+      classifiedBy: r[OBS_COL.classifiedBy] || undefined,
+      classificationTimestamp: r[OBS_COL.classificationTimestamp] || undefined,
     };
   });
 }
@@ -531,6 +535,10 @@ export type ObservationInput = {
   commonName?: string; // → [COMMONNAME:…] in col 19
   requestedSpecies?: string; // → [REQUESTED_SPECIES:…] in col 19
   extraMarkers?: TagMarker[]; // preserved through-markers
+  /** Existing attribution is retained when Tagger replaces an observation row. */
+  classifiedBy?: string;
+  /** ISO timestamp paired with classifiedBy — when that attribution was made. */
+  classificationTimestamp?: string;
 };
 
 /**
@@ -577,6 +585,8 @@ function buildObservationRow(
     requestedSpecies: o.requestedSpecies,
     extra: o.extraMarkers,
   });
+  row[OBS_COL.classifiedBy] = o.classifiedBy ?? '';
+  row[OBS_COL.classificationTimestamp] = o.classificationTimestamp ?? '';
   return row;
 }
 

@@ -76,6 +76,7 @@ export type DiffSummary = {
   modifications: number; // tagged → different species/count
   removals: number; // tagged → detagged
   timeCorrections: number; // images whose capture time changes
+  confirmations: number; // species/count unchanged, but explicitly re-reviewed (#368)
 };
 
 export type SyncPlan = {
@@ -120,10 +121,17 @@ export function buildSyncPlan(
   drafts: Record<string, DraftRecord>,
   offset: TimeOffset | null,
   pendingLocation: Deployment | null = null,
+  user = '',
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
-  const summary: DiffSummary = { additions: 0, modifications: 0, removals: 0, timeCorrections: 0 };
+  const summary: DiffSummary = {
+    additions: 0,
+    modifications: 0,
+    removals: 0,
+    timeCorrections: 0,
+    confirmations: 0,
+  };
 
   for (const img of images) {
     // Only a dirty draft carries pending intent; a clean (already-synced) draft
@@ -143,6 +151,19 @@ export function buildSyncPlan(
     // not supply it, but make its source accurately say "manual".
     const timestampSource = timeChanged && img.timestampSource ? 'manual' : undefined;
     const tagChanged = !observationsEqual(obs, img.baseObservations);
+    const confirmedSpecies = d?.confirmedSpecies ?? [];
+    const baseForObservation = (o: (typeof obs)[number]) => img.baseObservations.find(
+      (candidate) =>
+        candidate.scientificName === o.scientificName &&
+        Math.max(1, candidate.count) === Math.max(1, o.count) &&
+        (candidate.commonName ?? '') === (o.commonName ?? '') &&
+        (candidate.requestedSpecies ?? '') === (o.requestedSpecies ?? ''),
+    );
+    // Re-applying an existing species is an explicit confirmation action. The
+    // draft records that action directly; comparing attribution fields would
+    // mistake legacy drafts that lack those fields for confirmations.
+    const confirmedUnchanged = !!d && !tagChanged &&
+      (d.confirmedSpecies ?? []).some((name) => obs.some((o) => o.scientificName === name));
 
     if (timeChanged) summary.timeCorrections++;
 
@@ -153,18 +174,66 @@ export function buildSyncPlan(
       else if (wasTagged && !nowTagged) summary.removals++;
       else summary.modifications++;
 
+      summary.confirmations += confirmedSpecies.filter((name) =>
+        obs.some((o) => o.scientificName === name) &&
+        img.baseObservations.some((o) => o.scientificName === name),
+      ).length;
+
       tagEdits.push({
         mediaId: img.key,
         deploymentId,
         timestamp: corrected,
         mediaTimestamp: timeChanged ? corrected : undefined,
         timestampSource,
-        observations: obs.map((o) => ({
-          scientificName: o.scientificName,
-          count: Math.max(1, o.count),
-          commonName: o.commonName || undefined,
-          requestedSpecies: o.requestedSpecies || undefined,
-        })),
+        observations: obs.map((o) => {
+          const base = baseForObservation(o);
+          // Drafts written before classifiedBy/classificationTimestamp were
+          // modeled can omit them. Preserve the canonical values rather than
+          // blanking them when another observation on the image is edited.
+          const classifiedBy = base
+            ? o.classifiedBy ?? base.classifiedBy
+            : o.classifiedBy ?? (user.trim() || undefined);
+          const classificationTimestamp = base
+            ? o.classificationTimestamp ?? base.classificationTimestamp
+            : o.classificationTimestamp;
+          return {
+            scientificName: o.scientificName,
+            count: Math.max(1, o.count),
+            commonName: o.commonName || undefined,
+            requestedSpecies: o.requestedSpecies || undefined,
+            classifiedBy,
+            classificationTimestamp,
+          };
+        }),
+      });
+    } else if (confirmedUnchanged) {
+      summary.confirmations++;
+      tagEdits.push({
+        mediaId: img.key,
+        deploymentId,
+        timestamp: corrected,
+        mediaTimestamp: timeChanged ? corrected : undefined,
+        timestampSource,
+        // Content is identical to base by definition (tagChanged is false),
+        // so no delta/summary bookkeeping runs here — only the attribution
+        // `addObservation` already refreshed at apply time is written through.
+        observations: obs.map((o) => {
+          const base = baseForObservation(o);
+          const explicitlyConfirmed = confirmedSpecies.includes(o.scientificName);
+          return {
+            scientificName: o.scientificName,
+            count: Math.max(1, o.count),
+            commonName: o.commonName || undefined,
+            requestedSpecies: o.requestedSpecies || undefined,
+            // Only the explicitly re-applied species receives the current
+            // reviewer identity. Other legacy rows keep their canonical
+            // attribution (or remain unattributed).
+            classifiedBy: o.classifiedBy ?? base?.classifiedBy ??
+              (explicitlyConfirmed ? user.trim() || undefined : undefined),
+            classificationTimestamp: o.classificationTimestamp ??
+              (explicitlyConfirmed ? new Date().toISOString() : base?.classificationTimestamp),
+          };
+        }),
       });
     } else if (timeChanged) {
       // Time correction on an image whose species rows don't change. Goes to
@@ -200,9 +269,10 @@ export function snapshotStamp(d: Date): string {
   );
 }
 
-// The user id is a free-text identity, so it is percent-encoded into the key —
-// a `/` or other path-significant character can't break the two-level
-// `<user>/<stamp>/` layout the snapshot reader walks. The reader decodes it back.
+// The connected account or local handoff identity is percent-encoded into the
+// key — a `/` or other path-significant character can't break the two-level
+// `<identity>/<stamp>/` layout the snapshot reader walks. The reader decodes it
+// back.
 export const snapshotPrefixOf = (uploadPrefix: string, user: string, stamp: string): string =>
   `${uploadPrefix}.sparcd-tagger-snapshots/${encodeURIComponent(user)}/${stamp}/`;
 
@@ -374,7 +444,13 @@ async function writePending(
   return { status: 'synced', summary: EMPTY_SUMMARY, newETags: collectNewETags(journal) };
 }
 
-const EMPTY_SUMMARY: DiffSummary = { additions: 0, modifications: 0, removals: 0, timeCorrections: 0 };
+const EMPTY_SUMMARY: DiffSummary = {
+  additions: 0,
+  modifications: 0,
+  removals: 0,
+  timeCorrections: 0,
+  confirmations: 0,
+};
 
 /**
  * Write the pre-change snapshot set (old canonical bodies, then `manifest.json`
