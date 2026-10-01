@@ -253,23 +253,6 @@ Then('switching the setting off changes the action to a real sync', async ({ pag
   await expect(page.getByRole('button', { name: 'Run dry-run' })).toHaveCount(0);
 });
 
-// --- Identity gate ----------------------------------------------------------
-
-Given('no tagger identity has been set', async ({ page }) => {
-  await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('');
-  await sectionTab(page, 'Tag').click();
-});
-
-Then('the dialog states that an identity must be set in Settings first', async ({ page }) => {
-  await openSyncDialog(page);
-  await expect(page.getByText('Set a Tagger identity in Settings first')).toBeVisible();
-});
-
-Then('the sync action is unavailable', async ({ page }) => {
-  await expect(page.getByRole('button', { name: /Sync now|Run dry-run/ })).toBeDisabled();
-});
-
 // --- Nothing to sync --------------------------------------------------------
 
 Given('the local edits match what is already stored', async ({ page }) => {
@@ -337,9 +320,9 @@ Then(
 // --- Snapshot before replace ------------------------------------------------
 
 Then(
-  'the current stored files are first copied to an immutable snapshot filed under the tagger identity and the time',
+  'the current stored files are first copied to an immutable snapshot filed under the connected account and the time',
   async ({ s3 }) => {
-    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'));
+    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/testkey/'));
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
@@ -363,7 +346,7 @@ Then('the snapshot is only counted as recoverable once its manifest is written',
     files: { name: string }[];
   };
   expect(manifest.schemaVersion).toBe(1);
-  expect(manifest.user).toBe('jgonzalez');
+  expect(manifest.user).toBe('testkey');
   expect(manifest.files.map((f) => f.name)).toEqual([
     'media.csv',
     'observations.csv',
@@ -484,6 +467,10 @@ When('the sync is run without waiting for it to finish', async ({ page }) => {
   await openSyncDialog(page);
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
+  // Do not sample the pre-sync frame while the click is still committing the
+  // dialog state. The delayed canonical read guarantees this intermediate
+  // syncing state exists for both the species and timestamp scenarios.
+  await expect(statePill(page)).toHaveAttribute('aria-label', /^Sync status: syncing/);
 });
 
 Then('the tile still shows the species before the sync completes', async ({ page, s3 }) => {
@@ -670,8 +657,8 @@ Given('a previous sync wrote some but not all of the stored files', async ({ pag
     id: `${BUCKET}::${PREFIX_A}`,
     bucket: BUCKET,
     uploadPrefix: PREFIX_A,
-    snapshotPrefix: `${PREFIX_A}.sparcd-tagger-snapshots/jgonzalez/2024-05-05T10-00-00/`,
-    user: 'jgonzalez',
+    snapshotPrefix: `${PREFIX_A}.sparcd-tagger-snapshots/testkey/2024-05-05T10-00-00/`,
+    user: 'testkey',
     startedAt: '2024-05-05T10:00:00.000Z',
     objects: [
       {

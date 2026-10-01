@@ -45,7 +45,7 @@ export function App() {
     return (
       <SpeciesKeyBindingGate>
         <Chrome>
-          <Tag />
+          {section === 'settings' ? <Settings /> : <Tag />}
         </Chrome>
       </SpeciesKeyBindingGate>
     );

@@ -59,6 +59,8 @@ export type AppliedTag = {
   count: number; // floored to ≥1
   requestedSpecies?: string;
   freeTags?: string;
+  /** Identity captured when the edit is made, before a later account switch. */
+  classifiedBy?: string;
 };
 
 // --- Pure array transforms (exported for unit tests) -----------------------
@@ -73,6 +75,7 @@ export function addObservation(obs: DraftObservation[], tag: AppliedTag): DraftO
     count: Math.max(1, tag.count),
     requestedSpecies: tag.requestedSpecies ?? '',
     freeTags: tag.freeTags ?? '',
+    classifiedBy: tag.classifiedBy?.trim() || undefined,
   };
   if (isGhost(next)) return [next]; // Ghost replaces all real species
   const withoutGhost = obs.filter((o) => !isGhost(o)); // a real species clears Ghost

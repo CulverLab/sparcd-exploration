@@ -191,8 +191,8 @@ export function SyncDialog({
 
           {!user && !error && (
             <p className="text-warn font-mono text-[13px] border border-warn px-3 py-2">
-              Set a Tagger identity in Settings first — it stamps the audit snapshot path and the
-              mandatory edit comment.
+              Connect with a storage username first — it supplies the attribution, audit snapshot
+              path and mandatory edit comment.
             </p>
           )}
 

@@ -35,6 +35,7 @@ const obsCsv = serializeObservations([
     scientificName: 'Canis latrans',
     count: 2,
     tags: '[COMMONNAME:Coyote]',
+    classifiedBy: 'anita',
   },
 ]);
 
@@ -91,7 +92,7 @@ describe('buildTagImages', () => {
       baseTimestamp: '2024-01-01T08:00:00',
     });
     expect(images[0].baseObservations).toEqual([
-      { scientificName: 'Canis latrans', commonName: 'Coyote', count: 2, requestedSpecies: '', freeTags: '' },
+      { scientificName: 'Canis latrans', commonName: 'Coyote', count: 2, requestedSpecies: '', freeTags: '', classifiedBy: 'anita' },
     ]);
   });
 

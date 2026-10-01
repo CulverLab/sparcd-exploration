@@ -120,6 +120,7 @@ export function buildSyncPlan(
   drafts: Record<string, DraftRecord>,
   offset: TimeOffset | null,
   pendingLocation: Deployment | null = null,
+  user = '',
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
@@ -164,6 +165,19 @@ export function buildSyncPlan(
           count: Math.max(1, o.count),
           commonName: o.commonName || undefined,
           requestedSpecies: o.requestedSpecies || undefined,
+          classifiedBy: (() => {
+            const base = img.baseObservations.find(
+              (candidate) =>
+                candidate.scientificName === o.scientificName &&
+                Math.max(1, candidate.count) === Math.max(1, o.count) &&
+                (candidate.commonName ?? '') === (o.commonName ?? '') &&
+                (candidate.requestedSpecies ?? '') === (o.requestedSpecies ?? ''),
+            );
+            // Drafts written before classifiedBy was modeled can omit the
+            // field. Preserve the canonical value rather than blanking it
+            // when another observation on the image is edited.
+            return base ? o.classifiedBy ?? base.classifiedBy : user.trim() || o.classifiedBy;
+          })(),
         })),
       });
     } else if (timeChanged) {
@@ -200,9 +214,10 @@ export function snapshotStamp(d: Date): string {
   );
 }
 
-// The user id is a free-text identity, so it is percent-encoded into the key —
-// a `/` or other path-significant character can't break the two-level
-// `<user>/<stamp>/` layout the snapshot reader walks. The reader decodes it back.
+// The connected account or local handoff identity is percent-encoded into the
+// key — a `/` or other path-significant character can't break the two-level
+// `<identity>/<stamp>/` layout the snapshot reader walks. The reader decodes it
+// back.
 export const snapshotPrefixOf = (uploadPrefix: string, user: string, stamp: string): string =>
   `${uploadPrefix}.sparcd-tagger-snapshots/${encodeURIComponent(user)}/${stamp}/`;
 

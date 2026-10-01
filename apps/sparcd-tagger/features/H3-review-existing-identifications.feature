@@ -13,7 +13,7 @@ Feature: Review, correct and remove identifications that already exist
   — whether they came from the desktop app, sparcd-web or an earlier tagger
   sync — and shows them on each image. They can be corrected, re-counted or
   removed; the changes reach the stored files only through a sync, which is
-  stamped with the tagger identity.
+  stamped with the connected account that performs the sync.
 
   Background:
     Given an upload with existing identifications is open in the tagging workspace
@@ -86,10 +86,8 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: A correction is attributed to the person who synced it
     Given identifications were corrected locally
     When a live sync is run
-    Then the upload's metadata gains an edit comment carrying the tagger identity and the time of the edit
+    Then the upload's metadata gains an edit comment carrying the connected account and the time of the edit
     And the pre-change snapshot of the upload is filed under that same identity
-    # The identity is free text typed in Settings; it is not verified against
-    # the credentials used to connect. Flag for review.
 
   @H3
   Scenario: An image edited locally is distinguishable from one that is not

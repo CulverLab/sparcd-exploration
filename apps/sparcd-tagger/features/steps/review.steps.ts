@@ -249,7 +249,7 @@ Then('no change is reported for that image', async ({ page, s3 }) => {
 
 Given('identifications were corrected locally', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await focusFrame(page, 'IMG002.JPG');
   await speciesApply(page, 'Canis latrans').click();
@@ -264,13 +264,13 @@ When('a live sync is run', async ({ page }) => {
 });
 
 Then(
-  'the upload\'s metadata gains an edit comment carrying the tagger identity and the time of the edit',
+  'the upload\'s metadata gains an edit comment carrying the connected account and the time of the edit',
   async ({ s3 }) => {
     const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)) as {
       editComments: string[];
     };
     const last = meta.editComments[meta.editComments.length - 1];
-    expect(last).toContain('jgonzalez');
+    expect(last).toContain('testkey');
     expect(last).toMatch(/\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{2}/);
   },
 );
@@ -278,7 +278,7 @@ Then(
 Then('the pre-change snapshot of the upload is filed under that same identity', async ({ s3 }) => {
   const snapshots = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/'));
   expect(snapshots.length).toBeGreaterThan(0);
-  for (const p of snapshots) expect(p.key).toContain('.sparcd-tagger-snapshots/jgonzalez/');
+  for (const p of snapshots) expect(p.key).toContain('.sparcd-tagger-snapshots/testkey/');
   expect(snapshots.some((p) => p.key.endsWith('manifest.json'))).toBe(true);
 });
 
@@ -297,7 +297,7 @@ Then('its tile carries an unsaved-edit marker', async ({ page }) => {
 
 Then('the marker is cleared for that image once its change has been synced', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSyncDialog(page);
   await setSyncDryRun(page, false);

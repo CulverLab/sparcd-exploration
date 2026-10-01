@@ -56,6 +56,11 @@ describe('addObservation', () => {
     const next = addObservation([], tag('Canis latrans', 0));
     expect(next[0].count).toBe(1);
   });
+
+  it('keeps the editor identity on a newly added observation', () => {
+    const next = addObservation([], { ...tag('Canis latrans'), classifiedBy: 'harold' });
+    expect(next[0].classifiedBy).toBe('harold');
+  });
 });
 
 describe('incrementObservation', () => {
