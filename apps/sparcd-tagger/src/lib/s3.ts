@@ -21,6 +21,7 @@ import type { SyncJournal, CanonicalRole } from './syncJournal';
 // Not a security boundary in a static app — the wrapper just requires an
 // explicit scope. The connected key's IAM policy and bucket CORS gate access.
 const RUNTIME_BUCKET_SCOPE = ['*'];
+const UPLOAD_MARKER_CONCURRENCY = 16;
 
 let cached: { config: S3Config; client: SafeS3Client } | null = null;
 let writeCached: { config: S3Config; client: SafeS3Client } | null = null;
@@ -71,11 +72,34 @@ export type UploadRef = {
   stamp: string; // the `<stamp>` folder name
 };
 
-/** Upload folders for a collection, enumerated with a delimiter (no image walk). */
+/**
+ * Upload folders for a collection, enumerated with a delimiter (no image walk).
+ * A prefix is visible only after the uploader has written UploadMeta.json.
+ * Blobs and CSVs from an interrupted run remain in storage for recovery, but
+ * must not become a Browse row or a selectable tagging workspace.
+ */
 export async function listUploads(cfg: S3Config, bucket: string, uuid: string): Promise<UploadRef[]> {
   const client = getClient(cfg);
   const dirs = await client.listCommonPrefixes(bucket, `Collections/${uuid}/Uploads/`);
-  return dirs
+  const visible: (string | null)[] = [];
+  for (let i = 0; i < dirs.length; i += UPLOAD_MARKER_CONCURRENCY) {
+    const chunk = dirs.slice(i, i + UPLOAD_MARKER_CONCURRENCY);
+    visible.push(
+      ...(await Promise.all(
+        chunk.map(async (prefix) => {
+          try {
+            await client.statObject(bucket, `${prefix}UploadMeta.json`);
+            return prefix;
+          } catch (err) {
+            if (isNotFound(err)) return null;
+            throw translateReadError(err, 'UploadMeta.json');
+          }
+        }),
+      )),
+    );
+  }
+  return visible
+    .filter((prefix): prefix is string => prefix !== null)
     .map((prefix) => ({ prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix }))
     .sort((a, b) => b.stamp.localeCompare(a.stamp)); // newest stamp first
 }
@@ -346,8 +370,8 @@ export async function listCollectionSnapshots(
 }
 
 export function isNotFound(err: unknown): boolean {
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
+  const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.message === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
 }
 
 /** Load the canonical bodies of one snapshot, to restore them in place. A

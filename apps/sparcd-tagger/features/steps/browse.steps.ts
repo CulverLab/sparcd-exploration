@@ -24,6 +24,7 @@ import {
   PREFIX_A,
   PREFIX_B,
   LOCATION_NAME,
+  PREFIX_F,
 } from './support/data';
 import { makeLocalEdit, runLiveSync, waitForDirtyDrafts } from './support/flows';
 
@@ -101,9 +102,24 @@ Then('it reports the reason when the vocabulary cannot be read at all', async ({
 
 // --- Upload list ------------------------------------------------------------
 
+Given('a failed upload left blobs and CSVs without its UploadMeta marker', async ({ s3 }) => {
+  expect(s3.has(BUCKET, `${PREFIX_F}media.csv`)).toBe(true);
+  expect(s3.has(BUCKET, `${PREFIX_F}deployments.csv`)).toBe(true);
+  expect(s3.has(BUCKET, `${PREFIX_F}UploadMeta.json`)).toBe(false);
+});
+
 Given('a collection is selected', async ({ page }) => {
   await openAppConnected(page);
   await selectCollection(page);
+});
+
+Then('that incomplete upload is not listed', async ({ page }) => {
+  await expect(uploadRow(page, 'interrupted')).toHaveCount(0);
+});
+
+Then('the completed uploads remain listed', async ({ page }) => {
+  await expect(uploadRow(page, 'priortagger')).toBeVisible();
+  await expect(uploadRow(page, 'fielduser')).toBeVisible();
 });
 
 Then('each upload row shows the upload date and time', async ({ page }) => {

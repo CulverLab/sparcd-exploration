@@ -248,8 +248,8 @@ export type LocationsResult = LocationsParse & {
 };
 
 function isMissingObjectError(err: unknown): boolean {
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e.$metadata?.httpStatusCode === 404 || e.name === 'NoSuchKey' || e.name === 'NotFound';
+  const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  return e.$metadata?.httpStatusCode === 404 || e.name === 'NoSuchKey' || e.name === 'NotFound' || e.message === 'NoSuchKey';
 }
 
 /**
@@ -355,7 +355,8 @@ function deploymentLocationIds(csv: string): string[] {
 /**
  * The location ids a collection has actually deployed, read from each upload's
  * `Collections/<uuid>/Uploads/<upload>/deployments.csv`. Upload folders are
- * enumerated with a delimiter (no image walk), then one small GET per upload.
+ * enumerated with a delimiter (no image walk), and only prefixes with the
+ * UploadMeta visibility marker contribute locations.
  */
 export async function listCollectionDeploymentLocationIds(
   cfg: S3Config,
@@ -367,10 +368,17 @@ export async function listCollectionDeploymentLocationIds(
   await Promise.all(
     uploadDirs.map(async (dir) => {
       try {
+        await client.statObject(ref.bucket, `${dir}UploadMeta.json`);
+      } catch (err) {
+        if (isMissingObjectError(err)) return;
+        throw translateReadError(err, 'UploadMeta.json');
+      }
+      try {
         const bytes = await client.getObject(ref.bucket, `${dir}deployments.csv`);
         for (const id of deploymentLocationIds(new TextDecoder().decode(bytes))) ids.add(id);
-      } catch {
-        // Upload without a deployments.csv yet, or unreadable / CORS-blocked.
+      } catch (err) {
+        if (!isMissingObjectError(err)) throw translateReadError(err, 'deployments.csv');
+        // A published upload may not have deployments.csv yet.
       }
     }),
   );
@@ -485,8 +493,11 @@ export async function listPublishedUploads(cfg: S3Config, ref: CollectionRef): P
           // No deployments.csv — leave deploymentId null.
         }
         return { prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix, meta, deploymentId };
-      } catch {
-        return null; // No UploadMeta.json yet, or unreadable / CORS-blocked.
+      } catch (err) {
+        if (isMissingObjectError(err)) return null;
+        // A published upload must not disappear silently when the marker read
+        // fails because of CORS, credentials, or a transient storage error.
+        throw translateReadError(err, 'UploadMeta.json');
       }
     }),
   );
