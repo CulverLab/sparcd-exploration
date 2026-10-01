@@ -185,6 +185,45 @@ describe('buildSyncPlan', () => {
     expect(plan.tagEdits[0].observations).toEqual([]);
   });
 
+  it('marks a one-for-one species replacement with the previous scientific name', () => {
+    const plan = buildSyncPlan(
+      IMAGES,
+      {
+        [K1]: draft({
+          mediaPath: K1,
+          observations: [obs('Canis latrans', 1, 'Coyote')],
+        }),
+      },
+      null,
+    );
+    expect(plan.tagEdits[0].observations).toEqual([
+      expect.objectContaining({ scientificName: 'Canis latrans', correctedFrom: 'Puma concolor' }),
+    ]);
+  });
+
+  it('does not mark count-only, add-only, or removal-only edits as replacements', () => {
+    const count = buildSyncPlan(
+      IMAGES,
+      { [K1]: draft({ mediaPath: K1, observations: [obs('Puma concolor', 2)] }) },
+      null,
+    );
+    expect(count.tagEdits[0].observations[0].correctedFrom).toBeUndefined();
+
+    const addition = buildSyncPlan(
+      IMAGES,
+      { [K2]: draft({ mediaPath: K2, observations: [obs('Canis latrans', 1, 'Coyote')] }) },
+      null,
+    );
+    expect(addition.tagEdits[0].observations[0].correctedFrom).toBeUndefined();
+
+    const removal = buildSyncPlan(
+      IMAGES,
+      { [K1]: draft({ mediaPath: K1, observations: [] }) },
+      null,
+    );
+    expect(removal.tagEdits[0].observations).toEqual([]);
+  });
+
   it('ignores a questionable-only toggle (no canonical change)', () => {
     const plan = buildSyncPlan(
       IMAGES,

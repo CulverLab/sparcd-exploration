@@ -22,6 +22,7 @@ export type DraftObservation = {
   count: number; // ≥1 always
   requestedSpecies: string; // free-text request → [REQUESTED_SPECIES:…]; '' otherwise
   freeTags: string; // extra raw markers, preserved verbatim (per-observation)
+  correctedFrom?: string; // prior scientific name for an explicit replacement
 };
 
 /** One image's local edit. `id` = `${bucket}::${uploadPrefix}::${mediaPath}`.

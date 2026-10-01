@@ -40,6 +40,13 @@ Feature: Review, correct and remove identifications that already exist
     Then the new count is held against that species for that image
     And a count below one is not accepted
 
+  @H3 @H3-3
+  Scenario: Replacing an existing species records the correction
+    Given the focused image carries an existing species to correct
+    When the existing species is replaced with another species
+    And a live sync is run
+    Then the stored replacement records the previous species as corrected
+
   @H3
   Scenario: A single wrong identification can be removed without losing the others
     Given the focused image carries several species

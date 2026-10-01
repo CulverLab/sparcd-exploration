@@ -477,6 +477,7 @@ export function timestampSourceFromComments(comments: string): TimestampSource |
 
 export const COMMONNAME_PREFIX = 'COMMONNAME';
 export const REQUESTED_SPECIES_PREFIX = 'REQUESTED_SPECIES';
+export const CORRECTED_FROM_PREFIX = 'CORRECTED_FROM';
 
 // `[PREFIX:value]` markers concatenated in the col-19 comments field. Prefixes
 // are upper snake; values run to the next `]`.
@@ -504,6 +505,12 @@ export function requestedSpeciesFromComments(comments: string): string | null {
   return m ? m.value : null;
 }
 
+/** Prior scientific name for an explicit species correction, or null. */
+export function correctedFromFromComments(comments: string): string | null {
+  const m = parseTagMarkers(comments).find((t) => t.prefix === CORRECTED_FROM_PREFIX);
+  return m?.value || null;
+}
+
 /**
  * Build the col-19 comments string for one observation. `commonName` and
  * `requestedSpecies` land as reserved markers; `extra` carries through any
@@ -512,12 +519,15 @@ export function requestedSpeciesFromComments(comments: string): string | null {
 export function buildObservationComments(input: {
   commonName?: string;
   requestedSpecies?: string;
+  correctedFrom?: string;
   extra?: TagMarker[];
 }): string {
   const markers: TagMarker[] = [];
   if (input.commonName) markers.push({ prefix: COMMONNAME_PREFIX, value: input.commonName });
   if (input.requestedSpecies)
     markers.push({ prefix: REQUESTED_SPECIES_PREFIX, value: input.requestedSpecies });
+  if (input.correctedFrom)
+    markers.push({ prefix: CORRECTED_FROM_PREFIX, value: input.correctedFrom });
   if (input.extra) markers.push(...input.extra);
   return serializeTagMarkers(markers);
 }
@@ -531,6 +541,7 @@ export type ObservationInput = {
   commonName?: string; // → [COMMONNAME:…] in col 19
   requestedSpecies?: string; // → [REQUESTED_SPECIES:…] in col 19
   extraMarkers?: TagMarker[]; // preserved through-markers
+  correctedFrom?: string; // prior scientific name for an explicit replacement
 };
 
 /**
@@ -575,6 +586,7 @@ function buildObservationRow(
   row[OBS_COL.comments] = buildObservationComments({
     commonName: o.commonName,
     requestedSpecies: o.requestedSpecies,
+    correctedFrom: o.correctedFrom,
     extra: o.extraMarkers,
   });
   return row;

@@ -9,6 +9,7 @@ import {
   buildObservationComments,
   commonNameFromComments,
   requestedSpeciesFromComments,
+  correctedFromFromComments,
   computeSpeciesDelta,
   applyUploadMetaEdit,
   parseUploadMeta,
@@ -107,6 +108,16 @@ describe('tag marker grammar', () => {
     expect(
       buildObservationComments({ requestedSpecies: 'Jaguarundi', extra: [{ prefix: 'X', value: 'y' }] }),
     ).toBe('[REQUESTED_SPECIES:Jaguarundi][X:y]');
+  });
+
+  it('round-trips an explicit species correction marker', () => {
+    const comments = buildObservationComments({
+      commonName: 'Coyote',
+      correctedFrom: 'Puma concolor',
+      extra: [{ prefix: 'FUTURE_THING', value: '42' }],
+    });
+    expect(comments).toBe('[COMMONNAME:Coyote][CORRECTED_FROM:Puma concolor][FUTURE_THING:42]');
+    expect(correctedFromFromComments(comments)).toBe('Puma concolor');
   });
 });
 

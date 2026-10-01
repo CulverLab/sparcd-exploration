@@ -153,6 +153,23 @@ export function buildSyncPlan(
       else if (wasTagged && !nowTagged) summary.removals++;
       else summary.modifications++;
 
+      // A species replacement is the one-to-one case where an existing name
+      // disappeared and a different name was added on the same image. Keep
+      // that relationship on the replacement row so the canonical record
+      // explains what was corrected. Additions, removals, and count-only edits
+      // deliberately remain unmarked.
+      const baseNames = new Set(img.baseObservations.map((o) => o.scientificName));
+      const nextNames = new Set(obs.map((o) => o.scientificName));
+      const removedNames = img.baseObservations
+        .map((o) => o.scientificName)
+        .filter((name) => !nextNames.has(name));
+      const addedNames = obs
+        .map((o) => o.scientificName)
+        .filter((name) => !baseNames.has(name));
+      const replacementFrom = removedNames.length === 1 && addedNames.length === 1
+        ? removedNames[0]
+        : undefined;
+
       tagEdits.push({
         mediaId: img.key,
         deploymentId,
@@ -164,6 +181,9 @@ export function buildSyncPlan(
           count: Math.max(1, o.count),
           commonName: o.commonName || undefined,
           requestedSpecies: o.requestedSpecies || undefined,
+          correctedFrom: o.correctedFrom ?? (replacementFrom && o.scientificName === addedNames[0]
+            ? replacementFrom
+            : undefined),
         })),
       });
     } else if (timeChanged) {

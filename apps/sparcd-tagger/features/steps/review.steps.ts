@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { parseObservations } from '@sparcd/camtrap';
 import {
   Given,
   When,
@@ -15,7 +16,7 @@ import {
   openUpload,
 } from './support/world';
 import { BUCKET, PREFIX_A, MEDIA_A } from './support/data';
-import { openSyncDialog, setSyncDryRun, readStore, waitForSyncDialogClosed } from './support/flows';
+import { openSyncDialog, setSyncDryRun, readStore, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
 
 const appliedChip = (page: Page, label: string) =>
   page.locator('span.inline-flex:not([data-testid="applied-species-summary"])').filter({ hasText: label }).first();
@@ -107,6 +108,37 @@ Then('several species collapse to a summary that can be expanded', async ({ page
 Given('the focused image records a species with a count', async ({ page }) => {
   await focusFrame(page, 'IMG001.JPG');
   await expect(appliedChip(page, 'Mule Deer').locator('input[type="number"]')).toHaveValue('2');
+});
+
+Given('the focused image carries an existing species to correct', async ({ page }) => {
+  await sectionTab(page, 'Settings').click();
+  await page.locator('#user').fill('jgonzalez');
+  await sectionTab(page, 'Tag').click();
+  await focusFrame(page, 'IMG004.JPG');
+  await expandApplied(page);
+  await expect(appliedChip(page, 'Mountain Lion')).toBeVisible();
+});
+
+When('the existing species is replaced with another species', async ({ page }) => {
+  await page.getByRole('button', { name: 'Remove Mountain Lion' }).click();
+  await speciesApply(page, 'Pecari tajacu').click();
+  await expect.poll(async () => (await draftSpecies(page, 'IMG004.JPG')).sort()).toEqual([
+    'Canis latrans',
+    'Pecari tajacu',
+  ]);
+  await waitForDirtyDrafts(page, 1);
+});
+
+Then('the stored replacement records the previous species as corrected', async ({ s3 }) => {
+  const observations = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`));
+  const replacement = observations.find(
+    (o) => o.mediaId.endsWith('IMG004.JPG') && o.scientificName === 'Pecari tajacu',
+  );
+  expect(replacement).toBeTruthy();
+  expect(replacement!.tags).toContain('[CORRECTED_FROM:Puma concolor]');
+  expect(
+    observations.some((o) => o.mediaId.endsWith('IMG004.JPG') && o.scientificName === 'Puma concolor'),
+  ).toBe(false);
 });
 
 When('the count is changed', async ({ page }) => {
