@@ -25,6 +25,11 @@ export type FlipObservation = {
   count: number;
   requestedSpecies: string;
   freeTags: string;
+  /** Identity captured when this identification was made. */
+  classifiedBy?: string;
+  /** ISO timestamp paired with classifiedBy. */
+  classificationTimestamp?: string;
+  reviewEvents?: { reviewedBy: string; reviewedAt: string }[];
 };
 
 /**

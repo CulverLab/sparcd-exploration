@@ -48,7 +48,7 @@ Then('every complete snapshot of this upload is listed, most recent first', asyn
 });
 
 Then(
-  'each entry states when it was taken, by which tagger identity, and how many files it holds',
+  'each entry states when it was taken, by which connected account or local handoff identity, and how many files it holds',
   async ({ page }) => {
     const item = snapshotItems(page).first();
     await expect(item).toContainText('2024-02-01 12:00:00');
@@ -91,7 +91,7 @@ Then(
 
 When('a snapshot is chosen for restore', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);
   await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -118,11 +118,6 @@ Given('a snapshot has been chosen', async ({ page }) => {
   await expect(page.getByText('Comparing the snapshot to the current files…')).toBeHidden();
 });
 
-Then('a restore cannot be run without a tagger identity', async ({ page }) => {
-  await expect(page.getByText('Set a Tagger identity in Settings first')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Restore now|Run dry-run/ })).toBeDisabled();
-});
-
 Then(
   'while the dry-run setting is on, running it reports that nothing was written',
   async ({ page, s3 }) => {
@@ -131,7 +126,7 @@ Then(
     await sectionTab(page, 'Settings').click();
     await settingsDryRunCheckbox(page).check();
     await expect(settingsDryRunCheckbox(page)).toBeChecked();
-    await page.locator('#user').fill('jgonzalez');
+    await expect(page.locator('#user')).toHaveValue('testkey');
     await sectionTab(page, 'Tag').click();
     await openSnapshots(page);
     await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -145,7 +140,7 @@ Then(
 
 When('a snapshot is restored', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);
   await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -164,7 +159,7 @@ When('a snapshot is restored', async ({ page }) => {
 Then(
   'the current stored files are first copied to a new snapshot filed under the restoring identity',
   async ({ s3 }) => {
-    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'));
+    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/testkey/'));
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
@@ -179,7 +174,9 @@ Then(
 
 Then("only then are the snapshot's versions written back in place", async ({ s3 }) => {
   const lastSnapshot = s3.puts.findLastIndex((p) => p.key.includes('.sparcd-tagger-snapshots/'));
-  const canonical = s3.puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+  const canonical = s3.puts.filter(
+    (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+  );
   expect(canonical.length).toBeGreaterThan(0);
   expect(s3.puts.indexOf(canonical[0])).toBeGreaterThan(lastSnapshot);
   expect(canonical.every((p) => p.ifMatch !== undefined)).toBe(true);
@@ -191,7 +188,7 @@ Then("only then are the snapshot's versions written back in place", async ({ s3 
 
 Given('the stored files changed since the restore was previewed', async ({ page, s3 }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await settingsDryRunCheckbox(page).uncheck();
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);
@@ -222,12 +219,14 @@ Then('the restore replaces the files it re-read at the moment it ran', async ({ 
 Then(
   'every replacement still carries the precondition that catches a change made mid-write',
   async ({ s3 }) => {
-    const canonical = s3.puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+    const canonical = s3.puts.filter(
+      (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+    );
     expect(canonical.length).toBeGreaterThan(0);
     expect(canonical.every((p) => !!p.ifMatch)).toBe(true);
     // And the pre-restore snapshot captured the third party's state, so it is
     // recoverable rather than lost.
-    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'));
+    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/testkey/'));
     expect(snaps.find((p) => p.key.endsWith('observations.csv'))!.body).toBe('rewritten elsewhere');
   },
 );
@@ -325,4 +324,3 @@ Then("the other uploads' snapshots are still listed", async ({ page }) => {
   await expect(section).toContainText('2024-02-01 12:00:00');
   await expect(section).not.toContainText('2024-04-04');
 });
-

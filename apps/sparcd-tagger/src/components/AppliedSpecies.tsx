@@ -21,6 +21,12 @@ function labelOf(o: DraftObservation): string {
   return isGhostObs(o) ? 'Ghost' : o.commonName || o.scientificName;
 }
 
+function reviewLabel(o: DraftObservation): string | null {
+  const reviewEvents = o.reviewEvents ?? [];
+  const review = reviewEvents[reviewEvents.length - 1];
+  return review ? `Reviewed by ${review.reviewedBy} at ${review.reviewedAt}` : null;
+}
+
 export function AppliedSpecies(props: AppliedSpeciesProps) {
   const [expanded, setExpanded] = useState(false);
   const obs = props.observations;
@@ -98,6 +104,16 @@ function Chip({
       <span className="truncate max-w-[12rem]">
         {ghost ? '◯ Ghost' : labelOf(obs)}
       </span>
+      {obs.classifiedBy && (
+        <span className="text-[11px] text-inkMute" aria-label={`Originally identified by ${obs.classifiedBy}`}>
+          Originally identified by {obs.classifiedBy}
+        </span>
+      )}
+      {reviewLabel(obs) && (
+        <span className="text-[11px] text-inkMute" aria-label={reviewLabel(obs)!}>
+          {reviewLabel(obs)}
+        </span>
+      )}
       {obs.requestedSpecies && (
         <span className="font-mono text-inkMute text-[11px]">requested</span>
       )}

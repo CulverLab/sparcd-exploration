@@ -9,6 +9,8 @@ const appDir = fileURLToPath(new URL('../', import.meta.url));
 const benchDir = fileURLToPath(new URL('./', import.meta.url));
 const resultsDir = path.join(benchDir, 'results');
 const containerName = `sparcd-uploader-bench-${process.pid}`;
+const minioImage = process.env.MINIO_IMAGE ||
+  'docker.io/alpine/minio:RELEASE.2025-10-15T17-29-55Z@sha256:cf23643a6cf9ce159c57643ceb88279e431262282428c9e0bf3a7ef1a97e84b4';
 const minioOrigin = 'http://127.0.0.1:19000';
 const collectionUuid = '11111111-1111-1111-1111-111111111111';
 const collectionBucket = `sparcd-${collectionUuid}`;
@@ -63,10 +65,11 @@ try {
 
   run('docker', [
     'run', '-d', '--rm', '--name', containerName, '-p', '19000:9000',
+    '-u', '0',
     '-e', 'MINIO_ROOT_USER=minioadmin',
     '-e', 'MINIO_ROOT_PASSWORD=minioadmin',
     '-e', 'MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:5316',
-    'quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z', 'server', '/data',
+    minioImage, 'server', '/data',
   ]);
   containerStarted = true;
   await waitFor(`${minioOrigin}/minio/health/ready`, 'MinIO');
