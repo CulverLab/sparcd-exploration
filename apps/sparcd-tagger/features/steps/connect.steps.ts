@@ -25,7 +25,6 @@ import {
   setSyncDryRun,
   readStore,
   waitForDirtyDrafts,
-  waitForSyncDialogClosed,
 } from './support/flows';
 
 // --- Background / shared givens ---------------------------------------------
@@ -201,15 +200,6 @@ Then('the tagger returns to the connection screen', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
-Then('after reloading and reconnecting, it has no identity carried over', async ({ page }) => {
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-  await connect(page);
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
-});
-
 // --- Tag gate ---------------------------------------------------------------
 
 When('no upload has been opened from Browse', async ({ page }) => {
@@ -228,22 +218,18 @@ Then('Browse, History and Settings remain available', async ({ page }) => {
 
 // --- Identity ---------------------------------------------------------------
 
-When('a tagger identity is entered in Settings', async ({ page }) => {
-  await openSettings(page);
-  await page.locator('#user').fill('jgonzalez');
-  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+Then('Settings shows the connected storage username', async ({ page }) => {
+  await expect(page.locator('#user')).toHaveValue('testkey');
 });
 
-Then('that identity is retained in Settings', async ({ page }) => {
-  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+Then('Settings shows connected storage username {string}', async ({ page }, username: string) => {
+  await openSettings(page);
+  await expect(page.locator('#user')).toHaveValue(username);
+  await sectionTab(page, 'Tag').click();
 });
 
-Then('a fresh connection starts with no identity carried over', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-  await connect(page);
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
+Then('the connected identity cannot be edited', async ({ page }) => {
+  await expect(page.locator('#user')).toHaveAttribute('readonly', '');
 });
 
 When('the tagger is opened in a second tab of the same browser', async ({ context, s3, scratch }) => {
@@ -252,12 +238,6 @@ When('the tagger is opened in a second tab of the same browser', async ({ contex
   await second.goto(APP_URL);
   await expect(sectionTab(second, 'Browse')).toBeVisible();
   scratch.second = second;
-});
-
-Then('that identity is retained in Settings of the second tab', async ({ scratch }) => {
-  const second = scratch.second as import('@playwright/test').Page;
-  await openSettings(second);
-  await expect(second.locator('#user')).toHaveValue('jgonzalez');
 });
 
 When('a sibling tool connects the shared session with different credentials', async ({ context }) => {
@@ -286,42 +266,6 @@ When('a sibling tool connects the shared session with different credentials', as
   }, ENDPOINT);
 });
 
-Then('Settings shows no tagger identity', async ({ page }) => {
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-});
-
-Then(
-  'that identity is used for the audit-snapshot path and the edit comment of every sync',
-  async ({ page, s3 }) => {
-    await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
-    await collectionButton(page, COLLECTION_NAME).click();
-    await openWorkspaceFromBrowse(page);
-    await makeLocalEdit(page);
-    await openSyncDialog(page);
-    await setSyncDryRun(page, false);
-    await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-
-    const written = s3.puts.filter((p) => p.key.endsWith('UploadMeta.json'));
-    expect(written.length).toBeGreaterThan(0);
-    const meta = JSON.parse(written[written.length - 1].body) as { editComments: string[] };
-    expect(meta.editComments.join('\n')).toContain('jgonzalez');
-    expect(s3.puts.some((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'))).toBe(true);
-  },
-);
-
-Then('a live sync or restore cannot be run while the identity is empty', async ({ page }) => {
-  await waitForSyncDialogClosed(page);
-  await openSettings(page);
-  await page.locator('#user').fill('');
-  await sectionTab(page, 'Tag').click();
-  await openSyncDialog(page);
-  await expect(page.getByText('Set a Tagger identity in Settings first')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Sync now|Run dry-run/ })).toBeDisabled();
-});
-
 // --- Session defaults -------------------------------------------------------
 
 When('Settings is opened for the first time in a session', async ({ page }) => {
@@ -345,7 +289,7 @@ Then(
   async ({ page, s3 }) => {
     await expect(settingsDryRunCheckbox(page)).not.toBeChecked();
     // An identity is required before the dialog will run anything at all.
-    await page.locator('#user').fill('jgonzalez');
+    await expect(page.locator('#user')).toHaveValue('testkey');
     await sectionTab(page, 'Browse').click();
     await collectionButton(page, COLLECTION_NAME).click();
     await openWorkspaceFromBrowse(page);

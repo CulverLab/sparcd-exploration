@@ -66,6 +66,8 @@ function ready(
     exifNaive?: NaiveDateTime;
     exifTimestampSource?: 'exif-modify';
     manualNaive?: NaiveDateTime;
+    preTags?: FlipObservation[];
+    preTaggerUser?: string;
     mediaKind?: FileEntry['mediaKind'];
   } = {},
 ): FileEntry {
@@ -86,6 +88,8 @@ function ready(
     exifNaive: 'exifNaive' in opts ? opts.exifNaive : naive(),
     exifTimestampSource: opts.exifTimestampSource,
     manualNaive: opts.manualNaive,
+    preTags: opts.preTags,
+    preTaggerUser: opts.preTaggerUser,
   };
 }
 
@@ -117,6 +121,51 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     expect(rows[0].count).toBe(0); // blank column reads back as 0
     // Observation timestamp matches the media row's EXIF-derived capture time.
     expect(rows[0].timestamp).toBe(parseMedia(b.mediaCsv)[0].timestamp);
+  });
+
+  it('writes the pre-upload tagger identity as classified_by', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{ scientificName: 'Canis latrans', commonName: 'Coyote', count: 1, requestedSpecies: '', freeTags: '' }],
+      preTaggerUser: 'anita',
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('anita');
+  });
+
+  it('prefers per-observation attribution when a local batch changed identities', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{
+        scientificName: 'Canis latrans',
+        commonName: 'Coyote',
+        count: 1,
+        requestedSpecies: '',
+        freeTags: '',
+        classifiedBy: 'alice',
+        classificationTimestamp: '2024-01-20T14:30:00.000Z',
+      }],
+      preTaggerUser: 'bob',
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('alice');
+    expect(rows[0].classificationTimestamp).toBe('2024-01-20T14:30:00.000Z');
+  });
+
+  it('preserves separate review events through a tagger-to-uploader handoff', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{
+        scientificName: 'Canis latrans',
+        commonName: 'Coyote',
+        count: 1,
+        requestedSpecies: '',
+        freeTags: '',
+        classifiedBy: 'fielduser',
+        classificationTimestamp: '2024-01-11T00:00:00.000Z',
+        reviewEvents: [{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }],
+      }],
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('fielduser');
+    expect(rows[0].reviewEvents).toEqual([{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }]);
   });
 
   it('media.csv carries the DST-corrected full ISO capture time in col 4', async () => {

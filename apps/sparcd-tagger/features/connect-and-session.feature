@@ -6,8 +6,9 @@ Feature: Connect the tagger to a collection store and manage the session
   """
   As-built flow: before any tagging is possible the tagger must be given
   S3-compatible credentials. The tool is a static, bring-your-own-credentials
-  page — it holds no accounts of its own. Session-level choices (who is
-  tagging, whether writes are real, how images are grouped) live in Settings.
+  page — it holds no accounts of its own. Session-level choices (whether writes
+  are real and how images are grouped) live in Settings. Connected attribution
+  comes from the storage username.
   """
 
   Background:
@@ -61,14 +62,6 @@ Feature: Connect the tagger to a collection store and manage the session
     And it no longer shows the previous connection's collections or images
 
   @unmapped
-  Scenario: A disconnect from a sibling tool forgets the tagger identity
-    Given the tagger is connected
-    And a tagger identity is entered in Settings
-    When a sibling tool disconnects the shared session
-    Then the tagger returns to the connection screen
-    And after reloading and reconnecting, it has no identity carried over
-
-  @unmapped
   Scenario: The tagging workspace is unreachable until an upload is chosen
     Given the tagger is connected
     When no upload has been opened from Browse
@@ -76,42 +69,21 @@ Feature: Connect the tagger to a collection store and manage the session
     And Browse, History and Settings remain available
 
   @unmapped
-  Scenario: The tagger identity is entered in Settings and stamps every sync
+  Scenario: Connected storage username supplies Tagger attribution
     Given the tagger is connected
-    When a tagger identity is entered in Settings
-    Then that identity is used for the audit-snapshot path and the edit comment of every sync
-    And a live sync or restore cannot be run while the identity is empty
-    # The identity is free text typed by the user; the tool does not verify it
-    # against the credentials it connected with.
+    When Settings is opened
+    Then Settings shows the connected storage username
+    And the connected identity cannot be edited
 
-  @unmapped
-  Scenario: The tagger identity survives a reload
+  @H2 @H2-3
+  Scenario: A connected-account change updates future attribution
     Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And the browser is reloaded
-    And Settings is opened
-    Then that identity is retained in Settings
-
-  @unmapped
-  Scenario: The tagger identity is remembered on this device
-    Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And the tagger is opened in a second tab of the same browser
-    Then that identity is retained in Settings of the second tab
-
-  @unmapped
-  Scenario: A sibling tab connecting as someone else drops the tagger identity
-    Given the tagger is connected
-    And a tagger identity is entered in Settings
+    And an upload is open in the tagging workspace
     When a sibling tool connects the shared session with different credentials
-    Then Settings shows no tagger identity
-
-  @unmapped
-  Scenario: The tagger identity is forgotten on disconnect
-    Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And Disconnect is chosen
-    Then a fresh connection starts with no identity carried over
+    Then Settings shows connected storage username "otherkey"
+    When the connected account assigns a species to an image
+    And the upload is synced
+    Then the new identification is attributed to "otherkey"
 
   @unmapped
   Scenario: Real writes are the default; dry-run is opt-in

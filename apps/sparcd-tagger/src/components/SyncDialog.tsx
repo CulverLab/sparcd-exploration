@@ -191,8 +191,8 @@ export function SyncDialog({
 
           {!user && !error && (
             <p className="text-warn font-mono text-[13px] border border-warn px-3 py-2">
-              Set a Tagger identity in Settings first — it stamps the audit snapshot path and the
-              mandatory edit comment.
+              Connect with a storage username first — it supplies the attribution, audit snapshot
+              path and mandatory edit comment.
             </p>
           )}
 
@@ -320,16 +320,23 @@ function LocationChangeNote({ pendingLocation }: { pendingLocation: Deployment }
 function SummaryGrid({
   summary,
 }: {
-  summary: { additions: number; modifications: number; removals: number; timeCorrections: number };
+  summary: {
+    additions: number;
+    modifications: number;
+    removals: number;
+    timeCorrections: number;
+    confirmations: number;
+  };
 }) {
   const cells: [string, number][] = [
     ['Added', summary.additions],
     ['Changed', summary.modifications],
     ['Removed', summary.removals],
     ['Time-corrected', summary.timeCorrections],
+    ['Confirmed', summary.confirmations],
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
       {cells.map(([label, n]) => (
         <div key={label} className="border border-rule px-2 py-1.5 text-center">
           <div className="font-mono text-[18px] text-ink leading-none">{n}</div>

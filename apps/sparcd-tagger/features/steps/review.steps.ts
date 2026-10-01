@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { parseObservations, parseCsvRows, serializeCsvRows, OBS_COL } from '@sparcd/camtrap';
 import {
   Given,
   When,
@@ -16,6 +17,12 @@ import {
 } from './support/world';
 import { BUCKET, PREFIX_A, MEDIA_A } from './support/data';
 import { openSyncDialog, setSyncDryRun, readStore, waitForSyncDialogClosed } from './support/flows';
+
+/** One cell of the preview's Added / Changed / Removed / Time-corrected / Confirmed grid. */
+const summaryCell = (page: Page, label: string) =>
+  page.locator('div.border.text-center').filter({ hasText: label });
+
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const appliedChip = (page: Page, label: string) =>
   page.locator('span.inline-flex:not([data-testid="applied-species-summary"])').filter({ hasText: label }).first();
@@ -227,29 +234,85 @@ Then('a selection of images can be marked in one action', async ({ page }) => {
   }
 });
 
-// --- Confirmation records nothing -------------------------------------------
+// --- Confirmation records a review (#368) -----------------------------------
 
 Given('an existing identification is re-applied unchanged', async ({ page }) => {
   await focusFrame(page, 'IMG001.JPG');
   await speciesApply(page, 'Odocoileus hemionus').click();
 });
 
+Given('an existing identification has original attribution', async ({ page, s3 }) => {
+  const key = `${PREFIX_A}observations.csv`;
+  const rows = parseCsvRows(s3.text(BUCKET, key));
+  const row = rows.find((cells) => cells[OBS_COL.mediaId]?.endsWith('IMG001.JPG'))!;
+  row[OBS_COL.classifiedBy] = 'fielduser';
+  row[OBS_COL.classificationTimestamp] = '2024-01-11T00:00:00.000Z';
+  s3.put(BUCKET, key, serializeCsvRows(rows), 'text/csv');
+  await page.reload();
+  await openWorkspace(page);
+  await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer');
+  await expect(page.locator('[aria-label="Originally identified by fielduser"]')).toBeVisible();
+});
+
 When('a sync is previewed', async ({ page }) => {
   await openSyncDialog(page);
 });
 
-Then('no change is reported for that image', async ({ page, s3 }) => {
-  await expect(
-    page.getByText('No local edits to sync — everything matches the canonical files.'),
-  ).toBeVisible();
-  expect(s3.puts).toHaveLength(0);
+Then('the preview reports one confirmed image and no other change', async ({ page }) => {
+  await expect(summaryCell(page, 'Added')).toHaveText('0Added');
+  await expect(summaryCell(page, 'Changed')).toHaveText('0Changed');
+  await expect(summaryCell(page, 'Removed')).toHaveText('0Removed');
+  await expect(summaryCell(page, 'Confirmed')).toHaveText('1Confirmed');
 });
+
+When('that sync is run live', async ({ page }) => {
+  await setSyncDryRun(page, false);
+  await page.getByRole('button', { name: 'Sync now' }).click();
+  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
+});
+
+Then(
+  "the confirmed image's stored identification is stamped with the reviewer and the time of the review",
+  async ({ s3 }) => {
+    const obs = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`));
+    const row = obs.find(
+      (o) => o.mediaId.endsWith('IMG001.JPG') && o.scientificName === 'Odocoileus hemionus',
+    );
+    expect(row).toBeTruthy();
+    expect(row!.classifiedBy).toBe('testkey');
+    expect(row!.classificationTimestamp).toMatch(ISO_TIMESTAMP);
+    expect(row!.reviewEvents).toEqual([{ reviewedBy: 'testkey', reviewedAt: expect.stringMatching(ISO_TIMESTAMP) }]);
+  },
+);
+
+Then('the original identifier and separate review remain visible in the stored image', async ({ s3 }) => {
+  const obs = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`));
+  const row = obs.find((o) => o.mediaId.endsWith('IMG001.JPG') && o.scientificName === 'Odocoileus hemionus');
+  expect(row).toMatchObject({
+    classifiedBy: 'fielduser',
+    classificationTimestamp: '2024-01-11T00:00:00.000Z',
+  });
+  expect(row?.reviewEvents).toEqual([{ reviewedBy: 'testkey', reviewedAt: expect.stringMatching(ISO_TIMESTAMP) }]);
+});
+
+Then(
+  "the corrected image's stored identification is stamped with the reviewer and the time of the review",
+  async ({ s3 }) => {
+    const obs = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`));
+    const row = obs.find(
+      (o) => o.mediaId.endsWith('IMG002.JPG') && o.scientificName === 'Canis latrans',
+    );
+    expect(row).toBeTruthy();
+    expect(row!.classifiedBy).toBe('testkey');
+    expect(row!.classificationTimestamp).toMatch(ISO_TIMESTAMP);
+  },
+);
 
 // --- Attribution ------------------------------------------------------------
 
 Given('identifications were corrected locally', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await focusFrame(page, 'IMG002.JPG');
   await speciesApply(page, 'Canis latrans').click();
@@ -264,13 +327,13 @@ When('a live sync is run', async ({ page }) => {
 });
 
 Then(
-  'the upload\'s metadata gains an edit comment carrying the tagger identity and the time of the edit',
+  'the upload\'s metadata gains an edit comment carrying the connected account and the time of the edit',
   async ({ s3 }) => {
     const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)) as {
       editComments: string[];
     };
     const last = meta.editComments[meta.editComments.length - 1];
-    expect(last).toContain('jgonzalez');
+    expect(last).toContain('testkey');
     expect(last).toMatch(/\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{2}/);
   },
 );
@@ -278,7 +341,7 @@ Then(
 Then('the pre-change snapshot of the upload is filed under that same identity', async ({ s3 }) => {
   const snapshots = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/'));
   expect(snapshots.length).toBeGreaterThan(0);
-  for (const p of snapshots) expect(p.key).toContain('.sparcd-tagger-snapshots/jgonzalez/');
+  for (const p of snapshots) expect(p.key).toContain('.sparcd-tagger-snapshots/testkey/');
   expect(snapshots.some((p) => p.key.endsWith('manifest.json'))).toBe(true);
 });
 
@@ -297,7 +360,7 @@ Then('its tile carries an unsaved-edit marker', async ({ page }) => {
 
 Then('the marker is cleared for that image once its change has been synced', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSyncDialog(page);
   await setSyncDryRun(page, false);
