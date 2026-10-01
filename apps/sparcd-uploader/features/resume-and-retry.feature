@@ -33,6 +33,13 @@ Feature: Resume an interrupted upload and retry a failed one
     And it shows how many of its files are done and how many failed
     And only uploads whose metadata was published are marked complete
 
+  @AL1 @AL1-6
+  Scenario: A resumed publication accepts matching existing metadata and completes
+    Given an interrupted upload has a matching UploadMeta publication already stored
+    When it is resumed
+    Then the resumed publication completes without replacing that metadata
+    And its completion record is written
+
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History
