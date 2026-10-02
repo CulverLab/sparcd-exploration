@@ -249,10 +249,49 @@ describe('store persistence', () => {
       uploadDescription: 'Sky Island transect',
       selectedBucket: 'bucket::uuid',
       selectedLocationKey: 'loc-7',
+      requireCollectionSelection: false,
       uploadTimeZone: 'America/Phoenix',
       dryRun: false,
       concurrencyMode: 'manual',
       uploadConcurrency: 16,
+    });
+  });
+});
+
+describe('starting a new batch', () => {
+  it('clears assignment details while preserving identity and run preferences', () => {
+    useStore.setState({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: 'bucket::uuid',
+      selectedLocationKey: 'loc-7',
+      uploadDescription: 'July retrieval',
+      uploadTimeZone: 'America/Phoenix',
+      dryRun: true,
+      concurrencyMode: 'manual',
+      uploadConcurrency: 16,
+    });
+
+    useStore.getState().nextBatch();
+
+    expect(useStore.getState()).toMatchObject({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: null,
+      selectedLocationKey: null,
+      requireCollectionSelection: true,
+      uploadDescription: '',
+      uploadTimeZone: '',
+      dryRun: true,
+      concurrencyMode: 'manual',
+      uploadConcurrency: 16,
+    });
+    const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
+    expect(persisted).toMatchObject({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: null,
+      selectedLocationKey: null,
+      requireCollectionSelection: true,
+      uploadDescription: '',
+      uploadTimeZone: '',
     });
   });
 });
