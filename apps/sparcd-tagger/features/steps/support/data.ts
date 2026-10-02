@@ -147,7 +147,7 @@ export const OBS_A: ObsSpec[] = [
     timestamp: '2024-01-11T06:00:00',
     scientificName: 'Canis latrans',
     count: 3,
-    comments: '[COMMONNAME:Coyote][REQUESTED_SPECIES:Grey Wolf]',
+    comments: '[COMMONNAME:Coyote][REQUESTED_SPECIES:Grey Wolf][REVIEWED_BY:fielduser][REVIEWED_AT:2024-01-12T09:30:00.000Z]',
   },
 ];
 

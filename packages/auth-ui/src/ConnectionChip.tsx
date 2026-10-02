@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   loadPersistedConnection,
   getLiveConnection,
@@ -6,6 +6,9 @@ import {
   type PersistedConnection,
 } from './session';
 import { useOnline } from './useOnline';
+
+// Keep the JSX runtime available to the package's server-rendered test path.
+void React;
 
 export type ConnectionChipProps = {
   /** Optional human identity, e.g. the SPARC'd username stamped on writes. */

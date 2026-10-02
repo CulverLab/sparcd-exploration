@@ -57,7 +57,7 @@
 | A1-2 | Images and their tags enter the system in a single upload | covered | uploader: tag-before-upload.feature: The upload carries the images and the identifications together | Images and applied species are published in one pass. |
 | A1-3 | Untagged images are accepted and marked as untagged | covered | uploader: tag-before-upload.feature: An untagged file is accepted and published as untagged | Tagged and untagged files publish together; untagged files have no species row. |
 | A1-4 | An upload with no tags at all is still accepted | covered | uploader: upload-run.feature: A batch with no species identifications is accepted and recorded as untagged | A wholly untagged batch publishes with placeholder rows and a zero-tag count. |
-| A1-5 | Tags made before upload are attributed to Anita | missing | — | No scenario attributes a pre-upload identification to its maker. |
+| A1-5 | Tags made before upload are attributed to Anita | covered | uploader: tag-before-upload.feature: Tags made before upload are attributed to the person who made them | The local-batch handoff identity is carried through the Flip handoff and written to observations.csv classified_by. |
 | A1-6 | Tags are not lost while waiting for a connection | partial | tagger: local-batch.feature: Coming back to the batch resumes the tagging | Tags survive reopening, but no scenario waits days and verifies uploaded data. |
 
 ## A2
@@ -109,7 +109,7 @@
 | --- | --- | --- | --- | --- |
 | H2-1 | An assigned species is saved and visible to others with access | untestable | tagger: sync-identifications-to-the-collection.feature: Synced identifications become visible to everyone with access | NOTES.md says visibility lacks a propagation-delay threshold. |
 | H2-2 | An image can carry more than one species | covered | tagger: H2-assign-species-to-images.feature: An image can carry more than one species | Both species remain and neither replaces the other. |
-| H2-3 | Identifications are attributed to the person who made them | partial | tagger: connect-and-session.feature: The tagger identity is entered in Settings and stamps every sync | Sync has an identity, but identification rows do not assert maker attribution. |
+| H2-3 | Identifications are attributed to the person who made them | covered | tagger: H2-attribute-identifications.feature: Identifications are attributed to the person who made them | Connected sessions derive attribution from the storage username, stamp new identification rows, and preserve another identifier's existing attribution. |
 | H2-4 | Only species valid for the collection can be assigned | missing | tagger: H2-assign-species-to-images.feature: The species list is browsable, not only searchable | The loaded vocabulary is not constrained per collection. |
 | H2-5 | An image Harold has identified is no longer counted as untagged | covered | tagger: H2-assign-species-to-images.feature: Dragging a species tile onto the focused image adds it at count one | The image tile changes from untagged to the assigned species. |
 | H2-6 | Harold can leave an image he cannot identify without tagging it | partial | tagger: H3-review-existing-identifications.feature: Existing identifications are shown on the images that carry them | Untagged images display correctly, but moving on without recording a species is not tested. |
@@ -126,7 +126,7 @@
 | H3-5 | A review records who carried it out | partial | tagger: H3-review-existing-identifications.feature: A correction is attributed to the person who synced it | Correction records identity and time; confirmation without change records no reviewer. |
 | H3-6 | The original identifier's work remains attributable | missing | — | No scenario displays original attribution beside a separate review. |
 | H3-7 | A review does not destroy the original uploaded data | partial | tagger: sync-identifications-to-the-collection.feature: The previous state is preserved before anything is replaced; tagger: H3-review-existing-identifications.feature: A correction is attributed to the person who synced it | The change is traceable, but the stored files are replaced and the upload record is rewritten on sync; the original survives only as a snapshot copy. |
-| H3-8 | Harold can tell reviewed identifications from unreviewed ones | missing | tagger: H3-review-existing-identifications.feature: An image edited locally is distinguishable from one that is not | The marker means unsynced edit, not reviewed versus unreviewed. |
+| H3-8 | Harold can tell reviewed identifications from unreviewed ones | covered | tagger: H3-review-existing-identifications.feature: Reviewed and unreviewed identifications are visibly distinguished | The focused species chips identify each observation as reviewed or not reviewed, and Overview reports mixed and unreviewed image states. |
 
 ## Totals
 
@@ -142,5 +142,5 @@
 | AL2 | 4 | 2 | 0 | 0 | 6 |
 | H1 | 3 | 0 | 1 | 2 | 6 |
 | H2 | 2 | 2 | 2 | 1 | 7 |
-| H3 | 1 | 5 | 2 | 0 | 8 |
-| Overall | 21 | 25 | 20 | 7 | 73 |
+| H3 | 2 | 4 | 2 | 0 | 8 |
+| Overall | 22 | 24 | 20 | 7 | 73 |

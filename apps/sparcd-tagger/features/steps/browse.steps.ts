@@ -339,7 +339,7 @@ Then("that upload's row is marked as having unsynced edits", async ({ page }) =>
 
 Then('an upload whose local edits have all been synced is marked as synced', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('tes…key');
   await sectionTab(page, 'Tag').click();
   await runLiveSync(page);
   await sectionTab(page, 'Browse').click();
