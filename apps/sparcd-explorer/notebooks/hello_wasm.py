@@ -271,6 +271,17 @@ def _():
       margin-top: 0.25rem;
     }
 
+    /* ── Sign-in field flag ──────────────────────────────────────────────── */
+    /* The sign-in inputs sit three shadow roots deep (marimo-form > marimo-dict >
+       marimo-text), where no selector written outside can reach. This sheet is
+       adopted into each marimo-text root, where :host() can pick the field by the
+       label marimo copies onto the host, and custom properties inherit through the
+       roots, so the sidebar flags a field by setting --sparcd-flag-<field> on the
+       form's wrapper. Unset, the outline stays none, as marimo draws it. */
+    :host([data-label*="Endpoint"]) input { outline: var(--sparcd-flag-endpoint, none); }
+    :host([data-label*="Access key"]) input { outline: var(--sparcd-flag-access, none); }
+    :host([data-label*="Secret key"]) input { outline: var(--sparcd-flag-secret, none); }
+
     /* ── Thumbnail grid ──────────────────────────────────────────────────── */
     .sparcd-grid {
       display: grid;
@@ -528,11 +539,31 @@ def _(StoredConnectionReader, mo):
 
 
 @app.cell(hide_code=True)
-def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo, remembered):
-    # S3 / MinIO credentials. Values prefill from .env when present, so a working
-    # local .env connects without submitting; failing that, from a remembered
-    # browser connection. Deployed users sign in via the form (rendered in the
-    # sidebar). This cell only defines the form; it does not display.
+def _(mo):
+    # The values from the last Connect. Downstream cells read these instead of
+    # creds_form.value, and the form cell rebuilds the form from them: when the
+    # sidebar redraws after Connect, marimo resets a form's fields to the values it
+    # was built with, which would erase what the user just typed.
+    get_signin, set_signin = mo.state(None, allow_self_loops=True)
+    return get_signin, set_signin
+
+
+@app.cell(hide_code=True)
+def _(
+    DEFAULT_ACCESS,
+    DEFAULT_ENDPOINT,
+    DEFAULT_SECRET,
+    DEFAULT_SECURE,
+    get_signin,
+    mo,
+    remembered,
+    set_signin,
+):
+    # S3 / MinIO credentials. Values prefill from the last Connect; before that,
+    # from .env when present, so a working local .env connects without submitting;
+    # failing that, from a remembered browser connection. Deployed users sign in via
+    # the form (rendered in the sidebar). This cell only defines the form; it does
+    # not display.
     def initial_connection(default_endpoint, default_access, default_secret, default_secure, remembered):
         """Choose browser form defaults without combining a partial secret source."""
         has_default_connection = bool(default_endpoint and default_access and default_secret)
@@ -558,7 +589,7 @@ def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo, reme
             "remember": uses_remembered_endpoint or uses_remembered_access,
         }
 
-    _initial = initial_connection(
+    _initial = get_signin() or initial_connection(
         DEFAULT_ENDPOINT,
         DEFAULT_ACCESS,
         DEFAULT_SECRET,
@@ -602,17 +633,23 @@ def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo, reme
             secure=_secure_in,
             remember=_remember_in,
         )
-        .form(label="", bordered=False, show_clear_button=True, submit_button_label="Connect")
+        .form(
+            label="",
+            bordered=False,
+            show_clear_button=True,
+            submit_button_label="Connect",
+            on_change=set_signin,
+        )
     )
     return (creds_form,)
 
 
 @app.cell(hide_code=True)
-def _(StoredConnectionWriter, creds_form, mo):
+def _(StoredConnectionWriter, get_signin, mo):
     # Persists (or explicitly forgets) the submitted connection only on an
     # actual Connect — never on the .env-driven first render — mirroring the
     # Tagger/Uploader apps, which save at connect() time, not per keystroke.
-    _submitted = creds_form.value
+    _submitted = get_signin()
     remember_sync = None
     if _submitted is not None:
         remember_sync = mo.ui.anywidget(
@@ -633,22 +670,20 @@ def _(
     DEFAULT_ENDPOINT,
     DEFAULT_SECRET,
     DEFAULT_SECURE,
-    creds_form,
-    mo,
+    get_signin,
     urlparse,
 ):
-    # Build the MinIO client from the submitted credentials, falling back to .env
-    # defaults on first load. Renders a compact connection chip.
-    _form_value = creds_form.value
-    if _form_value is None:
+    # Build the MinIO client from the last Connect, falling back to .env defaults on
+    # first load. Anything wrong with the form goes out as signin_problem, which the
+    # sidebar shows under Connect with the fields it is about highlighted.
+    _creds = get_signin()
+    if _creds is None and DEFAULT_ENDPOINT and DEFAULT_ACCESS and DEFAULT_SECRET:
         _creds = {
             "endpoint": DEFAULT_ENDPOINT,
             "access": DEFAULT_ACCESS,
             "secret": DEFAULT_SECRET,
             "secure": DEFAULT_SECURE,
-        } if (DEFAULT_ENDPOINT and DEFAULT_ACCESS and DEFAULT_SECRET) else None
-    else:
-        _creds = _form_value
+        }
 
     # Deliberately NO mo.stop here. mo.stop halts this cell AND every downstream
     # cell — including the single sidebar cell that hosts the sign-in form. In the
@@ -657,115 +692,88 @@ def _(
     # credentials. Instead, with no usable credentials we define client=None and let
     # the data cells degrade to empty-schema dataframes, so the whole app (and the
     # sidebar above all) always renders.
-    _missing = [
-        _name
-        for _key, _name in (("endpoint", "endpoint"), ("access", "access key"), ("secret", "secret key"))
-        if not (_creds or {}).get(_key, "").strip()
-    ]
-    if _missing:
-        client = None
-        is_wildcats_s3_endpoint = False
-        _need = " and ".join([", ".join(_missing[:-1]), _missing[-1]] if len(_missing) > 1 else _missing)
-        _connection_chip = mo.Html(
-            "<div class='sparcd-chip'><span class='led' style='background:var(--warn);"
-            "box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);'></span>"
-            f"<span>Enter your {_need} in the sidebar to load data.</span></div>"
-        )
-    else:
-        from html import escape as _esc_ep
-        from minio import Minio
-
-        def parse_endpoint(raw, default_secure):
-            """Check a typed endpoint; returns (host[:port], secure, problem), problem None when usable.
-
-            Accepts a bare name with an optional :port, or an http(s) address, so localhost
-            and custom ports work. Each problem describes what is in the text, in plain words,
-            because the people signing in are not expected to know URL syntax.
-            """
-            import re
-            from urllib.parse import urlsplit
-
-            raw = raw.strip()
-            scheme = re.match(r"([a-z][a-z0-9+.-]*):(/*)", raw, re.IGNORECASE)
-            # "localhost:9000" matches too; with no slashes it is a name and a number.
-            if scheme and not scheme[2] and scheme[1].lower() not in {"http", "https"}:
-                scheme = None
-            secure = scheme[1].lower() == "https" if scheme else bool(default_secure)
-            if any(c.isspace() for c in raw):
-                return raw, secure, "Remove the spaces."
-            if scheme and scheme[1].lower() not in {"http", "https"}:
-                return raw, secure, f"Start it with https:// instead of {scheme[0]}"
-            if scheme and scheme[2] != "//":
-                return raw, secure, f"Use exactly two slashes after “{scheme[1]}:”."
-            try:
-                parts = urlsplit(raw if scheme else f"//{raw}")
-            except ValueError:
-                return raw, secure, "This doesn't look like a web address."
-            rest = raw[raw.index("//") + 2 + len(parts.netloc):] if scheme else raw[len(parts.netloc):]
-            try:
-                parts.port
-            except ValueError:
-                return raw, secure, "The number after the “:” isn't valid."
-            if not parts.hostname:
-                return raw, secure, "The server name is missing."
-            if "@" in parts.netloc:
-                return raw, secure, "Remove the “@” and everything before it."
-            if rest not in {"", "/"}:
-                return raw, secure, f"Remove “{rest}” from the end."
-            return parts.netloc, secure, None
-
-        _ep, _secure, _problem = parse_endpoint(_creds["endpoint"], _creds["secure"])
-
-        # An unusable endpoint gets no client, so the registry cell stays quiet and this
-        # is the one place that explains what to fix.
-        if _problem:
-            client = None
-            is_wildcats_s3_endpoint = False
-            _connection_chip = mo.Html(
-                "<div class='sparcd-callout'>"
-                "<div class='t'>The Endpoint doesn't look right.</div>"
-                f"<div>{_esc_ep(_problem)} It should look like <b>server.example.org</b> "
-                "or <b>https://server.example.org</b>, with your server's name.</div>"
-                f"<div class='d'>You entered: {_esc_ep(_creds['endpoint'])}</div>"
-                "</div>"
-            )
+    client = None
+    is_wildcats_s3_endpoint = False
+    signin_host = None
+    signin_problem = None
+    if _creds is not None:
+        _missing = [_key for _key in ("endpoint", "access", "secret") if not _creds.get(_key, "").strip()]
+        if _missing:
+            _names = [{"endpoint": "endpoint", "access": "access key", "secret": "secret key"}[_k] for _k in _missing]
+            _need = " and ".join([", ".join(_names[:-1]), _names[-1]] if len(_names) > 1 else _names)
+            signin_problem = {"fields": _missing, "title": f"Enter your {_need}."}
         else:
-            # Exact-site point display is a data-protection concern; gate it to the trusted host.
-            _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
-            is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
+            from minio import Minio
 
-            client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
-            _connection_chip = mo.Html(
-                "<div class='sparcd-chip'><span class='led'></span>"
-                f"<span>Endpoint OK: <span class='host'>{_esc_ep(_ep)}</span></span></div>"
-            )
-    _connection_chip
-    return client, is_wildcats_s3_endpoint
+            def parse_endpoint(raw, default_secure):
+                """Check a typed endpoint; returns (host[:port], secure, problem), problem None when usable.
+
+                Accepts a bare name with an optional :port, or an http(s) address, so localhost
+                and custom ports work. Each problem describes what is in the text, in plain words,
+                because the people signing in are not expected to know URL syntax.
+                """
+                import re
+                from urllib.parse import urlsplit
+
+                raw = raw.strip()
+                scheme = re.match(r"([a-z][a-z0-9+.-]*):(/*)", raw, re.IGNORECASE)
+                # "localhost:9000" matches too; with no slashes it is a name and a number.
+                if scheme and not scheme[2] and scheme[1].lower() not in {"http", "https"}:
+                    scheme = None
+                secure = scheme[1].lower() == "https" if scheme else bool(default_secure)
+                if any(c.isspace() for c in raw):
+                    return raw, secure, "Remove the spaces."
+                if scheme and scheme[1].lower() not in {"http", "https"}:
+                    return raw, secure, f"Start it with https:// instead of {scheme[0]}"
+                if scheme and scheme[2] != "//":
+                    return raw, secure, f"Use exactly two slashes after “{scheme[1]}:”."
+                try:
+                    parts = urlsplit(raw if scheme else f"//{raw}")
+                except ValueError:
+                    return raw, secure, "This doesn't look like a web address."
+                rest = raw[raw.index("//") + 2 + len(parts.netloc):] if scheme else raw[len(parts.netloc):]
+                try:
+                    parts.port
+                except ValueError:
+                    return raw, secure, "The number after the “:” isn't valid."
+                if not parts.hostname:
+                    return raw, secure, "The server name is missing."
+                if "@" in parts.netloc:
+                    return raw, secure, "Remove the “@” and everything before it."
+                if rest not in {"", "/"}:
+                    return raw, secure, f"Remove “{rest}” from the end."
+                return parts.netloc, secure, None
+
+            _ep, _secure, _problem = parse_endpoint(_creds["endpoint"], _creds["secure"])
+            if _problem:
+                signin_problem = {
+                    "fields": ["endpoint"],
+                    "title": "The endpoint doesn't look right.",
+                    "message": f"{_problem} It should look like server.example.org "
+                    "or https://server.example.org, with your server's name.",
+                }
+            else:
+                # Exact-site point display is a data-protection concern; gate it to the trusted host.
+                _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
+                is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
+                client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
+                signin_host = _ep
+    return client, is_wildcats_s3_endpoint, signin_host, signin_problem
 
 
 @app.cell(hide_code=True)
-def _(client, mo):
+def _(client, mo, signin_host, signin_problem):
     # Collection registry. Reads every sparcd-<uuid> bucket's collection.json so the
-    # picker can show human-readable names; surfaces S3 errors as friendly callouts.
+    # picker can show human-readable names. Sign-in failures become signin_message,
+    # shown in the sidebar under Connect; the main area only gets a status chip.
     import json as _json
     from html import escape as _esc
 
     collections_registry = []
-    _connection_failed = False
-    _callout = None
-
-    def _error_callout(title, hint, detail_label, detail):
-        return mo.Html(
-            "<div class='sparcd-callout'>"
-            f"<div class='t'>{_esc(title)}</div>"
-            f"<div>{_esc(hint)}</div>"
-            f"<div class='d'>{_esc(detail_label)}: {_esc(detail)}</div>"
-            "</div>"
-        )
+    signin_message = signin_problem
+    _failed = False
 
     # client is None until the user signs in (deployed bundle) or .env auto-connects.
-    # Skip all S3 work in that state so the registry stays empty and NO error callout
-    # is shown — the connection chip already tells the user to enter credentials.
     if client is not None:
         from minio.error import S3Error as _S3Error
 
@@ -773,32 +781,39 @@ def _(client, mo):
             with mo.status.spinner(title="Reading collections…"):
                 _buckets = [b.name for b in client.list_buckets() if b.name.startswith("sparcd-")]
         except _S3Error as exc:
-            _hint = {
-                "InvalidAccessKeyId": "The access key wasn't recognized. Check it for typos.",
-                "SignatureDoesNotMatch": "The secret key doesn't match the access key. Check it for typos.",
-                "AccessDenied": "This account isn't allowed to see collections. Ask your SPARC'd administrator.",
-            }.get(exc.code, "Check the endpoint, access key, and secret key.")
-            _callout = _error_callout("Couldn't sign in.", _hint, "For support", exc.code or exc.message or str(exc))
-            _connection_failed = True
+            _fields, _message = {
+                "InvalidAccessKeyId": (["access"], "The access key wasn't recognized. Check it for typos."),
+                "SignatureDoesNotMatch": (
+                    ["secret"],
+                    "The secret key doesn't match the access key. Check it for typos.",
+                ),
+                "AccessDenied": ([], "This account isn't allowed to see collections. Ask your SPARC'd administrator."),
+            }.get(exc.code, ([], "Check the endpoint, access key, and secret key."))
+            signin_message = {
+                "fields": _fields,
+                "title": "Couldn't sign in.",
+                "message": _message,
+                "detail": exc.code or exc.message or str(exc),
+            }
+            _failed = True
             _buckets = []
         except Exception as exc:
-            _callout = _error_callout(
-                "Couldn't reach the server.",
-                "Check the endpoint and your internet connection.",
-                "For support",
-                str(exc),
-            )
-            _connection_failed = True
+            signin_message = {
+                "fields": ["endpoint"],
+                "title": "Couldn't reach the server.",
+                "message": "Check the endpoint and your internet connection.",
+                "detail": str(exc),
+            }
+            _failed = True
             _buckets = []
 
-        if not _buckets and not _connection_failed:
-            _callout = mo.Html(
-                "<div class='sparcd-callout'>"
-                "<div class='t'>No collections found.</div>"
-                "<div>You're signed in, but this account can't see any SPARC'd collections. "
-                "Ask your SPARC'd administrator for access.</div>"
-                "</div>"
-            )
+        if not _buckets and not _failed:
+            signin_message = {
+                "fields": [],
+                "title": "No collections found.",
+                "message": "You're signed in, but this account can't see any SPARC'd collections. "
+                "Ask your SPARC'd administrator for access.",
+            }
 
         for _b in _buckets:
             _uuid = _b.removeprefix("sparcd-")
@@ -811,8 +826,18 @@ def _(client, mo):
                 continue
 
     collections_registry.sort(key=lambda r: (r["name"].strip().lower(), r["bucket"]))
-    _callout if _callout is not None else None
-    return (collections_registry,)
+    _warn_led = (
+        "<span class='led' style='background:var(--warn);"
+        "box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);'></span>"
+    )
+    if client is not None and not _failed:
+        _status = f"<span class='led'></span><span>Signed in to <span class='host'>{_esc(signin_host)}</span></span>"
+    elif signin_message:
+        _status = f"{_warn_led}<span>Not signed in. See the message under Connect.</span>"
+    else:
+        _status = f"{_warn_led}<span>Sign in from the sidebar to load data.</span>"
+    mo.Html(f"<div class='sparcd-chip'>{_status}</div>")
+    return collections_registry, signin_message
 
 
 @app.cell(hide_code=True)
@@ -1155,6 +1180,7 @@ def _(
     display_options,
     mo,
     search_form,
+    signin_message,
 ):
     # ONE sidebar for the whole app, in a single cell. marimo mounts each
     # `marimo-sidebar` element into a shared slot keyed by a per-element id; when a
@@ -1175,9 +1201,24 @@ def _(
         "<div class='sparcd-note' style='margin:0 0 0.3rem;'>"
         "Sign in above to load this section.</div>"
     )
+    # Sign-in problems sit right under Connect. The fields they are about get an
+    # outline through --sparcd-flag-<field> (see "Sign-in field flag" in the theme).
+    _flags = "".join(f"--sparcd-flag-{_f}: 2px solid var(--warn);" for _f in (signin_message or {}).get("fields", []))
+    _signin_callout = []
+    if signin_message:
+        from html import escape as _esc_sb
+
+        _signin_callout = [mo.Html(
+            "<div class='sparcd-callout' role='alert'>"
+            f"<div class='t'>{_esc_sb(signin_message['title'])}</div>"
+            + (f"<div>{_esc_sb(signin_message['message'])}</div>" if signin_message.get("message") else "")
+            + (f"<div class='d'>For support: {_esc_sb(signin_message['detail'])}</div>" if signin_message.get("detail") else "")
+            + "</div>"
+        )]
     mo.sidebar([
         mo.Html("<div class='sparcd-side-label'>Connection</div>"),
-        creds_form,
+        mo.Html(f"<div style='{_flags}'>{creds_form}</div>"),
+        *_signin_callout,
         mo.Html("<div class='sparcd-side-label'>Collection</div>"),
         mo.Html(_signin) if _not_connected else collection_load_form,
         mo.Html("<div class='sparcd-side-label'>Query filters</div>"),
