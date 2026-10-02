@@ -86,6 +86,12 @@ Feature: Examine an image closely enough to catch every species
     # temporarily forcing `presignImage` to throw.
 
   @H1
+  Scenario: A missing derived preview falls back to the original
+    Given an image key uses the Media hash layout
+    When its preview image fails to load
+    Then the tile requests the original image key
+
+  @H1
   Scenario: Video media plays instead of zooming
     Given the focused item is a video clip
     Then it plays with the browser's own playback controls
