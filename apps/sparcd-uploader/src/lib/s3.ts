@@ -6,6 +6,7 @@
 import {
   SafeS3Client,
   listCollections as listCollectionsWith,
+  listUploadFolders,
   parseCollectionKey,
   translateReadError,
   type CollectionRef,
@@ -354,20 +355,21 @@ function deploymentLocationIds(csv: string): string[] {
 
 /**
  * The location ids a collection has actually deployed, read from each upload's
- * `Collections/<uuid>/Uploads/<upload>/deployments.csv`. Upload folders are
- * enumerated with a delimiter (no image walk), then one small GET per upload.
+ * `Collections/<uuid>/Uploads/<upload>/deployments.csv` in every bucket holding
+ * the collection. Upload folders are enumerated with a delimiter (no image
+ * walk), then one small GET per upload.
  */
 export async function listCollectionDeploymentLocationIds(
   cfg: S3Config,
   ref: CollectionRef,
 ): Promise<string[]> {
   const client = getClient(cfg);
-  const uploadDirs = await client.listCommonPrefixes(ref.bucket, `Collections/${ref.uuid}/Uploads/`);
+  const folders = await listUploadFolders(client, ref);
   const ids = new Set<string>();
   await Promise.all(
-    uploadDirs.map(async (dir) => {
+    folders.map(async ({ bucket, prefix }) => {
       try {
-        const bytes = await client.getObject(ref.bucket, `${dir}deployments.csv`);
+        const bytes = await client.getObject(bucket, `${prefix}deployments.csv`);
         for (const id of deploymentLocationIds(new TextDecoder().decode(bytes))) ids.add(id);
       } catch {
         // Upload without a deployments.csv yet, or unreadable / CORS-blocked.
@@ -457,6 +459,7 @@ export function makeEditIO(cfg: S3Config, bucket: string, uploadPrefix: string):
 }
 
 export type PublishedUpload = {
+  bucket: string; // the bucket this upload folder was read from; edits go there
   prefix: string; // full `Collections/<uuid>/Uploads/<stamp>/`
   stamp: string;
   meta: UploadMetaJson;
@@ -465,28 +468,31 @@ export type PublishedUpload = {
 };
 
 /**
- * List the published uploads of a collection for the management UI: each
- * upload's `UploadMeta.json` (description + tally) and its current deployment_id.
- * One small GET per upload; an upload missing either file is skipped.
+ * List the published uploads of a collection for the management UI, across
+ * every bucket holding it: each upload's `UploadMeta.json` (description +
+ * tally) and its current deployment_id. A folder is an upload once its
+ * `media.csv` exists, so one HEAD per folder skips the rest; an upload missing
+ * `UploadMeta.json` is skipped too.
  */
 export async function listPublishedUploads(cfg: S3Config, ref: CollectionRef): Promise<PublishedUpload[]> {
   const client = getClient(cfg);
-  const uploadDirs = await client.listCommonPrefixes(ref.bucket, `Collections/${ref.uuid}/Uploads/`);
+  const folders = await listUploadFolders(client, ref);
   const out = await Promise.all(
-    uploadDirs.map(async (prefix): Promise<PublishedUpload | null> => {
+    folders.map(async ({ bucket, prefix }): Promise<PublishedUpload | null> => {
       try {
-        const metaBytes = await client.getObject(ref.bucket, `${prefix}UploadMeta.json`);
+        await client.statObject(bucket, `${prefix}media.csv`);
+        const metaBytes = await client.getObject(bucket, `${prefix}UploadMeta.json`);
         const meta = parseUploadMeta(new TextDecoder().decode(metaBytes));
         let deploymentId: string | null = null;
         try {
-          const depText = new TextDecoder().decode(await client.getObject(ref.bucket, `${prefix}deployments.csv`));
+          const depText = new TextDecoder().decode(await client.getObject(bucket, `${prefix}deployments.csv`));
           deploymentId = parseCsvLine(depText.split('\n').find((l) => l.trim()) ?? '')[0]?.trim() || null;
         } catch {
           // No deployments.csv — leave deploymentId null.
         }
-        return { prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix, meta, deploymentId };
+        return { bucket, prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix, meta, deploymentId };
       } catch {
-        return null; // No UploadMeta.json yet, or unreadable / CORS-blocked.
+        return null; // No media.csv or UploadMeta.json yet, or unreadable / CORS-blocked.
       }
     }),
   );

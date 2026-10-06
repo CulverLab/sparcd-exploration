@@ -87,7 +87,7 @@ function UploadCard({
     setNote(null);
     try {
       // Re-read fresh canonical to ground the IfMatch base on the current bytes.
-      const fresh = await readUploadMeta(cfg, collection.bucket, upload.prefix);
+      const fresh = await readUploadMeta(cfg, upload.bucket, upload.prefix);
       const body = buildDescriptionEdit(fresh.text, {
         description,
         user,
@@ -95,14 +95,14 @@ function UploadCard({
       });
       const result = await runPublishedEdit(
         {
-          bucket: collection.bucket,
+          bucket: upload.bucket,
           uploadPrefix: upload.prefix,
           user,
           base: { uploadMeta: { etag: fresh.etag, hash: fresh.hash } },
           bodies: { uploadMeta: body },
           dryRun,
         },
-        makeEditIO(cfg, collection.bucket, upload.prefix),
+        makeEditIO(cfg, upload.bucket, upload.prefix),
       );
       setNote(resultNote(result, dryRun));
       if (result.status === 'edited' && !dryRun) {
@@ -124,7 +124,7 @@ function UploadCard({
     setNote(null);
     try {
       const roles = ['deployments', 'media', 'observations'] as const;
-      const fresh = await loadPublishedCanonical(cfg, collection.bucket, upload.prefix, [...roles]);
+      const fresh = await loadPublishedCanonical(cfg, upload.bucket, upload.prefix, [...roles]);
       const deployment = locationToDeployment(loc, uuid);
       const next = restampDeployment(
         {
@@ -136,7 +136,7 @@ function UploadCard({
       );
       const result = await runPublishedEdit(
         {
-          bucket: collection.bucket,
+          bucket: upload.bucket,
           uploadPrefix: upload.prefix,
           user,
           base: {
@@ -147,7 +147,7 @@ function UploadCard({
           bodies: { deployments: next.deployments, media: next.media, observations: next.observations },
           dryRun,
         },
-        makeEditIO(cfg, collection.bucket, upload.prefix),
+        makeEditIO(cfg, upload.bucket, upload.prefix),
       );
       setNote(resultNote(result, dryRun));
       if (result.status === 'edited' && !dryRun) {
