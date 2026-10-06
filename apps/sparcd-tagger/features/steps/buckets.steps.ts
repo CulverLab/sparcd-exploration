@@ -17,10 +17,10 @@ import {
   BUCKET,
   COLLECTION_NAME,
   DATA_BUCKET,
-  MEDIA_F,
+  MEDIA_G,
   PREFIX_A,
   PREFIX_B,
-  PREFIX_F,
+  PREFIX_G,
   mediaKey,
   seedDataBucket,
 } from './support/data';
@@ -36,7 +36,7 @@ async function expectRendered(page: Page, file: string, bucket: string, key: str
 }
 
 const coyoteRow = (s3: { text: (bucket: string, key: string) => string }) =>
-  parseObservations(s3.text(DATA_BUCKET, `${PREFIX_F}observations.csv`)).find(
+  parseObservations(s3.text(DATA_BUCKET, `${PREFIX_G}observations.csv`)).find(
     (row) => row.scientificName === 'Canis latrans',
   );
 
@@ -52,16 +52,16 @@ When('the upload stored in the data bucket is opened', async ({ page }) => {
 });
 
 Then('its images render from their Media keys, signed against the data bucket', async ({ page }) => {
-  for (const m of MEDIA_F) await expectRendered(page, m.file, DATA_BUCKET, m.key!);
+  for (const m of MEDIA_G) await expectRendered(page, m.file, DATA_BUCKET, m.key!);
 });
 
 When('a species is applied to one of its images and synced', async ({ page }) => {
-  await makeLocalEdit(page, MEDIA_F[0].file);
+  await makeLocalEdit(page, MEDIA_G[0].file);
   await runLiveSync(page);
 });
 
 Then("that upload's observations.csv in the data bucket records it", ({ s3 }) => {
-  expect(coyoteRow(s3)?.mediaId).toBe(MEDIA_F[0].key);
+  expect(coyoteRow(s3)?.mediaId).toBe(MEDIA_G[0].key);
 });
 
 Then("the observation id is built on the image's stamped name", ({ s3 }) => {
@@ -70,7 +70,7 @@ Then("the observation id is built on the image's stamped name", ({ s3 }) => {
 
 Then("nothing is written outside that upload's folder in the data bucket", ({ s3 }) => {
   expect(s3.puts.length).toBeGreaterThan(0);
-  expect(s3.puts.filter((p) => p.bucket !== DATA_BUCKET || !p.key.startsWith(PREFIX_F))).toEqual([]);
+  expect(s3.puts.filter((p) => p.bucket !== DATA_BUCKET || !p.key.startsWith(PREFIX_G))).toEqual([]);
 });
 
 // --- one collection, two buckets -------------------------------------------

@@ -562,18 +562,18 @@ export function seedFixtures(s3: MockS3): void {
 // --- The same collection, also in a data bucket (issue #376) -----------------
 
 export const DATA_BUCKET = 'field-data';
-export const STAMP_F = '2026.09.01.08.00.00_datauser';
-export const PREFIX_F = `Collections/${UUID}/Uploads/${STAMP_F}/`;
+export const STAMP_G = '2026.09.01.08.00.00_datauser';
+export const PREFIX_G = `Collections/${UUID}/Uploads/${STAMP_G}/`;
 /** A folder the uploader is still writing: everything but its media.csv. */
 export const PREFIX_UNFINISHED = `Collections/${UUID}/Uploads/2026.10.01.07.00.00_halfway/`;
 
-const BYTES_F = [makePng(240, 180, 101), makePng(240, 180, 102)];
+const BYTES_G = [makePng(240, 180, 101), makePng(240, 180, 102)];
 
 /** Upload F — stored by content: its images live under Media/, not in its folder. */
-export const MEDIA_F: MediaSpec[] = [
+export const MEDIA_G: MediaSpec[] = [
   { file: 'IMG101.JPG', timestamp: '2026-08-30T06:15:00', mime: 'image/jpeg' },
   { file: 'IMG102.JPG', timestamp: '2026-08-30T06:15:20', mime: 'image/jpeg' },
-].map((m, i) => ({ ...m, key: mediaLayoutKey(BYTES_F[i], m.timestamp, m.file) }));
+].map((m, i) => ({ ...m, key: mediaLayoutKey(BYTES_G[i], m.timestamp, m.file) }));
 
 /**
  * Split the collection across a data bucket and its legacy bucket. The data
@@ -588,23 +588,23 @@ export function seedDataBucket(s3: MockS3): void {
   copy(`Collections/${UUID}/collection.json`);
   s3.keys(BUCKET, PREFIX_B).forEach(copy);
 
-  s3.put(DATA_BUCKET, `${PREFIX_F}media.csv`, mediaCsv(PREFIX_F, MEDIA_F), 'text/csv');
-  s3.put(DATA_BUCKET, `${PREFIX_F}observations.csv`, blankObservationsCsv(PREFIX_F, MEDIA_F), 'text/csv');
-  s3.put(DATA_BUCKET, `${PREFIX_F}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(DATA_BUCKET, `${PREFIX_G}media.csv`, mediaCsv(PREFIX_G, MEDIA_G), 'text/csv');
+  s3.put(DATA_BUCKET, `${PREFIX_G}observations.csv`, blankObservationsCsv(PREFIX_G, MEDIA_G), 'text/csv');
+  s3.put(DATA_BUCKET, `${PREFIX_G}deployments.csv`, deploymentsCsv(), 'text/csv');
   s3.put(
     DATA_BUCKET,
-    `${PREFIX_F}UploadMeta.json`,
+    `${PREFIX_G}UploadMeta.json`,
     uploadMetaJson({
       bucket: DATA_BUCKET,
-      prefix: PREFIX_F,
+      prefix: PREFIX_G,
       user: 'datauser',
-      imageCount: MEDIA_F.length,
+      imageCount: MEDIA_G.length,
       imagesWithSpecies: 0,
       description: 'Stored by content',
     }),
     'application/json',
   );
-  MEDIA_F.forEach((m, i) => s3.put(DATA_BUCKET, m.key!, BYTES_F[i], 'image/png'));
+  MEDIA_G.forEach((m, i) => s3.put(DATA_BUCKET, m.key!, BYTES_G[i], 'image/png'));
 
   s3.put(DATA_BUCKET, `${PREFIX_UNFINISHED}deployments.csv`, deploymentsCsv(), 'text/csv');
   s3.put(

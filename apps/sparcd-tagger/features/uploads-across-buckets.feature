@@ -16,7 +16,7 @@ Feature: Tag uploads wherever the collection keeps them
   Scenario: An upload stored by content opens, renders and syncs in the data bucket
     When the upload stored in the data bucket is opened
     Then its images render from their Media keys, signed against the data bucket
-    Given a tagger identity has been set in Settings
+    Given the connected account is ready for attribution
     When a species is applied to one of its images and synced
     Then that upload's observations.csv in the data bucket records it
     And the observation id is built on the image's stamped name
