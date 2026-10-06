@@ -30,6 +30,7 @@ import {
   serializeDeployments,
   parseDeployments,
   parseCsvRows,
+  mediaObjectName,
   MEDIA_COL,
   OBS_COL,
   type MediaEdit,
@@ -304,7 +305,7 @@ async function buildWrites(
   const allMediaEdits = [...plan.tagEdits, ...plan.timeEdits];
   let mediaBody = mergeMedia(current.media.text, allMediaEdits);
   let observationsBody = mergeObservations(current.observations.text, plan.tagEdits, {
-    observationId: (mediaId, i) => `${mediaId.slice(uploadPrefix.length)}:${i}`,
+    observationId: (mediaId, i) => `${mediaObjectName(mediaId, uploadPrefix)}:${i}`,
   });
   let deploymentsBody = current.deployments.text;
   if (plan.locationEdit) {
