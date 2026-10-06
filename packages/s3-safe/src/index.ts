@@ -529,14 +529,29 @@ export class SafeS3Client {
 
 // --- Collections -----------------------------------------------------------
 //
-// A "collection" is a `sparcd-<uuid>` bucket carrying a deterministic
-// `collection.json` marker. Discovery probes that exact key in every candidate
-// bucket rather than listing the `Collections/` prefix, so a bucket the key
-// cannot read (or that CORS blocks) is simply skipped, never fatal. Every tool
-// that needs the collection list shares this so they never diverge on what a
-// collection is or how it is keyed.
+// A collection is a `Collections/<uuid>/` folder with a `collection.json`. Two
+// bucket shapes hold them, and one store may have both while it moves over:
+//
+// - Legacy: one bucket per collection named `sparcd-<uuid>`, images inside each
+//   upload folder. Discovery probes `collection.json` at the uuid the name gives.
+// - Data bucket: any other bucket holding `Collections/`, many collections side
+//   by side and images under `Media/<sha256>/`. Its name is the store's choice,
+//   so discovery lists `Collections/` instead of trusting a name. `sparcd` and
+//   `sparcd-*` are reserved for the legacy shape and are never data buckets.
+//
+// A uuid found in several buckets is one collection. Its uploads are read from
+// all of them, data buckets first, and new uploads go to its data bucket. A
+// bucket the key cannot read (or that CORS blocks) is skipped, never fatal.
+// Every tool that needs the collection list shares this so they never diverge
+// on what a collection is or how it is keyed.
 
-const COLLECTION_BUCKET_PREFIX = 'sparcd-';
+const LEGACY_BUCKET_PREFIX = 'sparcd-';
+
+/** Whether `bucket` has a legacy SPARC'd name, which is never read as a data bucket. */
+export function isLegacyBucket(bucket: string): boolean {
+  return bucket === 'sparcd' || bucket.startsWith(LEGACY_BUCKET_PREFIX);
+}
+
 // A store can expose a hundred-plus buckets. Firing every marker probe at once
 // just queues them all behind the browser's per-origin connection limit, and
 // starves whatever else the page needs mid-connect. Sixteen keeps the pipe full
@@ -560,8 +575,12 @@ async function mapLimit<T, R>(
 
 export type CollectionRef = {
   key: string; // `${bucket}::${uuid}`
-  bucket: string;
+  bucket: string; // where collection.json was read; collection-level files live here
   uuid: string;
+  /** Every bucket holding `Collections/<uuid>/`, data buckets first. */
+  buckets: string[];
+  /** The data bucket new uploads go to, or null when the collection only has its legacy bucket. */
+  dataBucket: string | null;
   name: string | null;
   organization: string | null;
   contact: string | null;
@@ -575,30 +594,67 @@ function cleanStr(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
+type Sighting = { bucket: string; uuid: string; doc: Record<string, unknown> | null };
+
+async function readCollectionDoc(
+  client: SafeS3Client,
+  bucket: string,
+  uuid: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const bytes = await client.getObject(bucket, `Collections/${uuid}/collection.json`);
+    return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  } catch {
+    return null; // No marker, or unreadable / CORS-blocked.
+  }
+}
+
 export async function listCollections(client: SafeS3Client): Promise<CollectionRef[]> {
-  const buckets = await client.listBuckets();
-  const candidates = buckets.filter(
-    (b) => b.startsWith(COLLECTION_BUCKET_PREFIX) && b.length > COLLECTION_BUCKET_PREFIX.length,
+  const buckets = (await client.listBuckets()).sort();
+  const legacy = buckets.filter(
+    (b) => b.startsWith(LEGACY_BUCKET_PREFIX) && b.length > LEGACY_BUCKET_PREFIX.length,
   );
-  const probed = await mapLimit(candidates, PROBE_CONCURRENCY, async (bucket) => {
-    const uuid = bucket.slice(COLLECTION_BUCKET_PREFIX.length).toLowerCase();
+  const dataCandidates = buckets.filter((b) => !isLegacyBucket(b));
+
+  const listed = await mapLimit(dataCandidates, PROBE_CONCURRENCY, async (bucket) => {
     try {
-      const bytes = await client.getObject(bucket, `Collections/${uuid}/collection.json`);
-      const doc = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
-      return {
-        key: `${bucket}::${uuid}`,
-        bucket,
-        uuid,
-        name: cleanStr(doc.nameProperty),
-        organization: cleanStr(doc.organizationProperty),
-        contact: cleanStr(doc.contactInfoProperty),
-        description: cleanStr(doc.descriptionProperty),
-      };
+      const prefixes = await client.listCommonPrefixes(bucket, 'Collections/');
+      return prefixes.map((p) => ({ bucket, uuid: p.slice('Collections/'.length, -1) }));
     } catch {
-      return null; // No marker, or unreadable / CORS-blocked. Keep probing.
+      return []; // Unlistable or CORS-blocked: not a data bucket this key can use.
     }
   });
-  const found = probed.filter((r): r is CollectionRef => r !== null);
+  const dataSightings = await mapLimit(listed.flat(), PROBE_CONCURRENCY, async (s): Promise<Sighting> => ({
+    ...s,
+    doc: await readCollectionDoc(client, s.bucket, s.uuid),
+  }));
+  const legacySightings = await mapLimit(legacy, PROBE_CONCURRENCY, async (bucket): Promise<Sighting> => {
+    const uuid = bucket.slice(LEGACY_BUCKET_PREFIX.length).toLowerCase();
+    return { bucket, uuid, doc: await readCollectionDoc(client, bucket, uuid) };
+  });
+
+  const byUuid = new Map<string, Sighting[]>();
+  // A legacy bucket without a readable marker is not this key's collection.
+  for (const s of [...dataSightings, ...legacySightings.filter((l) => l.doc)]) {
+    byUuid.set(s.uuid, [...(byUuid.get(s.uuid) ?? []), s]);
+  }
+
+  const found: CollectionRef[] = [];
+  for (const [uuid, sightings] of byUuid) {
+    const home = sightings.find((s) => s.doc);
+    if (!home?.doc) continue; // Uploads under a uuid nothing describes: not a collection.
+    found.push({
+      key: `${home.bucket}::${uuid}`,
+      bucket: home.bucket,
+      uuid,
+      buckets: sightings.map((s) => s.bucket),
+      dataBucket: sightings.find((s) => !isLegacyBucket(s.bucket))?.bucket ?? null,
+      name: cleanStr(home.doc.nameProperty),
+      organization: cleanStr(home.doc.organizationProperty),
+      contact: cleanStr(home.doc.contactInfoProperty),
+      description: cleanStr(home.doc.descriptionProperty),
+    });
+  }
   // Sort by display name so pickers read alphabetically; fall back to bucket,
   // then uuid as a stable tiebreak.
   return found.sort(
@@ -609,4 +665,27 @@ export async function listCollections(client: SafeS3Client): Promise<CollectionR
 export function parseCollectionKey(key: string): { bucket: string; uuid: string } {
   const [bucket, uuid] = key.split('::');
   return { bucket, uuid };
+}
+
+/** One upload folder: the bucket it was read from and its `Collections/<uuid>/Uploads/<name>/` prefix. */
+export type UploadFolder = { bucket: string; prefix: string };
+
+/**
+ * Every upload folder of a collection, across the buckets that hold it. A
+ * folder name found in more than one bucket (an upload copied into the data
+ * bucket) is read from the first, so it appears once. The image keys in a
+ * folder's `media.csv` resolve in that folder's bucket.
+ */
+export async function listUploadFolders(
+  client: SafeS3Client,
+  ref: Pick<CollectionRef, 'uuid' | 'buckets'>,
+): Promise<UploadFolder[]> {
+  const root = `Collections/${ref.uuid}/Uploads/`;
+  const perBucket = await Promise.all(
+    ref.buckets.map(async (bucket) =>
+      (await client.listCommonPrefixes(bucket, root)).map((prefix) => ({ bucket, prefix })),
+    ),
+  );
+  const seen = new Set<string>();
+  return perBucket.flat().filter((f) => !seen.has(f.prefix) && !!seen.add(f.prefix));
 }

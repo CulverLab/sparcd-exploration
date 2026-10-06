@@ -2,28 +2,45 @@ import { describe, it, expect } from 'vitest';
 import {
   SafeS3Client,
   BucketNotAllowedError,
+  isLegacyBucket,
   listCollections,
+  listUploadFolders,
   parseCollectionKey,
   translateReadError,
 } from '../src/index';
 
-// `listCollections` only ever calls `listBuckets()` and `getObject()`, so a
-// duck-typed stub covering those two is enough to exercise its filtering,
-// parsing, skip-on-error, and sort behavior without a live backend.
+// `listCollections` only ever calls `listBuckets()`, `listCommonPrefixes()` and
+// `getObject()`, so a duck-typed stub covering those is enough to exercise its
+// filtering, merging, skip-on-error, and sort behavior without a live backend.
+// Folders are derived from the object keys; `unlistable` buckets refuse listing.
 function fakeClient(
   buckets: string[],
   objects: Record<string, unknown | Error>,
-): SafeS3Client {
+  unlistable: string[] = [],
+): SafeS3Client & { listed: string[] } {
+  const listed: string[] = [];
   return {
+    listed,
     async listBuckets() {
       return buckets;
+    },
+    async listCommonPrefixes(bucket: string, prefix: string) {
+      listed.push(bucket);
+      if (unlistable.includes(bucket)) throw new Error('AccessDenied');
+      const folders = new Set<string>();
+      for (const path of Object.keys(objects)) {
+        if (!path.startsWith(`${bucket}/${prefix}`)) continue;
+        const rest = path.slice(bucket.length + 1 + prefix.length);
+        if (rest.includes('/')) folders.add(prefix + rest.slice(0, rest.indexOf('/') + 1));
+      }
+      return [...folders].sort();
     },
     async getObject(bucket: string, key: string) {
       const hit = objects[`${bucket}/${key}`];
       if (hit === undefined || hit instanceof Error) throw hit ?? new Error('NoSuchKey');
       return new TextEncoder().encode(JSON.stringify(hit));
     },
-  } as unknown as SafeS3Client;
+  } as unknown as SafeS3Client & { listed: string[] };
 }
 
 describe('parseCollectionKey', () => {
@@ -59,6 +76,8 @@ describe('listCollections', () => {
       key: 'sparcd-ALF::alf',
       bucket: 'sparcd-ALF',
       uuid: 'alf', // lowercased from the bucket suffix
+      buckets: ['sparcd-ALF'],
+      dataBucket: null,
       name: 'Alpha',
       organization: null, // absent organizationProperty → null
       contact: null,
@@ -112,6 +131,94 @@ describe('listCollections', () => {
     const result = await listCollections(client);
     expect(result).toHaveLength(129);
     expect(peak).toBeLessThanOrEqual(16);
+  });
+
+  it('finds every collection in a data bucket whatever its name', async () => {
+    const client = fakeClient(['field-store'], {
+      'field-store/Collections/u1/collection.json': { nameProperty: 'One' },
+      'field-store/Collections/u2/collection.json': { nameProperty: 'Two' },
+    });
+    const result = await listCollections(client);
+    expect(result.map((c) => [c.key, c.buckets, c.dataBucket])).toEqual([
+      ['field-store::u1', ['field-store'], 'field-store'],
+      ['field-store::u2', ['field-store'], 'field-store'],
+    ]);
+  });
+
+  it('merges a uuid held by a data bucket and its legacy bucket into one collection', async () => {
+    const client = fakeClient(['sparcd-u1', 'field-store'], {
+      'sparcd-u1/Collections/u1/collection.json': { nameProperty: 'Legacy name' },
+      'field-store/Collections/u1/collection.json': { nameProperty: 'Data name' },
+    });
+    const [ref, ...rest] = await listCollections(client);
+    expect(rest).toEqual([]);
+    expect(ref).toMatchObject({
+      key: 'field-store::u1',
+      bucket: 'field-store',
+      buckets: ['field-store', 'sparcd-u1'],
+      dataBucket: 'field-store',
+      name: 'Data name',
+    });
+  });
+
+  it('reads collection.json from the legacy bucket when the data bucket only holds uploads', async () => {
+    const client = fakeClient(['sparcd-u1', 'field-store'], {
+      'sparcd-u1/Collections/u1/collection.json': { nameProperty: 'Legacy name' },
+      'field-store/Collections/u1/Uploads/2026.01.01.00.00.00_ana/media.csv': {},
+    });
+    const [ref] = await listCollections(client);
+    expect(ref).toMatchObject({
+      key: 'sparcd-u1::u1',
+      bucket: 'sparcd-u1',
+      buckets: ['field-store', 'sparcd-u1'],
+      dataBucket: 'field-store',
+      name: 'Legacy name',
+    });
+  });
+
+  it('skips data-bucket folders nothing describes, and buckets it cannot list', async () => {
+    const client = fakeClient(
+      ['field-store', 'locked'],
+      { 'field-store/Collections/orphan/Uploads/x/media.csv': {} },
+      ['locked'],
+    );
+    expect(await listCollections(client)).toEqual([]);
+  });
+
+  it('never lists the reserved legacy names as data buckets', async () => {
+    const client = fakeClient(['sparcd', 'sparcd-settings-abc', 'sparcd-u1', 'field-store'], {
+      'sparcd/Collections/u9/collection.json': { nameProperty: 'Not a data bucket' },
+    });
+    await listCollections(client);
+    expect(client.listed).toEqual(['field-store']);
+  });
+});
+
+describe('isLegacyBucket', () => {
+  it('reserves `sparcd` and `sparcd-*`', () => {
+    expect(isLegacyBucket('sparcd')).toBe(true);
+    expect(isLegacyBucket('sparcd-settings-x')).toBe(true);
+    expect(isLegacyBucket('sparcd-8dbd9c43')).toBe(true);
+    expect(isLegacyBucket('sparcdata')).toBe(false);
+    expect(isLegacyBucket('field-store')).toBe(false);
+  });
+});
+
+describe('listUploadFolders', () => {
+  it('unions upload folders across buckets, reading a copied folder from the first bucket', async () => {
+    const up = (b: string, name: string) => `${b}/Collections/u1/Uploads/${name}/media.csv`;
+    const client = fakeClient([], {
+      [up('field-store', 'B_new')]: {},
+      [up('field-store', 'A_copied')]: {},
+      [up('sparcd-u1', 'A_copied')]: {},
+      [up('sparcd-u1', 'C_old')]: {},
+    });
+    const folders = await listUploadFolders(client, { uuid: 'u1', buckets: ['field-store', 'sparcd-u1'] });
+    expect(folders).toEqual([
+      { bucket: 'field-store', prefix: 'Collections/u1/Uploads/A_copied/' },
+      { bucket: 'field-store', prefix: 'Collections/u1/Uploads/B_new/' },
+      { bucket: 'sparcd-u1', prefix: 'Collections/u1/Uploads/C_old/' },
+    ]);
   });
 });
 
