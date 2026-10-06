@@ -260,6 +260,7 @@ Then('examination carries on in the background while the user works on Assign', 
   await app.continueToAssign();
   await app.waitForCollections();
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
   await app.continueToUpload();
   // The Upload step reports the still-running examination, then it completes
   // without anyone going back to Inspect.

@@ -80,7 +80,13 @@ Every active person: GetObject/HeadObject/ListObjectsV2 on the settings bucket u
 the namespace except invariant 4, plus reading `Settings/activity/**`.
 A person sees a collection bucket in ListBuckets only with a membership; everyone
 active sees the settings bucket. Paused or invited people get 403 on everything.
-`exactLocations` is stored and returned but not yet enforced (team decision pending).
+`exactLocations` controls coordinate redaction. For non-admin callers, the proxy always
+redacts `latProperty`/`lngProperty` from `Settings/locations.json`; it redacts those
+fields from a collection's `locations.json` and blanks longitude/latitude columns in
+that collection's `deployments.csv` unless the caller's membership has
+`exactLocations: true`. Names, IDs, elevation, and deployment relationships remain
+available. A missing `members.json` means no membership and therefore no collection
+access for regular users. Admin callers retain exact-coordinate access.
 CopyObject, ListMultipartUploads, bucket create/delete, ACL, policy, versioning and
 tagging calls are 403.
 

@@ -51,21 +51,23 @@ export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) 
 
   if (!cfg) return null;
 
+  const host = hostOf(cfg.endpoint);
+
   return (
-    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-inkSoft">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[12px] text-inkSoft">
       {!online && (
         <span className="inline-flex items-center gap-1 text-warn" title="No network connection">
           <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-warn" />
           offline
         </span>
       )}
-      <span className="text-inkSoft italic" title="S3 endpoint you're connected to">
-        {hostOf(cfg.endpoint)}
+      <span className="min-w-0 max-w-[12rem] truncate text-inkSoft italic" title={host}>
+        {host}
       </span>
       <span aria-hidden className="text-ruleSoft">
         ·
       </span>
-      <span className="text-inkMute italic" title="Your access key (masked)">
+      <span className="shrink-0 text-inkMute italic" title="Your access key (masked)">
         {maskKey(cfg.accessKey)}
       </span>
       {identity && (
@@ -73,7 +75,10 @@ export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) 
           <span aria-hidden className="text-ruleSoft">
             ·
           </span>
-          <span className="text-inkSoft font-[600]" title="Identity recorded with your activity">
+          <span
+            className="min-w-0 max-w-[10rem] truncate text-inkSoft font-[600]"
+            title={identity}
+          >
             {identity}
           </span>
         </>
@@ -82,7 +87,7 @@ export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) 
         type="button"
         onClick={onDisconnect}
         title="End this session and log out"
-        className="ml-1 border border-rule px-2 py-0.5 text-[11px] font-body text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+        className="ml-1 shrink-0 border border-rule px-2 py-0.5 text-[11px] font-body text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
       >
         Logout
       </button>

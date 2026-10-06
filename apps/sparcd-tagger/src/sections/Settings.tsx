@@ -222,7 +222,7 @@ export function Settings() {
           ))}
         </div>
         <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Not shown anywhere yet — this sets the unit ahead of an upcoming location display.
+          Sets the unit emphasized when a location's elevation is shown.
         </p>
       </section>
 

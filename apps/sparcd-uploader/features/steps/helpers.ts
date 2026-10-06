@@ -97,6 +97,20 @@ export async function producePartialRun(app: App, specs: FileSpec[] = publishabl
   await app.waitForRunPhase('partial', 120_000);
 }
 
+/** Drive a wet run that ends `error`, with one file refused outright. */
+export async function produceFatalRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
+  app.s3.putDelayMs = 150;
+  app.notes.sourceSpecs = specs;
+  await app.dropFolder(specs);
+  await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+  app.s3.putHooks.push((_b, key) =>
+    key.endsWith(FAILING_FILE) ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
+  );
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('error', 120_000);
+}
+
 /** Drive a wet run all the way through to a published upload. */
 export async function produceCompleteRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
   app.s3.putDelayMs = 150;

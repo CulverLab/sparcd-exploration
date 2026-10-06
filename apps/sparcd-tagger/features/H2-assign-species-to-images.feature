@@ -38,7 +38,7 @@ Feature: Assign species to images in an upload
     Then that species tile remains highlighted
     And selecting the species has not changed the focused image
 
-  @H2
+  @H2 @H2-2
   Scenario: An image can carry more than one species
     Given the focused image already carries one species
     When a second species is applied to it
@@ -234,6 +234,17 @@ Feature: Assign species to images in an upload
     And the previous species is left without one
 
   @H2
+  Scenario: A key two species in the vocabulary both claim applies neither
+    Given the vocabulary gives two species the same key
+    And an image is focused
+    When the shared key is pressed
+    Then neither of the two species is recorded on the image
+    And both of their rows mark the key as shared
+    When one of the two is given a key of its own
+    Then the shared key applies the species that kept it
+    And no row marks a key as shared
+
+  @H2
   Scenario: A duplicate vocabulary key can be kept with its existing species
     Given the species vocabulary carries a key binding for a species
     When its key is assigned to a different species
@@ -300,7 +311,7 @@ Feature: Assign species to images in an upload
     # defaults to the first image and every path clamps it into range), and an
     # upload with no taggable images never renders the panel. See CORRECTIONS.md.
 
-  @H2
+  @H2 @H2-5
   Scenario: Dragging a species tile onto the focused image adds it at count one
     Given an image is focused
     When a species tile is dragged onto the image area in the Focus view

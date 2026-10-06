@@ -83,6 +83,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
     clipVideo(),
   ]);
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
   // Berlin so both a DST and a non-DST date are exercised, and so the result
   // cannot coincide with the uploading machine's own zone.
   await app.timeZoneSelect().selectOption('Europe/Berlin');
@@ -133,6 +134,7 @@ const card = (app: App, fileName: string) =>
 Given('some examined files carry no camera capture time', async ({ app }) => {
   await rescanFromAssign(app, gappyBatch());
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
 });
 
 Then('each of them already shows an estimated time, marked as an estimate', async ({ app }) => {

@@ -55,6 +55,15 @@ upstream's per-bucket CORS headers, removes the SDK's `?x-id=` param, and
 buffers request bodies so a length-less body never reaches the upstream as
 `Transfer-Encoding: chunked`.
 
+## Protected coordinates
+
+This legacy Worker has one proxy credential and no per-person collection
+membership table, so it cannot enforce `exactLocations`. It refuses
+`Settings/locations.json`, collection `locations.json`, and upload
+`deployments.csv` requests rather than forwarding precise coordinates. Use the
+[per-person access proxy](../../access/) when a deployment needs authorized
+coordinate access or coordinate redaction.
+
 ## What a replayed request can change
 
 Inside the 15-minute window, a captured request can be sent again. What an

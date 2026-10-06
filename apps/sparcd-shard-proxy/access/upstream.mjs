@@ -144,14 +144,22 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
 
     /** The immediate child "directories" of a prefix, via the delimiter. */
     async listCommonPrefixes(bucket, prefix) {
-      const res = await sendMeta(url(bucket, '', {
-        'list-type': '2', prefix, delimiter: '/', 'max-keys': '1000',
-      }));
-      if (res.status === 404) return [];
-      if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
-      const xml = await res.text();
-      return [...xml.matchAll(/<CommonPrefixes><Prefix>([\s\S]*?)<\/Prefix><\/CommonPrefixes>/g)]
-        .map((m) => decodeEntities(m[1]));
+      const prefixes = [];
+      let token;
+      do {
+        const query = { 'list-type': '2', prefix, delimiter: '/', 'max-keys': '1000' };
+        if (token) query['continuation-token'] = token;
+        const res = await sendMeta(url(bucket, '', query));
+        if (res.status === 404) return prefixes;
+        if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
+        const xml = await res.text();
+        prefixes.push(...[...xml.matchAll(/<CommonPrefixes><Prefix>([\s\S]*?)<\/Prefix><\/CommonPrefixes>/g)]
+          .map((m) => decodeEntities(m[1])));
+        token = /<IsTruncated>true<\/IsTruncated>/.test(xml)
+          ? decodeEntities(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1] ?? '')
+          : null;
+      } while (token);
+      return prefixes;
     },
 
     async listBuckets() {
