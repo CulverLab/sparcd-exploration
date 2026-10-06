@@ -30,8 +30,7 @@ def _():
     DEFAULT_SECRET = os.getenv("SPARCD_S3_SECRET_KEY", "")
     DEFAULT_SECURE = os.getenv("SPARCD_S3_SECURE", "true").lower() == "true"
 
-    # Loaded-collection cache keyed by the picked bucket tuple, so re-selecting a
-    # collection is instant and changing selection doesn't refetch until submitted.
+    # Cache by collection UUIDs and buckets so collections sharing a bucket stay separate.
     SPARCD_COLLECTION_DATA_CACHE = {}
 
     # Navy paw mark, inlined so the header works identically in local dev and in
@@ -750,8 +749,6 @@ def _(
 
 @app.cell(hide_code=True)
 def _(client, mo):
-    # Collection registry. Reads every sparcd-<uuid> bucket's collection.json so the
-    # picker can show human-readable names; surfaces S3 errors as friendly callouts.
     import json as _json
     from html import escape as _esc
 
@@ -776,7 +773,7 @@ def _(client, mo):
 
         try:
             with mo.status.spinner(title="Reading collections…"):
-                _buckets = [b.name for b in client.list_buckets() if b.name.startswith("sparcd-")]
+                _buckets = sorted(b.name for b in client.list_buckets())
         except _S3Error as exc:
             _hint = {
                 "InvalidAccessKeyId": "The access key wasn't recognized. Check it for typos.",
@@ -805,15 +802,47 @@ def _(client, mo):
                 "</div>"
             )
 
-        for _b in _buckets:
-            _uuid = _b.removeprefix("sparcd-")
+        # A data bucket (any name but sparcd / sparcd-*) holds many collections and is
+        # found by listing Collections/; a legacy sparcd-<uuid> bucket holds one. Same
+        # rules as @sparcd/s3-safe listCollections, merged by uuid, data buckets first.
+        def _read_collection(bucket, uuid):
             try:
-                _meta = _json.loads(client.get_object(_b, f"Collections/{_uuid}/collection.json").read())
-                _name = _meta.get("nameProperty") or _meta.get("name") or _uuid
-                _org = _meta.get("organizationProperty") or ""
-                collections_registry.append({"bucket": _b, "uuid": _uuid, "name": _name, "org": _org})
-            except _S3Error:
+                return _json.loads(client.get_object(bucket, f"Collections/{uuid}/collection.json").read())
+            except Exception:
+                return None
+
+        _by_uuid = {}
+        for _b in _buckets:
+            if _b == "sparcd" or _b.startswith("sparcd-"):
                 continue
+            try:
+                _uuids = [
+                    o.object_name[len("Collections/"):-1]
+                    for o in client.list_objects(_b, prefix="Collections/", recursive=False)
+                    if o.is_dir
+                ]
+            except Exception:
+                continue
+            for _uuid in _uuids:
+                _by_uuid.setdefault(_uuid, []).append((_b, _read_collection(_b, _uuid)))
+        for _b in _buckets:
+            if not _b.startswith("sparcd-") or _b == "sparcd-":
+                continue
+            _uuid = _b.removeprefix("sparcd-").lower()
+            _meta = _read_collection(_b, _uuid)
+            if _meta is not None:
+                _by_uuid.setdefault(_uuid, []).append((_b, _meta))
+        for _uuid, _sightings in _by_uuid.items():
+            _home = next(((b, doc) for b, doc in _sightings if doc is not None), None)
+            if _home is None:
+                continue
+            _b, _meta = _home
+            _name = _meta.get("nameProperty") or _meta.get("name") or _uuid
+            _org = _meta.get("organizationProperty") or ""
+            collections_registry.append({
+                "bucket": _b, "uuid": _uuid, "name": _name, "org": _org,
+                "buckets": [b for b, doc in _sightings],
+            })
 
     collections_registry.sort(key=lambda r: (r["name"].strip().lower(), r["bucket"]))
     _callout if _callout is not None else None
@@ -824,7 +853,7 @@ def _(client, mo):
 def _(collections_registry, mo):
     # Collection picker + its own Load submit. Changing the selection does nothing
     # until "Load selected collection" is pressed (A.1). Displayed in the sidebar.
-    _options = {f"{c['name']}   ({c['org']})" if c['org'] else c['name']: c['bucket']
+    _options = {f"{c['name']}   ({c['org']})" if c['org'] else c['name']: (c['uuid'], tuple(c['buckets']))
                 for c in collections_registry}
 
     _default = next(
@@ -854,7 +883,7 @@ def _(collections_registry, mo):
 
 @app.cell(hide_code=True)
 def _(DEFAULT_COLLECTION_BUCKETS, SPARCD_COLLECTION_DATA_CACHE, collection_load_form):
-    # Selected buckets + their prefixes. Falls back to the default until the form
+    # Selected collections + their prefixes. Falls back to the default until the form
     # is submitted, so the app loads a collection on first render.
     _submitted = collection_load_form.value
     BUCKETS = list((_submitted or {}).get("collections") or DEFAULT_COLLECTION_BUCKETS)
@@ -862,8 +891,8 @@ def _(DEFAULT_COLLECTION_BUCKETS, SPARCD_COLLECTION_DATA_CACHE, collection_load_
         # Pressing Load re-reads the collection, so tagging done since shows up.
         SPARCD_COLLECTION_DATA_CACHE.pop(tuple(BUCKETS), None)
     UPLOADS_PREFIXES = [
-        (b, f"Collections/{b.removeprefix('sparcd-')}/Uploads/")
-        for b in BUCKETS
+        (bucket, f"Collections/{uuid}/Uploads/")
+        for uuid, buckets in BUCKETS for bucket in buckets
     ]
     None
     return BUCKETS, UPLOADS_PREFIXES
@@ -921,6 +950,7 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
 
     if _cached is None:
         with mo.status.spinner(title="Loading collection…", subtitle="Fetching deployments, media, observations"):
+            _seen = set()
             for bucket, prefix in UPLOADS_PREFIXES:
                 try:
                     uploads = [
@@ -931,8 +961,21 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 except Exception as _exc:
                     _skip(bucket, "listing uploads", _exc)
                     uploads = []
-                total_uploads += len(uploads)
                 for up in uploads:
+                    if up in _seen:
+                        continue
+                    _seen.add(up)
+                    try:
+                        rows = _read_csv(bucket, up + "media.csv")
+                    except Exception as _exc:
+                        if isinstance(_exc, FileNotFoundError) or getattr(_exc, "code", None) == "NoSuchKey":
+                            continue
+                        _skip(up.rstrip("/"), "media.csv", _exc)
+                        rows = []
+                    total_uploads += 1
+                    _media_rows += rows
+                    _media_buckets += [bucket] * len(rows)
+                    _media_uploads += [up] * len(rows)
                     try:
                         rows = _read_csv(bucket, up + "deployments.csv")
                         _dep_rows += rows
@@ -940,13 +983,6 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         _dep_uploads += [up] * len(rows)
                     except Exception as _exc:
                         _skip(up.rstrip("/"), "deployments.csv", _exc)
-                    try:
-                        rows = _read_csv(bucket, up + "media.csv")
-                        _media_rows += rows
-                        _media_buckets += [bucket] * len(rows)
-                        _media_uploads += [up] * len(rows)
-                    except Exception as _exc:
-                        _skip(up.rstrip("/"), "media.csv", _exc)
                     try:
                         rows = _read_csv(bucket, up + "observations.csv")
                         _obs_rows += rows
@@ -1301,11 +1337,12 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
     # An image stays when one of its observations passes the filters. An image
     # with no observation rows has no species, so an include filter drops it;
     # otherwise its media.csv timestamp decides.
-    _kept_paths = observations_filtered["media_path"].unique().to_list()
-    _observed_paths = _obs_scope["media_path"].unique().to_list()
+    _image_key = pl.struct("bucket", "upload", "media_path")
+    _kept_paths = observations_filtered.select(_image_key).to_series().unique()
+    _observed_paths = _obs_scope.select(_image_key).to_series().unique()
     media_filtered = _media_scope.filter(
-        pl.col("media_path").is_in(_kept_paths)
-        | (~pl.col("media_path").is_in(_observed_paths) & _dated("timestamp") & pl.lit(not _included))
+        _image_key.is_in(_kept_paths.implode())
+        | (~_image_key.is_in(_observed_paths.implode()) & _dated("timestamp") & pl.lit(not _included))
     )
     # From here on an observation is an identification. A placeholder row (no
     # species, no tags) only records that the image exists: the uploader writes one
@@ -2140,11 +2177,11 @@ def _(
     else:
         _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
         _uploads = [u for us in _rows["uploads"].to_list() for u in us]
-        _media_loc = media_filtered.filter(pl.col("upload").is_in(_uploads)).unique("media_path")
+        _media_loc = media_filtered.filter(pl.col("upload").is_in(_uploads)).unique(["bucket", "upload", "media_path"])
         _obs_loc = observations_filtered.filter(pl.col("upload").is_in(_uploads))
 
         _total = _media_loc.height
-        _tagged = _obs_loc["media_path"].unique().len()
+        _tagged = _obs_loc.select("bucket", "upload", "media_path").unique().height
         _untagged = max(0, _total - _tagged)
 
         _sci_clean = (
@@ -2213,7 +2250,7 @@ def _(
     pl,
     selected_location_ids,
 ):
-    # Per-image events for the selected area: one row per (bucket, media_path),
+    # Per-image events for the selected area: one row per (bucket, upload, media_path),
     # species aggregated across that image's observations. Untagged frames stay in
     # media_filtered but the inner join keeps only tagged images in the grid/table.
     if not selected_location_ids:
@@ -2236,16 +2273,15 @@ def _(
             media_filtered
             .filter(pl.col("upload").is_in(_uploads))
             .select("media_path", "file_name", "mime_type", "deployment_id", "bucket", "upload")
-            .unique(subset=["bucket", "media_path"])
+            .unique(subset=["bucket", "upload", "media_path"])
             .join(_upload_locations, on="upload", how="left")
-            .drop("upload")
         )
-        _selected_keys = set(_selected_media.select("bucket", "media_path").iter_rows())
+        _selected_keys = set(_selected_media.select("bucket", "upload", "media_path").iter_rows())
         import re as _re_events
         _common_pat = _re_events.compile(r"COMMONNAME:([^\]]+)")
         _events_by_key = {}
         for _obs in observations_filtered.iter_rows(named=True):
-            _key = (_obs["bucket"], _obs["media_path"])
+            _key = (_obs["bucket"], _obs["upload"], _obs["media_path"])
             if _key not in _selected_keys:
                 continue
             _name = _obs["scientific_name"] or ""
@@ -2253,7 +2289,7 @@ def _(
             _names = [_name] if len(_name) >= 3 else _common_pat.findall(_tags)
             _event = _events_by_key.setdefault(
                 _key,
-                {"bucket": _key[0], "media_path": _key[1], "species": set(), "count": 0, "tags": "", "timestamp": ""},
+                {"bucket": _key[0], "upload": _key[1], "media_path": _key[2], "species": set(), "count": 0, "tags": "", "timestamp": ""},
             )
             _event["species"].update(n for n in _names if n)
             try:
@@ -2269,6 +2305,7 @@ def _(
             [
                 {
                     "bucket": _event["bucket"],
+                    "upload": _event["upload"],
                     "media_path": _event["media_path"],
                     "scientific_name": ", ".join(sorted(_event["species"])),
                     "count": _event["count"],
@@ -2279,6 +2316,7 @@ def _(
             ],
             schema={
                 "bucket": pl.Utf8,
+                "upload": pl.Utf8,
                 "media_path": pl.Utf8,
                 "scientific_name": pl.Utf8,
                 "count": pl.Int64,
@@ -2290,7 +2328,7 @@ def _(
             _selected_media
             .join(
                 _obs_events,
-                on=["bucket", "media_path"],
+                on=["bucket", "upload", "media_path"],
                 how="inner",
             )
             .sort("timestamp", descending=False)
