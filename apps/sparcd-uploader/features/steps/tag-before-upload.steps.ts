@@ -2,6 +2,7 @@ import { Given, When, Then, expect } from './fixtures';
 import { APP_PATH, type App } from './app';
 import { FAILING_FILE, expectStoredAtLocation, publishedUploads, writtenCsvRows } from './helpers';
 import { jpegModifyDateOnly } from './batches';
+import { COLLECTION_C_NAME, DATA_BUCKET, seedDataBucket } from './fixtures-data';
 
 // What the Tagger would have written back. Keys are the paths within the
 // chosen folder — the same ids Inspect scanned with.
@@ -146,6 +147,49 @@ Then('the Uploader receives Coyote from the shared hand-off record', async ({ ap
   const rows = await app.listedFiles();
   const image = rows.find((row) => row.name === 'IMG_0002.JPG');
   expect(image?.species).toBe('Coyote×1');
+});
+
+// --- a published upload in a data bucket, opened by the real Tagger ---------
+
+Given('the store also has a data bucket holding a collection', ({ app }) => {
+  seedDataBucket(app.s3);
+});
+
+When('the scanned batch is uploaded to the data-bucket collection', async ({ app }) => {
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.openCollectionList();
+  await app.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: COLLECTION_C_NAME }).click();
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.continueToUpload();
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done', 120_000);
+});
+
+When('the real Tagger is opened through the unified dev origin', async ({ app }) => {
+  // Same origin as the Uploader, so the Tagger picks up the same connection.
+  await app.page.goto('/sparcd-exploration/tagger/');
+});
+
+Then('the real Tagger lists that upload in the data-bucket collection', async ({ app }) => {
+  await app.page.locator('aside').getByRole('button').filter({ hasText: COLLECTION_C_NAME }).click();
+  await app.page.locator('button').filter({ hasText: 'ada-lovelace' }).filter({ hasText: 'Open →' }).click();
+  await expect(app.page.getByRole('button', { name: 'Sync…' })).toBeVisible();
+});
+
+Then('it renders each image from its Media key in the data bucket', async ({ app }) => {
+  const mediaCsv = app.s3.puts.filter((p) => p.key.endsWith('/media.csv')).at(-1)!;
+  expect(mediaCsv.bucket).toBe(DATA_BUCKET);
+  const images = writtenCsvRows(app, mediaCsv.key).filter((r) => r[6].endsWith('.JPG'));
+  expect(images).toHaveLength(3);
+  for (const [key, , , , , , name] of images) {
+    expect(key).toMatch(/^Media\/[0-9a-f]{64}\/\d{14}-IMG_000\d\.JPG$/);
+    const img = app.page.locator(`button[title="${name}"] img`);
+    await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+    expect(new URL((await img.getAttribute('src'))!).pathname).toBe(`/${DATA_BUCKET}/${key}`);
+  }
 });
 
 // --- coming back ------------------------------------------------------------

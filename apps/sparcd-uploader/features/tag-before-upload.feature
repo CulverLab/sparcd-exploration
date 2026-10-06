@@ -46,6 +46,14 @@ Feature: Identify species before the batch is uploaded
     # Tagger reads and updates it, and the Uploader consumes it on return.
 
   @cross-tool
+  Scenario: The real Tagger opens what the real Uploader stored in a data bucket
+    Given the store also has a data bucket holding a collection
+    When the scanned batch is uploaded to the data-bucket collection
+    And the real Tagger is opened through the unified dev origin
+    Then the real Tagger lists that upload in the data-bucket collection
+    And it renders each image from its Media key in the data bucket
+
+  @cross-tool
   Scenario: The real Tagger warns when a batch has only EXIF ModifyDate
     Given a ModifyDate-only batch has been scanned
     When "Tag species first" is chosen through the unified dev origin
