@@ -62,8 +62,9 @@ The names `sparcd` and `sparcd-*` are reserved for this shape.
   (`existingOriginal`).
 - Write originals with `If-None-Match: *`. Nothing under `Media/` is ever
   overwritten or deleted. Deleting an upload deletes its manifest folder only.
-- Write `media.csv` last. An upload folder without `media.csv` is not an upload
-  yet, and readers skip it.
+- Write `media.csv` last. Legacy writers put `UploadMeta.json` last instead.
+  An upload folder missing either file is not an upload yet, and readers skip
+  it.
 
 ## Rules for readers
 
@@ -73,9 +74,10 @@ The names `sparcd` and `sparcd-*` are reserved for this shape.
   lives.
 - A collection is one uuid, which may appear in a data bucket and in its legacy
   `sparcd-<uuid>` bucket. Read uploads from both. Leave out folders without
-  `media.csv` first; then, when the same upload folder name is in both, read
-  the data bucket's copy, so an upload copied over shows once and a
-  half-finished copy never hides the complete one.
+  `media.csv` first (`listUploadFolders`); then, when the same upload folder
+  name is in both, read the data bucket's copy, so an upload copied over shows
+  once and a half-finished copy never hides the complete one. Readers also
+  require `UploadMeta.json` before showing an upload.
 - The same `Media/` key can appear in several uploads. Scope anything keyed by
   image to its upload.
 - Observation ids are built on `mediaObjectName`: the key's tail past the hash
