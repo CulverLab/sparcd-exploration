@@ -26,7 +26,7 @@ export type Media = {
   comments?: string;
   mediaId: string;
   deploymentId: string;
-  mediaPath: string; // full S3 object key under the upload prefix
+  mediaPath: string; // full S3 object key: `Media/<sha256>/...`, or inside the upload folder (old layout)
   fileName: string; // local filename
   timestamp: string; // ISO, from EXIF
   mimeType: string; // "image/jpeg"
@@ -251,9 +251,62 @@ export function serializeUploadMeta(meta: UploadMetaJson): string {
 }
 
 // ---------------------------------------------------------------------------
+// Media layout. In a data bucket each original is stored once per content hash
+// at `Media/<sha256>/<YYYYMMDDHHmmss>-<camera-filename>`, and `media.csv` col 0
+// names it. The stamp is the camera-local capture time at upload and never
+// changes: a later time correction edits `media.csv` only. Derived files such
+// as `preview-640.jpg` sit beside the original under fixed unstamped names, so
+// a stamped name is what marks an original. Old-layout uploads keep their
+// images inside the upload folder; readers go by col 0 either way. README.md
+// has the whole layout.
+// ---------------------------------------------------------------------------
+
+export const MEDIA_PREFIX = 'Media/';
+export const UNKNOWN_CAPTURE_STAMP = '00000000000000';
+
+/** A camera-local wall-clock time, with no zone attached. */
+export type WallClock = { year: number; month: number; day: number; hour: number; minute: number; second: number };
+
+/** `YYYYMMDDHHmmss` for a camera-local capture time; fourteen zeros when there is none. */
+export function captureStamp(t: WallClock | undefined): string {
+  if (!t) return UNKNOWN_CAPTURE_STAMP;
+  return `${String(t.year).padStart(4, '0')}${pad(t.month)}${pad(t.day)}${pad(t.hour)}${pad(t.minute)}${pad(t.second)}`;
+}
+
+/** The hash folder of a content hash, `Media/<sha256>/`. */
+export const mediaFolder = (sha256: string): string => `${MEDIA_PREFIX}${sha256}/`;
+
+/** The key an original is stored under: `Media/<sha256>/<stamp>-<camera-filename>`. */
+export const mediaKey = (sha256: string, stamp: string, fileName: string): string =>
+  `${mediaFolder(sha256)}${stamp}-${fileName}`;
+
+export const isMediaKey = (key: string): boolean => key.startsWith(MEDIA_PREFIX);
+
+/** Whether a name inside a hash folder is an original (stamped) rather than a derived file. */
+export const isOriginalName = (name: string): boolean => /^\d{14}-./.test(name);
+
+/**
+ * The original among a hash folder's keys, or undefined when it holds none.
+ * Two uploaders racing on the same bytes can leave two originals; the
+ * alphabetically first one wins so every writer settles on the same key.
+ */
+export function existingOriginal(keys: string[]): string | undefined {
+  return keys.filter((k) => isOriginalName(k.slice(k.lastIndexOf('/') + 1))).sort()[0];
+}
+
+/**
+ * The bundle-relative name observation ids are built on: the key's tail past
+ * the hash folder (Media layout) or past the upload folder (old layout).
+ */
+export function mediaObjectName(key: string, uploadPrefix: string): string {
+  if (isMediaKey(key)) return key.slice(key.lastIndexOf('/') + 1);
+  return key.slice(uploadPrefix.endsWith('/') ? uploadPrefix.length : uploadPrefix.length + 1);
+}
+
+// ---------------------------------------------------------------------------
 // UploadComplete.json — this project's own completion sentinel (additive; not
-// read by upstream SPARC'd, which keys completion off UploadMeta.json). Blobs
-// live under the upload prefix, so there is no separate blob prefix to record.
+// read by upstream SPARC'd, which keys completion off UploadMeta.json). Each
+// file records its full key, so either layout needs no separate blob prefix.
 // ---------------------------------------------------------------------------
 
 export type UploadCompleteFile = { media_path: string; size: number; sha256: string };
