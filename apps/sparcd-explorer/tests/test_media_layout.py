@@ -52,6 +52,7 @@ class MediaLayoutTest(unittest.TestCase):
         ns, scopes = run_explorer(s3, click=hex_of("Alpha"))
         self.assertEqual(ns["locations"]["image_count"].to_list(), [2])
         self.assertEqual(ns["locations"]["tagged_image_count"].to_list(), [2])
+        self.assertEqual(ns["hex_summary"]["checklists"].to_list(), [2])
         self.assertEqual((scopes["location_summary_card"]["_total"], scopes["location_summary_card"]["_tagged"]), (2, 2))
         self.assertEqual(ns["selected_total"], 2)
         self.assertEqual(set(ns["selected_images_all"]["scientific_name"]), {"Owl", "Deer"})

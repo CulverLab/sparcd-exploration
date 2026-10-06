@@ -1715,7 +1715,7 @@ def _(deployments, locations, observations_filtered, pl):
             .agg(
                 # Distinct common names, the same count as the map panel and stat card.
                 pl.col("tags").str.extract_all(r"COMMONNAME:[^\]]+").explode().drop_nulls().n_unique().alias("species_richness"),
-                pl.col("media_path").n_unique().alias("checklists"),
+                pl.struct("bucket", "upload", "media_path").n_unique().alias("checklists"),
                 pl.col("timestamp").max().alias("most_recent"),
             )
         )
