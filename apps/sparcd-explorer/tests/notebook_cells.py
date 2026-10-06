@@ -68,6 +68,7 @@ class FakeS3:
     def upload(self, name, deployments=(), media=(), observations=()):
         folder = f"{PREFIX}{name}/"
         self.uploads.append(folder)
+        self.files[folder + "UploadMeta.json"] = b"{}"
         for file, rows in (("deployments.csv", deployments), ("media.csv", media), ("observations.csv", observations)):
             buf = io.StringIO()
             csv.writer(buf).writerows(rows)

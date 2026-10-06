@@ -125,6 +125,70 @@ Then('dry run is switched off by default', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
 });
 
+When('the browser reports offline before upload', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+  });
+});
+
+Then('the upload status says it is offline and real upload is disabled', async ({ app }) => {
+  await expect(app.page.locator('#upload-connectivity-status')).toContainText(
+    'Offline — real uploads paused; dry runs remain available',
+  );
+  const start = app.page.getByRole('button', { name: 'Start upload' });
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+  await expect(app.page.getByRole('button', { name: 'Try real upload anyway' })).toBeVisible();
+});
+
+When('the operator allows a real upload while offline', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Try real upload anyway' }).click();
+});
+
+Then('the real upload action is available despite the offline signal', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(app.page.locator('#upload-connectivity-status')).toContainText(
+    'Offline — trying a real upload; the browser signal may be stale',
+  );
+});
+
+Then('dry run remains available while offline', async ({ app }) => {
+  await expect(app.dryRunCheckbox()).toBeEnabled();
+  await app.dryRunCheckbox().check();
+  await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeEnabled();
+  await app.dryRunCheckbox().uncheck();
+});
+
+Then('the retry action is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Retry failed files' })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try real upload anyway' })).toBeVisible();
+});
+
+Then('History Resume is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload', exact: true })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try resume anyway' })).toBeVisible();
+});
+
+Then('History Resume is enabled after reconnecting', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload', exact: true })).toBeEnabled();
+});
+
+When('the browser reports online again', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+  });
+});
+
+Then('the upload status says it is online and real upload is enabled', async ({ app }) => {
+  await expect(app.page.locator('#upload-connectivity-status')).toHaveText(
+    'Online — network detected; real uploads can be attempted',
+  );
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).not.toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+});
+
 When('the operator opts into a dry run', async ({ app }) => {
   await app.dryRunCheckbox().check();
 });
@@ -904,21 +968,39 @@ Then('the wizard returns to the Files step with an empty batch', async ({ app })
 });
 
 Then(
-  'the collection, deployment, uploader identity, description and timezone of the previous batch are kept',
+  'the next batch has no collection, deployment, description or timezone selected',
   async ({ app }) => {
     await app.dropFolder(standardBatch());
     await app.waitForInspected();
     await app.continueToAssign();
     await app.waitForCollections();
-    await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
-    await expect(app.deploymentTrigger()).toContainText('Bear Canyon');
+    await expect(app.collectionTrigger()).toContainText('Select a target collection');
+    await expect(app.page.getByText('Select a target collection first.')).toBeVisible();
+    await app.collectionTrigger().click();
+    await app.page.getByRole('option').filter({ hasText: COLLECTION_A_NAME }).first().click();
+    await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
       app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
-    ).toHaveValue('July retrieval');
-    await expect(app.timeZoneSelect()).toHaveValue('America/Phoenix');
+    ).toHaveValue('');
+    await expect(app.timeZoneSelect()).toHaveValue('');
+    await app.chooseDeployment('Bear Canyon');
+    await app.timeZoneSelect().selectOption({ label: 'Select a timezone…' });
+    await expect(app.timeZoneSelect()).toHaveValue('');
   },
 );
+
+Then('the uploader identity is still filled in', async ({ app }) => {
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
+});
+
+Then('continuing without a timezone is disabled', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.page.getByRole('status').filter({ hasText: 'Select a timezone first' })).toBeVisible();
+  await expect(app.page.locator('#upload-timezone-help')).toContainText(
+    'Select a timezone before continuing.',
+  );
+});
 
 // --- wake lock and preparing phase -------------------------------------------
 

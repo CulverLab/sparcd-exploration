@@ -755,6 +755,11 @@ export class App {
     await this.setListOpen(this.collectionTrigger(), true);
   }
 
+  async chooseCollection(name: string): Promise<void> {
+    await this.openCollectionList();
+    await this.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: name }).click();
+  }
+
   async closeCollectionList(): Promise<void> {
     await this.setListOpen(this.collectionTrigger(), false);
   }

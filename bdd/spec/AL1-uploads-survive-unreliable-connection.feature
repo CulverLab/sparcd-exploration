@@ -57,3 +57,10 @@ Feature: Uploads survive an unreliable connection
     Given the upload was interrupted before all data transferred
     When Alice or anyone else looks at the upload
     Then it is not shown as a completed upload
+
+  @AL1 @AL1-6
+  Scenario: A resumed publication accepts an existing matching publication object
+    Given the upload was interrupted after a publication object was claimed by another writer
+    When Alice resumes the upload
+    Then the existing publication is accepted only when its content matches
+    And the completion sentinel is written

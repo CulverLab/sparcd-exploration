@@ -60,7 +60,7 @@ Then('that choice stands for as long as the same location stays selected', async
 
 Then('the timezone list offers every timezone the browser knows', async ({ app }) => {
   const known = await app.page.evaluate(() => Intl.supportedValuesOf('timeZone'));
-  const offered = await app.timeZoneSelect().locator('option').allTextContents();
+  const offered = await app.timeZoneSelect().locator('option:not([value=""])').allTextContents();
   expect(offered).toEqual(known);
 });
 
@@ -69,7 +69,7 @@ Then('the currently chosen timezone is always offered even if it is not in that 
   expect(known).not.toContain(LEGACY_ZONE);
   await app.chooseDeployment('Offshore Buoy');
   await expect(app.timeZoneSelect()).toHaveValue(LEGACY_ZONE);
-  const offered = await app.timeZoneSelect().locator('option').allTextContents();
+  const offered = await app.timeZoneSelect().locator('option:not([value=""])').allTextContents();
   expect(offered[0]).toBe(LEGACY_ZONE);
   expect(offered).toHaveLength(known.length + 1);
 });

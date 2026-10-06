@@ -41,6 +41,19 @@ Feature: Resume an interrupted upload and retry a failed one
     Then the finished upload is shown as complete with nothing left to do
     And the cut-off upload says how many files are still to send and names "Resume upload" as the next step
 
+  @AL1 @AL1-6
+  Scenario: A resumed publication accepts matching existing metadata and completes
+    Given an interrupted upload has a matching UploadMeta publication already stored
+    When it is resumed
+    Then the resumed publication completes without replacing that metadata
+    And its completion record is written
+
+  @AL1
+  Scenario: History renders a late batch start with a 24-hour clock
+    Given a completed upload started late in the day is recorded
+    When History is opened
+    Then History shows the batch start as "2026-09-11 22:15:10"
+
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History
@@ -91,6 +104,20 @@ Feature: Resume an interrupted upload and retry a failed one
     And the successfully stored files are left alone
     And when they all land, the metadata for that same upload folder is published
     And exactly one upload exists in the destination
+
+  @F1 @F1-4
+  Scenario: Offline status gates retry
+    Given a real upload finished as partial with some files failed
+    When the browser reports offline before upload
+    Then the retry action is disabled while offline
+
+  @F1 @F1-4
+  Scenario: Offline status gates History Resume until reconnecting
+    Given an open upload is listed in History
+    When the browser reports offline before upload
+    Then History Resume is disabled while offline
+    When the browser reports online again
+    Then History Resume is enabled after reconnecting
 
   @AL2 @AL2-4
   Scenario: Resuming a run that failed outright completes that same upload

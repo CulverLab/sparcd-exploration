@@ -30,7 +30,7 @@
 // statObject size/hash sanity check, and interrupted files restart from
 // scratch (mid-file multipart resume is a follow-on, not v0). The prefix is
 // reused, so a 412 on a metadata write is treated as "already written, skip"
-// rather than a re-stamp.
+// only after the existing object is read and its bytes match.
 //
 // Bounded concurrency is a small inline lane pool rather than p-limit: lanes
 // lazily pull the next blob, so memory stays flat across thousands of files and
@@ -332,6 +332,7 @@ const fileRecordFor = (sessionId: string, it: UploadItem, state: FileRecord['sta
   remoteKey: it.key,
   attempt: 0,
   preTags: it.preTags,
+  preTaggerUser: it.preTaggerUser,
 });
 
 /** A file record for a scanned-but-not-yet-processed file — everything a
@@ -991,7 +992,7 @@ function makeRunner(
 
   // One attempt at the whole sequence for a given plan. Throws
   // PreconditionFailedError on a final-prefix metadata collision (fresh runs
-  // re-stamp; resumes skip).
+  // re-stamp; resumes verify matching bytes before skipping).
   const runOnce = async (plan: RunPlan): Promise<void> => {
     abort = new AbortController(); // fresh signal per attempt
     let stalled = false;
@@ -1122,9 +1123,25 @@ function makeRunner(
 
   // Shared by a fixed-plan run and a streamed run: writes the CSVs/JSON in
   // publish order, dry-run logs instead of PUTting, and treats a 412 as
-  // already-written (idempotent) only on resume — a fresh run must not
-  // silently accept a metadata collision.
+  // already-written only on resume after verifying the existing bytes. A
+  // fresh run must not silently accept a metadata collision, and a resumed
+  // run must not accept a different publication under the same key.
   const writeMetadata = async (writes: MetadataWrite[], uploadPath: string): Promise<void> => {
+    const readExisting = async (key: string): Promise<Uint8Array> => {
+      for (let attempt = 0; ; attempt++) {
+        if (cancelled) throw new Error('cancelled');
+        try {
+          return await client.getObject(snap.bucket, key);
+        } catch (err) {
+          if (cancelled) throw new Error('cancelled');
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          const wait = backoff(attempt);
+          log('warn', `verify existing metadata retry ${key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
+          await sleep(wait);
+        }
+      }
+    };
+
     for (const w of writes) {
       if (cancelled) throw new Error('cancelled');
       const key = `${uploadPath}/${w.name}`;
@@ -1149,8 +1166,10 @@ function makeRunner(
               // A 412 only says something is there. It is this upload's own
               // earlier write only if it holds the same bytes; anything else
               // would publish another upload's file as part of this one.
-              const existing = new TextDecoder().decode(await client.getObject(snap.bucket, key));
-              if (existing !== w.body) {
+              const existing = await readExisting(key);
+              const expected = new TextEncoder().encode(w.body);
+              const sameBytes = existing.length === expected.length && existing.every((byte, i) => byte === expected[i]);
+              if (!sameBytes) {
                 // Carries the 412 so it reads as a refusal, not a lost connection.
                 throw Object.assign(
                   new Error(
@@ -1159,7 +1178,7 @@ function makeRunner(
                   { $metadata: { httpStatusCode: 412 } },
                 );
               }
-              log('info', `already present, skip: ${key}`);
+              log('info', `already present with matching content, skip: ${key}`);
               break;
             }
             throw err;

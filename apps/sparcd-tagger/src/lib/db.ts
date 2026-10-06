@@ -12,6 +12,7 @@ import Dexie, { type Table } from 'dexie';
 import type { Deployment } from '@sparcd/camtrap';
 import type { CanonicalState } from './sync';
 import type { SyncJournal } from './syncJournal';
+import type { ReviewEvent } from '@sparcd/camtrap';
 
 /** One applied species on an image — the unit of the multi-species set. Identity
  *  within an image is `scientificName` (Ghost = `Casper`). The single source of
@@ -22,6 +23,9 @@ export type DraftObservation = {
   count: number; // ≥1 always
   requestedSpecies: string; // free-text request → [REQUESTED_SPECIES:…]; '' otherwise
   freeTags: string; // extra raw markers, preserved verbatim (per-observation)
+  classifiedBy?: string; // canonical attribution, preserved when rows are replaced
+  classificationTimestamp?: string; // ISO; when the original identification was made
+  reviewEvents?: ReviewEvent[];
 };
 
 /** One image's local edit. `id` = `${bucket}::${uploadPrefix}::${mediaPath}`.
@@ -36,6 +40,8 @@ export interface DraftRecord {
 
   // The full intended species set for this image, in apply order.
   observations: DraftObservation[];
+  /** Species explicitly re-applied as a confirmation since the last sync. */
+  confirmedSpecies?: string[];
   questionable: boolean;
   timeOverride: string | null; // per-image corrected ISO timestamp; null when unset
 

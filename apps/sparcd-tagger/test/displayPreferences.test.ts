@@ -24,6 +24,10 @@ beforeAll(async () => {
 });
 
 describe('display preferences across a disconnect', () => {
+  it('defaults new sessions to a 24-hour clock', () => {
+    expect(useStore.getState().timeFormat).toBe('24h');
+  });
+
   it('keeps the date, time and distance choices, like the theme', () => {
     const store = useStore.getState();
     store.setDateFormat('numeric');

@@ -21,11 +21,13 @@ export const STAMP_B = '2023.06.01.09.30.00_fielduser';
 export const STAMP_C = '2025.03.10.14.00.00_newuploader';
 export const STAMP_D = '2026.03.27.15.19.44_videoproducer';
 export const STAMP_E = '2025.07.01.08.00.00_camerauser';
+export const STAMP_F = '2026.04.01.12.00.00_interrupted';
 export const PREFIX_A = `Collections/${UUID}/Uploads/${STAMP_A}/`;
 export const PREFIX_B = `Collections/${UUID}/Uploads/${STAMP_B}/`;
 export const PREFIX_C = `Collections/${UUID}/Uploads/${STAMP_C}/`;
 export const PREFIX_D = `Collections/${UUID}/Uploads/${STAMP_D}/`;
 export const PREFIX_E = `Collections/${UUID}/Uploads/${STAMP_E}/`;
+export const PREFIX_F = `Collections/${UUID}/Uploads/${STAMP_F}/`;
 
 export const DEPLOYMENT = `${UUID}:SAN15`;
 export const LOCATION_NAME = 'San Pedro 15';
@@ -147,7 +149,7 @@ export const OBS_A: ObsSpec[] = [
     timestamp: '2024-01-11T06:00:00',
     scientificName: 'Canis latrans',
     count: 3,
-    comments: '[COMMONNAME:Coyote][REQUESTED_SPECIES:Grey Wolf]',
+    comments: '[COMMONNAME:Coyote][REQUESTED_SPECIES:Grey Wolf][REVIEWED_BY:fielduser][REVIEWED_AT:2024-01-12T09:30:00.000Z]',
   },
 ];
 
@@ -499,6 +501,21 @@ export function seedFixtures(s3: MockS3): void {
   );
   MEDIA_E.forEach((m, i) => {
     s3.put(BUCKET, mediaKey(PREFIX_E, m.file), makePng(240, 180, i + 80), 'video/mp4');
+  });
+
+  // --- Upload F: an interrupted attempt with blobs and CSVs but no visibility marker ----
+  // It remains in storage for a later uploader resume, but must not appear in
+  // Browse or contribute to collection totals until UploadMeta.json lands.
+  s3.put(BUCKET, `${PREFIX_F}media.csv`, mediaCsv(PREFIX_F, MEDIA_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_F}observations.csv`, blankObservationsCsv(PREFIX_F, MEDIA_A), 'text/csv');
+  s3.put(BUCKET, `${PREFIX_F}deployments.csv`, deploymentsCsv(), 'text/csv');
+  MEDIA_A.forEach((m, i) => {
+    s3.put(
+      BUCKET,
+      mediaKey(PREFIX_F, m.file),
+      makePng(240, 180, i + 100),
+      m.mime === 'video/mp4' ? 'video/mp4' : 'image/png',
+    );
   });
 
   // --- A complete snapshot of upload A, plus an abandoned partial one --------

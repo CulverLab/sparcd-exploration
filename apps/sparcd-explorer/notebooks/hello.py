@@ -882,6 +882,48 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
         return [row for row in csv.reader(io.StringIO(raw)) if row]
 
 
+    def _upload_is_visible(bucket: str, prefix: str) -> bool:
+        # UploadMeta.json is the publication marker. Failed prefixes remain
+        # recoverable in storage, but are not application-visible until it exists.
+        try:
+            client.get_object(bucket, prefix + "UploadMeta.json").read()
+        except Exception as _exc:
+            if getattr(_exc, "code", None) != "NoSuchKey":
+                _skip(prefix.rstrip("/"), "UploadMeta.json", _exc)
+            return False
+        return True
+
+
+    def _load_visible_upload_rows(bucket: str, uploads: list[str]):
+        dep_rows, dep_uploads = [], []
+        media_rows, media_uploads = [], []
+        obs_rows, obs_uploads = [], []
+        visible_count = 0
+        for up in uploads:
+            if not _upload_is_visible(bucket, up):
+                continue
+            visible_count += 1
+            try:
+                rows = _read_csv(bucket, up + "deployments.csv")
+                dep_rows += rows
+                dep_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "deployments.csv", _exc)
+            try:
+                rows = _read_csv(bucket, up + "media.csv")
+                media_rows += rows
+                media_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "media.csv", _exc)
+            try:
+                rows = _read_csv(bucket, up + "observations.csv")
+                obs_rows += rows
+                obs_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "observations.csv", _exc)
+        return dep_rows, dep_uploads, media_rows, media_uploads, obs_rows, obs_uploads, visible_count
+
+
     DEPLOY_COLS = ["deployment_id", "location_id", "location_name",
                    "longitude", "latitude", "_d5", "_d6", "_d7",
                    "_d8", "_d9", "_d10", "_d11", "elevation"]
@@ -931,29 +973,18 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 except Exception as _exc:
                     _skip(bucket, "listing uploads", _exc)
                     uploads = []
-                total_uploads += len(uploads)
-                for up in uploads:
-                    try:
-                        rows = _read_csv(bucket, up + "deployments.csv")
-                        _dep_rows += rows
-                        _dep_buckets += [bucket] * len(rows)
-                        _dep_uploads += [up] * len(rows)
-                    except Exception as _exc:
-                        _skip(up.rstrip("/"), "deployments.csv", _exc)
-                    try:
-                        rows = _read_csv(bucket, up + "media.csv")
-                        _media_rows += rows
-                        _media_buckets += [bucket] * len(rows)
-                        _media_uploads += [up] * len(rows)
-                    except Exception as _exc:
-                        _skip(up.rstrip("/"), "media.csv", _exc)
-                    try:
-                        rows = _read_csv(bucket, up + "observations.csv")
-                        _obs_rows += rows
-                        _obs_buckets += [bucket] * len(rows)
-                        _obs_uploads += [up] * len(rows)
-                    except Exception as _exc:
-                        _skip(up.rstrip("/"), "observations.csv", _exc)
+                rows = _load_visible_upload_rows(bucket, uploads)
+                dep, dep_up, media, media_up, obs, obs_up, count = rows
+                _dep_rows += dep
+                _dep_buckets += [bucket] * len(dep)
+                _dep_uploads += dep_up
+                _media_rows += media
+                _media_buckets += [bucket] * len(media)
+                _media_uploads += media_up
+                _obs_rows += obs
+                _obs_buckets += [bucket] * len(obs)
+                _obs_uploads += obs_up
+                total_uploads += count
 
         deployments = (
             _to_df(_dep_rows, _dep_buckets, _dep_uploads, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
@@ -2494,6 +2525,10 @@ def _(
     selected_total,
     show_image_event_table,
 ):
+    def format_timestamp_24(value):
+        """Render stored ISO timestamps without locale-dependent AM/PM text."""
+        return str(value or "").replace("T", " ")[:19]
+
     if not selected_location_ids:
         image_event_table = mo.Html(
             "<div class='sparcd-note'>Select an area on the map to list its detections.</div>"
@@ -2537,6 +2572,9 @@ def _(
                 "media_path": "Media path",
                 "deployment_id": "Deployment",
             })
+        )
+        _event_rows = _event_rows.with_columns(
+            pl.col("Timestamp").map_elements(format_timestamp_24, return_dtype=pl.Utf8)
         )
         if _event_rows.height == 0:
             image_event_table = mo.Html(

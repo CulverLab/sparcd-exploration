@@ -91,7 +91,9 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   let fmt = zoneFormatters.get(timeZone);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone,
+      // A next batch starts with no zone chosen; read times in the browser's
+      // zone until one is, as a fresh session does.
+      timeZone: timeZone || undefined,
       hourCycle: 'h23',
       year: 'numeric',
       month: '2-digit',

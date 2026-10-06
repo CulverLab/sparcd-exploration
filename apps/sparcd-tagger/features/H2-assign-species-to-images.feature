@@ -384,7 +384,7 @@ Feature: Assign species to images in an upload
   @H2 @H2-6
   Scenario: An image left without a species stays untagged after moving on and syncing
     Given an upload with only uploader-written blank rows is open in the tagging workspace
-    And a tagger identity has been set in Settings
+    And the connected account is ready for attribution
     And its first image is focused
     When focus moves on to the next image without a species being applied
     And a species is applied to that next image

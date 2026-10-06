@@ -118,6 +118,34 @@ Given('an upload was interrupted before its metadata was published', async ({ ap
   await producePartialRun(app);
 });
 
+Given('a completed upload started late in the day is recorded', async ({ app }) => {
+  await produceCompleteRun(app);
+  const [batch] = await app.readBatchRecords();
+  expect(batch).toBeTruthy();
+  await app.page.evaluate(async (id) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const tx = db.transaction('batches', 'readwrite');
+    const store = tx.objectStore('batches');
+    const request = store.get(id);
+    await new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => {
+        store.put({ ...(request.result as Record<string, unknown>), startedAt: '2026-09-11T22:15:10-04:00' });
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }, batch.id);
+});
+
 When('History is opened', async ({ app }) => {
   await app.gotoSection('History');
 });
@@ -125,6 +153,10 @@ When('History is opened', async ({ app }) => {
 Then('that upload is listed as open', async ({ app }) => {
   await expect(app.page.getByText('open', { exact: true })).toBeVisible();
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(0);
+});
+
+Then('History shows the batch start as {string}', async ({ app }, expected: string) => {
+  await expect(app.page.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeVisible();
 });
 
 Then('it shows how many of its files are done and how many failed', async ({ app }) => {
@@ -168,6 +200,9 @@ Given('a second upload was cut off part-way while nobody was watching', async ({
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  // Next batch starts with nothing assigned (#338), so pick it all again.
+  await app.chooseCollection(COLLECTION_A_NAME);
+  await app.chooseDeployment('Bear Canyon');
   await app.continueToUpload();
   // Two files land; the rest are still in flight when the tab goes away.
   let media = 0;
@@ -209,6 +244,21 @@ Given('an open upload is listed in History', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' })).toBeVisible();
 });
 
+Given('an interrupted upload has a matching UploadMeta publication already stored', async ({ app }) => {
+  await producePartialRun(app);
+  app.s3.putHooks.length = 0;
+  let collided = false;
+  app.s3.putHooks.push((bucket, key, body) => {
+    if (collided || !key.endsWith('UploadMeta.json')) return undefined;
+    collided = true;
+    // Simulate another writer winning the immutable PUT race with the exact
+    // bytes this resumed run is trying to publish.
+    app.s3.put(bucket, key, body, { contentType: 'application/json' });
+    return { status: 412, code: 'PreconditionFailed', message: 'already present' };
+  });
+  app.notes.publicationCollision = true;
+});
+
 Given('the user resumes it and the upload lands as partial', async ({ app }) => {
   app.notes.putsBeforeResume = app.s3.puts.length;
   await resumeFromHistory(app);
@@ -236,9 +286,23 @@ Then('the partial run retries automatically without any user interaction', async
 });
 
 When('it is resumed', async ({ app }) => {
-  app.s3.putHooks.length = 0;
+  if (!app.notes.publicationCollision) app.s3.putHooks.length = 0;
   app.notes.putsBeforeResume = app.s3.puts.length;
   await resumeFromHistory(app);
+});
+
+Then('the resumed publication completes without replacing that metadata', async ({ app }) => {
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  const folder = app.notes.uploadFolder as string;
+  const key = `${UPLOADS_PREFIX}${folder}/UploadMeta.json`;
+  expect(app.s3.has(BUCKET_A, key)).toBe(true);
+  expect(app.s3.puts.filter((p) => p.key === key)).toHaveLength(0);
+  await expect.poll(() => app.logText(), { timeout: 10_000 }).toContain('matching content, skip');
+});
+
+Then('its completion record is written', async ({ app }) => {
+  const folder = app.notes.uploadFolder as string;
+  expect(app.s3.has(BUCKET_A, `${UPLOADS_PREFIX}${folder}/UploadComplete.json`)).toBe(true);
 });
 
 Then(

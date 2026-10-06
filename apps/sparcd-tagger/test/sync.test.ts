@@ -24,7 +24,7 @@ import type { SyncJournal } from '../src/lib/syncJournal';
 import { sha256Hex } from '../src/lib/hash';
 import type { TagImage } from '../src/lib/workspace';
 import type { DraftRecord, DraftObservation } from '../src/lib/db';
-import { blankDraft } from '../src/lib/drafts';
+import { blankDraft, addObservation } from '../src/lib/drafts';
 
 const obs = (
   scientificName: string,
@@ -172,11 +172,298 @@ const baseFrom = (c: CanonicalState) => ({
 describe('buildSyncPlan', () => {
   it('classifies an addition and emits one observation edit', () => {
     const plan = buildSyncPlan(IMAGES, ADD_DRAFTS, null);
-    expect(plan.summary).toEqual({ additions: 1, modifications: 0, removals: 0, timeCorrections: 0 });
+    expect(plan.summary).toEqual({
+      additions: 1,
+      modifications: 0,
+      removals: 0,
+      timeCorrections: 0,
+      confirmations: 0,
+    });
     expect(plan.tagEdits).toHaveLength(1);
     expect(plan.tagEdits[0].mediaId).toBe(K2);
     expect(plan.tagEdits[0].observations[0].scientificName).toBe('Canis latrans');
     expect(plan.timeEdits).toHaveLength(0);
+  });
+
+  it('attributes new identifications to the connected storage username while preserving other work', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser' }],
+    }];
+    const plan = buildSyncPlan(
+      images,
+      {
+        [K1]: draft({
+          mediaPath: K1,
+          observations: [
+            { ...obs('Puma concolor', 1), classifiedBy: 'fielduser' },
+            obs('Canis latrans', 1, 'Coyote'),
+          ],
+        }),
+      },
+      null,
+      null,
+      'harold',
+    );
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Canis latrans')?.classifiedBy).toBe('harold');
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Puma concolor')?.classifiedBy).toBe('fielduser');
+  });
+
+  it('preserves canonical attribution when a legacy draft omitted classifiedBy', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser' }, obs('Canis latrans', 1)],
+    }];
+    const plan = buildSyncPlan(
+      images,
+      {
+        [K1]: draft({
+          mediaPath: K1,
+          observations: [obs('Puma concolor', 1), { ...obs('Canis latrans', 1), count: 2 }],
+        }),
+      },
+      null,
+      null,
+      'harold',
+    );
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Puma concolor')?.classifiedBy).toBe('fielduser');
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Canis latrans')?.classifiedBy).toBe('harold');
+  });
+
+  it("does not credit the editor for an old image's species they didn't touch", () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [obs('Puma concolor', 1), obs('Canis latrans', 1, 'Coyote')],
+    }];
+    const plan = buildSyncPlan(
+      images,
+      { [K1]: draft({ mediaPath: K1, observations: [obs('Puma concolor', 2), obs('Canis latrans', 1, 'Coyote')] }) },
+      null,
+      null,
+      'harold',
+    );
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Puma concolor')?.classifiedBy).toBe('harold');
+    expect(plan.tagEdits[0].observations.find((o) => o.scientificName === 'Canis latrans')?.classifiedBy).toBeUndefined();
+  });
+
+  // #368 (Q12): a review of an existing identification must record the
+  // reviewer and date even when nothing about the species/count changes.
+  // Re-applying a species already present is how that confirmation is made —
+  // The store records the reviewer separately; the original attribution is
+  // retained in the canonical row.
+  it('records a confirmation as its own category, not a modification, when a species is re-applied unchanged', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser', classificationTimestamp: '2024-01-11T00:00:00.000Z' }],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: images[0].baseObservations,
+    });
+    const reapplied = addObservation(seeded.observations, {
+      scientificName: 'Puma concolor',
+      commonName: '',
+      count: 1,
+      classifiedBy: 'harold',
+      classificationTimestamp: '2024-01-20T14:30:00.000Z',
+    });
+    const plan = buildSyncPlan(
+      images,
+      {
+        [K1]: {
+          ...seeded,
+          observations: reapplied,
+          confirmedSpecies: ['Puma concolor'],
+          dirty: true,
+        },
+      },
+      null,
+    );
+    expect(plan.summary).toEqual({
+      additions: 0,
+      modifications: 0,
+      removals: 0,
+      timeCorrections: 0,
+      confirmations: 1,
+    });
+    expect(plan.tagEdits).toHaveLength(1);
+    const written = plan.tagEdits[0].observations[0];
+    expect(written.scientificName).toBe('Puma concolor');
+    expect(written.count).toBe(1);
+    expect(written.classifiedBy).toBe('fielduser');
+    expect(written.classificationTimestamp).toBe('2024-01-11T00:00:00.000Z');
+  });
+
+  it('does not confirm an untouched draft (no attribution refresh, no edit)', () => {
+    // The same content-unchanged shape as a confirmation, but reached without
+    // ever calling addObservation — nothing distinguishes it from an upload
+    // nobody has looked at, so no edit (and no review record) is emitted.
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: [obs('Puma concolor', 1)],
+    });
+    const plan = buildSyncPlan(IMAGES, { [K1]: { ...seeded, dirty: true } }, null);
+    expect(plan.summary.confirmations).toBe(0);
+    expect(plan.tagEdits).toHaveLength(0);
+  });
+
+  it('does not infer a confirmation from a legacy draft missing attribution', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser' }],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: [obs('Puma concolor', 1)],
+    });
+    const plan = buildSyncPlan(images, { [K1]: { ...seeded, dirty: true } }, null);
+    expect(plan.summary.confirmations).toBe(0);
+    expect(plan.tagEdits).toHaveLength(0);
+  });
+
+  it('does not credit unrelated legacy species when one species is confirmed', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [
+        { ...obs('Puma concolor', 1), classifiedBy: 'fielduser' },
+        obs('Canis latrans', 1, 'Coyote'),
+      ],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: images[0].baseObservations,
+    });
+    const reapplied = addObservation(seeded.observations, {
+      scientificName: 'Puma concolor',
+      commonName: '',
+      count: 1,
+      classifiedBy: 'harold',
+      classificationTimestamp: NOW.toISOString(),
+    });
+    const plan = buildSyncPlan(images, {
+      [K1]: { ...seeded, observations: reapplied, confirmedSpecies: ['Puma concolor'], dirty: true },
+    }, null);
+    const rows = plan.tagEdits[0].observations;
+    expect(plan.summary.confirmations).toBe(1);
+    expect(rows.find((o) => o.scientificName === 'Puma concolor')?.classifiedBy).toBe('fielduser');
+    expect(rows.find((o) => o.scientificName === 'Canis latrans')?.classifiedBy).toBeUndefined();
+  });
+
+  it('counts an explicit confirmation alongside another species edit', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser' }],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: images[0].baseObservations,
+    });
+    const plan = buildSyncPlan(images, {
+      [K1]: {
+        ...seeded,
+        observations: [
+          { ...obs('Puma concolor', 1), classifiedBy: 'harold', classificationTimestamp: NOW.toISOString() },
+          obs('Canis latrans', 1, 'Coyote'),
+        ],
+        confirmedSpecies: ['Puma concolor'],
+        dirty: true,
+      },
+    }, null, null, 'harold');
+    expect(plan.summary).toMatchObject({ modifications: 1, confirmations: 1 });
+  });
+
+  it('writes a review event only on the species that was re-applied', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [
+        { ...obs('Puma concolor', 1), classifiedBy: 'fielduser' },
+        { ...obs('Canis latrans', 1, 'Coyote'), classifiedBy: 'anita' },
+      ],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: images[0].baseObservations,
+    });
+    const plan = buildSyncPlan(images, {
+      [K1]: {
+        ...seeded,
+        observations: [
+          {
+            ...images[0].baseObservations[0],
+            reviewEvents: [{ reviewedBy: 'harold', reviewedAt: NOW.toISOString() }],
+          },
+          images[0].baseObservations[1],
+        ],
+        confirmedSpecies: ['Puma concolor'],
+        dirty: true,
+      },
+    }, null);
+    expect(plan.tagEdits[0].observations[0].reviewEvents).toEqual([
+      { reviewedBy: 'harold', reviewedAt: NOW.toISOString() },
+    ]);
+    expect(plan.tagEdits[0].observations[1].reviewEvents).toBeUndefined();
+  });
+
+  // A sync leaves the draft clean, without the review events it wrote, so the
+  // next confirm or count edit starts from a draft that holds only its own event.
+  const HAROLD = { reviewedBy: 'harold', reviewedAt: '2024-01-12T00:00:00.000Z' };
+  const BOB = { reviewedBy: 'bob', reviewedAt: NOW.toISOString() };
+  const reviewedPuma: TagImage[] = [{
+    ...IMAGES[0],
+    baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser', reviewEvents: [HAROLD] }],
+  }];
+
+  it('keeps a stored review when the species is confirmed again', () => {
+    const plan = buildSyncPlan(reviewedPuma, {
+      [K1]: draft({
+        mediaPath: K1,
+        observations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser', reviewEvents: [BOB] }],
+        confirmedSpecies: ['Puma concolor'],
+      }),
+    }, null, null, 'bob');
+    expect(plan.tagEdits[0].observations[0].reviewEvents).toEqual([HAROLD, BOB]);
+  });
+
+  it('keeps a stored review when the count is edited later', () => {
+    const plan = buildSyncPlan(reviewedPuma, {
+      [K1]: draft({
+        mediaPath: K1,
+        observations: [{ ...obs('Puma concolor', 2), classifiedBy: 'fielduser', reviewEvents: [BOB] }],
+        confirmedSpecies: ['Puma concolor'],
+      }),
+    }, null, null, 'bob');
+    expect(plan.tagEdits[0].observations[0].count).toBe(2);
+    expect(plan.tagEdits[0].observations[0].reviewEvents).toEqual([HAROLD, BOB]);
+  });
+
+  it('keeps edit-time attribution when the connected account changes before sync', () => {
+    const plan = buildSyncPlan(
+      [{ ...IMAGES[1], baseObservations: [] }],
+      { [K2]: draft({ mediaPath: K2, observations: [{ ...obs('Canis latrans', 1), classifiedBy: 'alice', classificationTimestamp: NOW.toISOString() }] }) },
+      null,
+      null,
+      'bob',
+    );
+    expect(plan.tagEdits[0].observations[0].classifiedBy).toBe('alice');
+  });
+
+  it('keeps confirmation attribution when a time correction is combined with the review', () => {
+    const images: TagImage[] = [{
+      ...IMAGES[0],
+      baseObservations: [{ ...obs('Puma concolor', 1), classifiedBy: 'fielduser' }],
+    }];
+    const seeded = blankDraft({ bucket: 'sparcd-x', uploadPrefix: PREFIX }, K1, DEP, {
+      observations: [{ ...obs('Puma concolor', 1), classifiedBy: 'harold', classificationTimestamp: NOW.toISOString() }],
+    });
+    const plan = buildSyncPlan(
+      images,
+      {
+        [K1]: {
+          ...seeded,
+          confirmedSpecies: ['Puma concolor'],
+          timeOverride: '2024-01-10T09:00:00',
+          dirty: true,
+        },
+      },
+      null,
+    );
+    expect(plan.summary).toMatchObject({ confirmations: 1, timeCorrections: 1 });
+    expect(plan.tagEdits[0].observations[0].classifiedBy).toBe('fielduser');
+    expect(plan.tagEdits[0].mediaTimestamp).toBe('2024-01-10T09:00:00');
   });
 
   it('classifies a detag as a removal with empty observations', () => {

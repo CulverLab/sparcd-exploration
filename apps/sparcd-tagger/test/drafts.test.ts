@@ -56,6 +56,20 @@ describe('addObservation', () => {
     const next = addObservation([], tag('Canis latrans', 0));
     expect(next[0].count).toBe(1);
   });
+
+  it('keeps the editor identity on a newly added observation', () => {
+    const next = addObservation([], { ...tag('Canis latrans'), classifiedBy: 'harold' });
+    expect(next[0].classifiedBy).toBe('harold');
+  });
+
+  it('preserves existing attribution when a legacy re-apply has no metadata', () => {
+    const next = addObservation(
+      [{ ...tag('Canis latrans'), classifiedBy: 'fielduser', classificationTimestamp: '2024-01-01T00:00:00.000Z' }],
+      tag('Canis latrans'),
+    );
+    expect(next[0].classifiedBy).toBe('fielduser');
+    expect(next[0].classificationTimestamp).toBe('2024-01-01T00:00:00.000Z');
+  });
 });
 
 describe('incrementObservation', () => {
@@ -84,6 +98,18 @@ describe('incrementObservation', () => {
       ['Odocoileus hemionus', 3],
       ['Canis latrans', 4],
     ]);
+  });
+
+  it('preserves original attribution when incrementing an existing species', () => {
+    const next = incrementObservation(
+      [{ ...obs('Canis latrans', 1), classifiedBy: 'fielduser' }],
+      { ...tag('Canis latrans'), classifiedBy: 'harold', classificationTimestamp: '2024-01-20T14:30:00.000Z' },
+    );
+    expect(next[0]).toMatchObject({
+      count: 2,
+      classifiedBy: 'fielduser',
+    });
+    expect(next[0].classificationTimestamp).toBeUndefined();
   });
 
   it('clears Ghost when a real species is incremented', () => {
@@ -217,6 +243,33 @@ describe('draft store — add-only over a base multi-species image', () => {
     const d = useDraftStore.getState().drafts;
     expect(d[PATH].observations[0].count).toBe(3);
     expect(d[P2].observations[0].count).toBe(1);
+  });
+
+  it('does not mark a species added in this draft as reviewed when its count is incremented', () => {
+    const empty = { observations: [] };
+    useDraftStore.getState().incrementSpecies(
+      CTX,
+      [{ ...target(empty) }],
+      tag('Lynx rufus', 1, 'Bobcat'),
+    );
+    const observation = useDraftStore.getState().drafts[PATH].observations[0];
+    expect(observation.count).toBe(1);
+    expect(observation.reviewEvents).toBeUndefined();
+    expect(useDraftStore.getState().drafts[PATH].confirmedSpecies).toBeUndefined();
+  });
+
+  it('marks a count edit on an existing species as confirmed for sync', () => {
+    useDraftStore.getState().setSpeciesCount(
+      CTX,
+      PATH,
+      DEP,
+      BASE,
+      'Odocoileus hemionus',
+      1,
+      'reviewer',
+      '2024-01-20T14:30:00.000Z',
+    );
+    expect(useDraftStore.getState().drafts[PATH].confirmedSpecies).toEqual(['Odocoileus hemionus']);
   });
 
   it('applying Ghost via the store clears real species', () => {

@@ -32,10 +32,11 @@ Feature: Retry a failed upload to the same destination
     And there is no duplicate upload of the same batch
 
   @AL2 @AL2-3
-  Scenario: No leftover partial data from the failed attempt remains
+  Scenario: Leftover partial data from the failed attempt is not presented
     When the retry completes
-    Then no partial data from the failed attempt remains in the destination
-    And the images present are those of the completed retry
+    Then partial data from the failed attempt remains recoverable in storage
+    And no application presents that partial data
+    And the images presented are those of the completed retry
 
   @AL2 @AL2-4
   Scenario: Retrying does not require re-entering the location
