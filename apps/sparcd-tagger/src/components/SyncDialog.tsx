@@ -95,7 +95,7 @@ export function SyncDialog({
         ]),
     );
     if (!expected.size) return;
-    const queryKey = ['tagImages', connectionId, collectionKey, ctx.uploadPrefix] as const;
+    const queryKey = ['tagImages', connectionId, ctx.bucket, ctx.uploadPrefix] as const;
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const fresh = queryClient.getQueryData<TagImage[]>(queryKey);

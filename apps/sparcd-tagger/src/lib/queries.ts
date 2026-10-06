@@ -8,16 +8,13 @@ import type { Deployment } from '@sparcd/camtrap';
 import {
   listCollections,
   listUploads,
-  listUploadImages,
   listCollectionSnapshots,
   listSnapshots,
   loadCanonicalState,
   loadUploadSummary,
   loadCurrentDeployment,
-  parseCollectionKey,
   type CollectionRef,
   type UploadRef,
-  type UploadImage,
   type UploadSnapshots,
   type UploadSummary,
   type SnapshotRef,
@@ -52,14 +49,11 @@ export function useCollections(cfg: S3Config | null, connectionId: number) {
   });
 }
 
-export function useUploads(cfg: S3Config | null, connectionId: number, collectionKey: string | null) {
+export function useUploads(cfg: S3Config | null, connectionId: number, collection: CollectionRef | undefined) {
   return useQuery<UploadRef[]>({
-    queryKey: ['uploads', connectionId, collectionKey],
-    queryFn: () => {
-      const { bucket, uuid } = parseCollectionKey(collectionKey!);
-      return listUploads(cfg!, bucket, uuid);
-    },
-    enabled: !!cfg && !!collectionKey,
+    queryKey: ['uploads', connectionId, collection?.key, collection?.buckets],
+    queryFn: () => listUploads(cfg!, collection!),
+    enabled: !!cfg && !!collection,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -76,17 +70,13 @@ export type { UploadSummary, UploadDraftState };
 export function useUploadSummaries(
   cfg: S3Config | null,
   connectionId: number,
-  collectionKey: string | null,
   uploads: UploadRef[] | undefined,
 ) {
   return useQueries({
     queries: (uploads ?? []).map((u) => ({
-      queryKey: ['uploadSummary', connectionId, collectionKey, u.prefix],
-      queryFn: () => {
-        const { bucket } = parseCollectionKey(collectionKey!);
-        return loadUploadSummary(cfg!, bucket, u.prefix);
-      },
-      enabled: !!cfg && !!collectionKey,
+      queryKey: ['uploadSummary', connectionId, u.bucket, u.prefix],
+      queryFn: () => loadUploadSummary(cfg!, u.bucket, u.prefix),
+      enabled: !!cfg,
       staleTime: 60 * 1000,
       retry: 1,
     })),
@@ -95,30 +85,12 @@ export function useUploadSummaries(
 
 /** Local edit state per upload (drives the Sync column). Cheap IndexedDB scan;
  *  short stale time so returning from a tagging session refreshes the pills. */
-export function useUploadDraftStates(connectionId: number, collectionKey: string | null) {
+export function useUploadDraftStates(connectionId: number, collection: CollectionRef | undefined) {
   return useQuery<Map<string, UploadDraftState>>({
-    queryKey: ['uploadDraftStates', connectionId, collectionKey],
-    queryFn: () => uploadDraftStates(parseCollectionKey(collectionKey!).bucket),
-    enabled: !!collectionKey,
+    queryKey: ['uploadDraftStates', connectionId, collection?.key, collection?.buckets],
+    queryFn: () => uploadDraftStates(collection!.buckets),
+    enabled: !!collection,
     staleTime: 5 * 1000,
-  });
-}
-
-export function useUploadImages(
-  cfg: S3Config | null,
-  connectionId: number,
-  collectionKey: string | null,
-  uploadPrefix: string | null,
-) {
-  return useQuery<UploadImage[]>({
-    queryKey: ['uploadImages', connectionId, collectionKey, uploadPrefix],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return listUploadImages(cfg!, bucket, uploadPrefix!);
-    },
-    enabled: !!cfg && !!collectionKey && !!uploadPrefix,
-    staleTime: 60 * 1000,
-    retry: 1,
   });
 }
 
@@ -129,36 +101,35 @@ export function useUploadImages(
 export function useTagImages(
   cfg: S3Config | null,
   connectionId: number,
-  collectionKey: string | null,
+  bucket: string | null,
   uploadPrefix: string | null,
 ) {
   return useQuery<TagImage[]>({
-    queryKey: ['tagImages', connectionId, collectionKey, uploadPrefix],
+    queryKey: ['tagImages', connectionId, bucket, uploadPrefix],
     queryFn: async () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      const state = await loadCanonicalState(cfg!, bucket, uploadPrefix!);
+      const state = await loadCanonicalState(cfg!, bucket!, uploadPrefix!);
       // Pin the conflict base to the session: only (re-)ground when the upload
       // has no base yet or no unsaved edits. Once edits exist the base is frozen,
       // so a background refetch can't silently absorb a remote change — drift
       // surfaces as a conflict at sync. Post-sync/restore re-grounding is
       // explicit (in syncRunner) and bypasses this.
-      const existing = await getUpload(bucket, uploadPrefix!);
+      const existing = await getUpload(bucket!, uploadPrefix!);
       // Draft writes are debounced, so Dexie can lag a live edit by up to the
       // debounce window. Consult the in-memory store synchronously too — an
       // optimistic edit already flips its record dirty there — so a refetch that
       // resolves inside that window can't re-ground the base under active edits.
       const store = useDraftStore.getState();
-      const memDirty = store.loadedKey === uploadId(bucket, uploadPrefix!)
+      const memDirty = store.loadedKey === uploadId(bucket!, uploadPrefix!)
         && (dirtyCount(store.drafts) > 0 || store.pendingLocation !== null);
-      if (shouldGroundUpload(existing, memDirty, await hasDirtyDraftsForUpload(bucket, uploadPrefix!))) {
-        await groundUpload(bucket, uploadPrefix!, state);
+      if (shouldGroundUpload(existing, memDirty, await hasDirtyDraftsForUpload(bucket!, uploadPrefix!))) {
+        await groundUpload(bucket!, uploadPrefix!, state);
       }
       return buildTagImages({
         mediaCsv: state.media.text,
         observationsCsv: state.observations.text,
       });
     },
-    enabled: !!cfg && !!collectionKey && !!uploadPrefix,
+    enabled: !!cfg && !!bucket && !!uploadPrefix,
     staleTime: 60 * 1000,
     retry: 1,
   });
@@ -179,15 +150,12 @@ export function shouldGroundUpload(
 export function useCollectionSnapshots(
   cfg: S3Config | null,
   connectionId: number,
-  collectionKey: string | null,
+  collection: CollectionRef | undefined,
 ) {
   return useQuery<UploadSnapshots[]>({
-    queryKey: ['collectionSnapshots', connectionId, collectionKey],
-    queryFn: () => {
-      const { bucket, uuid } = parseCollectionKey(collectionKey!);
-      return listCollectionSnapshots(cfg!, bucket, uuid);
-    },
-    enabled: !!cfg && !!collectionKey,
+    queryKey: ['collectionSnapshots', connectionId, collection?.key, collection?.buckets],
+    queryFn: () => listCollectionSnapshots(cfg!, collection!),
+    enabled: !!cfg && !!collection,
     staleTime: 30 * 1000,
     retry: 1,
   });
@@ -199,16 +167,13 @@ export function useCollectionSnapshots(
 export function useUploadSnapshots(
   cfg: S3Config | null,
   connectionId: number,
-  collectionKey: string | null,
+  bucket: string | null,
   uploadPrefix: string | null,
 ) {
   return useQuery<SnapshotRef[]>({
-    queryKey: ['snapshots', connectionId, collectionKey, uploadPrefix],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return listSnapshots(cfg!, bucket, uploadPrefix!);
-    },
-    enabled: !!cfg && !!collectionKey && !!uploadPrefix,
+    queryKey: ['snapshots', connectionId, bucket, uploadPrefix],
+    queryFn: () => listSnapshots(cfg!, bucket!, uploadPrefix!),
+    enabled: !!cfg && !!bucket && !!uploadPrefix,
     staleTime: 30 * 1000,
     retry: 1,
   });
@@ -248,16 +213,13 @@ export function useLocations(
 export function useCurrentDeployment(
   cfg: S3Config | null,
   connectionId: number,
-  collectionKey: string | null,
+  bucket: string | null,
   uploadPrefix: string | null,
 ) {
   return useQuery<Deployment | null>({
-    queryKey: ['currentDeployment', connectionId, collectionKey, uploadPrefix],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return loadCurrentDeployment(cfg!, bucket, uploadPrefix!);
-    },
-    enabled: !!cfg && !!collectionKey && !!uploadPrefix,
+    queryKey: ['currentDeployment', connectionId, bucket, uploadPrefix],
+    queryFn: () => loadCurrentDeployment(cfg!, bucket!, uploadPrefix!),
+    enabled: !!cfg && !!bucket && !!uploadPrefix,
     staleTime: 60 * 1000,
     retry: 1,
   });

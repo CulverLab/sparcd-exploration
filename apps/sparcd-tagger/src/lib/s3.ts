@@ -8,6 +8,7 @@
 import {
   SafeS3Client,
   listCollections as listCollectionsWith,
+  listUploadFolders,
   parseCollectionKey,
   translateReadError,
   type CollectionRef,
@@ -64,19 +65,23 @@ export function listCollections(cfg: S3Config): Promise<CollectionRef[]> {
   return listCollectionsWith(getClient(cfg));
 }
 
-// --- Uploads + images within a collection ----------------------------------
+// --- Uploads within a collection --------------------------------------------
 
 export type UploadRef = {
+  bucket: string; // where the folder was listed; every read and write for this upload goes here
   prefix: string; // full `Collections/<uuid>/Uploads/<stamp>/`
   stamp: string; // the `<stamp>` folder name
 };
 
-/** Upload folders for a collection, enumerated with a delimiter (no image walk). */
-export async function listUploads(cfg: S3Config, bucket: string, uuid: string): Promise<UploadRef[]> {
-  const client = getClient(cfg);
-  const dirs = await client.listCommonPrefixes(bucket, `Collections/${uuid}/Uploads/`);
-  return dirs
-    .map((prefix) => ({ prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix }))
+/** A collection's uploads across every bucket that holds it, enumerated with a delimiter (no image walk). */
+export async function listUploads(
+  cfg: S3Config,
+  ref: Pick<CollectionRef, 'uuid' | 'buckets'>,
+  client: SafeS3Client = getClient(cfg),
+): Promise<UploadRef[]> {
+  const folders = await listUploadFolders(client, ref);
+  return folders
+    .map(({ bucket, prefix }) => ({ bucket, prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix }))
     .sort((a, b) => b.stamp.localeCompare(a.stamp)); // newest stamp first
 }
 
@@ -145,32 +150,6 @@ export async function loadCurrentDeployment(
   } catch {
     return null;
   }
-}
-
-export type UploadImage = {
-  key: string; // full object key
-  fileName: string;
-  size: number;
-};
-
-// What the sparcd-web reader treats as an "image" under an upload prefix: it
-// recurses subfolders but returns only these extensions. Matching it here means
-// snapshot/CSV/JSON objects never show up as taggable images.
-const IMAGE_EXT = /\.(jpe?g|mp4)$/i;
-
-/** List the taggable images under an upload prefix (sparcd-web `get_s3_images` parity). */
-export async function listUploadImages(
-  cfg: S3Config,
-  bucket: string,
-  uploadPrefix: string,
-): Promise<UploadImage[]> {
-  const client = getClient(cfg);
-  const images: UploadImage[] = [];
-  for await (const obj of client.listObjects(bucket, uploadPrefix)) {
-    if (!IMAGE_EXT.test(obj.key)) continue;
-    images.push({ key: obj.key, fileName: obj.key.split('/').pop() ?? obj.key, size: obj.size });
-  }
-  return images.sort((a, b) => a.key.localeCompare(b.key));
 }
 
 const THUMB_TTL_SEC = 60 * 60; // 1h presigned GET, plenty for a tagging session
@@ -313,6 +292,7 @@ export async function listSnapshots(
 }
 
 export type UploadSnapshots = {
+  bucket: string;
   uploadPrefix: string;
   uploadStamp: string;
   snapshots: SnapshotRef[];
@@ -327,19 +307,18 @@ export type UploadSnapshots = {
  */
 export async function listCollectionSnapshots(
   cfg: S3Config,
-  bucket: string,
-  uuid: string,
+  ref: Pick<CollectionRef, 'uuid' | 'buckets'>,
 ): Promise<UploadSnapshots[]> {
-  const uploads = await listUploads(cfg, bucket, uuid);
+  const uploads = await listUploads(cfg, ref);
   const out = await Promise.all(
     uploads.map(async (u) => {
       let snapshots: SnapshotRef[] = [];
       try {
-        snapshots = await listSnapshots(cfg, bucket, u.prefix);
+        snapshots = await listSnapshots(cfg, u.bucket, u.prefix);
       } catch {
         // Keep aggregating; an unreadable upload contributes no snapshots.
       }
-      return { uploadPrefix: u.prefix, uploadStamp: u.stamp, snapshots };
+      return { bucket: u.bucket, uploadPrefix: u.prefix, uploadStamp: u.stamp, snapshots };
     }),
   );
   return out.filter((u) => u.snapshots.length > 0);

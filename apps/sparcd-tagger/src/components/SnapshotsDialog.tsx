@@ -26,9 +26,8 @@ type Phase = 'previewing' | 'preview' | 'running' | 'done';
 export function SnapshotsDialog({ ctx, onClose }: { ctx: UploadCtx; onClose: () => void }) {
   const cfg = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
-  const collectionKey = useStore((s) => s.selectedCollectionKey);
 
-  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, ctx.uploadPrefix);
+  const snapshots = useUploadSnapshots(cfg, connectionId, ctx.bucket, ctx.uploadPrefix);
 
   const [picked, setPicked] = useState<SnapshotRef | null>(null);
   // A live restore must not be dismissable mid-write (it would keep writing

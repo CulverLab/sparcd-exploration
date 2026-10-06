@@ -187,8 +187,9 @@ export async function putDraft(record: DraftRecord): Promise<void> {
 export type UploadDraftState = 'unsynced' | 'synced';
 
 /**
- * One pass over a bucket's drafts → which uploads have local work, and whether
- * it is still `unsynced` (any dirty draft) or `synced` (drafts exist, all pushed).
+ * One pass over the drafts in a collection's buckets → which uploads (by
+ * `uploadId`) have local work, and whether it is still `unsynced` (any dirty
+ * draft) or `synced` (drafts exist, all pushed).
  * A second pass over `uploads` upgrades any upload with a pending whole-upload
  * location correction to `unsynced` too — that's local work even when no
  * per-image draft is dirty (#301 review).
@@ -197,19 +198,20 @@ export type UploadDraftState = 'unsynced' | 'synced';
  * A full scan of each table (no `bucket` index), but both are bounded by local
  * tagging work.
  */
-export async function uploadDraftStates(bucket: string): Promise<Map<string, UploadDraftState>> {
+export async function uploadDraftStates(buckets: string[]): Promise<Map<string, UploadDraftState>> {
   const out = new Map<string, UploadDraftState>();
   await db.drafts
-    .filter((d) => d.bucket === bucket)
+    .filter((d) => buckets.includes(d.bucket))
     .each((d) => {
-      if (out.get(d.uploadPrefix) === 'unsynced') return; // dirty wins, stays unsynced
-      out.set(d.uploadPrefix, d.dirty ? 'unsynced' : 'synced');
+      const id = uploadId(d.bucket, d.uploadPrefix);
+      if (out.get(id) === 'unsynced') return; // dirty wins, stays unsynced
+      out.set(id, d.dirty ? 'unsynced' : 'synced');
     });
   await db.uploads
     // Records written before location correction have no `pendingLocation`
     // property. Treat both that legacy `undefined` and null as no correction.
-    .filter((u) => u.bucket === bucket && u.pendingLocation != null)
-    .each((u) => out.set(u.uploadPrefix, 'unsynced'));
+    .filter((u) => buckets.includes(u.bucket) && u.pendingLocation != null)
+    .each((u) => out.set(u.id, 'unsynced'));
   return out;
 }
 

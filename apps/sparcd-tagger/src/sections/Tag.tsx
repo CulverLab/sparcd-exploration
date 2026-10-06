@@ -85,6 +85,7 @@ export function Tag() {
   const connectionId = useStore((s) => s.connectionId);
   const collectionKey = useStore((s) => s.selectedCollectionKey);
   const uploadPrefix = useStore((s) => s.selectedUploadPrefix);
+  const bucket = useStore((s) => s.selectedUploadBucket);
   const burstGroupingEnabled = useStore((s) => s.burstGroupingEnabled);
   const burstThreshold = useStore((s) => s.burstThresholdSec);
   const autoAdvanceOnTag = useStore((s) => s.autoAdvanceOnTag);
@@ -97,13 +98,13 @@ export function Tag() {
   const needsGesture = useLocalBatch((s) => s.needsGesture);
   const attachOriginals = useLocalBatch((s) => s.attachOriginals);
 
-  const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
+  const images = useTagImages(cfg, connectionId, bucket, uploadPrefix);
   const species = useSpecies(cfg, connectionId, collectionKey);
   const locations = useLocations(cfg, connectionId, collectionKey);
-  const currentDeployment = useCurrentDeployment(cfg, connectionId, collectionKey, uploadPrefix);
+  const currentDeployment = useCurrentDeployment(cfg, connectionId, bucket, uploadPrefix);
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
-  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
+  const snapshots = useUploadSnapshots(cfg, connectionId, bucket, uploadPrefix);
   const hasSnapshot = (snapshots.data?.length ?? 0) > 0;
 
   const localImages = useMemo(
@@ -111,10 +112,8 @@ export function Tag() {
     [localRecord],
   );
 
-  const { bucket, uuid: collectionUuid } = collectionKey
-    ? parseCollectionKey(collectionKey)
-    : { bucket: '', uuid: '' };
-  const collectionName = collection?.name ?? collection?.bucket ?? bucket;
+  const collectionUuid = collectionKey ? parseCollectionKey(collectionKey).uuid : '';
+  const collectionName = collection?.name ?? collectionUuid;
   const uploadName = uploadPrefix ? uploadNameOf(uploadPrefix) : '';
   // Drafts are scoped by bucket + upload, and a local batch has neither — its
   // own id stands in, so re-entering the same hand-off resumes where it left off
@@ -123,7 +122,7 @@ export function Tag() {
     () =>
       localRecord
         ? { bucket: 'local', uploadPrefix: localRecord.id }
-        : { bucket, uploadPrefix: uploadPrefix ?? '' },
+        : { bucket: bucket ?? '', uploadPrefix: uploadPrefix ?? '' },
     [localRecord, bucket, uploadPrefix],
   );
 

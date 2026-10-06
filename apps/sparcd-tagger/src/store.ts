@@ -37,6 +37,7 @@ type TaggerState = {
   // What the researcher has drilled into (Browse → Tag).
   selectedCollectionKey: string | null; // `${bucket}::${uuid}`
   selectedUploadPrefix: string | null; // full `Collections/<uuid>/Uploads/<stamp>/`
+  selectedUploadBucket: string | null; // where that upload's folder was listed; all its reads and writes go here
 
   // Set when History routes to an upload to restore a snapshot: the Tag
   // workspace consumes it once to auto-open its Snapshots dialog, then clears it.
@@ -57,8 +58,8 @@ type TaggerState = {
   setSection: (section: Section) => void;
   toggleTheme: () => void;
   selectCollection: (key: string | null) => void;
-  selectUpload: (prefix: string | null) => void;
-  openUploadForSnapshots: (collectionKey: string, uploadPrefix: string) => void;
+  selectUpload: (prefix: string | null, bucket: string | null) => void;
+  openUploadForSnapshots: (collectionKey: string, uploadPrefix: string, uploadBucket: string) => void;
   clearPendingSnapshots: () => void;
   setSyncState: (state: SyncState) => void;
   setTaggerUser: (value: string) => void;
@@ -214,6 +215,7 @@ export const useStore = create<TaggerState>()(
     syncState: 'local-only',
     selectedCollectionKey: null,
     selectedUploadPrefix: null,
+    selectedUploadBucket: null,
     pendingSnapshots: false,
     taggerUser: loadTaggerUser(),
     dryRun: false,
@@ -230,6 +232,7 @@ export const useStore = create<TaggerState>()(
         connectionId: s.connectionId + 1,
         selectedCollectionKey: null,
         selectedUploadPrefix: null,
+        selectedUploadBucket: null,
       }));
     },
     disconnect: () => {
@@ -243,6 +246,7 @@ export const useStore = create<TaggerState>()(
         section: 'browse',
         selectedCollectionKey: null,
         selectedUploadPrefix: null,
+        selectedUploadBucket: null,
         taggerUser: '',
         autoAdvanceOnTag: true,
       }));
@@ -255,17 +259,24 @@ export const useStore = create<TaggerState>()(
         return { theme };
       }),
     selectCollection: (key) =>
-      set({ selectedCollectionKey: key, selectedUploadPrefix: null, syncState: 'local-only' }),
-    selectUpload: (prefix) =>
+      set({
+        selectedCollectionKey: key,
+        selectedUploadPrefix: null,
+        selectedUploadBucket: null,
+        syncState: 'local-only',
+      }),
+    selectUpload: (prefix, bucket) =>
       set({
         selectedUploadPrefix: prefix,
+        selectedUploadBucket: bucket,
         section: prefix ? 'tag' : 'browse',
         syncState: 'local-only',
       }),
-    openUploadForSnapshots: (collectionKey, uploadPrefix) =>
+    openUploadForSnapshots: (collectionKey, uploadPrefix, uploadBucket) =>
       set({
         selectedCollectionKey: collectionKey,
         selectedUploadPrefix: uploadPrefix,
+        selectedUploadBucket: uploadBucket,
         section: 'tag',
         syncState: 'local-only',
         pendingSnapshots: true,
@@ -330,6 +341,7 @@ subscribeSharedConnection((cfg) => {
           section: 'browse' as const,
           selectedCollectionKey: null,
           selectedUploadPrefix: null,
+          selectedUploadBucket: null,
         }),
   }));
 }, () => useStore.getState().s3Config);

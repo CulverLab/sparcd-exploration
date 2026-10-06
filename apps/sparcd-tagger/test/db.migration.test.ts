@@ -140,6 +140,6 @@ describe('Dexie v3 migration — single label → observations array', () => {
     const mod = await import('../src/lib/db');
     await mod.db.open();
 
-    expect((await mod.uploadDraftStates('b')).has('p/')).toBe(false);
+    expect((await mod.uploadDraftStates(['b'])).has(mod.uploadId('b', 'p/'))).toBe(false);
   });
 });

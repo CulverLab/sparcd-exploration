@@ -10,6 +10,7 @@ import {
   type UploadSummary,
   type UploadDraftState,
 } from '../lib/queries';
+import { uploadId } from '../lib/db';
 import { PawPads } from '../components/Paw';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
@@ -44,15 +45,14 @@ export function Browse() {
   const selectUpload = useStore((s) => s.selectUpload);
 
   const collections = useCollections(cfg, connectionId);
-  const uploads = useUploads(cfg, connectionId, collectionKey);
+  const collection = collections.data?.find((c) => c.key === collectionKey);
+  const uploads = useUploads(cfg, connectionId, collection);
   const species = useSpecies(cfg, connectionId, collectionKey); // loaded for the selected collection
-  const summaries = useUploadSummaries(cfg, connectionId, collectionKey, uploads.data);
-  const draftStates = useUploadDraftStates(connectionId, collectionKey);
+  const summaries = useUploadSummaries(cfg, connectionId, uploads.data);
+  const draftStates = useUploadDraftStates(connectionId, collection);
 
   const [filter, setFilter] = useState('');
   const [tab, setTab] = useState<Tab>('all');
-
-  const collection = collections.data?.find((c) => c.key === collectionKey);
 
   const shownCollections = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -229,8 +229,8 @@ export function Browse() {
                       key={u.prefix}
                       stamp={u.stamp}
                       query={summaries[i]}
-                      draftState={draftStates.data?.get(u.prefix)}
-                      onOpen={() => selectUpload(u.prefix)}
+                      draftState={draftStates.data?.get(uploadId(u.bucket, u.prefix))}
+                      onOpen={() => selectUpload(u.prefix, u.bucket)}
                     />
                   );
                 })}
