@@ -140,7 +140,7 @@ function RestorePane({
   const collectionKey = useStore((s) => s.selectedCollectionKey);
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
-  const collectionName = collection?.name ?? collection?.bucket ?? ctx.bucket;
+  const collectionName = collection?.name ?? collection?.uuid ?? ctx.bucket;
   const uploadName = uploadNameOf(ctx.uploadPrefix);
   const discardUpload = useDraftStore((s) => s.discardUpload);
   const queryClient = useQueryClient();

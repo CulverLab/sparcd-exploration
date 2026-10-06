@@ -201,7 +201,7 @@ function Snapshots() {
           >
             {collections.data.map((c) => (
               <option key={c.key} value={c.key}>
-                {c.name ?? c.bucket}
+                {c.name ?? c.uuid}
               </option>
             ))}
           </select>

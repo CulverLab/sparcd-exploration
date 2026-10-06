@@ -58,7 +58,7 @@ export function Browse() {
     const q = filter.trim().toLowerCase();
     if (!q) return collections.data ?? [];
     return (collections.data ?? []).filter((c) =>
-      `${c.name ?? c.bucket} ${c.organization ?? ''}`.toLowerCase().includes(q),
+      `${c.name ?? c.uuid} ${c.organization ?? ''}`.toLowerCase().includes(q),
     );
   }, [collections.data, filter]);
 
@@ -114,7 +114,7 @@ export function Browse() {
                   }`}
                 >
                   <div className={`text-[14px] text-ink ${c.key === collectionKey ? 'font-[600]' : ''}`}>
-                    {c.name ?? c.bucket}
+                    {c.name ?? c.uuid}
                   </div>
                   {c.organization && (
                     <div className="text-[12px] text-inkSoft font-mono mt-1">{c.organization}</div>
@@ -148,13 +148,13 @@ export function Browse() {
             <nav className="flex items-center gap-1.5 text-[13px] mb-3">
               <span className="text-inkSoft">Browse</span>
               <span className="text-inkMute">/</span>
-              <span className="text-ink">{collection?.name ?? collection?.bucket ?? '…'}</span>
+              <span className="text-ink">{collection?.name ?? collection?.uuid ?? '…'}</span>
             </nav>
 
             <div className="flex items-baseline justify-between gap-4 flex-wrap mb-4">
               <div>
                 <h1 className="font-display text-[28px] leading-tight text-ink">
-                  Uploads in {collection?.name ?? collection?.bucket ?? 'this collection'}
+                  Uploads in {collection?.name ?? collection?.uuid ?? 'this collection'}
                 </h1>
                 <p className="text-[13px] text-inkSoft mt-1">
                   {uploads.isLoading ? (
