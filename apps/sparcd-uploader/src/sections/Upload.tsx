@@ -11,6 +11,7 @@ import type { ReconcileProblem } from '../lib/resume';
 import {
   resumeUpload,
   runStreamingUpload,
+  uploadTarget,
   type ConcurrencyControl,
 } from '../lib/upload';
 import { probeShardClients } from '../lib/s3';
@@ -208,7 +209,7 @@ export function Upload() {
     ? {
         collectionName:
           collections.data?.find(
-            (c) => c.bucket === savedBatch.targetBucket && c.uuid === savedBatch.collectionUuid,
+            (c) => c.uuid === savedBatch.collectionUuid && c.buckets.includes(savedBatch.targetBucket),
           )?.name ?? savedBatch.targetBucket,
         collectionUuid: savedBatch.collectionUuid,
         location: savedBatch.location,
@@ -241,7 +242,7 @@ export function Upload() {
         build: {
           location,
           collectionUuid: collection.uuid,
-          bucket: collection.bucket,
+          ...uploadTarget(collection),
           uploaderSlug: slug,
           description,
           timeZone: uploadTimeZone,
@@ -432,7 +433,7 @@ export function Upload() {
             {snap && (snap.phase === 'error' || snap.phase === 'partial') && !snap.dryRun && (
               <Note
                 tone="warn"
-                message={`Upload failed. If it keeps happening, ask your administrator to check: the bucket's CORS policy must allow this web origin for PUT, HEAD, and OPTIONS requests, and the credentials need PUT, HEAD, and LIST permissions on the upload prefix. Collection ID: ${dest.collectionUuid}.`}
+                message={`Upload failed. If it keeps happening, ask your administrator to check: the bucket's CORS policy must allow this web origin for PUT, HEAD, and OPTIONS requests, and the credentials need PUT, HEAD, and LIST permissions in the collection's bucket. Collection ID: ${dest.collectionUuid}.`}
               />
             )}
           </>

@@ -2,11 +2,12 @@
 // (apart from Web Crypto for the integrity hash) and S3-free — it produces the
 // exact byte payloads P4 will upload, so the preview is truthful.
 //
-// Layout decision (P3, verified): image blobs live UNDER the upload prefix,
-// because the existing SPARC'd reader lists objects under that prefix and
-// ignores `media.csv`'s media_path. So `media_path` is
-// `Collections/<uuid>/Uploads/<stamp>_<slug>/<relpath>` — not a separate
-// UploadBlobs key. See plan "Persistence — S3 sync".
+// Layout: in a collection's data bucket each image is stored once by content
+// at `Media/<sha256>/<stamp>-<name>`, and readers find it through media.csv
+// col 0, never by listing the upload folder. A collection with only its legacy
+// `sparcd-<uuid>` bucket keeps the old layout, images inside the upload folder,
+// because the Java desktop app reads those uploads straight from storage.
+// `packages/camtrap/README.md` has the whole layout.
 
 import type { Media, Observation, TimestampSource } from '@sparcd/camtrap';
 import {
@@ -22,15 +23,21 @@ import {
   hasSpeciesPresent,
   parseTagMarkers,
   defaultObservationId,
+  captureStamp,
+  mediaKey,
+  mediaObjectName,
   type UploadCompleteJson,
 } from '@sparcd/camtrap';
 import type { FlipObservation } from '@sparcd/flip';
 import { locationToDeployment, type Location } from './locations';
 import { sanitizeRelPath, nameCounts, resolveOneName } from './normalize';
-import { naiveInZoneToUtcIso } from './exifTime';
-import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
+import { naiveInZoneToUtcIso, type NaiveDateTime } from './exifTime';
+import { estimateCaptureTimes, naturalPathCompare, type CaptureEstimate } from './estimateCaptureTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
+
+/** `media`: images under `Media/<sha256>/` in a data bucket. `legacy`: images inside the upload folder. */
+export type Layout = 'media' | 'legacy';
 
 /** One blob to stream: the full object key (= media_path) plus its source. */
 export type UploadItem = {
@@ -44,6 +51,7 @@ export type UploadItem = {
   sha256: string;
   timestampSource?: TimestampSource;
   captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
+  naive?: NaiveDateTime; // camera-local time behind both captureTimestamp and the Media key's stamp
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload
@@ -63,7 +71,11 @@ export type BundlePreview = {
   uploadCompleteJson: string;
   /** Per-file upload plan; the orchestrator (P4) streams these to `key`. */
   items: UploadItem[];
+  /** Files left out of media.csv because an earlier file resolved to the same key. */
+  dropped: Dropped[];
 };
+
+export type Dropped = { localPath: string; key: string };
 
 const enc = new TextEncoder();
 
@@ -132,6 +144,7 @@ async function sha256Hex(parts: Uint8Array[]): Promise<string> {
  * has to change once it's been decided. */
 export type BatchNaming = {
   uploadPath: string;
+  layout: Layout;
   nameFor: Map<string, string>; // FileEntry.id -> sanitized (pre-suffix) name
   counts: Map<string, number>; // sanitized-name occurrence counts, whole batch
 };
@@ -141,10 +154,11 @@ export function resolveBatchNaming(input: {
   uploaderSlug: string;
   now: Date;
   files: { id: string; relPath: string; fileName: string }[];
+  layout: Layout;
 }): BatchNaming {
   const stamp = uploadStamp(input.now);
   const uploadPath = `Collections/${input.collectionUuid}/Uploads/${stamp}_${input.uploaderSlug}`;
-  return namingForUploadPath(uploadPath, input.files);
+  return namingForUploadPath(uploadPath, input.files, input.layout);
 }
 
 /** The same sanitize/collision-count pass `resolveBatchNaming` does, against
@@ -156,6 +170,7 @@ export function resolveBatchNaming(input: {
 export function namingForUploadPath(
   uploadPath: string,
   files: { id: string; relPath: string; fileName: string }[],
+  layout: Layout,
 ): BatchNaming {
   const nameFor = new Map<string, string>();
   for (const f of files) {
@@ -163,18 +178,25 @@ export function namingForUploadPath(
     nameFor.set(f.id, safe.ok ? safe.name : f.fileName);
   }
   const counts = nameCounts([...nameFor.values()].map((name) => ({ name })));
-  return { uploadPath, nameFor, counts };
+  return { uploadPath, layout, nameFor, counts };
 }
 
 /** Resolve one file's final object name/key once it has a hash, against a
  * frozen `BatchNaming`. Stable from the moment it's returned — safe to upload
- * a blob under this key immediately, it will never need to change. */
+ * a blob under this key immediately, it will never need to change. In the
+ * Media layout this is the planned key: the run may still settle on an
+ * original already stored under the same hash. */
 export function objectKeyFor(
   id: string,
   sha256: string,
   naming: BatchNaming,
+  naive?: NaiveDateTime,
 ): { objectName: string; key: string } {
   const name = naming.nameFor.get(id)!;
+  if (naming.layout === 'media') {
+    const key = mediaKey(sha256, captureStamp(naive), name.slice(name.lastIndexOf('/') + 1));
+    return { objectName: mediaObjectName(key, naming.uploadPath), key };
+  }
   const objectName = resolveOneName(name, sha256, naming.counts);
   return { objectName, key: `${naming.uploadPath}/${objectName}` };
 }
@@ -191,8 +213,8 @@ const mimeFor = (f: FileEntry): string =>
 export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string, estimates: Map<string, CaptureEstimate>): UploadItem {
   const estimate = estimates.get(f.id);
   const modifiedOnly = f.exifTimestampSource === 'exif-modify';
-  const naive = modifiedOnly && f.manualNaive ? f.manualNaive : f.exifNaive ?? f.manualNaive ?? estimate!.naive;
-  const { objectName, key } = objectKeyFor(f.id, f.sha256!, naming);
+  const naive = modifiedOnly && f.manualNaive ? f.manualNaive : f.exifNaive ?? f.manualNaive ?? estimate?.naive;
+  const { objectName, key } = objectKeyFor(f.id, f.sha256!, naming, naive);
   return {
     id: f.id,
     localPath: f.relPath,
@@ -202,12 +224,13 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
     file: f.file,
     size: f.size,
     sha256: f.sha256!,
-    captureTimestamp: naiveInZoneToUtcIso(naive, timeZone),
+    captureTimestamp: naive && naiveInZoneToUtcIso(naive, timeZone),
+    naive,
     timestampSource: f.exifNaive && !modifiedOnly
       ? undefined
       : f.manualNaive
         ? f.manualSource ?? 'manual'
-        : modifiedOnly ? 'exif-modify' : estimate!.method,
+        : modifiedOnly ? 'exif-modify' : estimate?.method,
     mediaKind: f.mediaKind,
     mimeType: mimeFor(f),
     preTags: f.preTags,
@@ -223,10 +246,34 @@ export type BuildInput = {
   timeZone: string; // IANA zone the EXIF naive wall-clock is interpreted in
   files: FileEntry[];
   now: Date;
+  layout: Layout;
   /** Reuse an already-frozen naming resolution (a streamed run) instead of
    * resolving fresh from the currently-ready subset (the Assign preview). */
   naming?: BatchNaming;
+  /** The key each file actually landed under, by FileEntry id, when the run
+   * settled on an original already in storage instead of the planned key. */
+  resolvedKeys?: Map<string, string>;
 };
+
+/**
+ * One media.csv row per object key. Files that resolved to the same key carry
+ * the same bytes; the first in natural path order keeps the row.
+ */
+function onePerKey<T extends { localPath: string }>(
+  items: T[],
+  keyOf: (it: T) => string,
+): { kept: T[]; dropped: Dropped[] } {
+  const owner = new Map<string, T>();
+  for (const it of [...items].sort((a, b) => naturalPathCompare(a.localPath, b.localPath))) {
+    if (!owner.has(keyOf(it))) owner.set(keyOf(it), it);
+  }
+  return {
+    kept: items.filter((it) => owner.get(keyOf(it)) === it),
+    dropped: items
+      .filter((it) => owner.get(keyOf(it)) !== it)
+      .map((it) => ({ localPath: it.localPath, key: keyOf(it) })),
+  };
+}
 
 /**
  * Build the five bundle payloads from the chosen deployment, identity, and the
@@ -245,6 +292,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       uploaderSlug,
       now,
       files: ready,
+      layout: input.layout,
     });
   const uploadPath = naming.uploadPath;
 
@@ -253,7 +301,12 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
   // Resolve each file's key/capture-time/mime-type once (per-file work isn't
   // free), then project into media rows, observation rows, and upload items.
   const estimates = estimateCaptureTimes(files, timeZone);
-  const uploadItems: UploadItem[] = ready.map((f) => planItemFor(f, naming, timeZone, estimates));
+  const planned: UploadItem[] = ready.map((f) => {
+    const it = planItemFor(f, naming, timeZone, estimates);
+    const key = input.resolvedKeys?.get(f.id) ?? it.key;
+    return { ...it, key, objectName: mediaObjectName(key, uploadPath) };
+  });
+  const { kept: uploadItems, dropped } = onePerKey(planned, (it) => it.key);
   deployment.timestampIssues = uploadItems.some((it) => !!it.timestampSource);
 
   const media: Media[] = uploadItems.map((it) => ({
@@ -300,7 +353,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
     buildUploadMeta({
       uploadUser: uploaderSlug,
       date: now,
-      imageCount: ready.length,
+      imageCount: uploadItems.length,
       imagesWithSpecies: uploadItems.filter((it) => hasSpecies(it.preTags)).length,
       bucket,
       uploadPath,
@@ -320,12 +373,12 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
   const complete: UploadCompleteJson = {
     schemaVersion: 1,
     uploadPath,
-    fileCount: ready.length,
+    fileCount: uploadItems.length,
     metadataBundleSha256,
-    files: media.map((m, i) => ({
-      media_path: m.mediaPath,
-      size: ready[i].size,
-      sha256: ready[i].sha256!,
+    files: uploadItems.map((it) => ({
+      media_path: it.key,
+      size: it.size,
+      sha256: it.sha256,
     })),
     completedAt: now.toISOString(),
   };
@@ -342,7 +395,8 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
     observationsCsv,
     uploadMetaJson,
     uploadCompleteJson: serializeUploadComplete(complete),
-    items: uploadItems,
+    items: planned,
+    dropped,
   };
 }
 
@@ -351,6 +405,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
  * to avoid coupling this module to the resume store's schema); the caller
  * (resume.ts) is responsible for only passing records that have every field. */
 export type ResolvedFileRecord = {
+  localPath: string;
   fileName: string;
   size: number;
   sha256: string;
@@ -368,13 +423,15 @@ export type ResumeBundle = {
   observationsCsv: string;
   uploadMetaJson: string;
   uploadCompleteJson: string;
+  dropped: Dropped[];
 };
 
 /**
  * Build the same five bundle payloads as `buildBundle`, but from already-
  * resolved persisted records instead of live `FileEntry`s — for resuming a
  * session that was interrupted before it ever reached publish (no bundle was
- * ever built). The upload path is the one already persisted at the original
+ * ever built), or one whose files settled on different Media keys than its
+ * bundle names. The upload path is the one already persisted at the original
  * run's start (`BatchRecord.uploadPrefix`), reused verbatim rather than
  * re-stamped, so this publishes to the same destination the original run was
  * headed for instead of a new one.
@@ -389,7 +446,8 @@ export async function buildBundleFromRecords(input: {
   startedAt: Date;
   files: ResolvedFileRecord[];
 }): Promise<ResumeBundle> {
-  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt, files } = input;
+  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt } = input;
+  const { kept: files, dropped } = onePerKey(input.files, (f) => f.remoteKey);
   const deployment = locationToDeployment(location, collectionUuid);
 
   deployment.timestampIssues = files.some((f) => !!f.timestampSource);
@@ -407,7 +465,7 @@ export async function buildBundleFromRecords(input: {
   // shape as a normal upload's. A file the tagger identified publishes its
   // species rows instead of a placeholder.
   const observations: Observation[] = files.flatMap((f) => {
-    const objectName = f.remoteKey.slice(uploadPath.length + 1);
+    const objectName = mediaObjectName(f.remoteKey, uploadPath);
     return observationRowsFor(
       {
         mediaId: f.remoteKey,
@@ -473,5 +531,6 @@ export async function buildBundleFromRecords(input: {
     observationsCsv,
     uploadMetaJson,
     uploadCompleteJson: serializeUploadComplete(complete),
+    dropped,
   };
 }

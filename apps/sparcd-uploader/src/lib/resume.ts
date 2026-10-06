@@ -27,7 +27,7 @@ import {
 } from './scanFiles';
 import { processBatch, type ProcessResponse } from './processPool';
 import { namingForUploadPath, objectKeyFor, buildBundleFromRecords, type ResolvedFileRecord } from './bundle';
-import { naiveInZoneToUtcIso, partsInZone } from './exifTime';
+import { naiveInZoneToUtcIso, partsInZone, type NaiveDateTime } from './exifTime';
 import { estimateCaptureTimes, type EstimateInput } from './estimateCaptureTime';
 
 export type RestoreOk = {
@@ -307,6 +307,7 @@ export async function ensureBundle(
   const naming = namingForUploadPath(
     batch.uploadPrefix,
     session.files.map((f) => ({ id: f.localPath, relPath: f.localPath, fileName: f.fileName })),
+    batch.layout ?? 'legacy',
   );
 
   const timeZone = batch.uploadTimeZone;
@@ -377,12 +378,16 @@ export async function ensureBundle(
     const estimate = estimates.get(rec.localPath)!;
     return { captureTimestamp: naiveInZoneToUtcIso(estimate.naive, timeZone), timestampSource: estimate.method };
   };
+  // The camera-local time `timeFor` stands on, which a Media key is stamped with.
+  const naiveFor = (rec: FileRecord): NaiveDateTime =>
+    inspected.get(rec.localPath)?.exifNaive ??
+    (rec.captureTimestamp ? partsInZone(Date.parse(rec.captureTimestamp), timeZone) : estimates.get(rec.localPath)!.naive);
 
   const updated: FileRecord[] = [];
   for (const rec of session.files) {
     const r = inspected.get(rec.localPath);
     if (!r) continue;
-    const { objectName, key } = objectKeyFor(rec.localPath, r.sha256!, naming);
+    const { objectName, key } = objectKeyFor(rec.localPath, r.sha256!, naming, naiveFor(rec));
     updated.push({
       ...rec,
       state: 'pending',
@@ -403,6 +408,7 @@ export async function ensureBundle(
   const resolvedRecords: ResolvedFileRecord[] = session.files.map((rec) => {
     const r = byLocalPath.get(rec.localPath) ?? rec;
     return {
+      localPath: r.localPath,
       fileName: r.fileName,
       size: r.size,
       sha256: r.sha256!,
