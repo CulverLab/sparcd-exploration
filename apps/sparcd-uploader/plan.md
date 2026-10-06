@@ -24,6 +24,8 @@ complete. Tagging is deferred to
 empty `observations.csv` so downstream tools have a stable canonical base
 file to hash.
 
+> History: matching the existing readers' layout now holds for legacy `sparcd-<uuid>` buckets only; since #376 a data bucket stores images under `Media/<sha256>/` (see "Persistence — S3 sync").
+
 ## Design references
 
 The Claude Design bundle is the source of truth for layout, copy, and
@@ -217,12 +219,15 @@ Dexie tracks every upload-session state needed for resume.
 
 - **Dexie schema** v1:
   - `batches` table:
-    `{ id (sessionId), targetBucket, uploadPrefix, blobPrefix,
+    `{ id (sessionId), targetBucket, layout, uploadPrefix, blobPrefix,
     deploymentId, uploaderUser, description, startedAt, completedAt,
     totalFiles, totalBytes, fileAccessMode }`
     where `fileAccessMode` is `persistent-handle` when a durable
     `FileSystemDirectoryHandle` is stored, or `reselect-required` when the
-    user must reselect the folder before resume.
+    user must reselect the folder before resume. `layout` is `media` or
+    `legacy` (see "Persistence — S3 sync"), decided once when the run starts
+    and reused on every resume; a row without it is `legacy`. Not indexed, so
+    it needed no schema bump.
   - `files` table:
     `{ id (sessionId+localPath), sessionId, localPath, fileName,
     relPathInBundle, sanitizedObjectName, size, sha256, exifTimestamp,
@@ -250,24 +255,49 @@ Dexie tracks every upload-session state needed for resume.
 
 ### Persistence — S3 sync (i.e. the upload itself)
 
-- **Prefix choice.** The new upload prefix is
-  `Collections/<uuid>/Uploads/<ISO>_<uploaderUser>/`. Collision risk is
-  near-zero with second-resolution timestamps. If any final-prefix
-  metadata write returns 412, the uploader abandons that prefix, bumps the
-  timestamp by one second, and retries with a fresh upload prefix.
-  `UploadComplete.json` is the source of truth for whether a prefix is
-  publishable.
-- **Blob placement (revised in P3 — was "UploadBlobs staging").** Image bytes
-  upload **under the upload prefix**, at
-  `Collections/<uuid>/Uploads/<stamp>_<slug>/<relpath>`, and `media.csv`'s
-  `media_path` points there. P3 verified the existing SPARC'd reader **lists
-  objects under the upload prefix and ignores `media_path`** (it presigns the
-  listed key), so the original `UploadBlobs/<sessionId>/<sha>.<ext>` staging —
-  meant to avoid exposing a half-populated directory — would have made every
-  image invisible to the existing app. The half-populated-directory concern is
-  instead handled by ordering: image bytes and CSVs first, then
-  `UploadMeta.json` last (upstream's completion marker), then our additive
-  `UploadComplete.json`.
+The object layout is specified in
+[`packages/camtrap/README.md`](../../packages/camtrap/README.md) (issue #376);
+this section says how the uploader writes it.
+
+- **Upload folder.** Every upload has one manifest folder,
+  `Collections/<uuid>/Uploads/<stamp>_<uploaderUser>/`, holding
+  `deployments.csv`, `media.csv`, `observations.csv`, `UploadMeta.json` and
+  `UploadComplete.json`. Collision risk is near-zero with second-resolution
+  stamps; a metadata 412 on a fresh run is a hard error.
+- **Layout choice.** When a run starts the uploader looks at the chosen
+  collection. With a data bucket (any bucket not named `sparcd` or `sparcd-*`
+  that holds `Collections/<uuid>/`) it uses the **Media layout** in that
+  bucket. With only its legacy `sparcd-<uuid>` bucket it uses the **legacy
+  layout** there, exactly as before, because the Java desktop app reads those
+  uploads straight from storage. The layout and bucket are saved on the batch
+  row; a resume reuses them and never detects again. The uploader never writes
+  `Media/` into a legacy bucket. `UploadMeta.json`'s `bucket` is the target
+  bucket.
+- **Media layout keys.** An image is stored once per content hash at
+  `Media/<sha256>/<YYYYMMDDHHmmss>-<name>`: the stamp is the camera-local
+  capture time (the camera's, else one the person entered, else the
+  estimate; fourteen zeros with none), and the name is the file's own
+  sanitized name without its folders. The same naive time feeds the stamp and
+  `media.csv` col 4.
+- **Dedupe before every original.** Before writing, the lane lists
+  `Media/<sha256>/`. If it holds an original (a stamped name; derived files
+  such as `preview-640.jpg` don't count), nothing is written: its listed size
+  must equal the local size, or the file fails and the object is left alone.
+  That key becomes the file's resolved key, is saved as its `remoteKey`, and
+  its bytes count as skipped. Otherwise the planned key is written with
+  `If-None-Match: *`; a 412 lists again and settles on the original that won,
+  or fails the run if there is none. Files with the same bytes in one run are
+  processed one after the other, so the second always finds the first's
+  original.
+- **Legacy layout keys.** Images go inside the upload folder at
+  `<uploadPrefix>/<relpath>` with a deterministic suffix on name collisions,
+  and a 412 on an image is a hard error on a fresh run.
+- **Metadata from resolved keys.** `media.csv` col 0, observations col 3 and
+  `UploadComplete.json` name the key each file actually resolved to, which
+  for a dedupe hit can be another upload's original. Observation ids are
+  built on `mediaObjectName(key, uploadPath)`. Files that resolved to the same
+  key get one `media.csv` row: the first in natural path order keeps it, with
+  its own tags, and each dropped file is logged.
 - **Upload mechanics (informed by industry patterns).** Big-company web
   uploaders (Google Drive, Dropbox, Uppy + Tus) converge on a small set of
   techniques; the S3-native equivalent (which we use since we have no Tus
@@ -314,41 +344,43 @@ Dexie tracks every upload-session state needed for resume.
   what Uppy uses, but it needs a Tus server in front. We deploy against
   raw S3-compatible storage with no extra service, so we use the S3-native
   equivalent (multipart with `lib-storage`) instead.
-- **Order of operations** (revised in P3 — blobs now under the upload prefix).
-  1. Stream image uploads under `uploadPrefix` (at
-     `<uploadPrefix>/<relpath>`) in parallel via `writeImmutableStream` (which
-     uses `lib-storage`'s `Upload` — single-PUT for small files, multipart for
-     large; both conditional). Bounded concurrency via `p-limit` — **default 8,
-     slider 4–16** (industry sweet spot per Uppy/Tus practice; 4 is too
-     conservative for modern S3/R2 endpoints, 20+ saturates without gaining
-     throughput). Exponential backoff with jitter on transient failures.
-  2. Generate the final bundle metadata from successfully uploaded images.
-  3. Write `deployments.csv`, `media.csv`, and the always-empty
-     `observations.csv` under `uploadPrefix`.
-  4. Write `UploadMeta.json` under `uploadPrefix` — this is **upstream
-     SPARC'd's completion marker**, so it must land after the images and CSVs.
-  5. Write `UploadComplete.json` last under `uploadPrefix`; this is the
-     additional integrity sentinel for new SPARC'd tools (richer than
-     `UploadMeta.json` — carries the per-file hash manifest).
-- **Partial-publish rule.** S3 has no atomic directory publish, and this
-  wrapper intentionally exposes no `copy` or overwrite APIs. Therefore P4
-  may write final-prefix CSV/metadata files only in test buckets. Before
-  production-bucket writes, every reader this project controls must ignore
-  upload prefixes that lack `UploadComplete.json`, and existing Java/Next
-  reader behavior must be verified or updated. The completed layout still
-  matches the existing upload shape, but the visibility contract is
-  sentinel-based for safety.
-- **Final CSV timing.** The three CSVs are written after the blobs because
-  they reference media paths from step 1, so deferring them lets us record
-  actual sizes and `remoteETag` values in `media.csv` if the schema needs
-  it.
+- **Order of operations.**
+  1. Stream the images in parallel via `writeImmutableStream` (single PUT for
+     small files, multipart for large; both conditional), with bounded,
+     adaptive concurrency and exponential backoff with jitter on transient
+     failures. Media layout: dedupe first, as above.
+  2. Build the metadata once every image has landed, from the resolved keys.
+  3. Write the metadata to the upload folder. **Media layout:**
+     `deployments.csv`, `observations.csv`, `UploadMeta.json`,
+     `UploadComplete.json`, then `media.csv` last: an upload folder without
+     `media.csv` is not an upload yet, and readers skip it. **Legacy
+     layout:** unchanged, `deployments.csv`, `media.csv`, `observations.csv`,
+     then `UploadMeta.json` (upstream SPARC'd's completion marker), then
+     `UploadComplete.json`.
+
+  Nothing is written to the upload folder until every image has landed, so a
+  partly transferred batch is never visible as an upload.
+- **Final review.** Legacy: one listing of the upload folder confirms every
+  image's size, and a HEAD of the first, middle and last samples the
+  `x-amz-meta-sha256` contract. Media: there is no one folder to list, so
+  the review is the HEAD of the first, middle and last resolved keys.
+- **Resume.** A resume reuses the saved bucket, layout, upload folder and
+  each file's saved `remoteKey`. Files saved as `done` are re-checked by HEAD
+  and skipped; the rest go through the same lane as a fresh run (in the Media
+  layout, dedupe included). The saved bundle is republished byte for byte, so
+  a metadata write an earlier attempt already made still matches. Only when a
+  file settled on a different Media key than its record named (an original
+  stored since) is the bundle rebuilt from the records and saved again.
 - **Hash sanity.** SHA-256 is the app's integrity digest. For each blob
   PUT, send the SHA-256 as `x-amz-meta-sha256` object metadata and, where
   the backend supports it, also as the native `x-amz-checksum-sha256`
   header. **Verification path (portable, mandatory):** after upload,
   `HEAD` the object and confirm `Content-Length` matches the recorded
   size and `x-amz-meta-sha256` matches the recorded digest. This works on
-  every S3-compatible backend without exception. **Stronger verification
+  every S3-compatible backend without exception. A `Media/` key carries its
+  hash in its folder name, and an original another writer stored may lack
+  our metadata, so there the size and folder must match and
+  `x-amz-meta-sha256` only when present. **Stronger verification
   (optional, when supported):** AWS's `GetObjectAttributes` returns the
   native checksum if it was stored; MinIO and R2 support is uneven.
   The wrapper attempts `GetObjectAttributes` only on backends listed as
@@ -375,12 +407,12 @@ Dexie tracks every upload-session state needed for resume.
   whole. A future scoped abort (targeting only the uploader's own
   `UploadId`s) is noted as a deliberate exception that would need its
   own review.
-- **No deletes, ever** (object level). A partial upload leaves orphan
-  objects in the blob prefix or an incomplete final prefix; recovery is
-  to re-run the same session (skips verified `done` files, completes the
-  rest) or abandon and start a new prefix. Cleanup is an explicit future
-  admin operation, not
-  part of this tool.
+- **No deletes, ever** (object level). Nothing under `Media/` is ever
+  overwritten or deleted. A partial upload leaves stored images without an
+  upload naming them, or an incomplete upload folder; recovery is to re-run
+  the same session (skips verified `done` files, completes the rest) or
+  abandon it. Cleanup is an explicit future admin operation, not part of this
+  tool.
 - **The existing canonical upload tree stays read-only** in this tool —
   the uploader creates new prefixes, never modifies existing ones.
 
@@ -494,6 +526,8 @@ content hashes live in the `files` manifest inside `UploadComplete.json` (below)
 not in a `media.csv` column.
 `file_name` (col 6) is the local filename, `deployment_id` matches the single
 row in `deployments.csv`, and `file_media_type` (col 7) is `image/jpeg`.
+
+> History: the upload-prefix key above is the legacy layout; since #376 an upload to a data bucket keys `media_path` (here and in `UploadComplete.json`) as `Media/<sha256>/<stamp>-<name>` (see "Persistence — S3 sync").
 
 `observations.csv` — always written as an empty file in v0. Observations
 are written later by sparcd-tagger as append-only versions under
