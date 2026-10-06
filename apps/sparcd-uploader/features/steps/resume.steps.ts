@@ -255,7 +255,7 @@ Then(
 );
 
 Then('the upload continues from where it stopped', async ({ app }) => {
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
   const after = app.s3.puts.slice(app.notes.putsBeforeResume as number);
   expect(after.filter((p) => p.key.endsWith(FAILING_FILE))).toHaveLength(1);
   expect(after.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n)))).toHaveLength(5);
@@ -270,7 +270,7 @@ Given('a resumed upload has files recorded as already stored', async ({ app }) =
   app.s3.objects.delete(missing);
   app.notes.headsBefore = app.s3.heads.length;
   await resumeFromHistory(app);
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
 });
 
 Then('each of those objects is re-checked for its size and recorded fingerprint', async ({ app }) => {
@@ -295,7 +295,7 @@ When('an interrupted upload is resumed', async ({ app }) => {
   await producePartialRun(app);
   app.s3.putHooks.length = 0;
   await resumeFromHistory(app);
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
 });
 
 Then(
@@ -365,7 +365,7 @@ Then("the Upload step names the resumed upload's collection, location and folder
   await expect(summary).not.toContainText(COLLECTION_B_NAME);
   await expect(summary).not.toContainText('Coyote Wash');
   await expect(summary).not.toContainText('OTHERCARD');
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
 });
 
 // --- retrying from the Upload step -----------------------------------------
@@ -485,7 +485,7 @@ Then(
 );
 
 Then('a file whose content has changed since the original attempt is not uploaded', async ({ app }) => {
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
   const log = await app.logText();
   // It was already stored, so it is verified and skipped, never re-sent.
   expect(log).toMatch(/verified, skip: [^\s]*IMG_0003\.JPG/);
@@ -547,7 +547,7 @@ Then('the remaining files are examined again and the upload completes', async ({
   // exists for it')), so resuming re-examines whatever never finished
   // Inspect and builds the bundle this session never got, then publishes to
   // the same destination the original run was headed for.
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
 });
 
 Then('no data is lost', async ({ app }) => {

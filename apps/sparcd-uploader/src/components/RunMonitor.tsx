@@ -291,8 +291,8 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
         <Note
           message={
             snap.dryRun
-              ? `Dry run complete — ${snap.files.length} files would publish under ${snap.uploadPath}/. Nothing was written.`
-              : `Published ${snap.files.length} files under ${snap.uploadPath}/. Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
+              ? `Dry run complete — ${snap.files.length} files would publish as upload ${snap.uploadPath}/. Nothing was written.`
+              : `Published ${snap.files.length} files as upload ${snap.uploadPath}/. Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
           }
         />
       )}

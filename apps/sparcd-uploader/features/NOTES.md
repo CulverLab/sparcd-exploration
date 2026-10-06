@@ -4,10 +4,11 @@ Coverage notes for the as-built uploader feature files.
 
 ## What is documented
 
-- **Ten feature files**, one per coherent flow: connecting/session, choosing a
+- **Eleven feature files**, one per coherent flow: connecting/session, choosing a
   folder, inspecting the batch, tagging species before upload, assigning
   collection + deployment, capture time and timezone, the upload run itself,
-  resume/retry/History, correcting a published upload, and Settings/local data.
+  storing images by content in a data bucket, resume/retry/History, correcting
+  a published upload, and Settings/local data.
   Every scenario was traced to code in `src/`, and most are additionally pinned
   by a unit test in `test/`.
 - Scenarios carry a story tag only where the as-built behavior genuinely

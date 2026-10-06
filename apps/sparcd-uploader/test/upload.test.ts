@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreconditionFailedError } from '@sparcd/s3-safe';
+import { parseCsvRows } from '@sparcd/camtrap';
 import type { S3Config } from '@sparcd/types';
 import type { BatchRecord, BundleRecord, FileRecord, LoadedSession } from '../src/lib/db';
 import type { FileEntry } from '../src/store';
 import {
   resumeUpload,
   runStreamingUpload,
+  uploadTarget,
   type ConcurrencyControl,
   type UploadSnapshot,
 } from '../src/lib/upload';
@@ -284,6 +286,7 @@ describe('cancellation during metadata publication', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1133,6 +1136,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1172,6 +1176,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1216,6 +1221,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1267,6 +1273,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1314,6 +1321,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1358,6 +1366,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1398,6 +1407,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1441,6 +1451,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1489,6 +1500,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1545,6 +1557,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1588,6 +1601,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1627,6 +1641,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1672,6 +1687,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1716,6 +1732,7 @@ describe('streamed runs upload as files individually become ready', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1754,7 +1771,7 @@ it('waits for final camera references before planning a streamed missing time', 
   const run = runStreamingUpload({
     config: CONFIG, dryRun: false, concurrency: manual(2),
     build: {
-      location: LOCATION, collectionUuid: 'collection', bucket: 'bucket',
+      location: LOCATION, collectionUuid: 'collection', bucket: 'bucket', layout: 'legacy',
       uploaderSlug: 'user', description: '', timeZone: 'UTC',
       files: [entries[0], entries[1], { ...entries[2], processState: 'processing', sha256: undefined }],
     },
@@ -1832,6 +1849,7 @@ describe('endpoint sharding', () => {
           location: LOCATION,
           collectionUuid: 'collection',
           bucket: 'bucket',
+          layout: 'legacy',
           uploaderSlug: 'user',
           description: 'description',
           timeZone: 'UTC',
@@ -1850,5 +1868,304 @@ describe('endpoint sharding', () => {
     expect(shard.writeImmutableStream).toHaveBeenCalledTimes(2);
     expect(primary.writeImmutable).toHaveBeenCalledTimes(5);
     expect(shard.writeImmutable).not.toHaveBeenCalled();
+  });
+});
+
+describe('Media layout', () => {
+  // A store with real Media semantics: listings filter by prefix, an immutable
+  // write to a taken key is a 412, and an original another writer stored may
+  // carry no sha256 metadata.
+  function makeMediaClient(stored = new Map<string, { size: number; sha256?: string }>()): FakeClient {
+    return {
+      statObject: vi.fn(async (_bucket: string, key: string) => {
+        const o = stored.get(key);
+        if (!o) throw Object.assign(new Error('missing'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+        return { size: o.size, metadata: o.sha256 ? { sha256: o.sha256 } : {} };
+      }),
+      writeImmutableStream: vi.fn(async (_bucket: string, key: string, file: File, opts: { sha256: string }) => {
+        if (stored.has(key)) throw new PreconditionFailedError(key);
+        stored.set(key, { size: file.size, sha256: opts.sha256 });
+        return { etag: `etag-${key}` };
+      }),
+      writeImmutable: vi.fn(async () => undefined),
+      getObject: vi.fn(async () => new Uint8Array()),
+      listObjects: vi.fn(async function* (_bucket: string, prefix: string) {
+        for (const [key, o] of stored) if (key.startsWith(prefix)) yield { key, size: o.size };
+      }),
+    };
+  }
+
+  // Camera time 2026-07-01 12:00:00, so every planned stamp is 20260701120000.
+  const entry = (relPath: string, sha256: string, size = 12): FileEntry => ({
+    ...makeFileEntry(0, size),
+    id: relPath,
+    relPath,
+    fileName: relPath.split('/').pop()!,
+    file: makeFile(relPath, size),
+    sha256,
+  });
+  const planned = (sha256: string, name: string) => `Media/${sha256}/20260701120000-${name}`;
+
+  async function upload(entries: FileEntry[], client: FakeClient, lanes = 2): Promise<UploadSnapshot> {
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: manual(lanes),
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'field-data',
+          layout: 'media',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    return collect(run, () => last);
+  }
+
+  const metadataNames = (client: FakeClient) =>
+    client.writeImmutable.mock.calls.map((c) => (c[1] as string).split('/').pop());
+  const mediaRows = (client: FakeClient) =>
+    parseCsvRows(client.writeImmutable.mock.calls.find((c) => (c[1] as string).endsWith('/media.csv'))![2] as string);
+  const persistedKeys = () =>
+    mocks.markFileState.mock.calls.map((c) => (c[1] as Partial<FileRecord>).remoteKey).filter(Boolean);
+
+  it('sends a collection with a data bucket to the Media layout there, and one without to its legacy bucket', () => {
+    expect(uploadTarget({ bucket: 'sparcd-c', dataBucket: 'field-data' })).toEqual({ bucket: 'field-data', layout: 'media' });
+    expect(uploadTarget({ bucket: 'sparcd-c', dataBucket: null })).toEqual({ bucket: 'sparcd-c', layout: 'legacy' });
+  });
+
+  it('keeps a legacy run inside its upload folder, with no Media/ reads or writes', async () => {
+    const entries = [makeFileEntry(0)];
+    const client = makeStreamingClient();
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: manual(1),
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          ...uploadTarget({ bucket: 'sparcd-collection', dataBucket: null }),
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    const [[bucket, key]] = client.writeImmutableStream.mock.calls;
+    expect(bucket).toBe('sparcd-collection');
+    expect(key).toMatch(/^Collections\/collection\/Uploads\/[^/]+_user\/file-0\.jpg$/);
+    expect(client.listObjects.mock.calls.every((c) => !(c[1] as string).startsWith('Media/'))).toBe(true);
+    expect(metadataNames(client)).toEqual([
+      'deployments.csv',
+      'media.csv',
+      'observations.csv',
+      'UploadMeta.json',
+      'UploadComplete.json',
+    ]);
+    expect(mocks.openSession.mock.calls[0][0].layout).toBe('legacy');
+  });
+
+  it('stores a new original under its hash folder and publishes media.csv last', async () => {
+    const client = makeMediaClient();
+    const snap = await upload([entry('DCIM/IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('done');
+    const key = planned('aa01', 'IMG_0001.JPG');
+    expect(client.writeImmutableStream.mock.calls.map((c) => [c[0], c[1]])).toEqual([['field-data', key]]);
+    expect(metadataNames(client)).toEqual([
+      'deployments.csv',
+      'observations.csv',
+      'UploadMeta.json',
+      'UploadComplete.json',
+      'media.csv',
+    ]);
+    expect(mediaRows(client)[0][0]).toBe(key);
+    // Every write is typed: the original by its mime type, the manifests by format.
+    expect(client.writeImmutableStream.mock.calls.every((c) => c[3].contentType === 'image/jpeg')).toBe(true);
+    expect(client.writeImmutable.mock.calls.every((c) => /^(text\/csv|application\/json)$/.test(c[3].contentType))).toBe(true);
+    // The review re-reads the stored original rather than listing the upload folder.
+    expect(client.listObjects.mock.calls.map((c) => c[1])).toEqual(['Media/aa01/']);
+    expect(client.statObject.mock.calls.map((c) => c[1])).toEqual([key]);
+    expect(mocks.openSession.mock.calls[0][0]).toMatchObject({ layout: 'media', targetBucket: 'field-data' });
+  });
+
+  it('reuses an original already stored under the same name and writes no image', async () => {
+    const key = planned('aa01', 'IMG_0001.JPG');
+    const client = makeMediaClient(new Map([[key, { size: 12 }]]));
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).not.toHaveBeenCalled();
+    expect(snap.files[0]).toMatchObject({ state: 'skipped', key });
+    expect(snap.skippedBytes).toBe(12);
+    expect(snap.log.some((l) => l.text === `already stored, skip: ${key}`)).toBe(true);
+    expect(mediaRows(client)[0][0]).toBe(key);
+  });
+
+  it('reuses an original stored under another name and points media.csv at it', async () => {
+    const other = 'Media/aa01/20190101000000-ELSEWHERE.JPG';
+    const client = makeMediaClient(new Map([
+      ['Media/aa01/preview-640.jpg', { size: 5 }],
+      [other, { size: 12 }],
+    ]));
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).not.toHaveBeenCalled();
+    expect(mediaRows(client)[0][0]).toBe(other);
+    expect(persistedKeys()).toContain(other);
+    expect(JSON.parse(client.writeImmutable.mock.calls.find((c) => c[1].endsWith('UploadComplete.json'))![2]).files[0].media_path).toBe(other);
+  });
+
+  it('does not count a derived file as the original', async () => {
+    const client = makeMediaClient(new Map([['Media/aa01/preview-640.jpg', { size: 5 }]]));
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream.mock.calls.map((c) => c[1])).toEqual([planned('aa01', 'IMG_0001.JPG')]);
+  });
+
+  it('fails a file whose stored original has another size, and leaves that object alone', async () => {
+    const key = planned('aa01', 'IMG_0001.JPG');
+    const client = makeMediaClient(new Map([[key, { size: 99 }]]));
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('partial');
+    expect(snap.files[0].state).toBe('failed');
+    expect(snap.files[0].error).toMatch(/already stored at 99 bytes/);
+    expect(client.writeImmutableStream).not.toHaveBeenCalled();
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('settles a 412 race on the original that won it', async () => {
+    const stored = new Map<string, { size: number; sha256?: string }>();
+    const client = makeMediaClient(stored);
+    const key = planned('aa01', 'IMG_0001.JPG');
+    client.writeImmutableStream.mockImplementationOnce(async () => {
+      stored.set(key, { size: 12 }); // another uploader landed the same bytes first
+      throw new PreconditionFailedError(key);
+    });
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutableStream).toHaveBeenCalledTimes(1);
+    expect(client.listObjects.mock.calls.map((c) => c[1])).toEqual(['Media/aa01/', 'Media/aa01/']);
+    expect(snap.files[0].state).toBe('skipped');
+    expect(mediaRows(client)[0][0]).toBe(key);
+  });
+
+  it('rethrows a 412 that leaves no original to use', async () => {
+    const client = makeMediaClient();
+    client.writeImmutableStream.mockImplementation(async (_bucket: string, key: string) => {
+      throw new PreconditionFailedError(key);
+    });
+    const snap = await upload([entry('IMG_0001.JPG', 'aa01')], client);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toMatch(/already exists/);
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+  });
+
+  it('stores the same bytes once when they come twice in one run, and lists them once', async () => {
+    const client = makeMediaClient();
+    const snap = await upload([entry('DCIM/IMG_10.JPG', 'aa01'), entry('DCIM/IMG_2.JPG', 'aa01')], client, 2);
+
+    expect(snap.phase).toBe('done');
+    const key = planned('aa01', 'IMG_10.JPG');
+    expect(client.writeImmutableStream.mock.calls.map((c) => c[1])).toEqual([key]);
+    // The row goes to the first file in natural path order, under the key that was stored.
+    expect(mediaRows(client).map((r) => [r[0], r[6]])).toEqual([[key, 'IMG_2.JPG']]);
+    expect(snap.log.some((l) => l.text === `DCIM/IMG_10.JPG: same bytes as another file in this upload, listed once as ${key}`)).toBe(true);
+  });
+
+  describe('resume', () => {
+    const record = (i: number, sha256: string, remoteKey: string, state: FileRecord['state']): FileRecord => ({
+      ...makeRecord('session-1', i, state),
+      sha256,
+      remoteKey,
+      sanitizedObjectName: remoteKey.split('/').pop(),
+    });
+    const session = (files: FileRecord[]): LoadedSession => ({
+      batch: { ...makeBatch('session-1', files.length), targetBucket: 'field-data', layout: 'media' },
+      bundle: makeBundleRecord('session-1'),
+      files,
+    });
+    async function resume(s: LoadedSession, client: FakeClient): Promise<UploadSnapshot> {
+      mocks.client = client;
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session: s, attached: attachedFor(s.files), concurrency: manual(2) },
+        (snap) => {
+          last = snap;
+        },
+      );
+      return collect(run, () => last);
+    }
+
+    it('keeps its keys and republishes the saved bundle, media.csv last', async () => {
+      const done = planned('aa00', 'file-0.jpg');
+      const pending = planned('aa01', 'file-1.jpg');
+      const client = makeMediaClient(new Map([[done, { size: 12 }]])); // stored by an earlier attempt, no metadata
+      const snap = await resume(session([record(0, 'aa00', done, 'done'), record(1, 'aa01', pending, 'pending')]), client);
+
+      expect(snap.phase).toBe('done');
+      expect(snap.log.some((l) => l.text === `verified, skip: ${done}`)).toBe(true);
+      expect(client.writeImmutableStream.mock.calls.map((c) => c[1])).toEqual([pending]);
+      expect(client.writeImmutable.mock.calls.map((c) => [(c[1] as string).split('/').pop(), c[2]])).toEqual([
+        ['deployments.csv', 'deployments'],
+        ['observations.csv', 'observations'],
+        ['UploadMeta.json', '{"meta":true}'],
+        ['UploadComplete.json', '{"complete":true}'],
+        ['media.csv', 'media'],
+      ]);
+      expect(mocks.attachBundle).not.toHaveBeenCalled();
+    });
+
+    it('rebuilds media.csv when a file settles on an original stored since, writing no second one', async () => {
+      const done = planned('aa00', 'file-0.jpg');
+      const earlier = 'Media/aa01/20190101000000-EARLIER.jpg';
+      const client = makeMediaClient(new Map([
+        [done, { size: 12, sha256: 'aa00' }],
+        [earlier, { size: 12 }],
+      ]));
+      const snap = await resume(
+        session([record(0, 'aa00', done, 'done'), record(1, 'aa01', planned('aa01', 'file-1.jpg'), 'pending')]),
+        client,
+      );
+
+      expect(snap.phase).toBe('done');
+      expect(client.writeImmutableStream).not.toHaveBeenCalled();
+      expect(metadataNames(client).at(-1)).toBe('media.csv');
+      expect(mediaRows(client).map((r) => r[0])).toEqual([done, earlier]);
+      expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
+      expect(mocks.attachBundle.mock.calls[0][0].mediaCsv).toBe(
+        client.writeImmutable.mock.calls.find((c) => c[1].endsWith('/media.csv'))![2],
+      );
+      expect(persistedKeys()).toContain(earlier);
+    });
   });
 });

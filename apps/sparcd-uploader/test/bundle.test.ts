@@ -27,6 +27,7 @@ import {
   resolveBatchNaming,
   namingForUploadPath,
   objectKeyFor,
+  planItemFor,
   buildBundleFromRecords,
   type BuildInput,
   type ResolvedFileRecord,
@@ -92,16 +93,19 @@ function ready(
 function build(
   files: FileEntry[],
   timeZone = 'America/Phoenix',
+  more: Partial<BuildInput> = {},
 ): ReturnType<typeof buildBundle> {
   const input: BuildInput = {
     location: SAN15,
     collectionUuid: UUID,
     bucket: `sparcd-${UUID}`,
+    layout: 'legacy',
     uploaderSlug: 'jdoe',
     description: 'Educational Test — uploader bundle',
     timeZone,
     files,
     now: new Date(2024, 0, 15, 10, 0, 0),
+    ...more,
   };
   return buildBundle(input);
 }
@@ -262,10 +266,11 @@ describe('resume: naming reconstructed from persisted records', () => {
       uploaderSlug: 'jdoe',
       now: new Date(2024, 0, 15, 10, 0, 0),
       files,
+      layout: 'legacy',
     });
     // The "resume" side only ever sees the fixed, already-persisted upload
     // path — never a fresh `now`.
-    const reconstructed = namingForUploadPath(original.uploadPath, files);
+    const reconstructed = namingForUploadPath(original.uploadPath, files, 'legacy');
 
     for (const f of files) {
       const seed = `sha-${f.id}`;
@@ -279,6 +284,7 @@ describe('resume: naming reconstructed from persisted records', () => {
 describe('resume: buildBundleFromRecords', () => {
   const UPLOAD_PATH = `Collections/${UUID}/Uploads/2024.01.15.10.00.00_jdoe`;
   const record = (over: Partial<ResolvedFileRecord> = {}): ResolvedFileRecord => ({
+    localPath: 'IMG001.JPG',
     fileName: 'IMG001.JPG',
     size: 12,
     sha256: 'sha-a',
@@ -421,6 +427,7 @@ describe('a batch tagged before upload publishes its species', () => {
       startedAt: new Date(2024, 0, 15, 10, 0, 0),
       files: [
         {
+          localPath: item.localPath,
           fileName: item.fileName,
           size: item.size,
           sha256: item.sha256,
@@ -451,6 +458,7 @@ describe('a batch tagged before upload publishes its species', () => {
       startedAt: new Date(2024, 0, 15, 10, 0, 0),
       files: [
         {
+          localPath: 'IMG001.JPG',
           fileName: 'IMG001.JPG',
           size: 12,
           sha256: 'sha-a',
@@ -491,5 +499,107 @@ describe('timestamp issues', () => {
     const b = await build([ready('1')]);
     expect(parseCsvRows(b.deploymentsCsv)[0][15]).toBe('false');
     expect(parseCsvRows(b.mediaCsv)[0][10]).toBe('');
+  });
+});
+
+describe('Media layout', () => {
+  const inMedia = (relPath: string, sha256: string, opts: Parameters<typeof ready>[1] = {}): FileEntry => ({
+    ...ready(relPath, opts),
+    sha256,
+  });
+  const tag = (scientificName: string): FlipObservation => ({
+    scientificName,
+    commonName: '',
+    count: 1,
+    requestedSpecies: '',
+    freeTags: '',
+  });
+
+  it('keys an original by its hash and camera-local stamp, without its folders', async () => {
+    const b = await build(
+      [inMedia('DCIM/100/IMG001.JPG', 'aa11', { exifNaive: naive({ minute: 4, second: 5 }) })],
+      'America/Phoenix',
+      { layout: 'media', bucket: 'field-data' },
+    );
+    const key = 'Media/aa11/20240110080405-IMG001.JPG';
+    expect(b.items[0].key).toBe(key);
+    const [row] = parseCsvRows(b.mediaCsv);
+    expect(row[MEDIA_COL.mediaId]).toBe(key);
+    expect(row[MEDIA_COL.filePath]).toBe(key);
+    expect(row[MEDIA_COL.timestamp]).toBe('2024-01-10T15:04:05.000Z'); // the same 08:04:05, in Phoenix
+    expect(parseObservations(b.observationsCsv)[0].observationId).toBe('20240110080405-IMG001.JPG:0');
+    expect(parseUploadMeta(b.uploadMetaJson).bucket).toBe('field-data');
+  });
+
+  it("stamps a file without camera time with its estimate's time", async () => {
+    const b = await build(
+      [
+        inMedia('a.JPG', 'aa01'),
+        inMedia('b.JPG', 'aa02', { exifNaive: undefined }),
+        inMedia('c.JPG', 'aa03', { exifNaive: naive({ minute: 10 }) }),
+      ],
+      'UTC',
+      { layout: 'media' },
+    );
+    expect(b.items[1].key).toBe('Media/aa02/20240110080500-b.JPG');
+    expect(b.items[1].captureTimestamp).toBe('2024-01-10T08:05:00.000Z');
+  });
+
+  it('stamps fourteen zeros and leaves col 4 empty for a file with no time at all', () => {
+    const naming = namingForUploadPath('Collections/u/Uploads/x', [{ id: 'x.JPG', relPath: 'x.JPG', fileName: 'x.JPG' }], 'media');
+    const item = planItemFor(inMedia('x.JPG', 'aa04', { exifNaive: undefined }), naming, 'UTC', new Map());
+    expect(item.key).toBe('Media/aa04/00000000000000-x.JPG');
+    expect(item.captureTimestamp).toBeUndefined();
+  });
+
+  it('names the key each file resolved to, not the planned one', async () => {
+    const other = 'Media/aa11/20200101000000-ELSEWHERE.JPG';
+    const b = await build([inMedia('IMG001.JPG', 'aa11')], 'UTC', {
+      layout: 'media',
+      resolvedKeys: new Map([['IMG001.JPG', other]]),
+    });
+    expect(parseCsvRows(b.mediaCsv)[0][MEDIA_COL.mediaId]).toBe(other);
+    expect(parseCsvRows(b.mediaCsv)[0][MEDIA_COL.fileName]).toBe('IMG001.JPG');
+    expect(parseObservations(b.observationsCsv)[0].observationId).toBe('20200101000000-ELSEWHERE.JPG:0');
+    expect(JSON.parse(b.uploadCompleteJson).files).toEqual([{ media_path: other, size: b.items[0].size, sha256: 'aa11' }]);
+  });
+
+  it('lists the same bytes once, as the first file in natural path order, carrying its own tags', async () => {
+    const key = 'Media/aa11/20240110080000-IMG10.JPG';
+    const b = await build(
+      [{ ...inMedia('IMG10.JPG', 'aa11'), preTags: [tag('Puma concolor')] }, { ...inMedia('IMG2.JPG', 'aa11'), preTags: [tag('Canis latrans')] }],
+      'UTC',
+      { layout: 'media', resolvedKeys: new Map([['IMG10.JPG', key], ['IMG2.JPG', key]]) },
+    );
+    expect(parseMedia(b.mediaCsv).map((m) => [m.mediaId, m.fileName])).toEqual([[key, 'IMG2.JPG']]);
+    expect(parseObservations(b.observationsCsv).map((o) => o.scientificName)).toEqual(['Canis latrans']);
+    expect(b.dropped).toEqual([{ localPath: 'IMG10.JPG', key }]);
+    expect(parseUploadMeta(b.uploadMetaJson).imageCount).toBe(1);
+    expect(JSON.parse(b.uploadCompleteJson).fileCount).toBe(1);
+  });
+
+  it('builds observation ids from a Media key on the resume path too, one row per key', async () => {
+    const key = 'Media/aa11/20240110080000-IMG001.JPG';
+    const rec = (localPath: string): ResolvedFileRecord => ({
+      localPath,
+      fileName: 'IMG001.JPG',
+      size: 12,
+      sha256: 'aa11',
+      remoteKey: key,
+      captureTimestamp: '2024-01-10T08:00:00.000Z',
+      mimeType: 'image/jpeg',
+    });
+    const b = await buildBundleFromRecords({
+      location: SAN15,
+      collectionUuid: UUID,
+      bucket: 'field-data',
+      uploaderSlug: 'jdoe',
+      description: '',
+      uploadPath: `Collections/${UUID}/Uploads/2024.01.15.10.00.00_jdoe`,
+      startedAt: new Date(2024, 0, 15, 10, 0, 0),
+      files: [rec('b/IMG001.JPG'), rec('a/IMG001.JPG')],
+    });
+    expect(parseObservations(b.observationsCsv).map((o) => o.observationId)).toEqual(['20240110080000-IMG001.JPG:0']);
+    expect(b.dropped).toEqual([{ localPath: 'b/IMG001.JPG', key }]);
   });
 });
