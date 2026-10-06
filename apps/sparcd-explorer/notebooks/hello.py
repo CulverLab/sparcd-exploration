@@ -964,7 +964,8 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 for up in uploads:
                     if up in _seen:
                         continue
-                    _seen.add(up)
+                    # A folder without media.csv is not an upload yet, so a half-copied
+                    # one in the data bucket must not hide the legacy copy.
                     try:
                         rows = _read_csv(bucket, up + "media.csv")
                     except Exception as _exc:
@@ -972,6 +973,7 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                             continue
                         _skip(up.rstrip("/"), "media.csv", _exc)
                         rows = []
+                    _seen.add(up)
                     total_uploads += 1
                     _media_rows += rows
                     _media_buckets += [bucket] * len(rows)

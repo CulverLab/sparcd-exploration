@@ -39,6 +39,13 @@ class MediaLayoutTest(unittest.TestCase):
         self.assertNotIn((BUCKET, PREFIX + "copied/media.csv"), s3.reads)
         self.assertEqual(ns["media"].filter(ns["pl"].col("upload") == PREFIX + "copied/")["bucket"].to_list(), ["field-data"])
 
+    def test_half_copied_data_folder_does_not_hide_the_legacy_upload(self):
+        s3 = upload(FakeS3(), "copying")
+        s3.upload("copying", bucket="field-data", deployments=[deployment("AAA01", "Alpha", 32, -110)], media=None)
+        ns, scopes = run_explorer(s3)
+        self.assertEqual(scopes["deployments"]["total_uploads"], 1)
+        self.assertEqual(ns["media"]["bucket"].to_list(), [BUCKET])
+
     def test_shared_key_keeps_upload_observations_separate(self):
         s3 = upload(FakeS3(), "u1", bucket="field-data", key=KEY)
         upload(s3, "u2", bucket="field-data", key=KEY, species="Deer")
