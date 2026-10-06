@@ -10,6 +10,8 @@ import {
   LOCATIONS_KEY,
   SETTINGS_BUCKET,
   SKIPPED_LOCATION_NAMES,
+  RAW_LOCATIONS,
+  locationsJson,
   USED_LOCATION_NAME,
   UUID_A,
   UUID_B,
@@ -134,6 +136,71 @@ Given('the chosen collection has already published uploads for some locations', 
   );
 });
 
+Given('the chosen collection has a collection-specific location list', async ({ app }) => {
+  const allowed = RAW_LOCATIONS.filter((location) => ['DEER3', 'BEAR1'].includes(location.idProperty));
+  app.s3.put(
+    BUCKET_A,
+    `Collections/${UUID_A}/locations.json`,
+    locationsJson(allowed),
+    { contentType: 'application/json' },
+  );
+  await reconnectAndReturnToAssign(app);
+});
+
+Given('the collections have different collection-specific location lists', async ({ app }) => {
+  app.s3.put(
+    BUCKET_A,
+    `Collections/${UUID_A}/locations.json`,
+    locationsJson(RAW_LOCATIONS.filter((location) => ['DEER3', 'BEAR1'].includes(location.idProperty))),
+    { contentType: 'application/json' },
+  );
+  app.s3.put(
+    BUCKET_B,
+    `Collections/${UUID_B}/locations.json`,
+    locationsJson(RAW_LOCATIONS.filter((location) => location.idProperty === 'COY2')),
+    { contentType: 'application/json' },
+  );
+  await reconnectAndReturnToAssign(app);
+});
+
+Then('only the collection-specific locations are offered', async ({ app }) => {
+  await app.openDeploymentList();
+  await expect(app.deploymentOptions()).toHaveCount(2);
+  const text = (await app.deploymentOptions().allTextContents()).join('\n');
+  expect(text).toContain('Bear Canyon');
+  expect(text).toContain('Deer Springs');
+  expect(text).not.toContain('Coyote Wash');
+});
+
+When('an outside collection location is searched', async ({ app }) => {
+  await app.openDeploymentList();
+  await app.page.getByPlaceholder('Filter by name or id…').fill('coy');
+});
+
+Then('the outside location is not offered and assignment remains unavailable', async ({ app }) => {
+  await expect(app.deploymentOptions()).toHaveCount(0);
+  await expect(app.deploymentTrigger()).toContainText('Select a deployment location…');
+  await expect(app.continueButton()).toBeDisabled();
+});
+
+Given('a collection-specific location is selected', async ({ app }) => {
+  await app.chooseDeployment('Bear Canyon');
+});
+
+When('the user switches to the other collection', async ({ app }) => {
+  await app.openCollectionList();
+  await app.page
+    .locator('ul[role="listbox"] li[role="option"]')
+    .filter({ hasText: COLLECTION_B_NAME })
+    .click();
+  await expect(app.collectionTrigger()).toContainText(COLLECTION_B_NAME);
+});
+
+Then('the previous location is cleared because it is not allowed for the new collection', async ({ app }) => {
+  await expect(app.deploymentTrigger()).toContainText('Select a deployment location…');
+  await expect(app.continueButton()).toBeDisabled();
+});
+
 When('the deployment list is shown', async ({ app }) => {
   await app.openDeploymentList();
   await expect(app.deploymentOptions().first()).toBeVisible();
@@ -144,8 +211,8 @@ Then('those already-used locations are listed first', async ({ app }) => {
 });
 
 Then("the list states how many of the registry's locations that collection has used", async ({ app }) => {
-  await expect(app.page.getByText(/1 of 6 locations\s+already deployed by/)).toBeVisible();
-  await expect(app.page.getByText(/but any location can be assigned/)).toBeVisible();
+  await expect(app.page.getByText(/1 of 6 locations\s+currently allowed for/)).toBeVisible();
+  await expect(app.page.getByText(/currently allowed for/)).toBeVisible();
 });
 
 When("part of a location's name or identifier is typed", async ({ app }) => {
@@ -346,6 +413,8 @@ When('the next batch is uploaded with {string} as its location', async ({ app },
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  // Next batch starts with nothing assigned (#338), so pick the collection again.
+  await app.chooseCollection(COLLECTION_A_NAME);
   await uploadAt(app, location);
 });
 

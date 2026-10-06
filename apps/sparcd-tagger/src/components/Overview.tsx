@@ -5,7 +5,7 @@ import { Thumb } from './Thumb';
 import { useDraftStore } from '../lib/drafts';
 import { useStore } from '../store';
 import { formatDateTime, formatTime, type TimeFormat } from '../lib/formatting';
-import { effectiveOf, isEditedFromBase, isGhostObs } from '../lib/effective';
+import { effectiveOf, isEditedFromBase, isGhostObs, reviewSummary } from '../lib/effective';
 import { isRangeFullySelected } from '../lib/selection';
 import type { Burst, BurstGrouping } from '../lib/bursts';
 import { isVideoImage, type TagImage } from '../lib/workspace';
@@ -21,6 +21,13 @@ function summarize(obs: DraftObservation[]): string {
   const name = isGhostObs(first) ? 'Ghost' : first.commonName || first.scientificName;
   const head = first.count > 1 ? `${name} ×${first.count}` : name;
   return obs.length > 1 ? `${head} +${obs.length - 1}` : head;
+}
+
+function reviewSummaryLabel(observations: DraftObservation[]): string | null {
+  const summary = reviewSummary(observations);
+  if (!summary) return null;
+  if (summary === 'mixed') return 'Mixed review';
+  return summary === 'reviewed' ? 'Reviewed' : 'Not reviewed';
 }
 
 // The Overview is the primary bulk-tagging surface: a virtualized, burst-banded
@@ -279,12 +286,14 @@ function ListCell({
   const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null);
   const timestampDisplay = timestamp ? formatDateTime(timestamp, dateFormat, timeFormat) : null;
   const edited = isEditedFromBase(eff);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
   const rowLabel = [
     `Filename: ${img.fileName}`,
     ...(!narrow
       ? [`Media type: ${isVideo ? 'video' : 'image'}`, timestamp ? `Capture time: ${timestamp}` : 'Capture time unavailable']
       : []),
     `Species: ${species}`,
+    ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
     ...(edited ? ['Unsaved edit'] : []),
     ...(eff.questionable ? ['Questionable'] : []),
   ].join('; ');
@@ -353,6 +362,16 @@ function ListCell({
       >
         {species}
       </span>
+      {reviewLabel && (
+        <span
+          data-column="review-status"
+          aria-label={`Review status: ${reviewLabel}`}
+          title={`Review status: ${reviewLabel}`}
+          className="w-20 shrink-0 text-[10px] font-mono text-inkMute truncate"
+        >
+          {reviewLabel}
+        </span>
+      )}
       <span data-column="markers" className="shrink-0 flex flex-col items-center gap-0.5 w-4">
         {edited && (
           <span
@@ -404,6 +423,7 @@ function GridCell({
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const eff = effectiveOf(img, draft);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
@@ -461,6 +481,16 @@ function GridCell({
             <span className="text-inkMute font-mono">{img.fileName}</span>
           )}
         </span>
+        {reviewLabel && (
+          <span
+            data-column="review-status"
+            aria-label={`Review status: ${reviewLabel}`}
+            title={`Review status: ${reviewLabel}`}
+            className="shrink-0 text-[9px] font-mono text-inkMute"
+          >
+            {reviewLabel}
+          </span>
+        )}
       </span>
     </button>
   );

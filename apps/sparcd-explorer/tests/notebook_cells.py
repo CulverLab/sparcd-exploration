@@ -79,6 +79,7 @@ class FakeS3:
         if marker and (bucket, f"Collections/{uuid}/collection.json") not in self.files:
             self.collection(bucket, uuid)
         folder = f"Collections/{uuid}/Uploads/{name}/"
+        self.files[bucket, folder + "UploadMeta.json"] = b"{}"
         for file, rows in (("deployments.csv", deployments), ("media.csv", media), ("observations.csv", observations)):
             if rows is None:
                 continue

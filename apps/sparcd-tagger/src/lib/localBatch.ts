@@ -20,7 +20,10 @@ import { safeReturnUrl } from './siblings';
 
 /** The batch id this page load was opened with, if any. Read synchronously so
  *  the app can skip the Connect gate on the very first render. */
-export const localBatchId = new URLSearchParams(window.location.search).get('batch');
+// Unit tests import the store in Node, where there is no browser global. A
+// missing window means ordinary connected mode rather than a local batch.
+export const localBatchId =
+  typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('batch');
 
 export type LocalBatchStatus = 'loading' | 'ready' | 'missing';
 

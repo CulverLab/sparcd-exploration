@@ -18,7 +18,7 @@ Feature: Correct the camera location recorded for an upload
 
   Background:
     Given an upload is open in the tagging workspace
-    And a tagger identity has been set in Settings
+    And the connected account is ready for attribution
 
   @unmapped
   Scenario: The upload's location can be corrected from the shared registry

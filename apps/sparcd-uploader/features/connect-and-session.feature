@@ -1,6 +1,5 @@
 # DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-uploader (src/App.tsx, src/store.ts, src/components/Chrome.tsx, src/lib/s3.ts) and packages/auth-ui (Connection.tsx, ConnectionChip.tsx, session.ts).
 
-@unmapped
 Feature: Connect the uploader to storage and manage the session
 
   """
@@ -31,7 +30,10 @@ Feature: Connect the uploader to storage and manage the session
     Then it shows the connection screen instead of a collection picker
     And going back from it returns to Inspect with the batch intact
 
-  @unmapped @offline
+  # F1-2's offline boundary is the end of Inspect: dropping and examining the
+  # batch work without a connection. Assign intentionally remains online-only;
+  # returning to Inspect must preserve the batch until the user can connect.
+  @F1-2 @offline
   Scenario: A loaded uploader can inspect its first batch without network access
     Given no connection has been made in this browser session
     And the browser is offline before deferring login

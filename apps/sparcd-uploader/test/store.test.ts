@@ -232,7 +232,7 @@ describe('store persistence', () => {
     useStore.getState().setUploaderUser('Ada Lovelace');
     useStore.getState().setUploadDescription('Sky Island transect');
     useStore.getState().setSelectedBucket('bucket::uuid');
-    useStore.getState().setSelectedLocationKey('loc-7');
+      useStore.getState().setSelectedLocationId('loc-7');
     useStore.getState().setUploadTimeZone('America/Phoenix');
     useStore.getState().setDryRun(false);
     useStore.getState().setConcurrencyMode('manual');
@@ -248,11 +248,50 @@ describe('store persistence', () => {
       uploaderUser: 'Ada Lovelace',
       uploadDescription: 'Sky Island transect',
       selectedBucket: 'bucket::uuid',
-      selectedLocationKey: 'loc-7',
+      selectedLocationId: 'loc-7',
+      requireCollectionSelection: false,
       uploadTimeZone: 'America/Phoenix',
       dryRun: false,
       concurrencyMode: 'manual',
       uploadConcurrency: 16,
+    });
+  });
+});
+
+describe('starting a new batch', () => {
+  it('clears assignment details while preserving identity and run preferences', () => {
+    useStore.setState({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: 'bucket::uuid',
+      selectedLocationId: 'loc-7',
+      uploadDescription: 'July retrieval',
+      uploadTimeZone: 'America/Phoenix',
+      dryRun: true,
+      concurrencyMode: 'manual',
+      uploadConcurrency: 16,
+    });
+
+    useStore.getState().nextBatch();
+
+    expect(useStore.getState()).toMatchObject({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: null,
+      selectedLocationId: null,
+      requireCollectionSelection: true,
+      uploadDescription: '',
+      uploadTimeZone: '',
+      dryRun: true,
+      concurrencyMode: 'manual',
+      uploadConcurrency: 16,
+    });
+    const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
+    expect(persisted).toMatchObject({
+      uploaderUser: 'Ada Lovelace',
+      selectedBucket: null,
+      selectedLocationId: null,
+      requireCollectionSelection: true,
+      uploadDescription: '',
+      uploadTimeZone: '',
     });
   });
 });

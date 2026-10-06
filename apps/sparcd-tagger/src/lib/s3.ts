@@ -12,6 +12,7 @@ import {
   parseCollectionKey,
   translateReadError,
   type CollectionRef,
+  type UploadFolder,
 } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
 import { parseUploadMeta, parseDeployments, type Deployment } from '@sparcd/camtrap';
@@ -22,6 +23,7 @@ import type { SyncJournal, CanonicalRole } from './syncJournal';
 // Not a security boundary in a static app — the wrapper just requires an
 // explicit scope. The connected key's IAM policy and bucket CORS gate access.
 const RUNTIME_BUCKET_SCOPE = ['*'];
+const UPLOAD_MARKER_CONCURRENCY = 16;
 
 let cached: { config: S3Config; client: SafeS3Client } | null = null;
 let writeCached: { config: S3Config; client: SafeS3Client } | null = null;
@@ -73,14 +75,40 @@ export type UploadRef = {
   stamp: string; // the `<stamp>` folder name
 };
 
-/** A collection's uploads across every bucket that holds it, enumerated with a delimiter (no image walk). */
+/**
+ * A collection's upload folders across every bucket that holds it, enumerated
+ * with a delimiter (no image walk). A folder is visible only once both of its
+ * completion markers exist: `listUploadFolders` requires media.csv (written
+ * last in the Media layout) and this requires UploadMeta.json (written last in
+ * the legacy layout). Blobs and CSVs from an interrupted run remain in storage
+ * for recovery, but must not become a Browse row or a selectable tagging
+ * workspace.
+ */
 export async function listUploads(
   cfg: S3Config,
   ref: Pick<CollectionRef, 'uuid' | 'buckets'>,
   client: SafeS3Client = getClient(cfg),
 ): Promise<UploadRef[]> {
   const folders = await listUploadFolders(client, ref);
-  return folders
+  const visible: (UploadFolder | null)[] = [];
+  for (let i = 0; i < folders.length; i += UPLOAD_MARKER_CONCURRENCY) {
+    const chunk = folders.slice(i, i + UPLOAD_MARKER_CONCURRENCY);
+    visible.push(
+      ...(await Promise.all(
+        chunk.map(async (folder) => {
+          try {
+            await client.statObject(folder.bucket, `${folder.prefix}UploadMeta.json`);
+            return folder;
+          } catch (err) {
+            if (isNotFound(err)) return null;
+            throw translateReadError(err, 'UploadMeta.json');
+          }
+        }),
+      )),
+    );
+  }
+  return visible
+    .filter((f): f is UploadFolder => f !== null)
     .map(({ bucket, prefix }) => ({ bucket, prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix }))
     .sort((a, b) => b.stamp.localeCompare(a.stamp)); // newest stamp first
 }
@@ -325,8 +353,8 @@ export async function listCollectionSnapshots(
 }
 
 export function isNotFound(err: unknown): boolean {
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
+  const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.message === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
 }
 
 /** Load the canonical bodies of one snapshot, to restore them in place. A

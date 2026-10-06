@@ -416,6 +416,7 @@ export async function ensureBundle(
       ...timeFor(rec),
       mimeType: r.mimeType,
       preTags: r.preTags,
+      preTaggerUser: r.preTaggerUser,
     };
   });
 

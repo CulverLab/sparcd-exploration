@@ -168,6 +168,17 @@ Feature: Upload and publish a batch
     Then it is retried up to five attempts with an increasing, randomized delay
     And the retry is recorded in the run log
 
+  @F1 @F1-4
+  Scenario: Upload availability is visible as the browser goes offline and online
+    Given the upload has not been started
+    When the browser reports offline before upload
+    Then the upload status says it is offline and real upload is disabled
+    And dry run remains available while offline
+    When the operator allows a real upload while offline
+    Then the real upload action is available despite the offline signal
+    When the browser reports online again
+    Then the upload status says it is online and real upload is enabled
+
   @unmapped
   Scenario: A transient error during the resume verify pass is retried rather than counted as a file failure
     Given a resumed run is verifying files already stored in a previous session
@@ -279,12 +290,14 @@ Feature: Upload and publish a batch
     Given a run is in progress
     Then the Back button is disabled
 
-  @unmapped
-  Scenario: The next batch from the same site keeps the previous choices
+  @US-007
+  Scenario: The next batch starts with assignment details cleared
     Given a real upload has completed
     When "Next batch" is chosen
     Then the wizard returns to the Files step with an empty batch
-    And the collection, deployment, uploader identity, description and timezone of the previous batch are kept
+    And the next batch has no collection, deployment, description or timezone selected
+    And the uploader identity is still filled in
+    And continuing without a timezone is disabled
 
   @unmapped
   Scenario: The screen wake lock is held while a dry run is in progress

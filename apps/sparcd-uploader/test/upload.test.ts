@@ -801,6 +801,166 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a transient publication failure before moving to the next metadata object', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const mediaKey = `${session.batch.uploadPrefix}/media.csv`;
+    let failedOnce = false;
+    client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => {
+      if (key === mediaKey && !failedOnce) {
+        failedOnce = true;
+        throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+      }
+    });
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+      `${session.batch.uploadPrefix}/deployments.csv`,
+      mediaKey,
+      mediaKey,
+      `${session.batch.uploadPrefix}/observations.csv`,
+      `${session.batch.uploadPrefix}/UploadMeta.json`,
+      `${session.batch.uploadPrefix}/UploadComplete.json`,
+    ]);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['deployments.csv', 'deployments'],
+    ['media.csv', 'media'],
+    ['observations.csv', 'observations'],
+    ['UploadMeta.json', '{"meta":true}'],
+    ['UploadComplete.json', '{"complete":true}'],
+  ])(
+    'accepts matching existing %s during a resumed publication and continues',
+    async (name, body) => {
+      const session = makeSession(['done']);
+      const client = makeClient(session.files);
+      mocks.client = client;
+      const key = `${session.batch.uploadPrefix}/${name}`;
+      let collided = false;
+      client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+        if (candidate === key && !collided) {
+          collided = true;
+          throw new PreconditionFailedError(candidate);
+        }
+      });
+      client.getObject.mockImplementation(async (_bucket: string, candidate: string) => {
+        expect(candidate).toBe(key);
+        return new TextEncoder().encode(body);
+      });
+
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+        (snap) => { last = snap; },
+      );
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('done');
+      expect(client.getObject).toHaveBeenCalledWith('bucket', key);
+      expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+        `${session.batch.uploadPrefix}/deployments.csv`,
+        `${session.batch.uploadPrefix}/media.csv`,
+        `${session.batch.uploadPrefix}/observations.csv`,
+        `${session.batch.uploadPrefix}/UploadMeta.json`,
+        `${session.batch.uploadPrefix}/UploadComplete.json`,
+      ]);
+      expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rejects a resumed publication when an existing metadata object has different content', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/media.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    client.getObject.mockResolvedValue(new TextEncoder().encode('someone else published this'));
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toMatch(/already holds different content/);
+    expect(snap.error).toContain('media.csv');
+    expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+      `${session.batch.uploadPrefix}/deployments.csv`,
+      `${session.batch.uploadPrefix}/media.csv`,
+    ]);
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('rejects a resumed publication when existing metadata has a UTF-8 BOM', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/deployments.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    const expected = new TextEncoder().encode('deployments');
+    const withBom = new Uint8Array(expected.length + 3);
+    withBom.set([0xef, 0xbb, 0xbf]);
+    withBom.set(expected, 3);
+    client.getObject.mockResolvedValue(withBom);
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toMatch(/already holds different content/);
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('retries a transient existing-metadata read before accepting matching bytes', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/media.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    let reads = 0;
+    client.getObject.mockImplementation(async (_bucket: string, candidate: string) => {
+      expect(candidate).toBe(key);
+      reads++;
+      if (reads === 1) {
+        throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+      }
+      return new TextEncoder().encode('media');
+    });
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.getObject).toHaveBeenCalledTimes(2);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
   it('confirms a resumed run by one listing pass plus a digest sample, not a HEAD per file', async () => {
     const session = makeSession(Array.from({ length: 8 }, () => 'pending'));
     mocks.client = makeClient(session.files);

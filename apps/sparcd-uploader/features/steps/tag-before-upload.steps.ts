@@ -132,6 +132,12 @@ When('Coyote is applied in the real Tagger', async ({ app }) => {
   await expect(image).toContainText('Coyote');
 });
 
+When('the real Tagger identity is set to Anita', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await app.page.locator('#user').fill('anita');
+  await app.page.getByRole('button', { name: 'Tag', exact: true }).click();
+});
+
 When('the real Tagger hands the batch back', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Done · back to Uploader' }).click();
   await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/uploader\/\?flip=/);
@@ -190,6 +196,11 @@ Then('it renders each image from its Media key in the data bucket', async ({ app
     await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
     expect(new URL((await img.getAttribute('src'))!).pathname).toBe(`/${DATA_BUCKET}/${key}`);
   }
+});
+
+Then('the hand-off records Anita as the tagger', async ({ app }) => {
+  const [record] = await app.readFlipRecords();
+  expect(record.taggerUser).toBe('anita');
 });
 
 // --- coming back ------------------------------------------------------------
@@ -411,6 +422,12 @@ Then('each row carries the common name the tagger used', async ({ app }) => {
   const comments = writtenCsvRows(app, 'observations.csv').map((r) => r[19]);
   expect(comments).toContain('[COMMONNAME:Coyote]');
   expect(comments).toContain('[COMMONNAME:Ghost]');
+});
+
+Then('the pre-upload identifications are attributed to Anita', async ({ app }) => {
+  const animal = writtenCsvRows(app, 'observations.csv').filter((r) => r[5] === 'animal');
+  expect(animal.length).toBeGreaterThan(0);
+  expect(animal.every((row) => row[16] === 'anita')).toBe(true);
 });
 
 Then('the upload metadata counts every identified image, empty frames included', async ({ app }) => {

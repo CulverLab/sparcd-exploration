@@ -97,6 +97,8 @@ export interface FileRecord {
   // indexed, so it needs no schema bump; persisted so a batch interrupted days
   // after tagging still publishes the identifications it left with.
   preTags?: FlipObservation[];
+  /** Person who applied the pre-upload tags in the Tagger. */
+  preTaggerUser?: string;
 }
 
 export interface BundleRecord {

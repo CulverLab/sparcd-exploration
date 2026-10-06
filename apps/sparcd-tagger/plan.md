@@ -493,7 +493,7 @@ explorer's pattern). Everything else is *inferred*, not asked:
   preset dropdown, region field, or path-style toggle on the main screen.
 - Rare manual region / path-style overrides live behind a collapsed
   **"Advanced"** disclosure, hidden by default.
-- Per-tool **identity** and **dry-run default** live in **Settings**, not
+- Connected-account attribution and the **dry-run default** live in **Settings**, not
   the login gate.
 
 Values prefill from `.env` during local development only. In deployable
@@ -820,9 +820,9 @@ connect/disconnect) and adds `listUploads`, `listUploadImages` (sparcd-web
 `presignImage`. Browse section drills collection → upload → presigned image
 grid (the "image viewer reads from a discovered collection" gate). Chrome with
 Browse/Tag/History/Settings tabs + a `StatePill` wired for all sync states (live
-value `local-only`). Settings holds identity + dry-run default + burst
-threshold. CORS error translation reuses the uploader's 404/403/status-less
-mapping.
+value `local-only`). Settings holds connected-account attribution + dry-run
+default + burst threshold. CORS error translation reuses the uploader's
+404/403/status-less mapping.
 
 **`Settings/species.json` — path + shape confirmed.** Verified against the
 upstream writer (`model/species/Species.java` + `resources/species.json`, via
@@ -852,9 +852,11 @@ exactly like Java. The `tagger-edited-v016` golden exercises both a Ghost
   `Settings/species.json` exists in the live settings bucket. The `.jpg`/`.mp4`
   `<img>` render-without-canvas assumption is encoded in `Thumb.tsx` and should
   be eyeballed live.
-- Open questions #1–#3 (snapshot/edit-comment identity persistence, first
-  write-allowed credentials, `IfMatch`/`IfNoneMatch` backend enforcement) remain
-  **P4 gates** and are untouched here by design — P0 writes nothing.
+- Open questions #2–#3 (first write-allowed credentials,
+  `IfMatch`/`IfNoneMatch` backend enforcement) remain **P4 gates** and are
+  untouched here by design — P0 writes nothing. Connected attribution is
+  resolved from the storage access key and is read-only; local handoffs use a
+  separate session-scoped identity.
 
 **For the P1 agent:** the merge/draft data model is ready
 (`MediaEdit`/`ObservationInput` in `@sparcd/camtrap`). P1 adds the Dexie `drafts`
@@ -1219,14 +1221,16 @@ time-corrected counts, the planned files, and the snapshot prefix — then lets 
 user run it. The persisted **dry-run default (Settings) is on**; turning it off is
 the only way to perform the in-place replacement. The **conflict view** offers
 "Discard local & reload" (drops drafts + re-grounds) or "Keep editing"; a live
-sync requires a non-empty Tagger identity (Settings) since it stamps the snapshot
-path + edit comment. The Chrome `StatePill` is now fed real states
+sync uses the connected storage username since it stamps the snapshot
+path + edit comment. Local Uploader handoffs use their session-scoped
+identity. The Chrome `StatePill` is now fed real states
 (`syncing`/`dry-run`/`synced`/`conflict`/`error`), reset to `local-only` when the
 upload changes.
 
 **Open questions #1–#3 — addressed in code, with #2/#3 still live-credential
-gates.** #1 (identity): prompt-and-persist via the Settings `taggerUser`,
-required before a live sync. #2/#3 (write-allowed credentials + `IfMatch`/
+gates.** #1 (identity): connected sessions derive `taggerUser` from the
+storage access key; local handoffs provide a session-scoped identity. #2/#3
+(write-allowed credentials + `IfMatch`/
 `IfNoneMatch` backend enforcement): the code sends the headers and treats
 non-enforcement as a hard `unsupported`/conflict (never a silent
 last-writer-wins downgrade), but **no live write or `IfMatch` preflight has been
@@ -1322,8 +1326,8 @@ resuming always completes the originally-intended write safely. Documented in
 the upload's recoverable snapshots (stamp · user · file count). Picking one opens
 a restore pane that **previews via a forced dry-run** (writes nothing), shows
 which files would be restored + where the current state will be snapshotted, then
-restores it — gated on the persisted **dry-run default** and a non-empty Tagger
-identity, and surfacing the same conflict view as the sync dialog
+restores it — gated on the persisted **dry-run default** and a non-empty
+connected account or local handoff identity, and surfacing the same conflict view as the sync dialog
 (discard-and-reload / keep editing). The Chrome `StatePill` is fed the same
 states a sync produces.
 
@@ -1398,7 +1402,8 @@ large collection would issue one snapshot-walk per upload — noted below.
 
 **Browse + Settings.** Reviewed; both were built complete in P0 (Browse:
 collection → upload → presigned image grid + species-vocabulary status line;
-Settings: identity, dry-run default, burst threshold, connection/disconnect) and
+Settings: connected-account attribution, dry-run default, burst threshold,
+connection/disconnect) and
 needed no change for P6. Left untouched deliberately rather than churned.
 
 **No new tests.** The new code is read-IO orchestration (`listCollectionSnapshots`)
@@ -1489,11 +1494,12 @@ per image); the `@sparcd/camtrap` merge layer already supports N rows/image.
 
 ## Open questions for before P0
 
-1. **User identity for snapshots and edit comments.** The IAM access key
-   stamps the bucket-side writer; the tagger also needs a logical `userId` for
-   audit snapshot paths and mandatory `UploadMeta.json.editComments` entries.
-   Options: prompt at session start, derive from access key, or pin to a
-   config file. Lean: prompt + persist.
+1. **User identity for snapshots and edit comments — resolved.** Connected
+   Tagger sessions use the IAM/storage access key as the username for
+   `classified_by`, audit snapshot paths and `UploadMeta.json.editComments`.
+   Settings displays that value read-only. Disconnected local Uploader
+   handoffs use a separate session-scoped identity because no storage account
+   is connected.
 2. **First write-allowed bucket/credentials.** Not a build-time allowlist
    (that idea is gone — see Static BYO-S3 security contract); a concrete
    credential set whose IAM policy permits conditional `PUT` on canonical

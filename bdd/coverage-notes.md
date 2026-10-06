@@ -5,9 +5,9 @@
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
 | F1-1 | Every image in a batch is stored and retrievable after a completed upload | covered | uploader: upload-run.feature: Every file in the batch is stored under one upload folder in the collection; uploader: upload-run.feature: Every stored object is confirmed once the batch is written | Together they store every file and verify retrieval by size or fingerprint. |
-| F1-2 | Preparing a batch requires no connection until Frank chooses to upload | partial | uploader: connect-and-session.feature: A loaded uploader can inspect its first batch without network access | Drop and inspection work offline, but the full preparation flow is not covered. |
+| F1-2 | Preparing a batch requires no connection until Frank chooses to upload | covered | uploader: connect-and-session.feature: A loaded uploader can inspect its first batch without network access | The offline boundary is the end of Inspect: dropping and examining the batch work offline; Assign intentionally asks for a connection, and returning to Inspect preserves the batch. |
 | F1-3 | A partial transfer is never presented as a completed upload | covered | uploader: upload-run.feature: The upload is only published once every file has landed; uploader: upload-run.feature: A batch where some files failed is left unpublished and shown as partial | Together they keep partial data unpublished and label the run partial. |
-| F1-4 | Frank can tell at a glance whether he is currently able to upload | partial | uploader: upload-run.feature: The run monitor shows one offline warning per outage, not one per poll tick | Offline and recovery are logged, but upload availability is not checked at a glance. |
+| F1-4 | Frank can tell at a glance whether he is currently able to upload | covered | uploader: upload-run.feature: Upload availability is visible as the browser goes offline and online | The upload screen visibly reports offline/online state and disables or enables real upload accordingly. |
 | F1-5 | An incomplete upload continues from where it stopped | covered | uploader: resume-and-retry.feature: An interrupted upload can be continued from where it stopped; uploader: resume-and-retry.feature: Files already stored and verified are not sent again | Together they resume at the stopping point and skip verified objects. |
 | F1-6 | Only image files are taken from the SD card | partial | uploader: choose-folder.feature: Only JPEG images and MP4 videos are taken from the chosen folder | Non-media is excluded, but MP4 video is accepted while the target says only images. |
 | F1-7 | An upload that never completes does not add images to the collection | covered | uploader: upload-run.feature: An upload that fails or is abandoned announces nothing | Without published metadata, collection readers see no abandoned images. |
@@ -16,8 +16,8 @@
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| F2-1 | Only locations valid for the chosen collection can be assigned | partial | uploader: assign-collection-and-deployment.feature: Locations the chosen collection has already used are offered first | Collection locations are prioritized, not enforced. |
-| F2-2 | A location outside the collection cannot be assigned | missing | — | Outside locations are allowed rather than refused. |
+| F2-1 | Only locations valid for the chosen collection can be assigned | covered | uploader: assign-collection-and-deployment.feature: Only locations valid for the chosen collection can be assigned; Changing collections clears a location that is no longer allowed | The collection-specific list is the only source offered for new assignments; historical deployments only order entries that remain allowed, and a collection switch clears an invalid persisted selection. |
+| F2-2 | A location outside the collection cannot be assigned | covered | uploader: assign-collection-and-deployment.feature: A location outside the collection cannot be assigned | Outside locations are absent from the picker, and the assignment remains unavailable. |
 | F2-3 | An upload cannot be finalized while any batch is missing a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | The single-batch gate requires a location but does not handle or name multiple batches. |
 | F2-4 | An upload can be finalized once every batch has a location | partial | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | A located single batch continues; all batches in a multi-batch upload are not checked. |
 | F2-5 | Each stored image carries the location Frank assigned to its batch | covered | uploader: assign-collection-and-deployment.feature: Every stored image carries the location assigned to its batch | Two batches uploaded one after the other to two locations each store their own location, and every media and observation row points at it. |
@@ -57,15 +57,15 @@
 | A1-2 | Images and their tags enter the system in a single upload | covered | uploader: tag-before-upload.feature: The upload carries the images and the identifications together | Images and applied species are published in one pass. |
 | A1-3 | Untagged images are accepted and marked as untagged | covered | uploader: tag-before-upload.feature: An untagged file is accepted and published as untagged | Tagged and untagged files publish together; untagged files have no species row. |
 | A1-4 | An upload with no tags at all is still accepted | covered | uploader: upload-run.feature: A batch with no species identifications is accepted and recorded as untagged | A wholly untagged batch publishes with placeholder rows and a zero-tag count. |
-| A1-5 | Tags made before upload are attributed to Anita | missing | — | No scenario attributes a pre-upload identification to its maker. |
+| A1-5 | Tags made before upload are attributed to Anita | covered | uploader: tag-before-upload.feature: Tags made before upload are attributed to the person who made them | The local-batch handoff identity is carried through the Flip handoff and written to observations.csv classified_by. |
 | A1-6 | Tags are not lost while waiting for a connection | covered | uploader: tag-before-upload.feature: Tags survive weeks of waiting for a connection | A batch handed over 40 days earlier and last opened 15 days earlier still publishes every tag. |
 
 ## A2
 
 | ID | target scenario title | status | as-built scenarios | reason |
 | --- | --- | --- | --- | --- |
-| A2-1 | Only locations valid for her collection can be assigned | missing | uploader: assign-collection-and-deployment.feature: Locations the chosen collection has already used are offered first | Used locations come first, but every registry location remains selectable. |
-| A2-2 | A location outside her collection cannot be assigned | missing | — | The uploader does not refuse registry locations outside the collection. |
+| A2-1 | Only locations valid for her collection can be assigned | covered | uploader: assign-collection-and-deployment.feature: Only locations valid for Anita's chosen collection can be assigned | Anita receives the same collection-scoped assignment list. |
+| A2-2 | A location outside her collection cannot be assigned | covered | uploader: assign-collection-and-deployment.feature: A location outside Anita's collection cannot be assigned | Outside locations are absent from the picker, and the assignment remains unavailable. |
 | A2-3 | The upload cannot be finalized without a location | covered | uploader: assign-collection-and-deployment.feature: The batch cannot be uploaded until a camera location is assigned | Continue is disabled and explains that a deployment is required. |
 | A2-4 | The stored location matches what Anita assigned | covered | uploader: assign-collection-and-deployment.feature: Every stored image carries the location assigned to its batch | The stored deployment carries the assigned location's id, name and coordinates, and every image row points at it. |
 | A2-5 | The location applies to the identifications she already made | covered | uploader: tag-before-upload.feature: The identifications made before upload are tied to the batch's location | Every species row from the Tagger points at the assigned location's deployment. |
@@ -79,7 +79,7 @@
 | AL1-3 | An unattended upload is found either complete or clearly resumable | covered | uploader: resume-and-retry.feature: Uploads left running unattended are found either complete or ready to resume | A finished upload shows as complete with nothing to do; one cut off by closing the tab says how many files are left and names Resume upload. |
 | AL1-4 | An upload is never left in a silent, stuck state | untestable | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete | NOTES.md says no threshold defines when silence becomes stuck. |
 | AL1-5 | Repeated interruptions still end in one finished upload | covered | uploader: upload-run.feature: Repeated connection drops still end in one finished upload | Three drops fail writes in flight; the run still ends in one upload folder, one History entry, and a media.csv listing every image once. |
-| AL1-6 | An interrupted upload is not presented as complete | covered | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete | Only uploads with published metadata are marked complete. |
+| AL1-6 | An interrupted upload is not presented as complete | covered | uploader: resume-and-retry.feature: An interrupted upload is listed as open, never as complete; uploader: resume-and-retry.feature: A resumed publication accepts matching existing metadata and completes | Only uploads with published metadata are marked complete; a resumed immutable-publication race accepts the existing object only after verifying its bytes and still writes the completion sentinel. |
 
 ## AL2
 
@@ -87,7 +87,7 @@
 | --- | --- | --- | --- | --- |
 | AL2-1 | The retry targets the same collection and location as the original attempt | covered | uploader: resume-and-retry.feature: A resumed upload lands in the same place as the original attempt | The recorded collection, folder, object paths, and deployment are reused. |
 | AL2-2 | The destination ends up with exactly one upload | covered | uploader: resume-and-retry.feature: Retrying the failed files of a partial run completes that same upload | The same folder is published and exactly one upload remains. |
-| AL2-3 | No leftover partial data from the failed attempt remains | partial | uploader: resume-and-retry.feature: Retrying the failed files of a partial run completes that same upload | Stored files remain and the same folder completes, but all failed-attempt residue is not checked. |
+| AL2-3 | Leftover partial data from a failed attempt is not presented by any app | covered | uploader: `publicationVisibility.test.ts` (published-upload and deployment discovery gate); tagger: AL2-hide-incomplete-uploads.feature: An interrupted upload without UploadMeta is not presented; explorer: `test_upload_visibility.py` (local and WASM notebook helpers) | Partial prefixes remain in storage for recovery, but the UploadMeta visibility marker keeps them out of Uploader, Tagger, and Explorer surfaces; the completed retry remains visible. |
 | AL2-4 | Retrying does not require re-entering the location | covered | uploader: resume-and-retry.feature: Retrying does not require choosing the location again | The collection and deployment are not requested again. |
 | AL2-5 | Retrying does not require re-identifying species already tagged | covered | uploader: tag-before-upload.feature: Retrying a failed upload of a tagged batch does not ask for the tags again | After a reload, History resumes the tagged batch without Inspect or the Tagger and publishes every species row. |
 | AL2-6 | A retry cannot be misdirected to a different destination by accident | covered | uploader: resume-and-retry.feature: A resumed upload lands in the same place as the original attempt | The retry cannot silently change its recorded destination. |
@@ -109,7 +109,7 @@
 | --- | --- | --- | --- | --- |
 | H2-1 | An assigned species is saved and visible to others with access | untestable | tagger: sync-identifications-to-the-collection.feature: Synced identifications become visible to everyone with access | NOTES.md says visibility lacks a propagation-delay threshold. |
 | H2-2 | An image can carry more than one species | covered | tagger: H2-assign-species-to-images.feature: An image can carry more than one species | Both species remain and neither replaces the other. |
-| H2-3 | Identifications are attributed to the person who made them | partial | tagger: connect-and-session.feature: The tagger identity is entered in Settings and stamps every sync | Sync has an identity, but identification rows do not assert maker attribution. |
+| H2-3 | Identifications are attributed to the person who made them | covered | tagger: H2-attribute-identifications.feature: Identifications are attributed to the person who made them | Connected sessions derive attribution from the storage username, stamp new identification rows, and preserve another identifier's existing attribution. |
 | H2-4 | Only species valid for the collection can be assigned | missing | tagger: H2-assign-species-to-images.feature: The species list is browsable, not only searchable | The loaded vocabulary is not constrained per collection. |
 | H2-5 | An image Harold has identified is no longer counted as untagged | covered | tagger: H2-assign-species-to-images.feature: Dragging a species tile onto the focused image adds it at count one | The image tile changes from untagged to the assigned species. |
 | H2-6 | Harold can leave an image he cannot identify without tagging it | covered | tagger: H2-assign-species-to-images.feature: An image left without a species stays untagged after moving on and syncing | After moving on and syncing, the skipped image still reads as untagged and its stored rows carry no species. |
@@ -126,21 +126,21 @@
 | H3-5 | A review records who carried it out | partial | tagger: H3-review-existing-identifications.feature: A correction is attributed to the person who synced it | Correction records identity and time; confirmation without change records no reviewer. |
 | H3-6 | The original identifier's work remains attributable | missing | — | No scenario displays original attribution beside a separate review. |
 | H3-7 | A review does not destroy the original uploaded data | partial | tagger: sync-identifications-to-the-collection.feature: The previous state is preserved before anything is replaced; tagger: H3-review-existing-identifications.feature: A correction is attributed to the person who synced it | The change is traceable, but the stored files are replaced and the upload record is rewritten on sync; the original survives only as a snapshot copy. |
-| H3-8 | Harold can tell reviewed identifications from unreviewed ones | missing | tagger: H3-review-existing-identifications.feature: An image edited locally is distinguishable from one that is not | The marker means unsynced edit, not reviewed versus unreviewed. |
+| H3-8 | Harold can tell reviewed identifications from unreviewed ones | covered | tagger: H3-review-existing-identifications.feature: Reviewed and unreviewed identifications are visibly distinguished | The focused species chips identify each observation as reviewed or not reviewed, and Overview reports mixed and unreviewed image states. |
 
 ## Totals
 
 | story | covered | partial | missing | untestable | total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| F1 | 4 | 3 | 0 | 0 | 7 |
-| F2 | 1 | 3 | 2 | 0 | 6 |
+| F1 | 6 | 1 | 0 | 0 | 7 |
+| F2 | 3 | 2 | 1 | 0 | 6 |
 | F3 | 0 | 5 | 1 | 0 | 6 |
 | F4 | 0 | 0 | 7 | 3 | 10 |
-| A1 | 5 | 0 | 1 | 0 | 6 |
-| A2 | 3 | 0 | 2 | 0 | 5 |
+| A1 | 6 | 0 | 0 | 0 | 6 |
+| A2 | 5 | 0 | 0 | 0 | 5 |
 | AL1 | 5 | 0 | 0 | 1 | 6 |
-| AL2 | 5 | 1 | 0 | 0 | 6 |
+| AL2 | 6 | 0 | 0 | 0 | 6 |
 | H1 | 4 | 0 | 0 | 2 | 6 |
-| H2 | 3 | 1 | 2 | 1 | 7 |
-| H3 | 1 | 5 | 2 | 0 | 8 |
-| Overall | 31 | 18 | 17 | 7 | 73 |
+| H2 | 4 | 0 | 2 | 1 | 7 |
+| H3 | 2 | 5 | 1 | 0 | 8 |
+| Overall | 41 | 13 | 12 | 7 | 73 |
