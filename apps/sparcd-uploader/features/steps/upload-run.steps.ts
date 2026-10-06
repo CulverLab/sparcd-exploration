@@ -220,9 +220,9 @@ Then(
     // not the per-file subfolders underneath it.
     const folder = puts[0].key.split('/').slice(0, 4).join('/');
     expect(app.s3.lists).toContain(`${puts[0].bucket}/${folder}/`);
-    await expect(
-      app.page.getByText(new RegExp(`final review: all ${puts.length} objects confirmed`)),
-    ).toBeVisible();
+    await expect
+      .poll(() => app.logText())
+      .toContain(`final review: all ${puts.length} objects confirmed`);
   },
 );
 
@@ -358,7 +358,7 @@ Then(
     const firstMetadata = keys.findIndex((k) => METADATA_NAMES.some((n) => k.endsWith(n)));
     expect(firstMetadata).toBe(4); // the four media objects come first
     // …and the listing that confirms them runs before any metadata is written.
-    await expect(app.page.getByText(/final review: all 4 objects confirmed/)).toBeVisible();
+    await expect.poll(() => app.logText()).toContain('final review: all 4 objects confirmed');
   },
 );
 
@@ -496,7 +496,7 @@ Then(
 );
 
 Then(
-  'an activity log records each retry, each warning and each metadata write as it happens',
+  'the run log records each retry, each warning and each metadata write',
   async ({ app }) => {
     await app.waitForRunPhase('done', 120_000);
     const log = await app.logText();
@@ -583,7 +583,7 @@ Then('it is retried up to five attempts with an increasing, randomized delay', a
   expect(Math.max(...delays)).toBeGreaterThan(Math.min(...delays));
 });
 
-Then('the retry is recorded in the activity log', async ({ app }) => {
+Then('the retry is recorded in the run log', async ({ app }) => {
   expect(await app.logText()).toContain('retry');
   expect(await app.logText()).toMatch(/failed [^\s]*IMG_0002\.JPG/);
 });
@@ -646,7 +646,7 @@ Given('a run pauses because the network is reported offline', async ({ app }) =>
   await expect.poll(() => app.logText(), { timeout: 30_000 }).toContain('waiting for network');
 });
 
-Then('the activity log records the offline wait exactly once', async ({ app }) => {
+Then('the run log records the offline wait exactly once', async ({ app }) => {
   const log = await app.logText();
   expect(log.match(/waiting for network/g) ?? []).toHaveLength(1);
 });
@@ -659,7 +659,7 @@ When('the network returns', async ({ app }) => {
   await app.waitForRunPhase('done', 120_000);
 });
 
-Then('the activity log records the recovery exactly once', async ({ app }) => {
+Then('the run log records the recovery exactly once', async ({ app }) => {
   const log = await app.logText();
   expect(log.match(/network back/g) ?? []).toHaveLength(1);
 });
@@ -935,7 +935,7 @@ When('the dry run is started and completes', async ({ app }) => {
   await app.waitForRunPhase('done');
 });
 
-Then('the activity log has the preparing-upload entry', async ({ app }) => {
+Then('the run log has the preparing-upload entry', async ({ app }) => {
   expect(await app.logText()).toContain('preparing upload…');
 });
 

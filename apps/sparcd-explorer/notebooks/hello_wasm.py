@@ -836,21 +836,22 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 "_p17", "_p18", "tags"]
 
 
-    def _to_df(rows, buckets, cols):
+    def _to_df(rows, buckets, uploads, cols):
         if not rows:
             sch = {c: pl.Utf8 for c in cols}
             sch["bucket"] = pl.Utf8
-            return pl.DataFrame({c: [] for c in cols + ["bucket"]}, schema=sch)
+            sch["upload"] = pl.Utf8
+            return pl.DataFrame({c: [] for c in cols + ["bucket", "upload"]}, schema=sch)
         width = len(cols)
         fixed = [(r + [""] * width)[:width] for r in rows]
         df = pl.DataFrame(fixed, schema=cols, orient="row")
-        df = df.with_columns(pl.Series("bucket", buckets))
-        return df.select(cols + ["bucket"])
+        df = df.with_columns(pl.Series("bucket", buckets), pl.Series("upload", uploads))
+        return df.select(cols + ["bucket", "upload"])
 
 
-    _dep_rows, _dep_buckets = [], []
-    _media_rows, _media_buckets = [], []
-    _obs_rows, _obs_buckets = [], []
+    _dep_rows, _dep_buckets, _dep_uploads = [], [], []
+    _media_rows, _media_buckets, _media_uploads = [], [], []
+    _obs_rows, _obs_buckets, _obs_uploads = [], [], []
     total_uploads = 0
 
     _cache = SPARCD_COLLECTION_DATA_CACHE
@@ -874,38 +875,40 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         rows = _read_csv(bucket, up + "deployments.csv")
                         _dep_rows += rows
                         _dep_buckets += [bucket] * len(rows)
+                        _dep_uploads += [up] * len(rows)
                     except Exception:
                         pass
                     try:
                         rows = _read_csv(bucket, up + "media.csv")
                         _media_rows += rows
                         _media_buckets += [bucket] * len(rows)
+                        _media_uploads += [up] * len(rows)
                     except Exception:
                         pass
                     try:
                         rows = _read_csv(bucket, up + "observations.csv")
                         _obs_rows += rows
                         _obs_buckets += [bucket] * len(rows)
+                        _obs_uploads += [up] * len(rows)
                     except Exception:
                         pass
 
         deployments = (
-            _to_df(_dep_rows, _dep_buckets, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
-            .select(DEPLOY_COLS + ["bucket"])
+            _to_df(_dep_rows, _dep_buckets, _dep_uploads, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
+            .select(DEPLOY_COLS + ["bucket", "upload"])
             .with_columns(
                 pl.col("latitude").cast(pl.Float64, strict=False),
                 pl.col("longitude").cast(pl.Float64, strict=False),
                 pl.col("elevation").cast(pl.Float64, strict=False),
             )
-            .filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
         )
         media = (
-            _to_df(_media_rows, _media_buckets, MEDIA_COLS + [f"_m{i}" for i in range(50)])
-            .select(MEDIA_COLS + ["bucket"])
+            _to_df(_media_rows, _media_buckets, _media_uploads, MEDIA_COLS + [f"_m{i}" for i in range(50)])
+            .select(MEDIA_COLS + ["bucket", "upload"])
         )
         observations = (
-            _to_df(_obs_rows, _obs_buckets, OBS_COLS + [f"_o{i}" for i in range(50)])
-            .select(OBS_COLS + ["bucket"])
+            _to_df(_obs_rows, _obs_buckets, _obs_uploads, OBS_COLS + [f"_o{i}" for i in range(50)])
+            .select(OBS_COLS + ["bucket", "upload"])
         )
         _cached = {
             "deployments": deployments,
@@ -1268,23 +1271,24 @@ def _(
         .rename({"lat_fixed": "latitude", "lng_fixed": "longitude"})
         .filter(pl.col("deployment_id").is_in(query_deployment_ids))
         .filter(pl.col("location_id") != "0000")
-        .filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
         .with_columns(pl.col("location_id").str.slice(0, 3).alias("mountain_range"))
     )
 
     # Total images from filtered media (includes untagged frames); tagged images
-    # from the filtered observations (distinct tagged media paths).
-    _image_counts = media_filtered.group_by("deployment_id").agg(
+    # from the filtered observations (distinct tagged media paths). Counted per
+    # upload and joined to that upload's own deployments.csv row: every upload to
+    # a location repeats its deployment_id, and a location id can name two sites.
+    _image_counts = media_filtered.group_by("bucket", "upload").agg(
         pl.col("media_path").n_unique().alias("image_count")
     )
-    _obs_counts = observations_filtered.group_by("deployment_id").agg(
+    _obs_counts = observations_filtered.group_by("bucket", "upload").agg(
         pl.col("media_path").n_unique().alias("tagged_image_count")
     )
 
     locations = (
         _locations_raw
-        .join(_image_counts, on="deployment_id", how="left")
-        .join(_obs_counts, on="deployment_id", how="left")
+        .join(_image_counts, on=["bucket", "upload"], how="left")
+        .join(_obs_counts, on=["bucket", "upload"], how="left")
         .group_by("mountain_range", "location_id", "location_name", "latitude", "longitude")
         .agg(
             pl.col("deployment_id").unique().alias("deployment_ids"),
@@ -1307,6 +1311,8 @@ def _(
         import math as _math
 
         def _latlon_to_utm(lat, lon):
+            if lat is None or lon is None:
+                return {"utm_zone": None, "utm_easting": None, "utm_northing": None}
             _zone = int((lon + 180) / 6) + 1
             _hemisphere = "N" if lat >= 0 else "S"
             _a = 6378137.0
@@ -1355,7 +1361,7 @@ def _(
             _scale = 10 ** _coord_digits
 
             def _truncate_coord(v):
-                return int(v * _scale) / _scale
+                return None if v is None else int(v * _scale) / _scale
 
             _locations_table = _locations_table.with_columns(
                 pl.col(_coord_cols[0]).map_elements(_truncate_coord, return_dtype=pl.Float64),
@@ -1525,7 +1531,7 @@ def _(locations, observations_filtered, pl):
             },
         )
     else:
-        _loc_with_hex = locations.with_columns(
+        _loc_with_hex = locations.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null()).with_columns(
             pl.struct(["latitude", "longitude"])
             .map_elements(
                 lambda s: _latlng_to_cell(s["latitude"], s["longitude"]),
@@ -1697,7 +1703,7 @@ def _(
                     "checklists": _hex_lookup.get(_r["location_id"], {}).get("checklists", 0),
                     "most_recent": _hex_lookup.get(_r["location_id"], {}).get("most_recent", "—"),
                 }
-                for _r in locations.iter_rows(named=True)
+                for _r in locations.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null()).iter_rows(named=True)
             ]
             camera_fig = go.Figure(
                 go.Scattermap(

@@ -232,7 +232,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // Refused rather than quietly narrowed: an admin who asked for a year and
   // got a month back would read the short answer as the whole story.
   function requireNarrowRange(query) {
-    if (rangeTooWide(query.get('from'), query.get('to'))) {
+    const from = query.get('from');
+    const to = query.get('to');
+    const fromMs = from ? Date.parse(from) : null;
+    const toMs = to ? Date.parse(to) : null;
+    if ((from && Number.isNaN(fromMs)) || (to && Number.isNaN(toMs))) {
+      fail('invalid', 'from and to must be valid timestamps');
+    }
+    if (fromMs !== null && toMs !== null && fromMs > toMs) {
+      fail('invalid', 'from must be earlier than to');
+    }
+    if (rangeTooWide(from, to)) {
       fail('invalid', `from and to may span at most ${MAX_RANGE_DAYS} days`);
     }
   }
@@ -322,6 +332,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
 
+    if (person.status === 'active' && next.status !== 'active') {
+      requireActiveRunnerForPerson(person.id);
+    }
     const saved = await guard(() => store.savePerson(next, person.etag));
     if (activeAdmins().length === 0) {
       // Another proxy removed the other admin between the check and the write.
@@ -347,6 +360,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     const retiredAt = new Date().toISOString();
     const { token, record } = newInvite();
+    requireActiveRunnerForPerson(person.id);
     const saved = await guard(() => store.savePerson({
       ...person,
       status: 'invited',
@@ -386,7 +400,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     grantedAt: new Date().toISOString(),
   });
 
-  const hasRunner = (members) => members.some((m) => m.access === 'run');
+  // Invited and paused people cannot use collection access. A runner guard
+  // therefore counts only members whose person record is currently active.
+  const hasRunner = (members) => members.some((m) =>
+    m.access === 'run' && store.person(m.personId)?.status === 'active');
 
   function requireRunner(members) {
     if (!hasRunner(members)) {
@@ -402,6 +419,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   function requireNotStranded(before, after) {
     if (hasRunner(before) && !hasRunner(after)) {
       fail('last_runner', 'this would remove the collection\'s last member with run access');
+    }
+  }
+
+  function requireActiveRunnerForPerson(personId) {
+    for (const collection of store.collections()) {
+      const member = collection.members.find((m) => m.personId === personId && m.access === 'run');
+      if (!member) continue;
+      const remaining = collection.members.filter((m) => m.personId !== personId);
+      if (!hasRunner(remaining)) {
+        fail('last_runner', 'this would leave the collection without an active runner');
+      }
     }
   }
 

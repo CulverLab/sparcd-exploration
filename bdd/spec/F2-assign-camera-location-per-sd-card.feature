@@ -16,19 +16,19 @@ Feature: Identify the camera location of each SD card's images
     Given Frank has one or more batches of images, each from a single SD card
     And Frank has chosen the collection he is uploading to
 
-  @F2
+  @F2 @F2-1
   Scenario: Only locations valid for the chosen collection can be assigned
     When Frank assigns a location to a batch
     Then he can choose only from the locations valid for that collection
     And locations belonging to other collections are not offered to him
 
-  @F2
+  @F2 @F2-2
   Scenario: A location outside the collection cannot be assigned
     When Frank attempts to assign a location that is not valid for the chosen collection
     Then the assignment is refused
     And the batch remains without an assigned location
 
-  @F2
+  @F2 @F2-3
   Scenario: An upload cannot be finalized while any batch is missing a location
     Given Frank is uploading more than one batch
     And at least one batch has no location assigned
@@ -36,19 +36,19 @@ Feature: Identify the camera location of each SD card's images
     Then finalizing is not permitted
     And he is told which batches still need a location
 
-  @F2
+  @F2 @F2-4
   Scenario: An upload can be finalized once every batch has a location
     Given every batch in the upload has a location assigned
     When Frank finalizes the upload
     Then the upload proceeds
 
-  @F2
+  @F2 @F2-5
   Scenario: Each stored image carries the location Frank assigned to its batch
     Given Frank assigned a location to each batch
     When the upload completes
     Then every image's stored location matches the location assigned to the batch it came from
 
-  @F2
+  @F2 @F2-6
   Scenario: Batches from different cards keep their own separate locations
     Given Frank uploads two batches from two different SD cards
     And each batch is assigned a different location

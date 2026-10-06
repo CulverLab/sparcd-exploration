@@ -59,6 +59,7 @@ Then('the first of them is already selected', async ({ app }) => {
 
 Then('the Continue gate never has to ask for a collection', async ({ app }) => {
   await expect(app.continueButton()).toHaveAttribute('title', 'Select a deployment location first');
+  await app.setUploader('Ada Lovelace');
   await app.chooseDeployment('Bear Canyon');
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
@@ -259,6 +260,7 @@ Then(
 
 When('a description is entered', async ({ app }) => {
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
   await app.setDescription('South ridge, July retrieval');
 });
 

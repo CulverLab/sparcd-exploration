@@ -486,7 +486,7 @@ export function Upload() {
               title={!online ? "You're offline" : undefined}
               className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             >
-              {snap.phase === 'error' ? 'Retry' : 'Retry failed files'}
+              {snap.phase === 'error' ? 'Resume upload' : 'Retry failed files'}
             </button>
           ) : (
             <button

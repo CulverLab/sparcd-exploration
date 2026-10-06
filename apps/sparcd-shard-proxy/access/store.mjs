@@ -33,6 +33,7 @@ export function makeStore({
   let state = emptyState();
   let timer = null;
   let lastFullReload = 0;
+  let mutationVersion = 0;
 
   function emptyState() {
     return {
@@ -68,6 +69,7 @@ export function makeStore({
   }
 
   async function doReload() {
+    const reloadVersion = mutationVersion;
     const next = emptyState();
     for (const upstreamName of await upstream.listBuckets()) {
       const client = ns.toClient(upstreamName);
@@ -76,7 +78,10 @@ export function makeStore({
       const uuid = collectionUuid(client);
       if (uuid) next.collections.set(client, { bucket: client, uuid, members: [], membersEtag: null });
     }
-    if (!next.settingsBucket) { state = next; return state; }
+    if (!next.settingsBucket) {
+      if (reloadVersion === mutationVersion) state = next;
+      return state;
+    }
 
     // A reload is the slowest thing the proxy does, and every write waits on
     // one. Against storage that answers in 150 ms, reading the people one after
@@ -125,8 +130,10 @@ export function makeStore({
       }
     }));
 
-    state = next;
-    lastFullReload = Date.now();
+    if (reloadVersion === mutationVersion) {
+      state = next;
+      lastFullReload = Date.now();
+    }
     return state;
   }
 
@@ -206,6 +213,7 @@ export function makeStore({
       );
       if (!ok) throw new Conflict('person changed underneath this edit');
       // The write landed, so this process must see it whatever happens next.
+      mutationVersion += 1;
       // The reload below confirms it, but a reload is many reads and any one of
       // them can fail; waiting for it would leave a pause or a key retirement
       // written upstream and still being honoured here.
@@ -232,9 +240,9 @@ export function makeStore({
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,
       );
       if (!ok) throw new Conflict('members changed underneath this edit');
-      // In force here the moment it is committed upstream, for the same reason
-      // as a person: a removal that waits for a reload is a removal that a
-      // failed read leaves undone.
+      // Apply the committed removal immediately; waiting for a reload would
+      // leave access in force when a subsequent read fails.
+      mutationVersion += 1;
       c.members = members;
       try {
         await bumpGeneration();

@@ -17,14 +17,14 @@ Feature: Uploads survive an unreliable connection
   Background:
     Given Alice has started an upload of a batch of images
 
-  @AL1
+  @AL1 @AL1-1
   Scenario: An interrupted upload continues on its own when the connection returns
     Given the connection drops while the upload is in progress
     When connectivity returns
     Then the upload continues
     And Alice does not have to restart it manually
 
-  @AL1
+  @AL1 @AL1-2
   Scenario: Data already transferred and verified is not sent again
     Given part of the batch has already transferred and been verified
     And the upload was interrupted
@@ -32,27 +32,27 @@ Feature: Uploads survive an unreliable connection
     Then the already-verified data is not sent a second time
     And only the remaining data is transferred
 
-  @AL1
+  @AL1 @AL1-3
   Scenario: An unattended upload is found either complete or clearly resumable
     Given Alice leaves the upload running unattended overnight
     When she returns in the morning
     Then the upload is either shown as complete, or shown as interrupted together with what is needed to carry on
 
-  @AL1
+  @AL1 @AL1-4
   Scenario: An upload is never left in a silent, stuck state
     Given the upload has stopped making progress
     When Alice looks at it
     Then she is told that it has stopped and why, as far as is known
     And it is not presented as still progressing
 
-  @AL1
+  @AL1 @AL1-5
   Scenario: Repeated interruptions still end in one finished upload
     Given the connection drops and returns several times during the upload
     When the upload finally completes
     Then the collection contains the batch exactly once
     And no image was left behind by the interruptions
 
-  @AL1
+  @AL1 @AL1-6
   Scenario: An interrupted upload is not presented as complete
     Given the upload was interrupted before all data transferred
     When Alice or anyone else looks at the upload

@@ -42,6 +42,11 @@ const ALLOW_HEADERS = [
 const EXPOSE_HEADERS =
   'ETag, Content-Length, x-amz-meta-sha256, x-amz-request-id, x-amz-version-id';
 
+// This legacy single-credential Worker has no collection membership table and
+// therefore cannot implement `exactLocations`. Refuse coordinate-bearing
+// objects so deploying it cannot bypass the access proxy's redaction policy.
+const COORDINATE_OBJECT = /\/(?:Settings\/locations\.json|Collections\/[^/]+\/locations\.json|Collections\/[^/]+\/Uploads\/[^/]+\/deployments\.csv)$/;
+
 // Only these reach the upstream, plus whatever `x-amz-*` the client set (user
 // metadata, ACLs, storage class — all of it carries meaning and all of it has
 // to be signed). Everything else the browser and the platform attach —
@@ -130,6 +135,23 @@ export default {
       return new Response(
         `<?xml version="1.0" encoding="UTF-8"?><Error><Code>SignatureDoesNotMatch</Code>` +
           `<Message>${escapeXml(rejection)}</Message></Error>`,
+        { status: 403, headers: { ...corsHeaders(origin), 'Content-Type': 'application/xml' } },
+      );
+    }
+
+    let policyPath;
+    try {
+      // Apply the refusal policy to the decoded key. The upstream URL parser
+      // resolves percent-encoded dots, while a regex over the raw pathname
+      // would let `locations%2Ejson` bypass it.
+      policyPath = decodeURIComponent(inbound.pathname);
+    } catch {
+      return new Response('invalid object path', { status: 400, headers: corsHeaders(origin) });
+    }
+    if (COORDINATE_OBJECT.test(policyPath)) {
+      return new Response(
+        '<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code>' +
+          '<Message>coordinate-bearing objects require the per-person access proxy</Message></Error>',
         { status: 403, headers: { ...corsHeaders(origin), 'Content-Type': 'application/xml' } },
       );
     }

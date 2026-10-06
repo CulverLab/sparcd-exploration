@@ -1,9 +1,10 @@
-// The camera-location registry — `Settings/locations.json` in the SPARC'd
-// settings bucket (the same settings bucket that holds `species.json`). Pure
+// The camera-location registry — the selected collection's
+// `Collections/<UUID>/locations.json` when that file is non-empty, with the
+// SPARC'd settings bucket's `Settings/locations.json` as the fallback. Pure
 // parsing/validation ported from the uploader's `locations.ts` verbatim (both
 // apps read the same registry, independently, per CLAUDE.md's per-feature-
 // optimization-over-shared-abstraction guidance); the S3 read below mirrors
-// `species.ts`'s discovery + fetch pattern.
+// `species.ts`'s collection-first + discovery + fetch pattern.
 //
 // Shape verified against the live registry (250 entries) and the upstream
 // `Location.java` model: a JSON array of objects, each with exactly
@@ -14,7 +15,7 @@
 
 import type { S3Config } from '@sparcd/types';
 import type { Deployment } from '@sparcd/camtrap';
-import { getClient, translateReadError } from './s3';
+import { getClient, parseCollectionKey, translateReadError } from './s3';
 
 /** Exact object key, relative to the settings bucket. */
 export const LOCATIONS_KEY = 'Settings/locations.json';
@@ -23,8 +24,8 @@ export const LOCATIONS_KEY = 'Settings/locations.json';
 export type RawLocation = {
   nameProperty: string;
   idProperty: string;
-  latProperty: number;
-  lngProperty: number;
+  latProperty: number | null;
+  lngProperty: number | null;
   elevationProperty: number;
 };
 
@@ -38,8 +39,8 @@ export type Location = {
   key: string;
   id: string;
   name: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   elevation: number;
 };
 
@@ -64,8 +65,8 @@ const ELEVATION_UNSET = -20000;
 function invalidReason(o: Location): string | null {
   if (!o.name) return 'empty name';
   if (!o.id) return 'empty id';
-  if (!(o.latitude >= -85 && o.latitude <= 85)) return `latitude ${o.latitude} out of [-85, 85]`;
-  if (!(o.longitude >= -180 && o.longitude <= 180))
+  if (o.latitude !== null && !(o.latitude >= -85 && o.latitude <= 85)) return `latitude ${o.latitude} out of [-85, 85]`;
+  if (o.longitude !== null && !(o.longitude >= -180 && o.longitude <= 180))
     return `longitude ${o.longitude} out of [-180, 180]`;
   if (o.elevation === ELEVATION_UNSET) return 'elevation unset';
   return null;
@@ -78,7 +79,8 @@ function coerce(entry: unknown): { ok: true; value: RawLocation } | { ok: false;
     if (typeof o[k] !== 'string') return { ok: false, reason: `${k} is not a string` };
   }
   for (const k of ['latProperty', 'lngProperty', 'elevationProperty'] as const) {
-    if (typeof o[k] !== 'number' || !Number.isFinite(o[k]))
+    const redactedCoordinate = (k === 'latProperty' || k === 'lngProperty') && o[k] === null;
+    if ((!redactedCoordinate && typeof o[k] !== 'number') || (typeof o[k] === 'number' && !Number.isFinite(o[k])))
       return { ok: false, reason: `${k} is not a finite number` };
   }
   return {
@@ -86,8 +88,8 @@ function coerce(entry: unknown): { ok: true; value: RawLocation } | { ok: false;
     value: {
       nameProperty: o.nameProperty as string,
       idProperty: o.idProperty as string,
-      latProperty: o.latProperty as number,
-      lngProperty: o.lngProperty as number,
+      latProperty: o.latProperty as number | null,
+      lngProperty: o.lngProperty as number | null,
       elevationProperty: o.elevationProperty as number,
     },
   };
@@ -121,7 +123,7 @@ export function parseLocations(text: string): LocationsParse {
     }
     const id = c.value.idProperty.trim();
     const loc: Location = {
-      key: `${id}|${c.value.latProperty},${c.value.lngProperty}`,
+      key: `${id}|${c.value.latProperty ?? ''},${c.value.lngProperty ?? ''}`,
       id,
       name: c.value.nameProperty.trim(),
       latitude: c.value.latProperty,
@@ -165,8 +167,7 @@ export function locationToDeployment(loc: Location, collectionUuid: string): Dep
 }
 
 /** Discover the settings bucket by probing visible buckets for `locations.json`. */
-async function discoverSettingsBucket(cfg: S3Config): Promise<string> {
-  const client = getClient(cfg);
+async function discoverSettingsBucket(cfg: S3Config, client = getClient(cfg)): Promise<string> {
   const buckets = await client.listBuckets();
   const found: string[] = [];
   await Promise.all(
@@ -196,17 +197,49 @@ function settingsRank(bucket: string): number {
   return 2;
 }
 
-export type LocationsResult = LocationsParse & { settingsBucket: string };
+export type LocationsResult = LocationsParse & {
+  /** Settings bucket when the fallback registry was used; null for collection data. */
+  settingsBucket: string | null;
+  sourceBucket: string;
+  sourceKey: string;
+};
 
-/** Read + parse the location registry from the discovered settings bucket. */
-export async function fetchLocations(cfg: S3Config): Promise<LocationsResult> {
-  const client = getClient(cfg);
-  const settingsBucket = await discoverSettingsBucket(cfg);
+function isMissingObjectError(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e.$metadata?.httpStatusCode === 404 || e.name === 'NoSuchKey' || e.name === 'NotFound';
+}
+
+/** Read + parse the location registry, collection list first. */
+export async function fetchLocations(
+  cfg: S3Config,
+  collectionKey?: string | null,
+  client = getClient(cfg),
+): Promise<LocationsResult> {
+  if (collectionKey) {
+    const { bucket, uuid } = parseCollectionKey(collectionKey);
+    const collectionKeyPath = `Collections/${uuid}/locations.json`;
+    let collectionBytes: Uint8Array | undefined;
+    try {
+      collectionBytes = await client.getObject(bucket, collectionKeyPath);
+    } catch (err) {
+      if (!isMissingObjectError(err)) {
+        throw translateReadError(err, `"${collectionKeyPath}" in bucket "${bucket}"`);
+      }
+      // A missing collection assignment falls back to settings.
+    }
+    if (collectionBytes) {
+      const collectionParsed = parseLocations(new TextDecoder().decode(collectionBytes));
+      if (collectionParsed.locations.length > 0) {
+        return { ...collectionParsed, settingsBucket: null, sourceBucket: bucket, sourceKey: collectionKeyPath };
+      }
+    }
+  }
+  const settingsBucket = await discoverSettingsBucket(cfg, client);
   let bytes: Uint8Array;
   try {
     bytes = await client.getObject(settingsBucket, LOCATIONS_KEY);
   } catch (err) {
     throw translateReadError(err, `"${LOCATIONS_KEY}"`);
   }
-  return { ...parseLocations(new TextDecoder().decode(bytes)), settingsBucket };
+  return { ...parseLocations(new TextDecoder().decode(bytes)), settingsBucket, sourceBucket: settingsBucket, sourceKey: LOCATIONS_KEY };
 }

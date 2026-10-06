@@ -47,7 +47,7 @@ Feature: Publish local identifications back to the collection
     And the dry-run is run
     Then the Sync dialog stays open showing the dry-run result
 
-  @unmapped
+  @H3 @H3-7
   Scenario: Opening the sync dialog previews the change without writing anything
     When the Sync dialog is opened
     Then the pending change is computed against the currently stored files

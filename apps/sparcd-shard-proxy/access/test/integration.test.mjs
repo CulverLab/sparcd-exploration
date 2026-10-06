@@ -59,11 +59,11 @@ before(async () => {
   };
 
   await invite('alice', [
-    { bucket: BUCKET_A, access: 'run' }, { bucket: BUCKET_B, access: 'look' },
+    { bucket: BUCKET_A, access: 'run', exactLocations: true }, { bucket: BUCKET_B, access: 'look' },
   ]);
   await invite('bob', [{ bucket: BUCKET_A, access: 'upload' }]);
   await invite('carol', [
-    { bucket: BUCKET_A, access: 'identify' }, { bucket: BUCKET_B, access: 'run' },
+    { bucket: BUCKET_A, access: 'identify', exactLocations: true }, { bucket: BUCKET_B, access: 'run' },
   ]);
 
   for (const name of ['alice', 'bob', 'carol']) {
@@ -157,6 +157,34 @@ describe('invariant 1: nothing outside the namespace', () => {
   test('the canary is still there, read with the upstream credential', async () => {
     const got = await root.get(CANARY, CANARY_KEY);
     assert.equal(got.text, CANARY_BODY);
+  });
+});
+
+describe('coordinate permission redaction', () => {
+  async function body(who, bucket, key) {
+    const out = await people[who].s3().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    return out.Body.transformToString();
+  }
+
+  test('settings and collection coordinates are redacted without exactLocations', async () => {
+    const settings = await body('bob', SETTINGS, 'Settings/locations.json');
+    assert.match(settings, /"nameProperty":"Settings site"/);
+    assert.match(settings, /"latProperty":null/);
+    assert.match(settings, /"lngProperty":null/);
+    const collection = await body('bob', BUCKET_A, `Collections/${UUID_A}/locations.json`);
+    assert.match(collection, /"idProperty":"LOC-/);
+    assert.match(collection, /"latProperty":null/);
+    assert.match(collection, /"lngProperty":null/);
+  });
+
+  test('exactLocations membership receives precise collection locations and deployments', async () => {
+    const locations = await body('alice', BUCKET_A, `Collections/${UUID_A}/locations.json`);
+    assert.match(locations, /"latProperty":32.1/);
+    const deployments = await body('alice', BUCKET_A, `${prefixA}/deployments.csv`);
+    assert.match(deployments, /-111.1,32.1/);
+    const redacted = await body('bob', BUCKET_A, `${prefixA}/deployments.csv`);
+    assert.doesNotMatch(redacted, /-111.1,32.1/);
+    assert.match(redacted, /DEP-1/);
   });
 });
 
@@ -410,6 +438,10 @@ describe('joining, pausing and resetting', () => {
   test('a reset retires the old key at once', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const carolId = list.body.people.find((p) => p.name === 'carol').id;
+    const aliceId = list.body.people.find((p) => p.name === 'alice').id;
+    // Carol is the only runner on B in the base fixture. Give Alice a
+    // temporary second runner role so reset can exercise key retirement.
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'run' });
     const before = await status(
       people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` })));
     assert.equal(before, 200);
@@ -430,6 +462,7 @@ describe('joining, pausing and resetting', () => {
       await status(people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }))),
       200,
     );
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'look' });
   });
 });
 
@@ -637,6 +670,10 @@ describe('activity', () => {
   test('a download, a denial and an access change each leave a line', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const aliceId = list.body.people.find((p) => p.name === 'alice').id;
+    const carolId = list.body.people.find((p) => p.name === 'carol').id;
+    // Alice is the only runner on A in the base fixture. Add a temporary
+    // alternate runner so pausing her exercises the activity audit path.
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'run' });
 
     const downloadKey = `${prefixA}/a.jpg`;
     await people.alice.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: downloadKey }));
@@ -644,6 +681,7 @@ describe('activity', () => {
       new PutObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/nope.jpg`, Body: 'x' })));
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'paused' });
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'active' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'identify' });
 
     const all = await people.admin.api('GET', '/-/admin/activity?limit=1000');
     assert.equal(all.status, 200);

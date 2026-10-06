@@ -119,7 +119,7 @@ function CollectionChrome({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
           {/* Sync pill is textual; drop it below sm so the right cluster stays icon-only on phones. */}
           <span className="hidden sm:flex items-center">
             <StatePill state={displayState} />
