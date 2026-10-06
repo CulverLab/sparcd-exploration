@@ -17,7 +17,9 @@ import type { S3Config } from '@sparcd/types';
 import type { CollectionRef } from '@sparcd/s3-safe';
 
 const KEY = 'sparcd-uploader-discovery';
-const VERSION = 1;
+// v2: a CollectionRef carries `buckets` and `dataBucket`. A v1 ref has neither
+// and would send an upload to the legacy layout, so v1 entries are dropped.
+const VERSION = 2;
 // Enough to keep a couple of accounts and endpoints warm without letting the
 // entry grow without bound.
 const MAX_ACCOUNTS = 4;
