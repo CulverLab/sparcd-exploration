@@ -292,7 +292,7 @@ When('it is resumed', async ({ app }) => {
 });
 
 Then('the resumed publication completes without replacing that metadata', async ({ app }) => {
-  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
   const folder = app.notes.uploadFolder as string;
   const key = `${UPLOADS_PREFIX}${folder}/UploadMeta.json`;
   expect(app.s3.has(BUCKET_A, key)).toBe(true);
