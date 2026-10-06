@@ -17,6 +17,7 @@ export type PutRecord = {
   key: string;
   size: number;
   body: string; // utf-8 view; only meaningful for the metadata files
+  contentType?: string; // as sent: the PUT's header, or the multipart create's
   ifNoneMatch?: string;
   ifMatch?: string;
   meta: Record<string, string>;
@@ -114,7 +115,7 @@ export class S3Mock {
   /** In-flight multipart uploads, keyed by upload id. */
   multipart = new Map<
     string,
-    { bucket: string; key: string; meta: Record<string, string>; contentType: string; parts: Map<number, Buffer> }
+    { bucket: string; key: string; meta: Record<string, string>; contentType?: string; parts: Map<number, Buffer> }
   >();
 
   private objKey(bucket: string, key: string): string {
@@ -326,7 +327,7 @@ export class S3Mock {
           bucket,
           key,
           meta,
-          contentType: req.headers()['content-type'] ?? 'application/octet-stream',
+          contentType: req.headers()['content-type'],
           parts: new Map(),
         });
         await route.fulfill({
@@ -366,7 +367,7 @@ export class S3Mock {
         this.multipart.delete(uploadId);
         this.put(bucket, key, body, { contentType: mpu.contentType, meta: mpu.meta });
         this.afterPut?.(bucket, key, this.get(bucket, key)!);
-        this.puts.push({ bucket, key, size: body.length, body: '', meta: mpu.meta });
+        this.puts.push({ bucket, key, size: body.length, body: '', contentType: mpu.contentType, meta: mpu.meta });
         const held = await this.maybeHoldPut(bucket, key);
         await this.fulfillHeldPut(route, {
           status: 200,
@@ -421,6 +422,7 @@ export class S3Mock {
           key,
           size: body.length,
           body: body.toString('utf8'),
+          contentType: req.headers()['content-type'],
           ifNoneMatch,
           ifMatch,
           meta,
