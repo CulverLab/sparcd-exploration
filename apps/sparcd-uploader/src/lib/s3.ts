@@ -470,9 +470,9 @@ export type PublishedUpload = {
 /**
  * List the published uploads of a collection for the management UI, across
  * every bucket holding it: each upload's `UploadMeta.json` (description +
- * tally) and its current deployment_id. A folder is an upload once its
- * `media.csv` exists, so one HEAD per folder skips the rest; an upload missing
- * `UploadMeta.json` is skipped too.
+ * tally) and its current deployment_id. `listUploadFolders` already leaves out
+ * folders without `media.csv`; an upload missing `UploadMeta.json` is skipped
+ * too.
  */
 export async function listPublishedUploads(cfg: S3Config, ref: CollectionRef): Promise<PublishedUpload[]> {
   const client = getClient(cfg);
@@ -480,7 +480,6 @@ export async function listPublishedUploads(cfg: S3Config, ref: CollectionRef): P
   const out = await Promise.all(
     folders.map(async ({ bucket, prefix }): Promise<PublishedUpload | null> => {
       try {
-        await client.statObject(bucket, `${prefix}media.csv`);
         const metaBytes = await client.getObject(bucket, `${prefix}UploadMeta.json`);
         const meta = parseUploadMeta(new TextDecoder().decode(metaBytes));
         let deploymentId: string | null = null;
@@ -492,7 +491,7 @@ export async function listPublishedUploads(cfg: S3Config, ref: CollectionRef): P
         }
         return { bucket, prefix, stamp: prefix.replace(/\/$/, '').split('/').pop() ?? prefix, meta, deploymentId };
       } catch {
-        return null; // No media.csv or UploadMeta.json yet, or unreadable / CORS-blocked.
+        return null; // No UploadMeta.json yet, or unreadable / CORS-blocked.
       }
     }),
   );

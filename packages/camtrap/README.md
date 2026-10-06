@@ -72,9 +72,10 @@ The names `sparcd` and `sparcd-*` are reserved for this shape.
   and for old ones (keys inside their own upload folder), wherever the folder
   lives.
 - A collection is one uuid, which may appear in a data bucket and in its legacy
-  `sparcd-<uuid>` bucket. Read uploads from both. When the same upload folder
-  name is in both, read the data bucket's copy, so an upload copied over shows
-  once.
+  `sparcd-<uuid>` bucket. Read uploads from both. Leave out folders without
+  `media.csv` first; then, when the same upload folder name is in both, read
+  the data bucket's copy, so an upload copied over shows once and a
+  half-finished copy never hides the complete one.
 - The same `Media/` key can appear in several uploads. Scope anything keyed by
   image to its upload.
 - Observation ids are built on `mediaObjectName`: the key's tail past the hash
