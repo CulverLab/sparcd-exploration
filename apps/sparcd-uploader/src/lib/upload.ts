@@ -54,7 +54,7 @@ import {
   type ObjectStat,
   type SafeS3Client,
 } from '@sparcd/s3-safe';
-import { existingOriginal, mediaFolder, mediaObjectName } from '@sparcd/camtrap';
+import { existingOriginal, mediaFolder, mediaObjectName, parseMedia } from '@sparcd/camtrap';
 import { getClient, probeShardClients, type ShardSet } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
@@ -1715,13 +1715,16 @@ export function resumeUpload(
       file: attached.get(r.localPath) ?? null,
       doneAlready: r.state === 'done',
     })),
-    // The saved bundle names each file's key as recorded. A file that settled
-    // on an original stored since then moved its media.csv row, so only then
-    // is the bundle rebuilt; otherwise it is republished byte for byte, which
-    // a metadata write an earlier attempt already made depends on.
+    // The saved bundle is republished byte for byte while its media.csv still
+    // names exactly the keys the files resolved to, which a metadata write an
+    // earlier attempt already made depends on. A file that settled on an
+    // original stored since the bundle was saved, in this attempt or in one
+    // that stopped before publishing, moves its row, so then it is rebuilt.
     metadata: async () => {
       const keyOf = new Map(plan.items.map((it) => [it.id, it.key]));
-      if (processedFiles.every((r) => keyOf.get(r.localPath) === r.remoteKey)) {
+      const saved = new Set(parseMedia(bundle.mediaCsv).map((m) => m.mediaPath));
+      const resolved = new Set(keyOf.values());
+      if (layout === 'legacy' || (saved.size === resolved.size && [...resolved].every((k) => saved.has(k)))) {
         return { writes: metadataWrites(bundle, layout), metadataBundleSha256: bundle.metadataBundleSha256 };
       }
       const rebuilt = await buildBundleFromRecords({

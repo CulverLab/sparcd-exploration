@@ -670,11 +670,19 @@ export function parseCollectionKey(key: string): { bucket: string; uuid: string 
 /** One upload folder: the bucket it was read from and its `Collections/<uuid>/Uploads/<name>/` prefix. */
 export type UploadFolder = { bucket: string; prefix: string };
 
+const isNotFound = (err: unknown): boolean => {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e.$metadata?.httpStatusCode === 404 || e.name === 'NotFound' || e.name === 'NoSuchKey';
+};
+
 /**
- * Every upload folder of a collection, across the buckets that hold it. A
- * folder name found in more than one bucket (an upload copied into the data
- * bucket) is read from the first, so it appears once. The image keys in a
- * folder's `media.csv` resolve in that folder's bucket.
+ * Every upload of a collection, across the buckets that hold it. A folder is
+ * an upload once its `media.csv` exists (writers put it last), so one HEAD per
+ * folder leaves out half-written ones before anything else is decided. An
+ * upload found in more than one bucket (copied into the data bucket) is read
+ * from the first, so it appears once, and a half-finished copy never hides the
+ * complete one. The image keys in a folder's `media.csv` resolve in that
+ * folder's bucket.
  */
 export async function listUploadFolders(
   client: SafeS3Client,
@@ -682,9 +690,19 @@ export async function listUploadFolders(
 ): Promise<UploadFolder[]> {
   const root = `Collections/${ref.uuid}/Uploads/`;
   const perBucket = await Promise.all(
-    ref.buckets.map(async (bucket) =>
-      (await client.listCommonPrefixes(bucket, root)).map((prefix) => ({ bucket, prefix })),
-    ),
+    ref.buckets.map(async (bucket) => {
+      const prefixes = await client.listCommonPrefixes(bucket, root);
+      const ready = await mapLimit(prefixes, PROBE_CONCURRENCY, (prefix) =>
+        client.statObject(bucket, `${prefix}media.csv`).then(
+          () => true,
+          (err) => {
+            if (isNotFound(err)) return false;
+            throw err;
+          },
+        ),
+      );
+      return prefixes.filter((_, i) => ready[i]).map((prefix) => ({ bucket, prefix }));
+    }),
   );
   const seen = new Set<string>();
   return perBucket.flat().filter((f) => !seen.has(f.prefix) && !!seen.add(f.prefix));

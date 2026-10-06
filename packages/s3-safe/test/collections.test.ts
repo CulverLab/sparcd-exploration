@@ -37,8 +37,15 @@ function fakeClient(
     },
     async getObject(bucket: string, key: string) {
       const hit = objects[`${bucket}/${key}`];
-      if (hit === undefined || hit instanceof Error) throw hit ?? new Error('NoSuchKey');
+      if (hit === undefined || hit instanceof Error) throw hit ?? Object.assign(new Error(key), { name: 'NoSuchKey' });
       return new TextEncoder().encode(JSON.stringify(hit));
+    },
+    async statObject(bucket: string, key: string) {
+      const hit = objects[`${bucket}/${key}`];
+      if (hit === undefined || hit instanceof Error) {
+        throw hit ?? Object.assign(new Error(key), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+      }
+      return { size: 1, metadata: {} };
     },
   } as unknown as SafeS3Client & { listed: string[] };
 }
@@ -219,6 +226,24 @@ describe('listUploadFolders', () => {
       { bucket: 'field-store', prefix: 'Collections/u1/Uploads/B_new/' },
       { bucket: 'sparcd-u1', prefix: 'Collections/u1/Uploads/C_old/' },
     ]);
+  });
+
+  it('leaves out folders without media.csv, so a half-finished copy never hides the complete one', async () => {
+    const root = (b: string, name: string) => `${b}/Collections/u1/Uploads/${name}/`;
+    const client = fakeClient([], {
+      [`${root('field-store', 'A_copying')}deployments.csv`]: {},
+      [`${root('sparcd-u1', 'A_copying')}media.csv`]: {},
+      [`${root('field-store', 'B_writing')}UploadMeta.json`]: {},
+    });
+    const folders = await listUploadFolders(client, { uuid: 'u1', buckets: ['field-store', 'sparcd-u1'] });
+    expect(folders).toEqual([{ bucket: 'sparcd-u1', prefix: 'Collections/u1/Uploads/A_copying/' }]);
+  });
+
+  it('fails rather than hiding uploads when media.csv cannot be checked', async () => {
+    const client = fakeClient([], {
+      'field-store/Collections/u1/Uploads/A/media.csv': Object.assign(new Error('denied'), { name: 'AccessDenied' }),
+    });
+    await expect(listUploadFolders(client, { uuid: 'u1', buckets: ['field-store'] })).rejects.toThrow('denied');
   });
 });
 

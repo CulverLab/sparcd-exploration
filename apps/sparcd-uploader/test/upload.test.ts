@@ -2109,9 +2109,10 @@ describe('Media layout', () => {
       remoteKey,
       sanitizedObjectName: remoteKey.split('/').pop(),
     });
-    const session = (files: FileRecord[]): LoadedSession => ({
-      batch: { ...makeBatch('session-1', files.length), targetBucket: 'field-data', layout: 'media' },
-      bundle: makeBundleRecord('session-1'),
+    // The saved bundle's media.csv names the keys as they stood when it was saved.
+    const session = (files: FileRecord[], savedKeys = files.map((f) => f.remoteKey!)) => ({
+      batch: { ...makeBatch('session-1', files.length), targetBucket: 'field-data', layout: 'media' as const },
+      bundle: { ...makeBundleRecord('session-1'), mediaCsv: savedKeys.map((k) => `"${k}"\n`).join('') },
       files,
     });
     async function resume(s: LoadedSession, client: FakeClient): Promise<UploadSnapshot> {
@@ -2130,7 +2131,8 @@ describe('Media layout', () => {
       const done = planned('aa00', 'file-0.jpg');
       const pending = planned('aa01', 'file-1.jpg');
       const client = makeMediaClient(new Map([[done, { size: 12 }]])); // stored by an earlier attempt, no metadata
-      const snap = await resume(session([record(0, 'aa00', done, 'done'), record(1, 'aa01', pending, 'pending')]), client);
+      const s = session([record(0, 'aa00', done, 'done'), record(1, 'aa01', pending, 'pending')]);
+      const snap = await resume(s, client);
 
       expect(snap.phase).toBe('done');
       expect(snap.log.some((l) => l.text === `verified, skip: ${done}`)).toBe(true);
@@ -2140,9 +2142,30 @@ describe('Media layout', () => {
         ['observations.csv', 'observations'],
         ['UploadMeta.json', '{"meta":true}'],
         ['UploadComplete.json', '{"complete":true}'],
-        ['media.csv', 'media'],
+        ['media.csv', s.bundle.mediaCsv],
       ]);
       expect(mocks.attachBundle).not.toHaveBeenCalled();
+    });
+
+    it('rebuilds media.csv when an earlier unpublished attempt settled a file on another original', async () => {
+      // That attempt saved remoteKey `earlier` and stopped on another file
+      // before publishing, so the saved bundle still names the planned key.
+      const done = planned('aa00', 'file-0.jpg');
+      const earlier = 'Media/aa01/20190101000000-EARLIER.jpg';
+      const client = makeMediaClient(new Map([
+        [done, { size: 12, sha256: 'aa00' }],
+        [earlier, { size: 12 }],
+      ]));
+      const s = session(
+        [record(0, 'aa00', done, 'done'), record(1, 'aa01', earlier, 'done')],
+        [done, planned('aa01', 'file-1.jpg')],
+      );
+      const snap = await resume(s, client);
+
+      expect(snap.phase).toBe('done');
+      expect(client.writeImmutableStream).not.toHaveBeenCalled();
+      expect(mediaRows(client).map((r) => r[0])).toEqual([done, earlier]);
+      expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
     });
 
     it('rebuilds media.csv when a file settles on an original stored since, writing no second one', async () => {
