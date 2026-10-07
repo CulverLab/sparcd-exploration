@@ -179,7 +179,8 @@ One JSON object per line:
 `{ ts, requestId, personId, personName, kind, bucket, key?, status, bytes?, ip?, detail? }`
 `kind`: `download` (GetObject 2xx on a media file), `upload`, `identify`, `list-change`
 (Settings/ writes), `collection-change`, `access-change` (API writes), `denied` (rule
-403), `bad-signature` (aggregated per source per minute, `detail.count` holds how many),
+403), `bad-signature` (aggregated per source until the next flush, and for at most a
+minute; `detail.count` holds how many, and a source still failing gets a new line),
 `sign-in` (first request per key per day), `log-gap` (the writer dropped lines under
 back-pressure, `detail.dropped` holds how many). Listing and metadata reads are not
 logged.

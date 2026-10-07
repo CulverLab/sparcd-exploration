@@ -237,6 +237,19 @@ describe('finding 13: the activity writer under back-pressure', () => {
     assert.equal(bad.find((l) => l.ip === '10.0.0.1').detail.count, 50);
     assert.equal(bad.find((l) => l.ip === '10.0.0.2').detail.count, 3);
   });
+
+  test('failures after their line is written are counted on a new line', async () => {
+    const stub = stubUpstream({ failing: false });
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5,
+    });
+    for (let i = 0; i < 2; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    while (stub.written.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    for (let i = 0; i < 3; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    await activity.drain();
+    const lines = stub.written.flatMap((w) => w.body.trim().split('\n')).map(JSON.parse);
+    assert.deepEqual(lines.filter((l) => l.kind === 'bad-signature').map((l) => l.detail.count), [2, 3]);
+  });
 });
 
 describe('finding 5: a failed generation bump still applies locally', () => {
