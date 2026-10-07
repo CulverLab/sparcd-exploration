@@ -803,19 +803,41 @@ function memoryUpstream(people, members) {
 async function accessApi(upstream) {
   const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
   await store.reload();
+  const activity = {
+    record() {},
+    drain: async () => {},
+    query: async () => ({ events: [], truncated: false }),
+    downloads: async () => ({ events: [] }),
+  };
   const api = makeApi({
-    store, activity: { record() {} }, lastActive: new Map(), publicEndpoint: 'http://proxy.example.org',
+    store, activity, lastActive: new Map(), publicEndpoint: 'http://proxy.example.org',
   });
-  const call = (actorId, method, path, body, headers = {}) => api.handle({
-    method, path, query: new URLSearchParams(), headers: new Headers(headers),
-    body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
-  });
+  const call = (actorId, method, target, body, headers = {}) => {
+    const url = new URL(target, 'http://proxy.example.org');
+    return api.handle({
+      method, path: url.pathname, query: url.searchParams, headers: new Headers(headers),
+      body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
+    });
+  };
   return { store, call };
 }
 
-describe('a collection keeps a runner who can act on it', () => {
-  const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
+const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
 
+describe('activity filters the API takes', () => {
+  test('an unparseable or reversed date is invalid, not a server error', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const q of ['from=yesterday', 'to=nope', 'from=2026-02-02T00:00:00Z&to=2026-02-01T00:00:00Z']) {
+      for (const path of ['/-/admin/activity', '/-/admin/activity/downloads']) {
+        await assert.rejects(call('admin', 'GET', `${path}?${q}`), { code: 'invalid' }, `${path}?${q}`);
+      }
+    }
+    const ok = await call('admin', 'GET', '/-/admin/activity?from=2026-02-01T00:00:00Z&to=2026-02-02T00:00:00Z');
+    assert.equal(ok.status, 200);
+  });
+});
+
+describe('a collection keeps a runner who can act on it', () => {
   test('a member list whose only runner is still invited is refused', async () => {
     const upstream = memoryUpstream(
       [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'invited' }],

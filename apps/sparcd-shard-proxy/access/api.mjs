@@ -244,7 +244,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // Refused rather than quietly narrowed: an admin who asked for a year and
   // got a month back would read the short answer as the whole story.
   function requireNarrowRange(query) {
-    if (rangeTooWide(query.get('from'), query.get('to'))) {
+    const from = query.get('from');
+    const to = query.get('to');
+    const fromMs = from ? Date.parse(from) : null;
+    const toMs = to ? Date.parse(to) : null;
+    if ((from && Number.isNaN(fromMs)) || (to && Number.isNaN(toMs))) {
+      fail('invalid', 'from and to must be valid timestamps');
+    }
+    if (fromMs !== null && toMs !== null && fromMs > toMs) {
+      fail('invalid', 'from must be earlier than to');
+    }
+    if (rangeTooWide(from, to)) {
       fail('invalid', `from and to may span at most ${MAX_RANGE_DAYS} days`);
     }
   }
