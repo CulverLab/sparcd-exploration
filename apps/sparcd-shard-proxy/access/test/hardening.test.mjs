@@ -817,3 +817,38 @@ describe('a collection keeps a runner who can act on it', () => {
     assert.equal(results.find((r) => r.status === 'rejected').reason.code, 'last_runner');
   });
 });
+
+describe('a reload already in flight cannot undo a write', () => {
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  test('a reload that read a person before their pause does not bring them back', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+    await store.reload();
+
+    // Person reads answer with what was stored when they were asked, but only
+    // when the test lets them.
+    const read = upstream.getJson;
+    const held = [];
+    let holding = true;
+    upstream.getJson = async (bucket, key) => {
+      const value = await read(bucket, key);
+      if (holding && key.includes('/people/')) await new Promise((resolve) => held.push(resolve));
+      return value;
+    };
+
+    const stale = store.reload();
+    while (held.length === 0) await turn();
+    const saving = store.savePerson({ ...store.person('p1'), status: 'paused' }, store.person('p1').etag);
+    while (store.person('p1').status !== 'paused') await turn();
+
+    held.splice(0).forEach((release) => release());
+    await stale;
+    assert.equal(store.person('p1').status, 'paused', 'the older reload put the person back');
+
+    holding = false;
+    held.splice(0).forEach((release) => release());
+    await saving;
+    assert.equal(store.person('p1').status, 'paused');
+  });
+});
