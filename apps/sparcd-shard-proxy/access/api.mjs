@@ -205,6 +205,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     if (path === '/-/admin/activity' && method === 'GET') {
       requireAdmin(person);
       requireNarrowRange(query);
+      const limit = query.get('limit') ? Number(query.get('limit')) : 200;
+      // NaN reads the whole range and then hands back an empty, untruncated page.
+      if (!Number.isInteger(limit) || limit < 1) fail('invalid', 'limit must be a positive integer');
       await activity.drain();
       return {
         status: 200,
@@ -214,7 +217,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
           person: query.get('person') ?? undefined,
           bucket: query.get('bucket') ?? undefined,
           kinds: parseKinds(query.get('kind')),
-          limit: query.get('limit') ? Number(query.get('limit')) : 200,
+          limit,
         }),
       };
     }

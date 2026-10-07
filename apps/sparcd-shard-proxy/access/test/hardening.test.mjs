@@ -864,6 +864,14 @@ describe('activity filters the API takes', () => {
     const ok = await call('admin', 'GET', '/-/admin/activity?from=2026-02-01T00:00:00Z&to=2026-02-02T00:00:00Z');
     assert.equal(ok.status, 200);
   });
+
+  test('a limit that is not a positive integer is invalid, not an empty page', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const limit of ['abc', '0', '-5', '2.5']) {
+      await assert.rejects(call('admin', 'GET', `/-/admin/activity?limit=${limit}`), { code: 'invalid' }, limit);
+    }
+    assert.equal((await call('admin', 'GET', '/-/admin/activity?limit=50')).status, 200);
+  });
 });
 
 describe('a collection keeps a runner who can act on it', () => {

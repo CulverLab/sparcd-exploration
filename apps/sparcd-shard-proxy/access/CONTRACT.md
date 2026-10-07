@@ -165,7 +165,7 @@ Admin only:
   `kind` is a comma-separated list and matches any of them; a kind outside the set below is
   400 `invalid`, and no `kind` at all is every kind. `from` and `to` are ISO 8601
   instants; one that does not parse, a `from` later than `to`, or a span over 31 days is
-  400 `invalid`.
+  400 `invalid`. `limit` defaults to 200 and must be a positive integer, or 400 `invalid`.
 - `GET /-/admin/activity/downloads?bucket=&key=&from=&to=` → `{ events: [...] }`. `key`
   matches an event whose key equals it or whose last path segment equals it,
   case-sensitive. `from` and `to` follow the rules above.
