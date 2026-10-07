@@ -14,6 +14,9 @@ vi.mock('@sparcd/s3-safe', () => ({
     statObject(...args: unknown[]) { return client.statObject(...args); }
   },
   listCollections: vi.fn(),
+  // One bucket, every listed folder already past the media.csv check.
+  listUploadFolders: async (_client: unknown, ref: { buckets: string[] }) =>
+    ((await client.listCommonPrefixes()) as string[]).map((prefix) => ({ bucket: ref.buckets[0], prefix })),
   parseCollectionKey: (key: string) => ({ bucket: 'bucket', uuid: key }),
   translateReadError: (error: unknown) => error,
 }));
@@ -27,6 +30,7 @@ const CFG: S3Config = {
   secretKey: 'secret',
   forcePathStyle: true,
 };
+const REF = { uuid: 'collection', buckets: ['bucket'] };
 
 describe('UploadMeta publication gate', () => {
   beforeEach(() => {
@@ -43,8 +47,8 @@ describe('UploadMeta publication gate', () => {
       return { size: 1 };
     });
 
-    await expect(listUploads(CFG, 'bucket', 'collection')).resolves.toEqual([
-      { prefix: published, stamp: 'published' },
+    await expect(listUploads(CFG, REF)).resolves.toEqual([
+      { bucket: 'bucket', prefix: published, stamp: 'published' },
     ]);
   });
 
@@ -53,6 +57,6 @@ describe('UploadMeta publication gate', () => {
     client.listCommonPrefixes.mockResolvedValue([published]);
     client.statObject.mockRejectedValue(new Error('Failed to fetch'));
 
-    await expect(listUploads(CFG, 'bucket', 'collection')).rejects.toThrow('Failed to fetch');
+    await expect(listUploads(CFG, REF)).rejects.toThrow('Failed to fetch');
   });
 });

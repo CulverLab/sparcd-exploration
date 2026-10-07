@@ -48,7 +48,9 @@ The sidebar holds the whole control surface, top to bottom:
   build the client.
 - **Collection** — pick a collection and press **Load selected collection**.
   Collections load on demand and are cached in memory, so re-selecting one is
-  instant.
+  instant. Collections are discovered by UUID in data buckets and legacy
+  `sparcd-<uuid>` buckets. Uploads are merged across their buckets, preferring
+  data-bucket copies and skipping folders without `media.csv`.
 - **Query filters** — mountain range, site code, year, month, start/end date,
   species include/exclude, and elevation range. Filters apply only when you
   press **Search**; adjusting a control recomputes nothing until then.

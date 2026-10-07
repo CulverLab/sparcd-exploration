@@ -819,6 +819,26 @@ describe('runSync — live write path', () => {
     }
   });
 
+  it('builds the observation id for a Media/ key on its stamped name', async () => {
+    const key = `Media/${'a'.repeat(64)}/20240110080030-IMG002.JPG`;
+    const media = serializeCsvRows([mediaRow(K1, '2024-01-10T08:00:00'), mediaRow(key, '2024-01-10T08:00:30')]);
+    const cur = { ...(await canonical()), media: { text: media, etag: '"media-1"', hash: await sha256Hex(media) } };
+    const { io, rec } = fakeIO(cur);
+    const images = [IMAGES[0], { ...IMAGES[1], key }];
+    const plan = buildSyncPlan(images, { [key]: draft({ mediaPath: key, observations: [obs('Canis latrans', 1, 'Coyote')] }) }, null);
+    const res = await runSync(
+      { bucket: 'field-data', uploadPrefix: PREFIX, user: 'jg', base: baseFrom(cur), plan, dryRun: false },
+      io,
+    );
+
+    expect(res.status).toBe('synced');
+    const written = parseObservations(rec.replaces.find((r) => r.key.endsWith('observations.csv'))!.body);
+    expect(written.find((row) => row.scientificName === 'Canis latrans')).toMatchObject({
+      mediaId: key,
+      observationId: '20240110080030-IMG002.JPG:0',
+    });
+  });
+
   it('enters the conflict view when a canonical file changed since grounding', async () => {
     const cur = await canonical();
     const { io, rec } = fakeIO(cur);

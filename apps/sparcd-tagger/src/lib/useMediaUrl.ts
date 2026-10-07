@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useStore } from '../store';
-import { parseCollectionKey, presignImage } from './s3';
+import { presignImage } from './s3';
 import { useLocalBatch } from './localBatch';
 import { mediaRequestScheduler, type MediaPriority } from './mediaRequestScheduler';
 
@@ -42,17 +42,15 @@ export function useMediaUrl(
 ): { url: string | undefined; isError: boolean; markLoaded: () => void } {
   const cfg = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
-  const collectionKey = useStore((s) => s.selectedCollectionKey);
+  // media.csv col 0 resolves in the bucket that media.csv was read from.
+  const bucket = useStore((s) => s.selectedUploadBucket);
   const isLocal = useLocalBatch((s) => s.status === 'ready');
   const localUrl = useObjectUrl(useLocalBatch((s) => s.media[objectKey]));
 
   const { data, isError } = useQuery({
-    queryKey: ['presign', connectionId, objectKey],
-    queryFn: () => {
-      const { bucket } = parseCollectionKey(collectionKey!);
-      return presignImage(cfg!, bucket, objectKey);
-    },
-    enabled: !isLocal && !!cfg && !!collectionKey,
+    queryKey: ['presign', connectionId, bucket, objectKey],
+    queryFn: () => presignImage(cfg!, bucket!, objectKey),
+    enabled: !isLocal && !!cfg && !!bucket,
     staleTime: 50 * 60 * 1000, // under the 1h URL TTL
     retry: 1,
   });

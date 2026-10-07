@@ -230,11 +230,12 @@ export class S3Mock {
     await page.route(originRe, async (route) => {
       const req = route.request();
       const auth = req.headers()['authorization'] ?? '';
-      if (!auth.startsWith('AWS4-HMAC')) {
+      const url = new URL(req.url());
+      // A presigned GET (the Tagger's <img> src) carries its signature in the query.
+      if (!auth.startsWith('AWS4-HMAC') && !url.searchParams.has('X-Amz-Signature')) {
         await route.fallback();
         return;
       }
-      const url = new URL(req.url());
       const path = decodeURIComponent(url.pathname).replace(/^\//, '');
       const slash = path.indexOf('/');
       const bucket = slash < 0 ? path : path.slice(0, slash);

@@ -26,9 +26,8 @@ type Phase = 'previewing' | 'preview' | 'running' | 'done';
 export function SnapshotsDialog({ ctx, onClose }: { ctx: UploadCtx; onClose: () => void }) {
   const cfg = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
-  const collectionKey = useStore((s) => s.selectedCollectionKey);
 
-  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, ctx.uploadPrefix);
+  const snapshots = useUploadSnapshots(cfg, connectionId, ctx.bucket, ctx.uploadPrefix);
 
   const [picked, setPicked] = useState<SnapshotRef | null>(null);
   // A live restore must not be dismissable mid-write (it would keep writing
@@ -141,7 +140,7 @@ function RestorePane({
   const collectionKey = useStore((s) => s.selectedCollectionKey);
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
-  const collectionName = collection?.name ?? collection?.bucket ?? ctx.bucket;
+  const collectionName = collection?.name ?? collection?.uuid ?? ctx.bucket;
   const uploadName = uploadNameOf(ctx.uploadPrefix);
   const discardUpload = useDraftStore((s) => s.discardUpload);
   const queryClient = useQueryClient();

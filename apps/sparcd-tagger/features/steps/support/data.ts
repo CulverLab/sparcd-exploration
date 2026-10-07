@@ -2,7 +2,7 @@
 // v016 Camtrap-DP-flavoured contract in `@sparcd/camtrap` (fixed-position CSV
 // columns; `media.csv` col 0 is the full object key, col 4 the capture time).
 
-import { MockS3 } from './s3mock';
+import { MockS3, sha256 } from './s3mock';
 import { makePng } from './png';
 
 export const UUID = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
@@ -43,7 +43,8 @@ const MEDIA_WIDTH = 11;
 const OBS_WIDTH = 20;
 const DEPLOY_WIDTH = 23;
 
-export type MediaSpec = { file: string; timestamp: string; mime: string; comments?: string };
+/** `key` is where a Media-layout upload stored the image; without it the image sits in its upload folder. */
+export type MediaSpec = { file: string; timestamp: string; mime: string; comments?: string; key?: string };
 
 /** Upload A — the workhorse: six frames, mixed tagging, one clip, one untimed. */
 export const MEDIA_A: MediaSpec[] = [
@@ -74,10 +75,14 @@ export const MEDIA_E: MediaSpec[] = [
 
 export const mediaKey = (prefix: string, file: string): string => `${prefix}${file}`;
 
+/** The Media layout's key: `Media/<sha256 of the bytes>/<YYYYMMDDHHmmss>-<file>`. */
+export const mediaLayoutKey = (bytes: Buffer, timestamp: string, file: string): string =>
+  `Media/${sha256(bytes)}/${timestamp.replace(/\D/g, '')}-${file}`;
+
 export function mediaCsv(prefix: string, specs: MediaSpec[]): string {
   return specs
     .map((m) => {
-      const key = mediaKey(prefix, m.file);
+      const key = m.key ?? mediaKey(prefix, m.file);
       const cells: string[] = [];
       cells[0] = key;
       cells[1] = DEPLOYMENT;
@@ -229,7 +234,7 @@ export function blankObservationsCsv(prefix: string, specs: MediaSpec[]): string
       cells[0] = `blank-${i}`;
       cells[1] = DEPLOYMENT;
       cells[2] = '';
-      cells[3] = mediaKey(prefix, m.file);
+      cells[3] = m.key ?? mediaKey(prefix, m.file);
       cells[4] = m.timestamp;
       cells[5] = 'blank';
       return row(cells, OBS_WIDTH);
@@ -552,4 +557,67 @@ export function seedFixtures(s3: MockS3): void {
     'application/json',
   );
   s3.put(BUCKET, `${PARTIAL_SNAPSHOT_PREFIX}media.csv`, snapMedia, 'text/csv');
+}
+
+// --- The same collection, also in a data bucket (issue #376) -----------------
+
+export const DATA_BUCKET = 'field-data';
+export const STAMP_G = '2026.09.01.08.00.00_datauser';
+export const PREFIX_G = `Collections/${UUID}/Uploads/${STAMP_G}/`;
+/** A folder the uploader is still writing: everything but its media.csv. */
+export const PREFIX_UNFINISHED = `Collections/${UUID}/Uploads/2026.10.01.07.00.00_halfway/`;
+
+const BYTES_G = [makePng(240, 180, 101), makePng(240, 180, 102)];
+
+/** Upload F — stored by content: its images live under Media/, not in its folder. */
+export const MEDIA_G: MediaSpec[] = [
+  { file: 'IMG101.JPG', timestamp: '2026-08-30T06:15:00', mime: 'image/jpeg' },
+  { file: 'IMG102.JPG', timestamp: '2026-08-30T06:15:20', mime: 'image/jpeg' },
+].map((m, i) => ({ ...m, key: mediaLayoutKey(BYTES_G[i], m.timestamp, m.file) }));
+
+/**
+ * Split the collection across a data bucket and its legacy bucket. The data
+ * bucket gets a copy of its collection.json, the Media-layout upload F, a copy
+ * of upload B (one folder in both buckets), and a folder still being written.
+ */
+export function seedDataBucket(s3: MockS3): void {
+  const copy = (key: string) => {
+    const o = s3.get(BUCKET, key)!;
+    s3.put(DATA_BUCKET, key, o.body, o.contentType);
+  };
+  copy(`Collections/${UUID}/collection.json`);
+  s3.keys(BUCKET, PREFIX_B).forEach(copy);
+
+  s3.put(DATA_BUCKET, `${PREFIX_G}media.csv`, mediaCsv(PREFIX_G, MEDIA_G), 'text/csv');
+  s3.put(DATA_BUCKET, `${PREFIX_G}observations.csv`, blankObservationsCsv(PREFIX_G, MEDIA_G), 'text/csv');
+  s3.put(DATA_BUCKET, `${PREFIX_G}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(
+    DATA_BUCKET,
+    `${PREFIX_G}UploadMeta.json`,
+    uploadMetaJson({
+      bucket: DATA_BUCKET,
+      prefix: PREFIX_G,
+      user: 'datauser',
+      imageCount: MEDIA_G.length,
+      imagesWithSpecies: 0,
+      description: 'Stored by content',
+    }),
+    'application/json',
+  );
+  MEDIA_G.forEach((m, i) => s3.put(DATA_BUCKET, m.key!, BYTES_G[i], 'image/png'));
+
+  s3.put(DATA_BUCKET, `${PREFIX_UNFINISHED}deployments.csv`, deploymentsCsv(), 'text/csv');
+  s3.put(
+    DATA_BUCKET,
+    `${PREFIX_UNFINISHED}UploadMeta.json`,
+    uploadMetaJson({
+      bucket: DATA_BUCKET,
+      prefix: PREFIX_UNFINISHED,
+      user: 'halfway',
+      imageCount: 1,
+      imagesWithSpecies: 0,
+      description: 'Not finished',
+    }),
+    'application/json',
+  );
 }

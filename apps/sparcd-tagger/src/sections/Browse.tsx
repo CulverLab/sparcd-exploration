@@ -10,6 +10,7 @@ import {
   type UploadSummary,
   type UploadDraftState,
 } from '../lib/queries';
+import { uploadId } from '../lib/db';
 import { PawPads } from '../components/Paw';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
@@ -44,21 +45,20 @@ export function Browse() {
   const selectUpload = useStore((s) => s.selectUpload);
 
   const collections = useCollections(cfg, connectionId);
-  const uploads = useUploads(cfg, connectionId, collectionKey);
+  const collection = collections.data?.find((c) => c.key === collectionKey);
+  const uploads = useUploads(cfg, connectionId, collection);
   const species = useSpecies(cfg, connectionId, collectionKey); // loaded for the selected collection
-  const summaries = useUploadSummaries(cfg, connectionId, collectionKey, uploads.data);
-  const draftStates = useUploadDraftStates(connectionId, collectionKey);
+  const summaries = useUploadSummaries(cfg, connectionId, uploads.data);
+  const draftStates = useUploadDraftStates(connectionId, collection);
 
   const [filter, setFilter] = useState('');
   const [tab, setTab] = useState<Tab>('all');
-
-  const collection = collections.data?.find((c) => c.key === collectionKey);
 
   const shownCollections = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return collections.data ?? [];
     return (collections.data ?? []).filter((c) =>
-      `${c.name ?? c.bucket} ${c.organization ?? ''}`.toLowerCase().includes(q),
+      `${c.name ?? c.uuid} ${c.organization ?? ''}`.toLowerCase().includes(q),
     );
   }, [collections.data, filter]);
 
@@ -114,7 +114,7 @@ export function Browse() {
                   }`}
                 >
                   <div className={`text-[14px] text-ink ${c.key === collectionKey ? 'font-[600]' : ''}`}>
-                    {c.name ?? c.bucket}
+                    {c.name ?? c.uuid}
                   </div>
                   {c.organization && (
                     <div className="text-[12px] text-inkSoft font-mono mt-1">{c.organization}</div>
@@ -148,13 +148,13 @@ export function Browse() {
             <nav className="flex items-center gap-1.5 text-[13px] mb-3">
               <span className="text-inkSoft">Browse</span>
               <span className="text-inkMute">/</span>
-              <span className="text-ink">{collection?.name ?? collection?.bucket ?? '…'}</span>
+              <span className="text-ink">{collection?.name ?? collection?.uuid ?? '…'}</span>
             </nav>
 
             <div className="flex items-baseline justify-between gap-4 flex-wrap mb-4">
               <div>
                 <h1 className="font-display text-[28px] leading-tight text-ink">
-                  Uploads in {collection?.name ?? collection?.bucket ?? 'this collection'}
+                  Uploads in {collection?.name ?? collection?.uuid ?? 'this collection'}
                 </h1>
                 <p className="text-[13px] text-inkSoft mt-1">
                   {uploads.isLoading ? (
@@ -229,8 +229,8 @@ export function Browse() {
                       key={u.prefix}
                       stamp={u.stamp}
                       query={summaries[i]}
-                      draftState={draftStates.data?.get(u.prefix)}
-                      onOpen={() => selectUpload(u.prefix)}
+                      draftState={draftStates.data?.get(uploadId(u.bucket, u.prefix))}
+                      onOpen={() => selectUpload(u.prefix, u.bucket)}
                     />
                   );
                 })}

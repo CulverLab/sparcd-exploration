@@ -78,6 +78,9 @@ export function Recovery() {
 // --- Unsynced local edits ----------------------------------------------------
 
 function LocalEdits() {
+  const cfg = useStore((s) => s.s3Config);
+  const connectionId = useStore((s) => s.connectionId);
+  const collections = useCollections(cfg, connectionId);
   const selectCollection = useStore((s) => s.selectCollection);
   const selectUpload = useStore((s) => s.selectUpload);
   const discardUpload = useDraftStore((s) => s.discardUpload);
@@ -96,8 +99,11 @@ function LocalEdits() {
   }, [refresh, liveDrafts]);
 
   const open = (g: Group) => {
-    selectCollection(g.collectionKey); // resets upload selection
-    selectUpload(g.uploadPrefix); // sets section → 'tag'
+    // A collection is keyed by its home bucket, which need not be the bucket
+    // this upload lives in once it spans a data bucket and its legacy one.
+    const uuid = uuidOf(g.uploadPrefix);
+    selectCollection(collections.data?.find((c) => c.uuid === uuid)?.key ?? g.collectionKey); // resets upload selection
+    selectUpload(g.uploadPrefix, g.bucket); // sets section → 'tag'
   };
 
   const discard = async (g: Group) => {
@@ -175,7 +181,7 @@ function Snapshots() {
   const [scope, setScope] = useState<string | null>(selectedCollectionKey);
   const scopeKey = scope ?? selectedCollectionKey ?? collections.data?.[0]?.key ?? null;
 
-  const snaps = useCollectionSnapshots(cfg, connectionId, scopeKey);
+  const snaps = useCollectionSnapshots(cfg, connectionId, collections.data?.find((c) => c.key === scopeKey));
 
   return (
     <section className="space-y-3">
@@ -195,7 +201,7 @@ function Snapshots() {
           >
             {collections.data.map((c) => (
               <option key={c.key} value={c.key}>
-                {c.name ?? c.bucket}
+                {c.name ?? c.uuid}
               </option>
             ))}
           </select>
@@ -234,7 +240,7 @@ function Snapshots() {
                   </div>
                 </div>
                 <button
-                  onClick={() => openForSnapshots(scopeKey!, u.uploadPrefix)}
+                  onClick={() => openForSnapshots(scopeKey!, u.uploadPrefix, u.bucket)}
                   className={`${btnInk} shrink-0`}
                   title="Open this upload and choose a snapshot to restore"
                 >
