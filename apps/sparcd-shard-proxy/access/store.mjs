@@ -34,6 +34,7 @@ export function makeStore({
   let timer = null;
   let lastFullReload = 0;
   let mutationVersion = 0;
+  let behind = false;
 
   function emptyState() {
     return {
@@ -79,7 +80,7 @@ export function makeStore({
       if (uuid) next.collections.set(client, { bucket: client, uuid, members: [], membersEtag: null });
     }
     if (!next.settingsBucket) {
-      if (reloadVersion === mutationVersion) state = next;
+      if (reloadVersion === mutationVersion) { state = next; behind = false; }
       return state;
     }
 
@@ -132,6 +133,7 @@ export function makeStore({
 
     if (reloadVersion === mutationVersion) {
       state = next;
+      behind = false;
       lastFullReload = Date.now();
     }
     return state;
@@ -161,7 +163,16 @@ export function makeStore({
     }
     const gen = await upstream.getJson(settings(), GENERATION_KEY);
     const seen = gen.status === 404 ? 0 : (gen.value.generation ?? 0);
-    if (seen !== state.generation) await reload();
+    if (seen === state.generation) return;
+    // Access changed somewhere and this process could not read how. Any
+    // revocation in that change would go on being honoured here, so until a
+    // reload lands nothing is.
+    try {
+      await reload();
+    } catch (err) {
+      behind = true;
+      throw err;
+    }
   }
 
   async function bumpGeneration() {
@@ -181,6 +192,8 @@ export function makeStore({
     reload,
     snapshot: () => state,
     settingsBucketUpstream: settings,
+    /** True while a known change to access data has failed to load. */
+    behind: () => behind,
 
     start() {
       if (!timer) {

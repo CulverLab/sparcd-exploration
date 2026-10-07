@@ -277,6 +277,12 @@ export async function createAccessProxy(input) {
     // memory.
     let claimed = null;
     if (!open) {
+      // Fail closed while a change to who may do what is known and unloaded.
+      if (store.behind()) {
+        req.resume();
+        respondXml(res, 403, 'AccessDenied', 'access data could not be refreshed', origin);
+        return;
+      }
       claimed = peekAccessKeyId({ headers, url });
       const hit = claimed ? store.byAccessKey(claimed) : null;
       if (!hit) {

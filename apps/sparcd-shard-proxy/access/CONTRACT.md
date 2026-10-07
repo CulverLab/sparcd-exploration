@@ -171,7 +171,8 @@ Admin only:
   case-sensitive. `from` and `to` follow the rules above.
 
 Access changes take effect on the proxy that made them at once, and on any other proxy
-within 5 s (each polls `generation.json`).
+within 5 s (each polls `generation.json`). A proxy whose poll finds a change it then
+cannot load answers every signed request with 403 until a reload succeeds.
 
 ## Activity events
 

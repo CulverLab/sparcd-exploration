@@ -926,6 +926,32 @@ describe('a collection keeps a runner who can act on it', () => {
   });
 });
 
+describe('a poll that cannot load a change fails closed', () => {
+  test('a newer generation that will not load holds the store behind until it does', { timeout: 5000 }, async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5 });
+    await store.reload();
+    assert.equal(store.behind(), false);
+
+    // Another proxy bumps the counter, and this one can then read nothing else.
+    upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+      body: '{"generation":1}', etag: '"g1"',
+    });
+    const listBuckets = upstream.listBuckets;
+    upstream.listBuckets = async () => { throw new Error('upstream is down for this'); };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+    store.start();
+    try {
+      while (!store.behind()) await tick();
+      upstream.listBuckets = listBuckets;
+      while (store.behind()) await tick();
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
+});
+
 describe('a reload already in flight cannot undo a write', () => {
   const turn = () => new Promise((resolve) => setImmediate(resolve));
 
