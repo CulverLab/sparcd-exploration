@@ -181,7 +181,7 @@ Then("that image's key carries its estimated capture time", async ({ app }) => {
   const key = mediaKeyOf(gappyBatch()[1], '20260701120500');
   expect(imagePuts(app).map((p) => p.key)).toContain(key);
   // media.csv col 4 is the same moment, from the same estimate (Bear Canyon is in America/Phoenix).
-  expect(lastMediaRows(app).find((r) => r[0] === key)![4]).toBe('2026-07-01T19:05:00.000Z');
+  expect(lastMediaRows(app).find((r) => r[0] === key)![4]).toBe('2026-07-01T12:05:00.000-07:00');
 });
 
 // --- resume ----------------------------------------------------------------
