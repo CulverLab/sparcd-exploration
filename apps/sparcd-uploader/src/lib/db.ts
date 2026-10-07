@@ -83,7 +83,7 @@ export interface FileRecord {
   remoteKey?: string; // full key (= media_path): the Media/ key it resolved to, or uploadPrefix/sanitizedObjectName
   sha256?: string;
   timestampSource?: import('@sparcd/camtrap').TimestampSource;
-  captureTimestamp?: string; // resolved naive-UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing capture time (post-tz), media.csv col 4
   exifCamera?: string;
   mediaKind?: MediaKind;
   mimeType?: string;
@@ -128,7 +128,7 @@ class UploaderDb extends Dexie {
     // fields aren't indexed), but the field shapes changed, so a forward-carrying
     // upgrade rewrites legacy in-flight rows. Legacy rows pre-date tz support:
     // their `exifTimestamp` was a browser-zone ISO; carry it verbatim as
-    // `captureTimestamp` so a resume reproduces the prior bytes, and stamp UTC
+    // `captureTimestamp` so a resume reproduces the prior bytes, including its offset
     // as the upload zone so the bundle rebuild doesn't re-derive a different
     // instant. Default `mediaKind`/`mimeType` to image (the only legacy type).
     this.version(2)

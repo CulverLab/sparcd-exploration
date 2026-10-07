@@ -51,7 +51,8 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
   anywhere in the tagger. Locations are shown to any connected user. Captured
   honestly in `F4-location-visibility.feature` so the gap is on the record.
 - **M2 (constraint) — largely supported.** Original files are never destroyed:
-  every write is preceded by an immutable snapshot, replacement is conditional
+  the first live edit also creates an immutable original-upload baseline. Every
+  later write is preceded by an immutable snapshot, replacement is conditional
   on the version read, conflicts refuse the write outright, and snapshots can
   be restored. Traceability exists at upload granularity (identity + timestamp
   in the edit comment and snapshot path), not per identification.

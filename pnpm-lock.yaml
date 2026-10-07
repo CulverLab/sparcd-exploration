@@ -66,6 +66,9 @@ importers:
       react-zoom-pan-pinch:
         specifier: ^4.0.3
         version: 4.0.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      tz-lookup:
+        specifier: ^6.1.25
+        version: 6.1.25
       zustand:
         specifier: ^5.0.0
         version: 5.0.14(@types/react@18.3.30)(react@18.3.1)
@@ -82,6 +85,9 @@ importers:
       '@types/react-dom':
         specifier: ^18.3.0
         version: 18.3.7(@types/react@18.3.30)
+      '@types/tz-lookup':
+        specifier: ^6.1.2
+        version: 6.1.2
       '@vitejs/plugin-react':
         specifier: ^4.3.2
         version: 4.7.0(vite@5.4.21(@types/node@20.19.41))

@@ -25,7 +25,7 @@ const SEVERITY_DOT: Record<Severity, string> = {
 };
 
 // Display the naive EXIF wall-clock as-written (no zone shift). The chosen
-// upload zone only affects the stored UTC instant, not this raw display.
+// upload zone affects the stored offset-bearing timestamp, not this raw display.
 function shortTime(n?: NaiveDateTime): string {
   if (!n) return '—';
   return formatNaive(n).replace('T', ' ');

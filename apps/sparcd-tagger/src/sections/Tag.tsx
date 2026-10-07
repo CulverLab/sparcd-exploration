@@ -14,6 +14,7 @@ import {
 import { useMediaUrl } from '../lib/useMediaUrl';
 import { parseCollectionKey } from '../lib/s3';
 import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
+import tzlookup from 'tz-lookup';
 import { SpeciesPanel } from '../components/SpeciesPanel';
 import { AppliedSpecies } from '../components/AppliedSpecies';
 import { Cheatsheet } from '../components/Cheatsheet';
@@ -102,6 +103,9 @@ export function Tag() {
   const species = useSpecies(cfg, connectionId, collectionKey);
   const locations = useLocations(cfg, connectionId, collectionKey);
   const currentDeployment = useCurrentDeployment(cfg, connectionId, collectionKey, uploadPrefix);
+  const captureTimeZone = currentDeployment.data
+    ? tzlookup(currentDeployment.data.latitude, currentDeployment.data.longitude)
+    : undefined;
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
   const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
@@ -266,7 +270,7 @@ export function Tag() {
         return matchesImageFilter(
           {
             fileName: image.fileName,
-            timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null),
+            timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
             observations: effectiveOf(image, draft).observations,
           },
           imageFilter,
@@ -338,7 +342,7 @@ export function Tag() {
   const tsOf = useMemo(
     () =>
       offsetActive(timeOffset)
-        ? (img: TagImage) => shiftTimestamp(img.baseTimestamp, timeOffset!)
+        ? (img: TagImage) => shiftTimestamp(img.baseTimestamp, timeOffset!, captureTimeZone)
         : undefined,
     [timeOffset],
   );
@@ -561,9 +565,10 @@ export function Tag() {
             img.baseTimestamp,
             timeOffset,
             drafts[img.key]?.timeOverride ?? null,
+            captureTimeZone,
           ),
         })),
-    [selectedForActions, list, drafts, timeOffset],
+    [selectedForActions, list, drafts, timeOffset, captureTimeZone],
   );
   const scopedTimeApplicableCount = bulkTimeTargets.length;
   const scopedTimeUnavailableReason = selected.size === 0
@@ -699,10 +704,10 @@ export function Tag() {
         Object.values(drafts).filter((r) => r.dirty),
         list.map((image) => ({
           ...image,
-          restoredTimestamp: correctedTimestamp(image.baseTimestamp, timeOffset, null),
+          restoredTimestamp: correctedTimestamp(image.baseTimestamp, timeOffset, null, captureTimeZone),
         })),
       ),
-    [drafts, list, timeOffset],
+    [drafts, list, timeOffset, captureTimeZone],
   );
 
   if (!localRecord) {
@@ -724,7 +729,7 @@ export function Tag() {
   const discardTitle = `Discard ${nDirty} image${nDirty !== 1 ? 's' : ''}: ${discardDetails.join('; ')}`;
   const hasUploadShift = offsetActive(timeOffset);
   const correctedTs = current
-    ? correctedTimestamp(current.baseTimestamp, timeOffset, draft?.timeOverride ?? null)
+    ? correctedTimestamp(current.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone)
     : '';
 
   return (
@@ -1140,6 +1145,7 @@ export function Tag() {
                     onSelectBurst={selectBurst}
                     onDrill={drill}
                     onDropSpecies={applyIncrementAt}
+                    timeZone={captureTimeZone}
                   />
                 )}
               </div>
@@ -1161,6 +1167,7 @@ export function Tag() {
                 kind="list"
                 onPick={pick}
                 onSelectBurst={selectBurst}
+                timeZone={captureTimeZone}
               />
             </div>
             <FocusPane
@@ -1170,6 +1177,7 @@ export function Tag() {
               corrected={correctedTs}
               hasUploadShift={hasUploadShift}
               overridden={!!draft?.timeOverride}
+              timeZone={captureTimeZone}
               onSetTime={(iso) =>
                 current && setTimeOverrideFn(ctx, current.key, current.deploymentId, currentBase, iso)
               }
@@ -1196,7 +1204,7 @@ export function Tag() {
         />
       )}
       {showSync && (
-        <SyncDialog ctx={ctx} images={list} drafts={drafts} onClose={closeSync} />
+        <SyncDialog ctx={ctx} images={list} drafts={drafts} timeZone={captureTimeZone} onClose={closeSync} />
       )}
       {showSnapshots && <SnapshotsDialog ctx={ctx} onClose={() => setShowSnapshots(false)} />}
       {showTimeShift && (
@@ -1224,7 +1232,7 @@ export function Tag() {
           count={bulkTime.targets.length}
           requestedCount={bulkTime.requestedCount}
           anchorTimestamp={bulkTime.anchor}
-          onApply={(delta) => applyTimeOffsetToSelectionFn(ctx, bulkTime.targets, delta)}
+          onApply={(delta) => applyTimeOffsetToSelectionFn(ctx, bulkTime.targets, delta, captureTimeZone)}
           onClose={closeBulkTime}
         />
       )}
@@ -1309,6 +1317,7 @@ function FocusPane({
   corrected,
   hasUploadShift,
   overridden,
+  timeZone,
   onSetTime,
   onClearTime,
   onDetag,
@@ -1323,6 +1332,7 @@ function FocusPane({
   corrected: string;
   hasUploadShift: boolean;
   overridden: boolean;
+  timeZone?: string;
   onSetTime: (iso: string) => void;
   onClearTime: () => void;
   onDetag: () => void;
@@ -1429,6 +1439,7 @@ function FocusPane({
                 hasUploadShift={hasUploadShift}
                 overridden={overridden}
                 timestampSource={current.timestampSource}
+                timeZone={timeZone}
                 onSet={onSetTime}
                 onClear={onClearTime}
               />

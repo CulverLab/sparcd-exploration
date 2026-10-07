@@ -40,12 +40,26 @@ Feature: Review, correct and remove identifications that already exist
     Then the new count is held against that species for that image
     And a count below one is not accepted
 
+  @H3 @H3-3
+  Scenario: Replacing an existing species records the correction
+    Given the focused image carries an existing species to correct
+    When the existing species is replaced with another species
+    And a live sync is run
+    Then the stored replacement records the previous species as corrected
+
   @H3
   Scenario: A single wrong identification can be removed without losing the others
     Given the focused image carries several species
     When one of them is removed
     Then only that species is dropped
     And the remaining species and their counts are preserved
+
+  @H3 @H3-4
+  Scenario: Removing an existing species records the removal
+    Given the focused image carries several species
+    When one of them is removed
+    And a live sync is run
+    Then the removed species is absent from the stored image and marked as removed
 
   @H3
   Scenario: Every identification on an image can be cleared at once
@@ -104,6 +118,33 @@ Feature: Review, correct and remove identifications that already exist
     And an existing identification is re-applied unchanged
     When a live sync is run
     Then the original identifier and separate review remain visible in the stored image
+
+  @H3 @H3-7
+  Scenario: A correction preserves the immutable original upload baseline
+    Given the original upload data is captured before a review
+    And identifications were corrected locally
+    When a live sync is run
+    Then the original uploaded data remains byte-for-byte intact
+    And the live audit records the correction identity and time
+
+  @H3 @H3-7
+  Scenario: A removal preserves the immutable original upload baseline
+    Given the original upload data is captured before a review
+    And the focused image carries at least one species
+    When Clear Species is used
+    And a live sync is run
+    Then the original uploaded data remains byte-for-byte intact
+    And the live audit records the removal identity and time
+
+  @H3 @H3-7
+  Scenario: Repeated reviews do not duplicate the original upload baseline
+    Given the original upload data is captured before a review
+    And identifications were corrected locally
+    When a live sync is run
+    And another review is made locally
+    And a live sync is run
+    Then the original uploaded data remains byte-for-byte intact
+    And the live audit records the correction identity and time
 
   @H3 @H3-8
   Scenario: Reviewed and unreviewed identifications are visibly distinguished

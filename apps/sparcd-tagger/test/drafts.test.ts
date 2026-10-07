@@ -177,9 +177,11 @@ describe('draft store — add-only over a base multi-species image', () => {
 
   it('removeSpecies removes one and keeps the others', () => {
     useDraftStore.getState().removeSpecies(CTX, PATH, DEP, BASE, 'Canis latrans');
-    expect(useDraftStore.getState().drafts[PATH].observations.map((o) => o.scientificName)).toEqual([
+    const draft = useDraftStore.getState().drafts[PATH];
+    expect(draft.observations.map((o) => o.scientificName)).toEqual([
       'Odocoileus hemionus',
     ]);
+    expect(draft.removedSpecies).toEqual(['Canis latrans']);
   });
 
   it('setSpeciesCount sets one species count on an image seeded from base', () => {
@@ -208,7 +210,7 @@ describe('draft store — add-only over a base multi-species image', () => {
     );
     const drafts = useDraftStore.getState().drafts;
     expect(Object.keys(drafts)).toEqual([PATH]);
-    expect(drafts[PATH].timeOverride).toBe('2024-01-10T11:15:00.000Z');
+    expect(drafts[PATH].timeOverride).toBe('2024-01-10T11:15:00.000+00:00');
     expect(drafts[PATH].observations.map((o) => o.scientificName)).toEqual([
       'Odocoileus hemionus',
       'Canis latrans',
@@ -217,7 +219,9 @@ describe('draft store — add-only over a base multi-species image', () => {
 
   it('detag clears all observations', () => {
     useDraftStore.getState().detag(CTX, [target()]);
-    expect(useDraftStore.getState().drafts[PATH].observations).toEqual([]);
+    const draft = useDraftStore.getState().drafts[PATH];
+    expect(draft.observations).toEqual([]);
+    expect(draft.removedSpecies).toEqual(['Odocoileus hemionus', 'Canis latrans']);
   });
 
   it('addSpecies over a selection adds to every target (add-only, no toggle)', () => {

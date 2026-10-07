@@ -244,6 +244,7 @@ type DraftState = {
     ctx: UploadCtx,
     targets: BulkTimeTarget[],
     delta: TimeOffsetRecord,
+    timeZone?: string,
   ) => void;
 
   /** Flush every pending debounced Dexie write now (manual Cmd/Ctrl+S confirm). */
@@ -376,11 +377,13 @@ export const useDraftStore = create<DraftState>((set, get) => {
           ? [...new Set([...(prev.confirmedSpecies ?? []), tag.scientificName])]
           : prev.confirmedSpecies;
         const observations = addObservation(prev.observations, tag);
+        const removedSpecies = (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName);
         return {
           observations: confirmed
             ? appendReviewEvent(observations, tag.scientificName, tag.classifiedBy, tag.classificationTimestamp)
             : observations,
           confirmedSpecies,
+          removedSpecies,
         };
       }),
 
@@ -399,14 +402,22 @@ export const useDraftStore = create<DraftState>((set, get) => {
           confirmedSpecies: wasPresent && wasCanonical
             ? [...new Set([...(prev.confirmedSpecies ?? []), tag.scientificName])]
             : prev.confirmedSpecies,
+          removedSpecies: (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName),
         };
       }),
 
     removeSpecies: (ctx, mediaPath, deploymentId, base, sci) =>
-      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => ({
-        observations: removeObservation(prev.observations, sci),
-        confirmedSpecies: (prev.confirmedSpecies ?? []).filter((name) => name !== sci),
-      })),
+      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
+        const wasCanonical = base?.observations.some((o) => o.scientificName === sci) ?? false;
+        const removedSpecies = wasCanonical
+          ? [...new Set([...(prev.removedSpecies ?? []), sci])]
+          : prev.removedSpecies;
+        return {
+          observations: removeObservation(prev.observations, sci),
+          confirmedSpecies: (prev.confirmedSpecies ?? []).filter((name) => name !== sci),
+          removedSpecies,
+        };
+      }),
 
     setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count, classifiedBy, classificationTimestamp) =>
       mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
@@ -421,7 +432,17 @@ export const useDraftStore = create<DraftState>((set, get) => {
         };
       }),
 
-    detag: (ctx, targets) => mutateMany(ctx, targets, { observations: [], confirmedSpecies: [] }),
+    detag: (ctx, targets) => mutateMany(ctx, targets, (prev) => {
+      const canonical = targets.find((target) => target.mediaPath === prev.mediaPath)?.base?.observations ?? [];
+      const removedSpecies = canonical
+        .filter((o) => prev.observations.some((current) => current.scientificName === o.scientificName))
+        .map((o) => o.scientificName);
+      return {
+        observations: [],
+        confirmedSpecies: [],
+        removedSpecies: [...new Set([...(prev.removedSpecies ?? []), ...removedSpecies])],
+      };
+    }),
 
     setTimeOffset: (ctx, offset) => {
       // Optimistic Zustand update (hot path) + durable Dexie mirror. Unlike a
@@ -442,13 +463,13 @@ export const useDraftStore = create<DraftState>((set, get) => {
     setQuestionableMany: (ctx, targets, value) =>
       mutateMany(ctx, targets, { questionable: value }),
 
-    applyTimeOffsetToSelection: (ctx, targets, delta) => {
+    applyTimeOffsetToSelection: (ctx, targets, delta, timeZone) => {
       // Precompute the new absolute override per image (delta on top of the
       // already-corrected time), keyed by media path so the shared mutateMany
       // reducer — which only sees `prev` — can look each one up.
       const overrideByPath: Record<string, string> = {};
       for (const t of targets) {
-        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta);
+        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta, timeZone);
       }
       mutateMany(
         ctx,
@@ -535,6 +556,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
           ...rec,
           dirty: false,
           confirmedSpecies: undefined,
+          removedSpecies: undefined,
           // Review events are now in the canonical observations.csv. Remove
           // the pending copy so a later sync cannot write the same marker twice.
           observations: rec.observations.map((observation) => ({

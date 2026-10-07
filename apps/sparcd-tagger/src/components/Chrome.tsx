@@ -130,6 +130,9 @@ function CollectionChrome({ children }: { children: ReactNode }) {
           <span className="hidden sm:flex items-center">
             <StatePill state={displayState} />
           </span>
+          {/* The connected access key is the attribution identity internally,
+              but ConnectionChip already renders only its masked form. Do not
+              pass the raw key into the header as a second identity label. */}
           <ConnectionChip onDisconnect={disconnect} />
           <button
             onClick={toggleTheme}

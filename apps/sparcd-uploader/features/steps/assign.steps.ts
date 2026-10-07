@@ -211,7 +211,7 @@ Then('those already-used locations are listed first', async ({ app }) => {
 });
 
 Then("the list states how many of the registry's locations that collection has used", async ({ app }) => {
-  await expect(app.page.getByText(/1 of 6 locations\s+currently allowed for/)).toBeVisible();
+  await expect(app.page.getByText(/1 of 7 locations\s+currently allowed for/)).toBeVisible();
   await expect(app.page.getByText(/currently allowed for/)).toBeVisible();
 });
 
