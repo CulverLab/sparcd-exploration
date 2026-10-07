@@ -198,7 +198,7 @@ Given('an upload to the data-bucket collection was interrupted after some images
 });
 
 Then('it stores the remaining image under the key it planned', async ({ app }) => {
-  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
   const specs = standardBatch();
   const failed = specs.findIndex((s) => s.path.endsWith(FAILING_FILE));
   expect(imagePuts(app, app.notes.putsBeforeResume as number).map((p) => p.key)).toEqual([

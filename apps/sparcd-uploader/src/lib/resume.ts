@@ -27,7 +27,7 @@ import {
 } from './scanFiles';
 import { processBatch, type ProcessResponse } from './processPool';
 import { namingForUploadPath, objectKeyFor, buildBundleFromRecords, type ResolvedFileRecord } from './bundle';
-import { naiveInZoneToUtcIso, partsInZone, type NaiveDateTime } from './exifTime';
+import { inputValueToNaive, naiveInZoneToUtcIso, partsInZone, type NaiveDateTime } from './exifTime';
 import { estimateCaptureTimes, type EstimateInput } from './estimateCaptureTime';
 
 export type RestoreOk = {
@@ -357,7 +357,10 @@ export async function ensureBundle(
         id: rec.localPath,
         relPath: rec.localPath,
         processState: 'ready',
-        exifNaive: partsInZone(Date.parse(rec.captureTimestamp), timeZone),
+        // Offset-bearing values parse as instants and are converted back to
+        // their written local fields. A naïve legacy value already contains
+        // those local fields, so do not let the browser's zone reinterpret it.
+        exifNaive: inputValueToNaive(rec.captureTimestamp) ?? partsInZone(Date.parse(rec.captureTimestamp), timeZone),
         // A reference carries a camera time, so it can never reach the
         // file-modified fallback — and its source file may be long gone.
         file: { lastModified: 0 },
@@ -381,7 +384,9 @@ export async function ensureBundle(
   // The camera-local time `timeFor` stands on, which a Media key is stamped with.
   const naiveFor = (rec: FileRecord): NaiveDateTime =>
     inspected.get(rec.localPath)?.exifNaive ??
-    (rec.captureTimestamp ? partsInZone(Date.parse(rec.captureTimestamp), timeZone) : estimates.get(rec.localPath)!.naive);
+    (rec.captureTimestamp
+      ? inputValueToNaive(rec.captureTimestamp) ?? partsInZone(Date.parse(rec.captureTimestamp), timeZone)
+      : estimates.get(rec.localPath)!.naive);
 
   const updated: FileRecord[] = [];
   for (const rec of session.files) {
@@ -426,6 +431,7 @@ export async function ensureBundle(
     bucket: batch.targetBucket,
     uploaderSlug: batch.uploaderSlug,
     description: batch.description,
+    timeZone: batch.uploadTimeZone,
     uploadPath: batch.uploadPrefix,
     startedAt: new Date(batch.startedAt),
     files: resolvedRecords,

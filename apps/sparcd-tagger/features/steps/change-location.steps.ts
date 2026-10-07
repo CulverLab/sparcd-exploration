@@ -136,6 +136,13 @@ Then("every image's deployment is the new location", async ({ page }) => {
   await expect(page.locator('body')).toContainText(NEW_LOCATION_ID);
 });
 
+Then('media and observation timestamps are rebased to the new location offset', async ({ s3 }) => {
+  const media = s3.text(BUCKET, `${PREFIX_A}media.csv`);
+  const observations = s3.text(BUCKET, `${PREFIX_A}observations.csv`);
+  expect(media).toContain('2024-01-10T08:00:00.000-05:00');
+  expect(observations).toContain('2024-01-10T08:00:00.000-05:00');
+});
+
 // --- Backward compatibility: a session grounded before location tracking ----
 
 Given('a local edit has been made', async ({ page }) => {

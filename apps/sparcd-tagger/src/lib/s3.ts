@@ -17,7 +17,7 @@ import {
 import type { S3Config } from '@sparcd/types';
 import { parseUploadMeta, parseDeployments, type Deployment } from '@sparcd/camtrap';
 import { sha256Hex } from './hash';
-import type { CanonicalState, SyncIO, SnapshotManifest } from './sync';
+import { originalBaselinePrefixOf, type CanonicalState, type SyncIO, type SnapshotManifest } from './sync';
 import type { SyncJournal, CanonicalRole } from './syncJournal';
 
 // Not a security boundary in a static app — the wrapper just requires an
@@ -255,6 +255,8 @@ export async function loadCanonicalState(
 // with `manifest.json` last. A prefix without a complete manifest is an
 // abandoned partial snapshot and is ignored on recovery.
 const SNAPSHOTS_DIR = '.sparcd-tagger-snapshots/';
+const ORIGINAL_BASELINE_FILE = 'manifest.json';
+const ORIGINAL_BASELINE_ROLES: Array<CanonicalRole> = ['media', 'deployments', 'observations', 'uploadMeta'];
 
 // The `<user>/` path segment is percent-encoded on write (see `snapshotPrefixOf`);
 // decode it back, tolerating a malformed value rather than throwing and hiding
@@ -357,6 +359,101 @@ export function isNotFound(err: unknown): boolean {
   return e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.message === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404;
 }
 
+/** Prefer the oldest complete pre-change snapshot when an upload was edited
+ * before this version first created its immutable baseline. There is no way to
+ * recover an older byte state from the live canonical files alone; an existing
+ * snapshot is the earliest durable evidence available. Missing snapshot roles
+ * fall back to the current canonical role. A listing or read failure throws
+ * rather than falling back: the baseline is written once, so a fallback would
+ * record already-edited files as the original for good. */
+async function originalBaselineSource(
+  cfg: S3Config,
+  bucket: string,
+  uploadPrefix: string,
+  current: CanonicalState,
+): Promise<CanonicalState> {
+  const snapshots = await listSnapshots(cfg, bucket, uploadPrefix);
+  const oldest = snapshots.at(-1);
+  if (!oldest) return current;
+  const bodies = await loadSnapshotBodies(cfg, bucket, oldest.prefix);
+  const source = { ...current };
+  for (const role of ORIGINAL_BASELINE_ROLES) {
+    const text = bodies[role];
+    if (text !== undefined) {
+      source[role] = { text, etag: '', hash: await sha256Hex(text) };
+    }
+  }
+  return source;
+}
+
+/**
+ * Create the upload's immutable first-state baseline. The manifest is written
+ * last, so a failed/partial attempt is retried safely; an existing manifest is
+ * the durable winner and no baseline object is ever overwritten.
+ */
+async function ensureOriginalBaseline(
+  cfg: S3Config,
+  bucket: string,
+  uploadPrefix: string,
+  current: CanonicalState,
+): Promise<void> {
+  const readClient = getClient(cfg);
+  const writeClient = getWriteClient(cfg);
+  const prefix = originalBaselinePrefixOf(uploadPrefix);
+  try {
+    await readClient.getObject(bucket, `${prefix}${ORIGINAL_BASELINE_FILE}`);
+    return;
+  } catch (err) {
+    if (!isNotFound(err)) throw translateReadError(err, 'original upload baseline');
+  }
+  const source = await originalBaselineSource(cfg, bucket, uploadPrefix, current);
+
+  for (const role of ORIGINAL_BASELINE_ROLES) {
+    const body = source[role].text;
+    try {
+      await writeClient.writeImmutable(bucket, `${prefix}${CANONICAL_FILE[role]}`, body, {
+        contentType: role === 'uploadMeta' ? 'application/json' : 'text/csv',
+      });
+    } catch (err) {
+      // Another writer may have created the baseline between our manifest read
+      // and this object. Conditional writes make that race harmless.
+      if (!isPrecondition(err)) throw err;
+    }
+  }
+
+  // Read back the objects after conditional writes. A concurrent creator may
+  // have won one of the object races, so the manifest must describe the bytes
+  // that actually exist rather than the state this caller originally loaded.
+  const files = [];
+  for (const role of ORIGINAL_BASELINE_ROLES) {
+    const objectKey = `${prefix}${CANONICAL_FILE[role]}`;
+    const stat = await readClient.statObject(bucket, objectKey);
+    const bytes = await readClient.getObject(bucket, objectKey);
+    files.push({
+      name: CANONICAL_FILE[role],
+      etag: stat.etag ?? '',
+      sha256: await sha256Hex(bytes),
+    });
+  }
+  const manifest = JSON.stringify({
+    schemaVersion: 1,
+    kind: 'original-upload-baseline',
+    files,
+  }, null, 2);
+  try {
+    await writeClient.writeImmutable(bucket, `${prefix}${ORIGINAL_BASELINE_FILE}`, manifest, {
+      contentType: 'application/json',
+    });
+  } catch (err) {
+    if (!isPrecondition(err)) throw err;
+  }
+}
+
+function isPrecondition(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === 'PreconditionFailedError' || e?.$metadata?.httpStatusCode === 412;
+}
+
 /** Load the canonical bodies of one snapshot, to restore them in place. A
  *  snapshot written before location-change support has no `deployments.csv`
  *  — that role comes back absent rather than erroring, so the caller can
@@ -403,6 +500,7 @@ export function makeSyncIO(
 ): SyncIO {
   return {
     loadCanonical: () => loadCanonicalState(cfg, bucket, uploadPrefix),
+    ensureOriginalBaseline: (current) => ensureOriginalBaseline(cfg, bucket, uploadPrefix, current),
     writeSnapshot: async (key, body, contentType) => {
       await getWriteClient(cfg).writeImmutable(bucket, key, body, { contentType });
     },

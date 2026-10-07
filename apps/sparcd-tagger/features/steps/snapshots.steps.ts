@@ -174,7 +174,9 @@ Then(
 
 Then("only then are the snapshot's versions written back in place", async ({ s3 }) => {
   const lastSnapshot = s3.puts.findLastIndex((p) => p.key.includes('.sparcd-tagger-snapshots/'));
-  const canonical = s3.puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+  const canonical = s3.puts.filter(
+    (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+  );
   expect(canonical.length).toBeGreaterThan(0);
   expect(s3.puts.indexOf(canonical[0])).toBeGreaterThan(lastSnapshot);
   expect(canonical.every((p) => p.ifMatch !== undefined)).toBe(true);
@@ -217,7 +219,9 @@ Then('the restore replaces the files it re-read at the moment it ran', async ({ 
 Then(
   'every replacement still carries the precondition that catches a change made mid-write',
   async ({ s3 }) => {
-    const canonical = s3.puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+    const canonical = s3.puts.filter(
+      (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+    );
     expect(canonical.length).toBeGreaterThan(0);
     expect(canonical.every((p) => !!p.ifMatch)).toBe(true);
     // And the pre-restore snapshot captured the third party's state, so it is

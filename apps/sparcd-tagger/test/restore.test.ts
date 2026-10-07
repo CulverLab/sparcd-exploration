@@ -100,6 +100,7 @@ const NOW = new Date('2024-01-20T14:30:00');
 
 type Recorder = {
   snapshots: { key: string; body: string }[];
+  baselines: CanonicalState[];
   replaces: { key: string; body: string; etag: string }[];
   journals: SyncJournal[];
   cleared: number;
@@ -109,7 +110,7 @@ function fakeIO(
   current: CanonicalState,
   opts: { snapshotFailsOn?: (key: string) => boolean; replaceError?: (key: string) => Error | null } = {},
 ): { io: SyncIO; rec: Recorder } {
-  const rec: Recorder = { snapshots: [], replaces: [], journals: [], cleared: 0 };
+  const rec: Recorder = { snapshots: [], baselines: [], replaces: [], journals: [], cleared: 0 };
   const io: SyncIO = {
     loadCanonical: async () => current,
     writeSnapshot: async (key, body) => {
@@ -146,6 +147,22 @@ describe('runRestore — dry-run writes nothing', () => {
     }
     expect(rec.snapshots).toHaveLength(0);
     expect(rec.replaces).toHaveLength(0);
+  });
+});
+
+describe('runRestore — original baseline', () => {
+  it('preserves the original baseline before a live restore', async () => {
+    const cur = await canonical();
+    const { io, rec } = fakeIO(cur);
+    io.ensureOriginalBaseline = async (state) => rec.baselines.push(state);
+    const res = await runRestore(
+      { bucket: 'sparcd-x', uploadPrefix: PREFIX, user: 'jg', bodies: SNAP_BODIES, dryRun: false },
+      io,
+    );
+    expect(res.status).toBe('synced');
+    expect(rec.baselines).toHaveLength(1);
+    expect(rec.baselines[0].observations.text).toBe(CUR_OBS);
+    expect(rec.snapshots[0].key).toContain('.sparcd-tagger-snapshots/');
   });
 });
 

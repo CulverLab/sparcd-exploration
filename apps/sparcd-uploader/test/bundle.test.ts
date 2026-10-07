@@ -174,21 +174,19 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
 
   it('media.csv carries the DST-corrected full ISO capture time in col 4', async () => {
     // The uploader is the writer-of-record for capture time: the naive EXIF
-    // wall-clock 08:00 interpreted in America/Phoenix (UTC-7, no DST) is 15:00Z,
-    // written as a full ISO 8601 UTC string — matching how sparcd-web itself
-    // stamps timestamps.
+    // wall-clock 08:00 retains the selected location's numeric offset.
     const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const rows = parseMedia(b.mediaCsv);
     expect(rows).toHaveLength(1);
-    expect(rows[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(rows[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
   });
 
   it('capture time is independent of the chosen zone going in (proves tz applied)', async () => {
-    // Same naive wall-clock, two different zones → two different UTC instants.
+    // Same naive wall-clock, two different zones → different numeric offsets.
     const phx = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const utc = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'UTC');
-    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
-    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000Z');
+    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
+    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000+00:00');
   });
 
   it('a video media row carries the video media type', async () => {
@@ -211,7 +209,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
 
     bundle = await build([{ ...modified, manualNaive: naive({ hour: 9 }), manualSource: 'manual' }]);
     expect(parseMedia(bundle.mediaCsv)[0].comments).toBe('[TIMESTAMP:manual]');
-    expect(parseMedia(bundle.mediaCsv)[0].timestamp).toBe('2024-01-10T16:00:00.000Z');
+    expect(parseMedia(bundle.mediaCsv)[0].timestamp).toBe('2024-01-10T09:00:00.000-07:00');
   });
 
   it('a manual capture time fills col 4 (DST-corrected) when EXIF is absent', async () => {
@@ -219,7 +217,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: undefined, manualNaive: naive({ hour: 8 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
   });
 
   it('prefers EXIF over a stray manual time so a real camera time is never clobbered', async () => {
@@ -227,7 +225,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }), manualNaive: naive({ hour: 20 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
     expect(parseMedia(b.mediaCsv)[0].comments).toBe('');
   });
 
@@ -264,6 +262,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     expect(meta.imageCount).toBe(2);
     expect(meta.editComments).toEqual([]);
     expect(meta.bucket).toBe(`sparcd-${UUID}`);
+    expect(meta.captureTimeZone).toBe('America/Phoenix');
   });
 });
 
@@ -575,7 +574,7 @@ describe('Media layout', () => {
     const [row] = parseCsvRows(b.mediaCsv);
     expect(row[MEDIA_COL.mediaId]).toBe(key);
     expect(row[MEDIA_COL.filePath]).toBe(key);
-    expect(row[MEDIA_COL.timestamp]).toBe('2024-01-10T15:04:05.000Z'); // the same 08:04:05, in Phoenix
+    expect(row[MEDIA_COL.timestamp]).toBe('2024-01-10T08:04:05.000-07:00'); // the same 08:04:05, in Phoenix
     expect(parseObservations(b.observationsCsv)[0].observationId).toBe('20240110080405-IMG001.JPG:0');
     expect(parseUploadMeta(b.uploadMetaJson).bucket).toBe('field-data');
   });
@@ -591,7 +590,7 @@ describe('Media layout', () => {
       { layout: 'media' },
     );
     expect(b.items[1].key).toBe('Media/aa02/20240110080500-b.JPG');
-    expect(b.items[1].captureTimestamp).toBe('2024-01-10T08:05:00.000Z');
+    expect(b.items[1].captureTimestamp).toBe('2024-01-10T08:05:00.000+00:00');
   });
 
   it('stamps fourteen zeros and leaves col 4 empty for a file with no time at all', () => {

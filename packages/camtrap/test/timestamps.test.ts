@@ -1,5 +1,18 @@
 import { it, expect } from 'vitest';
-import { buildMediaComments, timestampSourceFromComments, serializeMedia, parseMedia, mergeMedia, parseCsvRows, formatDateTime24, type TimestampSource } from '../src/index';
+import {
+  buildMediaComments,
+  timestampSourceFromComments,
+  serializeMedia,
+  parseMedia,
+  mergeMedia,
+  parseCsvRows,
+  captureTimestampInZone,
+  rebaseCaptureTimestamp,
+  shiftTimestamp,
+  ZERO_OFFSET,
+  formatDateTime24,
+  type TimestampSource,
+} from '../src/index';
 
 it.each<TimestampSource>(['manual', 'spread', 'interpolated', 'offset', 'file-modified', 'exif-modify'])('round trips %s', (timestampSource) => {
   expect(timestampSourceFromComments(buildMediaComments({ timestampSource }))).toBe(timestampSource);
@@ -33,6 +46,50 @@ it('changes an estimated timestamp marker to manual without losing other comment
   expect(row.timestamp).toBe('new');
   expect(row.comments).toBe('[TIMESTAMP:manual] note [UPLOADER:kept]');
   expect(timestampSourceFromComments(row.comments ?? '')).toBe('manual');
+});
+
+it('writes and rebases offset-bearing capture timestamps', () => {
+  const phoenix = captureTimestampInZone('2026-07-01T12:00:00', 'America/Phoenix');
+  expect(phoenix).toBe('2026-07-01T12:00:00.000-07:00');
+  expect(rebaseCaptureTimestamp(phoenix, 'America/Phoenix', 'America/New_York')).toBe(
+    '2026-07-01T12:00:00.000-04:00',
+  );
+  expect(rebaseCaptureTimestamp('2026-01-15T19:00:00.000Z', 'America/Phoenix', 'America/New_York')).toBe(
+    '2026-01-15T12:00:00.000-05:00',
+  );
+  expect(rebaseCaptureTimestamp('2026-01-15T12:00:00', 'America/Phoenix', 'America/New_York')).toBe(
+    '2026-01-15T12:00:00.000-05:00',
+  );
+});
+
+it('rebases six-digit fractional seconds across zones without dropping digits', () => {
+  expect(rebaseCaptureTimestamp('2024-05-01T20:02:11.123456+00:00', 'UTC', 'America/New_York')).toBe(
+    '2024-05-01T20:02:11.123456-04:00',
+  );
+  expect(rebaseCaptureTimestamp('2024-05-01T20:02:11.123456Z', 'America/Phoenix', 'America/New_York')).toBe(
+    '2024-05-01T13:02:11.123456-04:00',
+  );
+  expect(shiftTimestamp('2024-05-01T20:02:11.123456+00:00', { ...ZERO_OFFSET, hours: 1 }, 'UTC')).toBe(
+    '2024-05-01T21:02:11.123456+00:00',
+  );
+});
+
+it('shifts a Z value as the local time of its instant when the zone is known', () => {
+  expect(shiftTimestamp('2026-01-15T15:00:00.000Z', { ...ZERO_OFFSET, hours: 1 }, 'America/Phoenix')).toBe(
+    '2026-01-15T09:00:00.000-07:00',
+  );
+  expect(shiftTimestamp('2026-01-15T15:00:00.000Z', { ...ZERO_OFFSET, hours: 1 })).toBe('2026-01-15T16:00:00.000+00:00');
+});
+
+it('keeps daylight-saving offsets tied to the local date', () => {
+  expect(captureTimestampInZone('2026-01-15T12:00:00', 'America/New_York')).toContain('-05:00');
+  expect(captureTimestampInZone('2026-07-15T12:00:00', 'America/New_York')).toContain('-04:00');
+});
+
+it('moves a spring-forward wall clock through the nonexistent hour', () => {
+  expect(captureTimestampInZone('2026-03-08T02:30:00', 'America/New_York')).toBe(
+    '2026-03-08T03:30:00.000-04:00',
+  );
 });
 
 it('formats midnight and late-night instants with a 24-hour clock', () => {

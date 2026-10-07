@@ -118,9 +118,8 @@ export function serializeDeployments(deployments: Deployment[]): string {
  * matching SPARC'd's own writer.
  *
  * Col 4 carries `m.timestamp` verbatim — the uploader is the writer-of-record
- * for capture time and stamps a DST-corrected full ISO 8601 UTC timestamp
- * (`YYYY-MM-DDTHH:mm:ss.sssZ`) here, matching how sparcd-web itself stamps
- * timestamps (`datetime.now(UTC).isoformat()` in `camtrap_utils.py`). It is
+ * for capture time and stamps a DST-corrected full ISO 8601 timestamp with a
+ * numeric timezone offset (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`) here. It is
  * empty only when capture time is genuinely absent (e.g. a video without
  * container metadata, routed to manual entry). The tagger still merges later
  * per-image corrections via `mergeMedia`.
@@ -133,7 +132,7 @@ export function serializeMedia(media: Media[]): string {
         m.deploymentId, // 1  deployment_id
         m.mediaPath, // 2  sequence_id (= full key)
         '', // 3  capture_method
-        m.timestamp, // 4  timestamp (full ISO 8601 UTC, DST-corrected by the uploader)
+        m.timestamp, // 4  timestamp (offset-bearing ISO 8601, DST-corrected by uploader)
         m.mediaPath, // 5  file_path (= full key)
         m.fileName, // 6  file_name
         m.mimeType, // 7  file_media_type
@@ -201,6 +200,8 @@ export type UploadMetaJson = {
   bucket: string;
   uploadPath: string;
   description: string;
+  /** IANA zone used to interpret camera/estimated wall-clock capture times. */
+  captureTimeZone?: string;
 };
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -234,6 +235,7 @@ export function buildUploadMeta(input: {
   bucket: string;
   uploadPath: string;
   description: string;
+  captureTimeZone?: string;
 }): UploadMetaJson {
   // Key order matches the live file so the serialized bytes line up.
   return {
@@ -245,6 +247,7 @@ export function buildUploadMeta(input: {
     bucket: input.bucket,
     uploadPath: input.uploadPath,
     description: input.description,
+    ...(input.captureTimeZone ? { captureTimeZone: input.captureTimeZone } : {}),
   };
 }
 
@@ -489,20 +492,23 @@ export function parseMedia(csv: string): Media[] {
   }));
 }
 
+// Some producers (e.g. video ingestion) never populate observationType at
+// all, leaving it empty even on rows that name a real species — infer
+// "animal" from scientificName in that case. An explicit non-'animal'
+// value (e.g. "human", "vehicle") is trusted as-is and stays 'blank',
+// since other producers do use it to mean something other than blank.
+function isAnimalRow(r: string[]): boolean {
+  const rawType = r[OBS_COL.observationType] ?? '';
+  return rawType === 'animal' ||
+    (rawType === '' && (r[OBS_COL.scientificName] ?? '') !== '' && Number(r[OBS_COL.count] ?? '0') > 0);
+}
+
 /** Parse `observations.csv` into typed rows. `tags` is the raw col-19 comments. */
 export function parseObservations(csv: string): Observation[] {
   return parseCsvRows(csv).map((r) => {
-    const rawType = r[OBS_COL.observationType] ?? '';
     const scientificName = r[OBS_COL.scientificName] ?? '';
     const count = Number(r[OBS_COL.count] ?? '0');
-    // Some producers (e.g. video ingestion) never populate observationType at
-    // all, leaving it empty even on rows that name a real species — infer
-    // "animal" from scientificName in that case. An explicit non-'animal'
-    // value (e.g. "human", "vehicle") is trusted as-is and stays 'blank',
-    // since other producers do use it to mean something other than blank.
-    const observationType = rawType === 'animal' || (rawType === '' && scientificName !== '' && count > 0)
-      ? 'animal'
-      : 'blank';
+    const observationType = isAnimalRow(r) ? 'animal' : 'blank';
     const tags = r[OBS_COL.comments] ?? '';
     const reviewEvents = reviewEventsFromComments(tags);
     return {
@@ -539,6 +545,8 @@ export function timestampSourceFromComments(comments: string): TimestampSource |
 
 export const COMMONNAME_PREFIX = 'COMMONNAME';
 export const REQUESTED_SPECIES_PREFIX = 'REQUESTED_SPECIES';
+export const CORRECTED_FROM_PREFIX = 'CORRECTED_FROM';
+export const REMOVED_PREFIX = 'REMOVED';
 export const REVIEWED_BY_PREFIX = 'REVIEWED_BY';
 export const REVIEWED_AT_PREFIX = 'REVIEWED_AT';
 
@@ -568,6 +576,20 @@ export function requestedSpeciesFromComments(comments: string): string | null {
   return m ? m.value : null;
 }
 
+/** Prior scientific name for an explicit species correction, or null. */
+export function correctedFromFromComments(comments: string): string | null {
+  const m = parseTagMarkers(comments).find((t) => t.prefix === CORRECTED_FROM_PREFIX);
+  return m?.value || null;
+}
+
+/** All scientific names explicitly removed in this edit, or an empty list. */
+export function removedSpeciesFromComments(comments: string): string[] {
+  return parseTagMarkers(comments)
+    .filter((t) => t.prefix === REMOVED_PREFIX)
+    .map((t) => t.value)
+    .filter(Boolean);
+}
+
 /** Read repeatable reviewer events from an observation's comments markers. */
 export function reviewEventsFromComments(comments: string): ReviewEvent[] {
   const markers = parseTagMarkers(comments);
@@ -591,6 +613,8 @@ export function reviewEventsFromComments(comments: string): ReviewEvent[] {
 export function buildObservationComments(input: {
   commonName?: string;
   requestedSpecies?: string;
+  correctedFrom?: string;
+  removedSpecies?: string[];
   reviewEvents?: ReviewEvent[];
   extra?: TagMarker[];
 }): string {
@@ -598,6 +622,10 @@ export function buildObservationComments(input: {
   if (input.commonName) markers.push({ prefix: COMMONNAME_PREFIX, value: input.commonName });
   if (input.requestedSpecies)
     markers.push({ prefix: REQUESTED_SPECIES_PREFIX, value: input.requestedSpecies });
+  if (input.correctedFrom)
+    markers.push({ prefix: CORRECTED_FROM_PREFIX, value: input.correctedFrom });
+  for (const species of input.removedSpecies ?? [])
+    if (species) markers.push({ prefix: REMOVED_PREFIX, value: species });
   for (const event of input.reviewEvents ?? []) {
     if (event.reviewedBy && event.reviewedAt) {
       markers.push({ prefix: REVIEWED_BY_PREFIX, value: event.reviewedBy });
@@ -616,8 +644,10 @@ export type ObservationInput = {
   count: number; // col 9
   commonName?: string; // → [COMMONNAME:…] in col 19
   requestedSpecies?: string; // → [REQUESTED_SPECIES:…] in col 19
+  removedSpecies?: string[]; // → [REMOVED:…] in col 19
   reviewEvents?: ReviewEvent[]; // → [REVIEWED_BY/REVIEWED_AT:…] in col 19
   extraMarkers?: TagMarker[]; // preserved through-markers
+  correctedFrom?: string; // prior scientific name for an explicit replacement
   /** Existing attribution is retained when Tagger replaces an observation row. */
   classifiedBy?: string;
   /** ISO timestamp paired with classifiedBy — when the original attribution was made. */
@@ -637,6 +667,8 @@ export type MediaEdit = {
   mediaTimestamp?: string; // if set, overwrite media.csv col 4 for this image
   /** When a flagged capture time is corrected, replace its source marker in col 10. */
   timestampSource?: TimestampSource;
+  /** Species explicitly removed in this edit; written once on the replacement row. */
+  removedSpecies?: string[];
   observations: ObservationInput[];
 };
 
@@ -652,9 +684,10 @@ function buildObservationRow(
   edit: MediaEdit,
   o: ObservationInput,
   observationId: string,
+  existingRow?: string[],
 ): string[] {
-  const row = new Array<string>(OBS_COLUMN_COUNT).fill('');
-  row[OBS_COL.observationId] = observationId;
+  const row = existingRow ? [...existingRow] : new Array<string>(OBS_COLUMN_COUNT).fill('');
+  row[OBS_COL.observationId] = existingRow?.[OBS_COL.observationId] || observationId;
   row[OBS_COL.deploymentId] = edit.deploymentId;
   row[OBS_COL.mediaId] = edit.mediaId;
   row[OBS_COL.timestamp] = edit.timestamp;
@@ -663,11 +696,17 @@ function buildObservationRow(
   row[OBS_COL.scientificName] = o.scientificName;
   row[OBS_COL.count] = String(o.count);
   row[OBS_COL.countNew] = '0';
+  const knownPrefixes = new Set(['COMMONNAME', 'REQUESTED_SPECIES', 'CORRECTED_FROM', 'REMOVED', 'REVIEWED_BY', 'REVIEWED_AT']);
+  const preservedMarkers = parseTagMarkers(existingRow?.[OBS_COL.comments] ?? '').filter(
+    (marker) => !knownPrefixes.has(marker.prefix),
+  );
   row[OBS_COL.comments] = buildObservationComments({
     commonName: o.commonName,
     requestedSpecies: o.requestedSpecies,
+    correctedFrom: o.correctedFrom,
+    removedSpecies: o.removedSpecies,
     reviewEvents: o.reviewEvents,
-    extra: o.extraMarkers,
+    extra: [...preservedMarkers, ...(o.extraMarkers ?? [])],
   });
   row[OBS_COL.classifiedBy] = o.classifiedBy ?? '';
   row[OBS_COL.classificationTimestamp] = o.classificationTimestamp ?? '';
@@ -682,6 +721,7 @@ function buildBlankObservationRow(edit: MediaEdit, observationId: string): strin
   row[OBS_COL.timestamp] = edit.timestamp;
   row[OBS_COL.observationType] = 'blank';
   row[OBS_COL.cameraSetup] = 'false';
+  row[OBS_COL.comments] = buildObservationComments({ removedSpecies: edit.removedSpecies });
   return row;
 }
 
@@ -733,18 +773,32 @@ export function mergeObservations(
 ): string {
   const genId = opts.observationId ?? defaultObservationId;
   const editByMedia = new Map(edits.map((e) => [e.mediaId, e]));
+  const rows = parseCsvRows(canonicalObsCsv);
+  const existingByMedia = new Map<string, string[][]>();
+  for (const row of rows) {
+    const list = existingByMedia.get(row[OBS_COL.mediaId]);
+    if (list) list.push(row);
+    else existingByMedia.set(row[OBS_COL.mediaId], [row]);
+  }
   const built = new Map<string, string[][]>();
   for (const e of edits) {
+    const used = new Set<string[]>();
+    const existing = existingByMedia.get(e.mediaId) ?? [];
     const positive = e.observations
       .filter(positiveCount)
-      .map((o, i) => buildObservationRow(e, o, genId(e.mediaId, i)));
+      .map((o, i) => {
+        const prior = existing.find(
+          (row) => !used.has(row) && isAnimalRow(row) && row[OBS_COL.scientificName] === o.scientificName,
+        );
+        if (prior) used.add(prior);
+        return buildObservationRow(e, o, genId(e.mediaId, i), prior);
+      });
     built.set(
       e.mediaId,
       positive.length > 0 ? positive : [buildBlankObservationRow(e, genId(e.mediaId, 0))],
     );
   }
 
-  const rows = parseCsvRows(canonicalObsCsv);
   const out: string[][] = [];
   const placed = new Set<string>();
   for (const row of rows) {
@@ -885,9 +939,8 @@ export const ZERO_OFFSET: TimeOffset = {
 };
 
 // Parse the leading `YYYY-MM-DDTHH:mm:ss` fields out of either a naive string
-// (legacy data) or a full ISO 8601 UTC string (current writer output) — the
-// trailing `.sssZ`, if present, is ignored by the arithmetic below and dropped
-// from the output, which is always re-emitted as full ISO.
+// (legacy data) or a full ISO 8601 timestamp. Offset-bearing values retain
+// their numeric offset after the local wall-clock correction.
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
 
 /** Last valid day of `month0` (0-11) in `year` — for calendar-style day clamping. */
@@ -896,8 +949,9 @@ function daysInMonth(year: number, month0: number): number {
 }
 
 /**
- * Shift a timestamp (naive or full ISO) by a signed offset, returning a full
- * ISO 8601 UTC string. Non-matching input is returned unchanged.
+ * Shift a timestamp (naive or full ISO) by a signed offset. Numeric-offset
+ * values remain numeric-offset values; legacy `Z` values are upgraded to the
+ * canonical numeric `+00:00` spelling.
  *
  * Mirrors `LocalDateTime.plusYears(y).plusMonths(mo).plusDays(d).plusHours(h)...`
  * semantics carried over from the original desktop tooling: the year and month
@@ -907,15 +961,23 @@ function daysInMonth(year: number, month0: number): number {
  * steps are exact durations. See the `contracts.test.ts` "clamps month/year
  * overflow" case.
  */
-export function shiftTimestamp(iso: string, off: TimeOffset): string {
+export function shiftTimestamp(iso: string, off: TimeOffset, timeZone?: string): string {
   const m = TS_RE.exec(iso);
   if (!m) return iso;
-  let year = Number(m[1]);
-  let month0 = Number(m[2]) - 1;
-  let day = Number(m[3]);
-  const hour = Number(m[4]);
-  const minute = Number(m[5]);
-  const second = Number(m[6]);
+  const fraction = iso.match(/\.(\d{1,6})/)?.[1] ?? '';
+  const millisecond = Number(fraction.slice(0, 3).padEnd(3, '0') || 0);
+  const offset = iso.match(/(Z|[+-]\d{2}:?\d{2})$/)?.[1];
+  const written = {
+    year: Number(m[1]), month: Number(m[2]), day: Number(m[3]),
+    hour: Number(m[4]), minute: Number(m[5]), second: Number(m[6]), millisecond,
+  };
+  // A `Z` value's fields are UTC, not camera wall clock. With a zone, shift the
+  // wall clock that instant shows there.
+  const start = timeZone && offset === 'Z' ? partsAt(partsAsUtcMs(written), timeZone) : written;
+  let year = start.year;
+  let month0 = start.month - 1;
+  let day = start.day;
+  const { hour, minute, second } = start;
 
   // plusYears — clamp the day within the same month of the new year.
   year += off.years;
@@ -934,7 +996,19 @@ export function shiftTimestamp(iso: string, off: TimeOffset): string {
       off.minutes * 60_000 +
       off.seconds * 1_000,
   );
-  return d.toISOString();
+  d.setUTCMilliseconds(millisecond);
+  const shifted = {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+    millisecond: d.getUTCMilliseconds(),
+  };
+  return timeZone
+    ? formatCaptureTimestamp(shifted, timeZone, fraction.slice(3))
+    : formatCaptureTimestampWithOffset(shifted, offset === 'Z' || !offset ? '+00:00' : offset, fraction.slice(3));
 }
 
 /** Resolve the corrected timestamp for one image: per-image override wins over the upload offset. */
@@ -942,10 +1016,186 @@ export function correctedTimestamp(
   original: string,
   offset: TimeOffset | null,
   override: string | null,
+  timeZone?: string,
 ): string {
   if (override) return override;
-  if (offset) return shiftTimestamp(original, offset);
+  if (offset) return shiftTimestamp(original, offset, timeZone);
   return original;
+}
+
+// --- Offset-bearing capture timestamps -------------------------------------
+
+export type CaptureTimestampParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  millisecond: number;
+};
+
+const CAPTURE_TIMESTAMP_RE =
+  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,6}))?(Z|[+-]\d{2}:?\d{2})?$/;
+
+// Other tools may write microseconds. Milliseconds drive the arithmetic; the
+// digits past them (`subMillisecond`) are carried through to the output as-is.
+function parseCaptureTimestamp(
+  value: string,
+): { parts: CaptureTimestampParts; offset: string | null; subMillisecond: string } | null {
+  const match = CAPTURE_TIMESTAMP_RE.exec(value.trim());
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = '0', fraction = '', offset = null] = match;
+  const parts: CaptureTimestampParts = {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Number(second),
+    millisecond: Number(fraction.slice(0, 3).padEnd(3, '0') || 0),
+  };
+  if (offset) {
+    const normalized = offset === 'Z' ? '+00:00' : offset.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');
+    const offsetMatch = /^([+-])(\d{2}):(\d{2})$/.exec(normalized);
+    if (!offsetMatch || Number(offsetMatch[2]) > 23 || Number(offsetMatch[3]) > 59) return null;
+  }
+  const probe = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  if (
+    parts.month < 1 || parts.month > 12 ||
+    parts.day < 1 || parts.day > 31 ||
+    parts.hour > 23 || parts.minute > 59 || parts.second > 59 ||
+    probe.getUTCFullYear() !== parts.year ||
+    probe.getUTCMonth() !== parts.month - 1 ||
+    probe.getUTCDate() !== parts.day
+  ) return null;
+  return { parts, offset, subMillisecond: fraction.slice(3) };
+}
+
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function partsAt(instantMs: number, timeZone: string): CaptureTimestampParts {
+  const map: Record<string, number> = {};
+  let formatter = zoneFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    zoneFormatters.set(timeZone, formatter);
+  }
+  for (const part of formatter.formatToParts(new Date(instantMs))) {
+    if (part.type !== 'literal') map[part.type] = Number(part.value);
+  }
+  return {
+    year: map.year,
+    month: map.month,
+    day: map.day,
+    hour: map.hour,
+    minute: map.minute,
+    second: map.second,
+    millisecond: new Date(instantMs).getUTCMilliseconds(),
+  };
+}
+
+function partsAsUtcMs(parts: CaptureTimestampParts): number {
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second, parts.millisecond);
+}
+
+function offsetMinutesFor(parts: CaptureTimestampParts, timeZone: string): number {
+  let guess = partsAsUtcMs(parts);
+  for (let i = 0; i < 3; i += 1) {
+    const shown = partsAt(guess, timeZone);
+    guess -= partsAsUtcMs(shown) - partsAsUtcMs(parts);
+  }
+  return Math.round((partsAsUtcMs(parts) - guess) / 60_000);
+}
+
+function offsetText(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+';
+  const absolute = Math.abs(minutes);
+  return `${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+}
+
+function sameParts(a: CaptureTimestampParts, b: CaptureTimestampParts): boolean {
+  return a.year === b.year && a.month === b.month && a.day === b.day &&
+    a.hour === b.hour && a.minute === b.minute && a.second === b.second;
+}
+
+function localPartsAndOffset(parts: CaptureTimestampParts, timeZone: string): { parts: CaptureTimestampParts; offset: number } {
+  const offset = offsetMinutesFor(parts, timeZone);
+  const instant = partsAsUtcMs(parts) - offset * 60_000;
+  const shown = partsAt(instant, timeZone);
+  // A spring-forward wall-clock value does not exist. Move it through the gap
+  // to the first valid local time so the emitted timestamp names its instant.
+  if (!sameParts(shown, parts)) {
+    const delta = partsAsUtcMs(shown) - partsAsUtcMs(parts);
+    if (delta > 0) {
+      const corrected = partsAt(instant, timeZone);
+      return { parts: corrected, offset: offsetMinutesFor(corrected, timeZone) };
+    }
+  }
+  return { parts, offset };
+}
+
+function formatCaptureTimestamp(parts: CaptureTimestampParts, timeZone: string, subMillisecond = ''): string {
+  const resolved = localPartsAndOffset(parts, timeZone);
+  parts = resolved.parts;
+  return (
+    `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T` +
+    `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}.` +
+    `${String(parts.millisecond).padStart(3, '0')}${subMillisecond}${offsetText(resolved.offset)}`
+  );
+}
+
+function formatCaptureTimestampWithOffset(parts: CaptureTimestampParts, offset: string, subMillisecond = ''): string {
+  const normalized = offset === 'Z' ? '+00:00' : offset.includes(':') ? offset : `${offset.slice(0, 3)}:${offset.slice(3)}`;
+  return (
+    `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T` +
+    `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}.` +
+    `${String(parts.millisecond).padStart(3, '0')}${subMillisecond}${normalized}`
+  );
+}
+
+/** Normalize a user or legacy timestamp to the canonical offset-bearing form. */
+export function normalizeCaptureTimestamp(value: string): string {
+  const parsed = parseCaptureTimestamp(value);
+  if (!parsed) throw new Error(`Invalid capture timestamp: ${value}`);
+  return formatCaptureTimestampWithOffset(parsed.parts, parsed.offset ?? '+00:00', parsed.subMillisecond);
+}
+
+/** Interpret a naive camera wall-clock timestamp in an IANA zone. */
+export function captureTimestampInZone(naive: string, timeZone: string): string {
+  const parsed = parseCaptureTimestamp(naive);
+  if (!parsed) throw new Error(`Invalid capture timestamp: ${naive}`);
+  return formatCaptureTimestamp(parsed.parts, timeZone, parsed.subMillisecond);
+}
+
+/** Reinterpret a capture timestamp's wall-clock value in another IANA zone. */
+export function rebaseCaptureTimestamp(
+  value: string,
+  fromTimeZone: string | undefined,
+  toTimeZone: string,
+): string {
+  const parsed = parseCaptureTimestamp(value);
+  if (!parsed) throw new Error(`Invalid capture timestamp: ${value}`);
+  let parts = parsed.parts;
+  // Legacy files have two forms: naïve values already contain the camera's
+  // local wall-clock fields, while older full-ISO values ended in `Z` and need
+  // their original wall-clock components recovered through the old location.
+  if (parsed.offset === 'Z') {
+    if (fromTimeZone) {
+      const instant = Date.parse(value.endsWith('Z') ? value : `${value}Z`);
+      if (!Number.isNaN(instant)) parts = partsAt(instant, fromTimeZone);
+    }
+  }
+  return formatCaptureTimestamp(parts, toTimeZone, parsed.subMillisecond);
 }
 
 /** Format an instant as a local `YYYY-MM-DD HH:mm:ss` string with a 24-hour clock. */

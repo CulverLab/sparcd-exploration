@@ -26,6 +26,7 @@ export type DraftObservation = {
   classifiedBy?: string; // canonical attribution, preserved when rows are replaced
   classificationTimestamp?: string; // ISO; when the original identification was made
   reviewEvents?: ReviewEvent[];
+  correctedFrom?: string; // prior scientific name for an explicit replacement
 };
 
 /** One image's local edit. `id` = `${bucket}::${uploadPrefix}::${mediaPath}`.
@@ -42,6 +43,8 @@ export interface DraftRecord {
   observations: DraftObservation[];
   /** Species explicitly re-applied as a confirmation since the last sync. */
   confirmedSpecies?: string[];
+  /** Species explicitly removed since the last sync. */
+  removedSpecies?: string[];
   questionable: boolean;
   timeOverride: string | null; // per-image corrected ISO timestamp; null when unset
 

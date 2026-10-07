@@ -25,12 +25,12 @@ import {
   javaEditStamp,
   correctedTimestamp,
   hasSpeciesPresent,
-  rewriteMediaDeploymentId,
-  rewriteObservationsDeploymentId,
   serializeDeployments,
   parseDeployments,
   parseCsvRows,
   mediaObjectName,
+  serializeCsvRows,
+  rebaseCaptureTimestamp,
   MEDIA_COL,
   OBS_COL,
   type MediaEdit,
@@ -38,6 +38,7 @@ import {
   type Deployment,
   type ReviewEvent,
 } from '@sparcd/camtrap';
+import tzlookup from 'tz-lookup';
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 import { sha256Hex } from './hash';
@@ -134,6 +135,7 @@ export function buildSyncPlan(
   offset: TimeOffset | null,
   pendingLocation: Deployment | null = null,
   user = '',
+  timeZone?: string,
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
@@ -156,7 +158,7 @@ export function buildSyncPlan(
     // not the stale one the image loaded with.
     const deploymentId = pendingLocation?.deploymentId ?? img.deploymentId;
 
-    const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null);
+    const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null, timeZone);
     const timeChanged = !!img.baseTimestamp && corrected !== img.baseTimestamp;
     // A Tagger correction replaces an uploader estimate with a user-provided
     // time. Keep the marker so downstream readers still know the camera did
@@ -164,6 +166,9 @@ export function buildSyncPlan(
     const timestampSource = timeChanged && img.timestampSource ? 'manual' : undefined;
     const tagChanged = !observationsEqual(obs, img.baseObservations);
     const confirmedSpecies = d?.confirmedSpecies ?? [];
+    // Match provenance by the stable species key even when count/name fields
+    // changed. A count correction must retain the canonical review history and
+    // original attribution for that species.
     const baseForObservation = (o: (typeof obs)[number]) => img.baseObservations.find(
       (candidate) => candidate.scientificName === o.scientificName,
     );
@@ -172,6 +177,13 @@ export function buildSyncPlan(
     // mistake legacy drafts that lack those fields for confirmations.
     const confirmedUnchanged = !!d && !tagChanged &&
       (d.confirmedSpecies ?? []).some((name) => obs.some((o) => o.scientificName === name));
+
+    // Removals already on the canonical rows are re-emitted on every rewrite of
+    // this image; a species that is present again no longer counts as removed.
+    const removedSpecies = [...new Set([
+      ...(img.baseRemovedSpecies ?? []),
+      ...(d?.removedSpecies ?? []).filter((name) => img.baseObservations.some((o) => o.scientificName === name)),
+    ])].filter((name) => !obs.some((o) => o.scientificName === name));
 
     if (timeChanged) summary.timeCorrections++;
 
@@ -187,12 +199,33 @@ export function buildSyncPlan(
         img.baseObservations.some((o) => o.scientificName === name),
       ).length;
 
+      // A species replacement is the one-to-one case where an existing name
+      // disappeared and a different name was added on the same image. Keep
+      // that relationship on the replacement row so the canonical record
+      // explains what was corrected. Additions, removals, and count-only edits
+      // deliberately remain unmarked.
+      const baseNames = new Set(img.baseObservations.map((o) => o.scientificName));
+      const nextNames = new Set(obs.map((o) => o.scientificName));
+      const removedNames = img.baseObservations
+        .map((o) => o.scientificName)
+        .filter((name) => !nextNames.has(name));
+      const addedNames = obs
+        .map((o) => o.scientificName)
+        .filter((name) => !baseNames.has(name));
+      const replacementFrom = removedNames.length === 1 && addedNames.length === 1
+        ? removedNames[0]
+        : undefined;
+      // The swapped-out species is recorded once, as the correction, not also
+      // as a removal.
+      const removed = removedSpecies.filter((name) => name !== replacementFrom);
+
       tagEdits.push({
         mediaId: img.key,
         deploymentId,
         timestamp: corrected,
         mediaTimestamp: timeChanged ? corrected : undefined,
         timestampSource,
+        removedSpecies: removed,
         observations: obs.map((o) => {
           const base = baseForObservation(o);
           // The editor is credited only for a species changed or re-applied
@@ -213,7 +246,12 @@ export function buildSyncPlan(
             count: Math.max(1, o.count),
             commonName: o.commonName || undefined,
             requestedSpecies: o.requestedSpecies || undefined,
+            removedSpecies: obs[0] === o ? removed : undefined,
             reviewEvents: mergeReviewEvents(base?.reviewEvents, o.reviewEvents),
+            // A clean draft left by an earlier sync no longer holds the marker,
+            // so the canonical row is the source, as for attribution.
+            correctedFrom: base?.correctedFrom ?? o.correctedFrom ??
+              (replacementFrom && o.scientificName === addedNames[0] ? replacementFrom : undefined),
             classifiedBy,
             classificationTimestamp,
           };
@@ -230,6 +268,7 @@ export function buildSyncPlan(
         // Content is identical to base by definition (tagChanged is false),
         // so no delta/summary bookkeeping runs here — only the attribution
         // `addObservation` already refreshed at apply time is written through.
+        removedSpecies,
         observations: obs.map((o) => {
           const base = baseForObservation(o);
           const explicitlyConfirmed = confirmedSpecies.includes(o.scientificName);
@@ -238,6 +277,7 @@ export function buildSyncPlan(
             count: Math.max(1, o.count),
             commonName: o.commonName || undefined,
             requestedSpecies: o.requestedSpecies || undefined,
+            removedSpecies: obs[0] === o ? removedSpecies : undefined,
             // Only the explicitly re-applied species receives the current
             // reviewer identity. Other legacy rows keep their canonical
             // attribution (or remain unattributed).
@@ -246,6 +286,7 @@ export function buildSyncPlan(
             classificationTimestamp: base?.classificationTimestamp ?? o.classificationTimestamp ??
               (explicitlyConfirmed ? new Date().toISOString() : undefined),
             reviewEvents: mergeReviewEvents(base?.reviewEvents, o.reviewEvents),
+            correctedFrom: base?.correctedFrom ?? o.correctedFrom,
           };
         }),
       });
@@ -290,6 +331,10 @@ export function snapshotStamp(d: Date): string {
 export const snapshotPrefixOf = (uploadPrefix: string, user: string, stamp: string): string =>
   `${uploadPrefix}.sparcd-tagger-snapshots/${encodeURIComponent(user)}/${stamp}/`;
 
+/** Prefix for the one immutable copy of the upload's initial canonical state. */
+export const originalBaselinePrefixOf = (uploadPrefix: string): string =>
+  `${uploadPrefix}.sparcd-tagger-original/`;
+
 // --- Orchestrator ----------------------------------------------------------
 
 /** Every S3/Dexie effect the sync performs, injected so it is fully testable. */
@@ -298,6 +343,8 @@ export type SyncIO = {
   loadCanonical: () => Promise<CanonicalState>;
   /** Conditional `writeImmutable` of one snapshot object; rejects with a 412-typed error if the key exists. */
   writeSnapshot: (key: string, body: string, contentType: string) => Promise<void>;
+  /** Create the immutable first-state baseline if this upload has none yet. */
+  ensureOriginalBaseline?: (current: CanonicalState) => Promise<void>;
   /** `replaceIfUnchanged` of one canonical object; rejects with a conflict-typed error on a stale ETag. */
   replace: (key: string, body: string, etag: string, contentType: string) => Promise<{ etag?: string }>;
   saveJournal: (journal: SyncJournal) => Promise<void>;
@@ -368,13 +415,62 @@ function isUnsupported(err: unknown): boolean {
   return (err as { name?: string })?.name === 'ConditionalPutUnsupportedError';
 }
 
+function rewriteDeploymentAndRebase(
+  csv: string,
+  deploymentColumn: number,
+  timestampColumn: number,
+  fromDeploymentId: string | undefined,
+  toDeploymentId: string,
+  fromTimeZone: string | undefined,
+  recoveryTimeZone: string | undefined,
+  toTimeZone: string,
+  // Rows this sync just wrote already carry the new deployment id but still
+  // hold timestamps in the old zone.
+  isFreshRow: (row: string[]) => boolean = () => false,
+): string {
+  const rows = parseCsvRows(csv);
+  for (const row of rows) {
+    if (fromDeploymentId !== undefined && row[deploymentColumn] !== fromDeploymentId && !isFreshRow(row)) continue;
+    const timestamp = row[timestampColumn] ?? '';
+    if (timestamp && fromTimeZone && fromTimeZone !== toTimeZone) {
+      try {
+        row[timestampColumn] = rebaseCaptureTimestamp(timestamp, recoveryTimeZone, toTimeZone);
+      } catch {
+        // Preserve malformed legacy values while still correcting the location.
+      }
+    }
+    row[deploymentColumn] = toDeploymentId;
+  }
+  return serializeCsvRows(rows);
+}
+
+function replaceDeploymentRow(csv: string, fromDeploymentId: string | undefined, replacement: string[]): string {
+  const rows = parseCsvRows(csv);
+  const replacementId = replacement[0] ?? '';
+  const targetExists = replacementId !== fromDeploymentId && rows.some((row) => row[0] === replacementId);
+  const out: string[][] = [];
+  let placed = false;
+  for (const row of rows) {
+    if (fromDeploymentId === undefined || row[0] === fromDeploymentId) {
+      if (!placed && !targetExists) {
+        out.push(replacement);
+        placed = true;
+      }
+    } else {
+      out.push(row);
+    }
+  }
+  if (!placed && !targetExists) out.push(replacement);
+  return serializeCsvRows(out);
+}
+
 /**
  * Build the merged canonical bodies and which roles actually change. The merge
  * runs against `current` (verified equal to the grounded base), so unrelated
  * rows and unmodelled columns survive verbatim. `UploadMeta.json` always
  * changes — every successful sync appends its mandatory edit comment. A
- * pending location correction rewrites every media/observation row's
- * deployment id and replaces `deployments.csv` with the single new row —
+ * pending location correction rewrites matching media/observation rows and
+ * replaces the matching deployment row while preserving other deployments —
  * applied on top of the tag/time merge, not instead of it, so a location
  * change and species edits in the same sync both land correctly.
  */
@@ -392,9 +488,37 @@ async function buildWrites(
   });
   let deploymentsBody = current.deployments.text;
   if (plan.locationEdit) {
-    mediaBody = rewriteMediaDeploymentId(mediaBody, plan.locationEdit.deploymentId);
-    observationsBody = rewriteObservationsDeploymentId(observationsBody, plan.locationEdit.deploymentId);
-    deploymentsBody = serializeDeployments([plan.locationEdit]);
+    const currentDeployment = parseDeployments(current.deployments.text)[0];
+    const fromDeploymentId = currentDeployment?.deploymentId;
+    const fromTimeZone = currentDeployment
+      ? tzlookup(currentDeployment.latitude, currentDeployment.longitude)
+      : undefined;
+    const toTimeZone = tzlookup(plan.locationEdit.latitude, plan.locationEdit.longitude);
+    const legacyTimeZone = parseUploadMeta(current.uploadMeta.text).captureTimeZone ?? fromTimeZone;
+    const tagged = new Set(plan.tagEdits.map((e) => e.mediaId));
+    mediaBody = rewriteDeploymentAndRebase(
+      mediaBody,
+      MEDIA_COL.deploymentId,
+      MEDIA_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      fromTimeZone,
+      legacyTimeZone,
+      toTimeZone,
+    );
+    observationsBody = rewriteDeploymentAndRebase(
+      observationsBody,
+      OBS_COL.deploymentId,
+      OBS_COL.timestamp,
+      fromDeploymentId,
+      plan.locationEdit.deploymentId,
+      fromTimeZone,
+      legacyTimeZone,
+      toTimeZone,
+      (row) => tagged.has(row[OBS_COL.mediaId]),
+    );
+    const replacement = parseCsvRows(serializeDeployments([plan.locationEdit]))[0];
+    deploymentsBody = replaceDeploymentRow(current.deployments.text, fromDeploymentId, replacement);
   }
   const bodies: Record<CanonicalRole, string> = {
     media: mediaBody,
@@ -495,6 +619,16 @@ async function writeSnapshotSet(
 }
 
 /**
+ * The first live edit needs a durable copy of the upload as it arrived. This
+ * is deliberately separate from timestamped rollback snapshots: the baseline
+ * is created once and is never replaced or removed. The storage adapter owns
+ * the idempotent conditional-write details.
+ */
+async function ensureOriginalBaseline(io: SyncIO, current: CanonicalState): Promise<void> {
+  await io.ensureOriginalBaseline?.(current);
+}
+
+/**
  * Resume a prior partial sync/restore: verify written/pending objects against
  * the current remote, then continue from the first pending one. Returns the
  * terminal `SyncResult` when a journal is present (whether it conflicts,
@@ -515,6 +649,11 @@ async function tryResume(
   const decision = planResume(journal, remoteStates(cur));
   if (decision.kind === 'conflict')
     return { status: 'conflict', role: decision.role, reason: decision.reason };
+  // A journal may have been created by an older version before the immutable
+  // baseline was introduced. Establish the baseline before completing any
+  // resumed canonical write; the S3 adapter can use any available pre-change
+  // snapshot when one exists.
+  if (!dryRun) await ensureOriginalBaseline(io, cur);
   if (decision.kind === 'done') {
     if (dryRun)
       return { status: 'dry-run', summary: EMPTY_SUMMARY, snapshotPrefix: journal.snapshotPrefix, writes: [] };
@@ -554,7 +693,10 @@ type CommitCtx = {
  * conflict so the next attempt resumes instead of restarting.
  */
 async function commitWrites(io: SyncIO, c: CommitCtx, summary: DiffSummary): Promise<SyncResult> {
-  // 1. Immutable pre-change snapshot, with a single +1s re-stamp on collision.
+  // 1. Preserve the first uploaded state before creating any later snapshot.
+  await ensureOriginalBaseline(io, c.current);
+
+  // 2. Immutable pre-change snapshot, with a single +1s re-stamp on collision.
   let activePrefix = c.snapshotPrefix;
   try {
     await writeSnapshotSet(io, activePrefix, c.current, c.user, c.editStamp);
@@ -565,7 +707,7 @@ async function commitWrites(io: SyncIO, c: CommitCtx, summary: DiffSummary): Pro
     await writeSnapshotSet(io, activePrefix, c.current, c.user, c.editStamp);
   }
 
-  // 2. Journal the intended writes before the first canonical PUT.
+  // 3. Journal the intended writes before the first canonical PUT.
   const journal: SyncJournal = {
     id: `${c.bucket}::${c.uploadPrefix}`,
     bucket: c.bucket,
@@ -585,7 +727,7 @@ async function commitWrites(io: SyncIO, c: CommitCtx, summary: DiffSummary): Pro
   };
   await io.saveJournal(journal);
 
-  // 3. Conditional canonical replacement, in order, recording each new ETag.
+  // 4. Conditional canonical replacement, in order, recording each new ETag.
   const result = await writePending(io, journal, 0);
   if (result.status === 'synced') return { ...result, summary };
   return result;

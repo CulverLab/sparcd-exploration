@@ -30,11 +30,13 @@ export function SyncDialog({
   ctx,
   images,
   drafts,
+  timeZone,
   onClose,
 }: {
   ctx: UploadCtx;
   images: TagImage[];
   drafts: Record<string, DraftRecord>;
+  timeZone?: string;
   onClose: () => void;
 }) {
   const cfg = useStore((s) => s.s3Config);
@@ -75,7 +77,8 @@ export function SyncDialog({
     uploadPrefix: ctx.uploadPrefix,
     user,
     images,
-    drafts,
+      drafts,
+      timeZone,
   });
 
   /**
@@ -91,7 +94,7 @@ export function SyncDialog({
         .filter((image) => mediaIds.includes(image.key))
         .map((image) => [
           image.key,
-          correctedTimestamp(image.baseTimestamp, timeOffset, drafts[image.key]?.timeOverride ?? null),
+          correctedTimestamp(image.baseTimestamp, timeOffset, drafts[image.key]?.timeOverride ?? null, timeZone),
         ]),
     );
     if (!expected.size) return;
