@@ -802,4 +802,18 @@ describe('a collection keeps a runner who can act on it', () => {
     await assert.rejects(call('admin', 'POST', '/-/admin/people/r1/reset'), { code: 'last_runner' });
     assert.equal((await call('admin', 'POST', '/-/admin/people/r2/reset')).status, 200);
   });
+
+  test('two pauses at once on one proxy cannot both pass the check', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    const results = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(results.find((r) => r.status === 'rejected').reason.code, 'last_runner');
+  });
 });

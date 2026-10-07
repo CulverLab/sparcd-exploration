@@ -70,6 +70,18 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   const activeAdmins = () => store.people().filter((p) => p.admin && p.status === 'active');
 
+  // Person and membership documents have separate ETags. Serialize the
+  // runner-sensitive read/check/write sequences in this API instance so two
+  // concurrent admin actions cannot both pass the last-runner check.
+  let runnerMutation = Promise.resolve();
+  async function serializeRunnerMutation(fn) {
+    const previous = runnerMutation;
+    let release;
+    runnerMutation = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try { return await fn(); } finally { release(); }
+  }
+
   /**
    * One line per change, naming the change and its target. The admin screen
    * reads these directly, so "what happened" is a word and not a diff to
@@ -295,7 +307,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     };
   }
 
-  async function patchPerson(actor, id, input, requestId) {
+  async function patchPersonUnlocked(actor, id, input, requestId) {
     const person = store.person(id);
     if (!person) fail('not_found', 'no such person');
     if (input.admin !== undefined && typeof input.admin !== 'boolean') {
@@ -342,7 +354,11 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     return { person: publicPerson(saved) };
   }
 
-  async function resetPerson(actor, id, requestId) {
+  function patchPerson(actor, id, input, requestId) {
+    return serializeRunnerMutation(() => patchPersonUnlocked(actor, id, input, requestId));
+  }
+
+  async function resetPersonUnlocked(actor, id, requestId) {
     const person = store.person(id);
     if (!person) fail('not_found', 'no such person');
     if (person.admin && person.status === 'active' && activeAdmins().length <= 1) {
@@ -365,6 +381,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     logChange(actor, requestId, 'reset', person);
     return { invite: { token, expiresAt: record.expiresAt } };
+  }
+
+  function resetPerson(actor, id, requestId) {
+    return serializeRunnerMutation(() => resetPersonUnlocked(actor, id, requestId));
   }
 
   function mayEdit(actor, collection) {
@@ -424,7 +444,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   /** The whole-list form, guarded by the version the caller last read. */
-  async function putMembers(actor, bucket, input, headers, requestId) {
+  async function putMembersUnlocked(actor, bucket, input, headers, requestId) {
     const collection = store.collection(bucket);
     if (!collection) fail('not_found', 'no such collection');
     mayEdit(actor, collection);
@@ -447,11 +467,15 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     return { members: saved.members, membersVersion: saved.membersEtag ?? null };
   }
 
+  function putMembers(actor, bucket, input, headers, requestId) {
+    return serializeRunnerMutation(() => putMembersUnlocked(actor, bucket, input, headers, requestId));
+  }
+
   /**
    * The per-person form. The read-modify-write is the server's, so two admins
    * editing different people in one collection do not have to take turns.
    */
-  async function editOneMember(actor, bucket, mutate, requestId, { skipPermissionCheck } = {}) {
+  async function editOneMemberUnlocked(actor, bucket, mutate, requestId, { skipPermissionCheck } = {}) {
     for (let attempt = 0; ; attempt += 1) {
       const collection = store.collection(bucket);
       if (!collection) fail('not_found', `no such collection ${bucket}`);
@@ -472,6 +496,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
         await store.reload();
       }
     }
+  }
+
+  function editOneMember(actor, bucket, mutate, requestId, options) {
+    return serializeRunnerMutation(() => editOneMemberUnlocked(actor, bucket, mutate, requestId, options));
   }
 
   function setOneMember(actor, bucket, personId, input, requestId, options) {
