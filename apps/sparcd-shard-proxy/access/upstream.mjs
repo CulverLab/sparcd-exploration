@@ -174,9 +174,14 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
   };
 }
 
+// MinIO, like any Go encoder, writes `"` as `&#34;`: every ETag in a listing
+// arrives that way. Left encoded, a listing the proxy rebuilds escapes it a
+// second time and the client reads `&#34;…&#34;` back as the tag.
 function decodeEntities(s) {
   return s
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
     .replace(/&amp;/g, '&');
 }

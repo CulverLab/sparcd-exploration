@@ -10,7 +10,7 @@ import {
   rewriteBucketName, safeKeySegments,
 } from '../namespace.mjs';
 import {
-  classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey,
+  classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey, buildListing,
 } from '../rules.mjs';
 import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
@@ -595,6 +595,20 @@ describe('upstream listings', () => {
       (upstream) => upstream.listCommonPrefixes('sparcd-settings', 'Settings/activity/'));
     assert.deepEqual(out, ['Settings/activity/2026-01-01/', 'Settings/activity/2026-01-02/']);
     assert.equal(asked[1].searchParams.get('continuation-token'), 'abc');
+  });
+
+  test('an entry is decoded once, so a rebuilt listing escapes it once', async () => {
+    // What MinIO writes: Go's encoder spells `"` and `'` as numeric references.
+    const xml = '<ListBucketResult><Contents><Key>Settings/it&#39;s &amp; more.json</Key>'
+      + '<LastModified>2026-01-01T00:00:00.000Z</LastModified>'
+      + '<ETag>&#34;0f343b0931126a20f133d67c2b018a3b&#34;</ETag><Size>2</Size></Contents>'
+      + '<IsTruncated>false</IsTruncated></ListBucketResult>';
+    const { out } = await listing([xml], (upstream) => upstream.listPage('sparcd-settings'));
+    assert.equal(out.keys[0].key, "Settings/it's & more.json");
+    assert.equal(out.keys[0].etag, '"0f343b0931126a20f133d67c2b018a3b"');
+    const rebuilt = buildListing({ bucket: 'sparcd-settings', keys: out.keys, commonPrefixes: [] });
+    assert.match(rebuilt, /<ETag>"0f343b0931126a20f133d67c2b018a3b"<\/ETag>/);
+    assert.match(rebuilt, /<Key>Settings\/it's &amp; more\.json<\/Key>/);
   });
 });
 
