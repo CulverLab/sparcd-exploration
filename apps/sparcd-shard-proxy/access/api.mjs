@@ -359,12 +359,12 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     const saved = await guard(() => store.savePerson(next, person.etag));
     if (activeAdmins().length === 0) {
       // Another proxy removed the other admin between the check and the write.
-      await store.savePerson({ ...person }, saved.etag).catch(() => {});
+      await store.savePerson({ ...person }, saved.writtenEtag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
     await undoIfStranded(
       () => person.status === 'active' && saved.status !== 'active' && soleRunner(person.id),
-      () => store.savePerson({ ...person }, saved.etag),
+      () => store.savePerson({ ...person }, saved.writtenEtag),
     );
 
     for (const [change, happened] of [
@@ -402,12 +402,12 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     // The same recheck PATCH does: a reset is the other way to lose the last
     // admin, and another proxy may have removed the other one in between.
     if (activeAdmins().length === 0) {
-      await store.savePerson({ ...person }, saved.etag).catch(() => {});
+      await store.savePerson({ ...person }, saved.writtenEtag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be reset');
     }
     await undoIfStranded(
       () => person.status === 'active' && soleRunner(person.id),
-      () => store.savePerson({ ...person }, saved.etag),
+      () => store.savePerson({ ...person }, saved.writtenEtag),
     );
     logChange(actor, requestId, 'reset', person);
     return { invite: { token, expiresAt: record.expiresAt } };
@@ -479,7 +479,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // The lock above is per process. Another proxy can pause a collection's other
   // runner between this one's check and its write, and the two writes touch
   // different documents. Each side reads again after writing, so at least one
-  // of them sees the other's change, and that one puts its own back.
+  // of them sees the other's change, and that one puts its own back. The undo
+  // is guarded by the ETag of its own write, never the reloaded one: a later
+  // write by someone else makes it fail rather than be overwritten.
   async function undoIfStranded(stranded, undo) {
     if (!stranded()) return;
     await undo().catch(() => {});
@@ -508,7 +510,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     const saved = await guard(() => store.saveMembers(bucket, members, version));
     await undoIfStranded(
       () => !hasRunner(saved.members),
-      () => store.saveMembers(bucket, before, saved.membersEtag),
+      () => store.saveMembers(bucket, before, saved.writtenEtag),
     );
     logMemberDiff(actor, requestId, collection, before, saved.members);
     return { members: saved.members, membersVersion: saved.membersEtag ?? null };
@@ -536,7 +538,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
         const saved = await store.saveMembers(bucket, members, collection.membersEtag ?? null);
         await undoIfStranded(
           () => hasRunner(before) && !hasRunner(saved.members),
-          () => store.saveMembers(bucket, before, saved.membersEtag),
+          () => store.saveMembers(bucket, before, saved.writtenEtag),
         );
         logMemberDiff(actor, requestId, collection, before, saved.members);
         return { members: saved.members, membersVersion: saved.membersEtag ?? null };

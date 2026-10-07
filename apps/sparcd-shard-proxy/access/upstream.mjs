@@ -69,8 +69,8 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
 
     /**
      * @param guard `{ ifMatch }` for a replace, `{ ifNoneMatch: '*' }` for a
-     *              create. Returns false on 412/409, which is the caller's cue
-     *              to reload and retry.
+     *              create. Returns the ETag of the object written, or false
+     *              on 412/409, which is the caller's cue to reload and retry.
      */
     async put(bucket, key, body, { contentType = 'application/json', retry = true, ...guard } = {}) {
       const headers = { 'content-type': contentType };
@@ -84,7 +84,7 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
       const res = await via(url(bucket, key), { method: 'PUT', body: bytes, headers });
       if (res.status === 412 || res.status === 409) return false;
       if (!res.ok) throw new Error(`PUT ${bucket}/${key} → ${res.status} ${await res.text()}`);
-      return true;
+      return res.headers.get('etag');
     },
 
     async listKeys(bucket, prefix) {

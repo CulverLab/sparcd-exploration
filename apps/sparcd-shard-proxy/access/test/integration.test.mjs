@@ -492,7 +492,9 @@ describe('conflicts', () => {
       ...current.value,
       members: current.value.members.map((m) => ({ ...m, grantedAt: new Date().toISOString() })),
     };
-    assert.equal(await root.put(bucket, key, JSON.stringify(touched), { ifMatch: current.etag }), true);
+    const written = await root.put(bucket, key, JSON.stringify(touched), { ifMatch: current.etag });
+    // The tag a rollback is guarded by: the one this write produced.
+    assert.equal(written, (await root.getJson(bucket, key)).etag);
 
     const res = await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
       members: [{ personId: id('alice'), access: 'run' }],
@@ -1063,10 +1065,10 @@ describe('hardening', () => {
     const key = `Collections/${UUID_B}/members.json`;
 
     const current = await root.getJson(bucket, key);
-    assert.equal(await root.put(bucket, key, JSON.stringify({
+    assert.ok(await root.put(bucket, key, JSON.stringify({
       ...current.value,
       members: current.value.members.map((m) => ({ ...m, grantedAt: new Date().toISOString() })),
-    }), { ifMatch: current.etag }), true);
+    }), { ifMatch: current.etag }));
 
     const res = await people.admin.api(
       'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('alice')}`, { access: 'look' });

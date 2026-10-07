@@ -827,8 +827,9 @@ function memoryUpstream(people, members) {
       if (guard.ifNoneMatch === '*' && hit) return false;
       if (guard.ifMatch && guard.ifMatch !== hit?.etag) return false;
       writes += 1;
-      objects.set(`${bucket}/${key}`, { body: String(body), etag: `"w${writes}"` });
-      return true;
+      const etag = `"w${writes}"`;
+      objects.set(`${bucket}/${key}`, { body: String(body), etag });
+      return etag;
     },
   };
   for (const p of people) {
@@ -971,6 +972,56 @@ describe('two proxies cannot strand a collection between them', () => {
       { code: 'last_runner' });
     assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access === 'run'),
       'the removal was not put back');
+  });
+
+  // Runs `between` once, right after the next write to `key` lands and before
+  // the writer reloads: the other proxy acting in that gap.
+  const afterWrite = (upstream, key, between) => {
+    const put = upstream.put;
+    upstream.put = async (bucket, k, ...rest) => {
+      const written = await put(bucket, k, ...rest);
+      if (`${bucket}/${k}` === key) { upstream.put = put; await between(); }
+      return written;
+    };
+  };
+
+  test('a rollback leaves the other proxy\'s later reset in place', async () => {
+    const KEY = { accessKeyId: 'SPKR1AAAAAAAAAAAAAAAA', wrappedSecret: 'v1.x.y' };
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active', keys: [KEY] }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' })).status, 200);
+    afterWrite(upstream, personKey('r1'), async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'POST', '/-/admin/people/r1/reset')).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    const r1 = stored(upstream, personKey('r1'));
+    assert.equal(r1.status, 'invited', 'the rollback undid the reset');
+    assert.ok(r1.keys.every((k) => k.retiredAt), 'the retired key works again');
+  });
+
+  test('a member rollback leaves the other proxy\'s later grant in place', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }, { id: 'p3', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    afterWrite(upstream, membersKey, async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members/p3`,
+        { access: 'look' })).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'p3'),
+      'the rollback undid the grant');
   });
 });
 

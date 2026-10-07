@@ -217,14 +217,18 @@ export function makeStore({
     },
     isSettings: (bucket) => bucket === state.settingsBucket,
 
-    /** @param expect `'new'` for a create, or the etag the caller read. */
+    /**
+     * @param expect `'new'` for a create, or the etag the caller read.
+     * @returns the person as reloaded, plus `writtenEtag`: the ETag of this
+     *          write. The reloaded `etag` can already be another proxy's.
+     */
     async savePerson(person, expect) {
       const written = { ...person, etag: undefined, updatedAt: new Date().toISOString() };
       const guard = expect === 'new' ? { ifNoneMatch: '*' } : { ifMatch: expect };
-      const ok = await upstream.put(
+      const writtenEtag = await upstream.put(
         settings(), `${PEOPLE_PREFIX}${person.id}.json`, JSON.stringify(written), guard,
       );
-      if (!ok) throw new Conflict('person changed underneath this edit');
+      if (!writtenEtag) throw new Conflict('person changed underneath this edit');
       // The write landed, so this process must see it whatever happens next.
       mutationVersion += 1;
       // The reload below confirms it, but a reload is many reads and any one of
@@ -241,18 +245,19 @@ export function makeStore({
       } finally {
         await reload();
       }
-      return state.people.get(person.id);
+      return { ...state.people.get(person.id), writtenEtag };
     },
 
+    /** Returns the collection as reloaded, plus `writtenEtag` as `savePerson` does. */
     async saveMembers(bucket, members, expect) {
       const c = state.collections.get(bucket);
       if (!c) throw new Error(`unknown collection bucket ${bucket}`);
       const body = JSON.stringify({ schemaVersion: 1, members });
       const guard = expect === null ? { ifNoneMatch: '*' } : { ifMatch: expect };
-      const ok = await upstream.put(
+      const writtenEtag = await upstream.put(
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,
       );
-      if (!ok) throw new Conflict('members changed underneath this edit');
+      if (!writtenEtag) throw new Conflict('members changed underneath this edit');
       // In force here the moment it is committed upstream, for the same reason
       // as a person: a removal that waits for a reload is a removal that a
       // failed read leaves undone.
@@ -263,7 +268,7 @@ export function makeStore({
       } finally {
         await reload();
       }
-      return state.collections.get(bucket);
+      return { ...state.collections.get(bucket), writtenEtag };
     },
   };
 }
