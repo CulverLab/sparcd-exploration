@@ -1049,6 +1049,38 @@ describe('a poll that cannot load a change fails closed', () => {
       store.stop();
     }
   });
+
+  test('a failing periodic full reload still notices a newer generation', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    // Every poll is due a full reload.
+    const store = makeStore({
+      upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5, fullReloadMs: 0,
+    });
+    await store.reload();
+    const listBuckets = upstream.listBuckets;
+    let failures = 0;
+    upstream.listBuckets = async () => { failures += 1; throw new Error('upstream is down for this'); };
+    const until = async (done, message) => {
+      for (let i = 0; i < 400 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.ok(done(), message);
+    };
+    store.start();
+    try {
+      // Nothing is known to have changed, so failing reloads alone refuse nobody.
+      await until(() => failures >= 3, 'no full reload was attempted');
+      assert.equal(store.behind(), false);
+
+      upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+        body: '{"generation":1}', etag: '"g1"',
+      });
+      await until(() => store.behind(), 'a known change was never noticed');
+      upstream.listBuckets = listBuckets;
+      await until(() => !store.behind(), 'still behind after a reload succeeded');
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
 });
 
 describe('a reload already in flight cannot undo a write', () => {

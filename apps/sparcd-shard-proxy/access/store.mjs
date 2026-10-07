@@ -158,8 +158,12 @@ export function makeStore({
   // would otherwise never reach the other proxies at all.
   async function poll() {
     if (Date.now() - lastFullReload >= fullReloadMs) {
-      await reload();
-      return;
+      // A failed full reload is not yet a reason to refuse anyone, but it must
+      // not hide a known change either: the generation check below decides.
+      try {
+        await reload();
+        return;
+      } catch {}
     }
     const gen = await upstream.getJson(settings(), GENERATION_KEY);
     const seen = gen.status === 404 ? 0 : (gen.value.generation ?? 0);
