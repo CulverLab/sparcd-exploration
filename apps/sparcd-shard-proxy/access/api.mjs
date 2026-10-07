@@ -362,6 +362,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       await store.savePerson({ ...person }, saved.etag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
+    await undoIfStranded(
+      () => person.status === 'active' && saved.status !== 'active' && soleRunner(person.id),
+      () => store.savePerson({ ...person }, saved.etag),
+    );
 
     for (const [change, happened] of [
       ['paused', person.status === 'active' && saved.status === 'paused'],
@@ -401,6 +405,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       await store.savePerson({ ...person }, saved.etag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be reset');
     }
+    await undoIfStranded(
+      () => person.status === 'active' && soleRunner(person.id),
+      () => store.savePerson({ ...person }, saved.etag),
+    );
     logChange(actor, requestId, 'reset', person);
     return { invite: { token, expiresAt: record.expiresAt } };
   }
@@ -457,15 +465,25 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
   }
 
+  /** True when `personId` runs a collection that no other active member runs. */
+  const soleRunner = (personId) => store.collections().some((c) =>
+    c.members.some((m) => m.personId === personId && m.access === 'run')
+    && !hasRunner(c.members.filter((m) => m.personId !== personId)));
+
   function requireActiveRunnerForPerson(personId) {
-    for (const collection of store.collections()) {
-      const member = collection.members.find((m) => m.personId === personId && m.access === 'run');
-      if (!member) continue;
-      const remaining = collection.members.filter((m) => m.personId !== personId);
-      if (!hasRunner(remaining)) {
-        fail('last_runner', 'this would leave the collection without an active runner');
-      }
+    if (soleRunner(personId)) {
+      fail('last_runner', 'this would leave the collection without an active runner');
     }
+  }
+
+  // The lock above is per process. Another proxy can pause a collection's other
+  // runner between this one's check and its write, and the two writes touch
+  // different documents. Each side reads again after writing, so at least one
+  // of them sees the other's change, and that one puts its own back.
+  async function undoIfStranded(stranded, undo) {
+    if (!stranded()) return;
+    await undo().catch(() => {});
+    fail('last_runner', 'this would leave the collection without an active runner');
   }
 
   /** The whole-list form, guarded by the version the caller last read. */
@@ -488,6 +506,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
     const before = collection.members;
     const saved = await guard(() => store.saveMembers(bucket, members, version));
+    await undoIfStranded(
+      () => !hasRunner(saved.members),
+      () => store.saveMembers(bucket, before, saved.membersEtag),
+    );
     logMemberDiff(actor, requestId, collection, before, saved.members);
     return { members: saved.members, membersVersion: saved.membersEtag ?? null };
   }
@@ -512,6 +534,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       requireNotStranded(before, members);
       try {
         const saved = await store.saveMembers(bucket, members, collection.membersEtag ?? null);
+        await undoIfStranded(
+          () => hasRunner(before) && !hasRunner(saved.members),
+          () => store.saveMembers(bucket, before, saved.membersEtag),
+        );
         logMemberDiff(actor, requestId, collection, before, saved.members);
         return { members: saved.members, membersVersion: saved.membersEtag ?? null };
       } catch (err) {

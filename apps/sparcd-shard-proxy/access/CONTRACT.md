@@ -161,6 +161,11 @@ Admin only:
   existing runner rather than demanding one: an edit that would remove the collection's
   last active `run` member is 409 `last_runner`, while a collection that has no active
   runner yet can receive any grant.
+
+Every `last_runner` rule is checked before the write and again after it. Another proxy
+can change the other runner in between, so a write that turns out to have left the
+collection with no active runner is put back and answered 409 `last_runner`.
+
 - `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`.
   `kind` is a comma-separated list and matches any of them; a kind outside the set below is
   400 `invalid`, and no `kind` at all is every kind. `from` and `to` are ISO 8601

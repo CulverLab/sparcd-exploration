@@ -941,6 +941,39 @@ describe('a collection keeps a runner who can act on it', () => {
   });
 });
 
+describe('two proxies cannot strand a collection between them', () => {
+  const twoRunners = () => memoryUpstream(
+    [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+    [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+  );
+  const stored = (upstream, key) => JSON.parse(upstream.objects.get(key).body);
+  const personKey = (id) => `${SETTINGS_UP}/Settings/access/people/${id}.json`;
+  const membersKey = `t-${COLLECTION}/Collections/${UUID}/members.json`;
+
+  // The second proxy has not polled since the first paused r1, so its own
+  // check still counts r1 as an active runner.
+  test('a pause that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+      { code: 'last_runner' });
+    assert.equal(stored(upstream, personKey('r2')).status, 'active', 'the pause was not put back');
+  });
+
+  test('a member removal that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access === 'run'),
+      'the removal was not put back');
+  });
+});
+
 describe('a poll that cannot load a change fails closed', () => {
   test('a newer generation that will not load holds the store behind until it does', { timeout: 5000 }, async () => {
     const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
