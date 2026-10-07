@@ -720,6 +720,35 @@ describe('a settings listing pages through folders as well as keys', () => {
     assert.equal(page.nextToken, afterTree('Settings/b/'));
   });
 
+  test('paging returns every folder and key once, whatever the page size', async () => {
+    const names = ['Settings/a.json', 'Settings/b/', 'Settings/c.json', 'Settings/d/', 'Settings/e.json'];
+    // An upstream that honours start-after and answers two entries at a time.
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => {
+        const rest = names.filter((n) => !startAfter || n > startAfter);
+        const page = rest.slice(0, 2);
+        return {
+          keys: page.filter((n) => !n.endsWith('/')).map((key) => ({ key })),
+          commonPrefixes: page.filter((n) => n.endsWith('/')),
+          nextToken: rest.length > 2 ? 'more' : null,
+        };
+      },
+    };
+    for (const maxKeys of [1, 2, 1000]) {
+      const seen = [];
+      let after = null;
+      do {
+        const page = await listAroundProtectedTrees({
+          upstream, bucket: 'b', prefix: 'Settings/', delimiter: '/', maxKeys, after,
+          hidden: () => false, hiddenTrees: [],
+        });
+        seen.push(...page.commonPrefixes, ...page.keys.map((k) => k.key));
+        after = page.nextToken;
+      } while (after);
+      assert.deepEqual(seen.sort(), names, `max-keys ${maxKeys}`);
+    }
+  });
+
   const walk = (upstream, hiddenTrees = []) => listAroundProtectedTrees({
     upstream,
     bucket: 't-sparcd-settings-x',

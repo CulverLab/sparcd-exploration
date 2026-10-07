@@ -833,42 +833,37 @@ export async function listAroundProtectedTrees({
 
     // With a delimiter, folders and keys are two halves of one page and both
     // are entries as far as `max-keys` goes. Counting only the keys hands
-    // back a page of folders and calls it an empty listing.
-    for (const p of got.commonPrefixes) {
-      if (hidden(p)) continue;
-      if (entries() >= maxKeys) { truncated = true; break; }
-      commonPrefixes.push(p);
-      resumeAt = afterTree(p);
-    }
-    if (truncated) break;
+    // back a page of folders and calls it an empty listing. Both are taken in
+    // the order the upstream sorts them: every folder first and then a resume
+    // past the last one skips the keys that sorted between them.
+    const items = [
+      ...got.commonPrefixes.map((name) => ({ name })),
+      ...got.keys.map((entry) => ({ name: entry.key, entry })),
+    ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
     let jumpedTo = null;
-    for (const entry of got.keys) {
-      const tree = hiddenTrees.find((t) => entry.key.startsWith(t));
+    for (const { name, entry } of items) {
+      if (!entry) {
+        if (hidden(name)) { cursor = afterTree(name); continue; }
+        if (entries() >= maxKeys) { truncated = true; break; }
+        commonPrefixes.push(name);
+        resumeAt = afterTree(name);
+        cursor = resumeAt;
+        continue;
+      }
+      const tree = hiddenTrees.find((t) => name.startsWith(t));
       if (tree) { jumpedTo = afterTree(tree); break; }
       if (entries() >= maxKeys) { truncated = true; break; }
       keys.push(entry);
-      cursor = entry.key;
-      resumeAt = entry.key;
+      cursor = name;
+      resumeAt = name;
     }
     if (truncated) break;
-    if (jumpedTo) {
-      cursor = jumpedTo;
-      if (page === 19 && got.nextToken) {
-        truncated = true;
-        resumeAt = resumeAt ?? cursor ?? after ?? '';
-        break;
-      }
-      continue;
-    }
-    if (!got.nextToken) break;
-    // A page of nothing but folders still has a position to go on from.
-    // Stopping there because it held no keys drops every page after it.
-    if (got.keys.length > 0) cursor = got.keys[got.keys.length - 1].key;
-    else if (got.commonPrefixes.length > 0) {
-      cursor = afterTree(got.commonPrefixes[got.commonPrefixes.length - 1]);
-    } else break;
-    if (page === 19 && got.nextToken) {
+    // A page of nothing but folders still has a position to go on from: the
+    // cursor has moved past each of them above.
+    if (jumpedTo) cursor = jumpedTo;
+    else if (!got.nextToken || items.length === 0) break;
+    if (page === 19) {
       truncated = true;
       resumeAt = resumeAt ?? cursor ?? after ?? '';
     }
