@@ -924,6 +924,21 @@ describe('a collection keeps a runner who can act on it', () => {
     assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
     assert.equal(results.find((r) => r.status === 'rejected').reason.code, 'last_runner');
   });
+
+  test('an edit queued behind its caller\'s own pause is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'a2', status: 'active', admin: true }, { id: 'p1', status: 'active' }],
+      [],
+    );
+    const { call } = await accessApi(upstream);
+    // a2 is checked and queued while still an active admin, then paused ahead of their turn.
+    const [pause, queued] = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/a2', { status: 'paused' }),
+      call('a2', 'PATCH', '/-/admin/people/p1', { status: 'paused' }),
+    ]);
+    assert.equal(pause.status, 'fulfilled');
+    assert.equal(queued.reason?.code, 'forbidden');
+  });
 });
 
 describe('a poll that cannot load a change fails closed', () => {

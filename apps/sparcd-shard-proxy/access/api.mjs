@@ -74,12 +74,18 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // runner-sensitive read/check/write sequences in this API instance so two
   // concurrent admin actions cannot both pass the last-runner check.
   let runnerMutation = Promise.resolve();
-  async function serializeRunnerMutation(fn) {
+  async function serializeRunnerMutation(actor, fn) {
     const previous = runnerMutation;
     let release;
     runnerMutation = new Promise((resolve) => { release = resolve; });
     await previous;
-    try { return await fn(); } finally { release(); }
+    try {
+      // The caller was checked before the wait, and an edit queued ahead of
+      // this one may have paused or demoted them since.
+      const current = store.person(actor.id);
+      if (current?.status !== 'active') fail('forbidden', 'person is no longer active');
+      return await fn(current);
+    } finally { release(); }
   }
 
   /**
@@ -368,7 +374,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   function patchPerson(actor, id, input, requestId) {
-    return serializeRunnerMutation(() => patchPersonUnlocked(actor, id, input, requestId));
+    return serializeRunnerMutation(actor, (current) => {
+      requireAdmin(current);
+      return patchPersonUnlocked(current, id, input, requestId);
+    });
   }
 
   async function resetPersonUnlocked(actor, id, requestId) {
@@ -397,7 +406,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   function resetPerson(actor, id, requestId) {
-    return serializeRunnerMutation(() => resetPersonUnlocked(actor, id, requestId));
+    return serializeRunnerMutation(actor, (current) => {
+      requireAdmin(current);
+      return resetPersonUnlocked(current, id, requestId);
+    });
   }
 
   function mayEdit(actor, collection) {
@@ -481,7 +493,8 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   function putMembers(actor, bucket, input, headers, requestId) {
-    return serializeRunnerMutation(() => putMembersUnlocked(actor, bucket, input, headers, requestId));
+    return serializeRunnerMutation(actor,
+      (current) => putMembersUnlocked(current, bucket, input, headers, requestId));
   }
 
   /**
@@ -512,7 +525,8 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   function editOneMember(actor, bucket, mutate, requestId, options) {
-    return serializeRunnerMutation(() => editOneMemberUnlocked(actor, bucket, mutate, requestId, options));
+    return serializeRunnerMutation(actor,
+      (current) => editOneMemberUnlocked(current, bucket, mutate, requestId, options));
   }
 
   function setOneMember(actor, bucket, personId, input, requestId, options) {
