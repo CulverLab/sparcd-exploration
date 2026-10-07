@@ -565,6 +565,39 @@ describe('upstream signing', () => {
   });
 });
 
+describe('upstream listings', () => {
+  /** Answers each request with the next page, and keeps the URLs asked for. */
+  async function listing(pages, run) {
+    const real = globalThis.fetch;
+    const asked = [];
+    globalThis.fetch = async (req) => {
+      asked.push(new URL(req.url));
+      return new Response(pages[asked.length - 1], {
+        status: 200, headers: { 'content-type': 'application/xml' },
+      });
+    };
+    try {
+      const out = await run(makeUpstream({
+        endpoint: 'https://rgw.example/', accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'b'.repeat(40),
+      }));
+      return { out, asked };
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  test('every page of day folders is read, not just the first', async () => {
+    const page = (day, next) => '<ListBucketResult>'
+      + `<CommonPrefixes><Prefix>Settings/activity/${day}/</Prefix></CommonPrefixes>`
+      + `<IsTruncated>${next ? 'true' : 'false'}</IsTruncated>`
+      + `${next ? `<NextContinuationToken>${next}</NextContinuationToken>` : ''}</ListBucketResult>`;
+    const { out, asked } = await listing([page('2026-01-01', 'abc'), page('2026-01-02')],
+      (upstream) => upstream.listCommonPrefixes('sparcd-settings', 'Settings/activity/'));
+    assert.deepEqual(out, ['Settings/activity/2026-01-01/', 'Settings/activity/2026-01-02/']);
+    assert.equal(asked[1].searchParams.get('continuation-token'), 'abc');
+  });
+});
+
 describe('If-Match normalizing', () => {
   const cases = [
     ['"c1f2"', 'c1f2'],
