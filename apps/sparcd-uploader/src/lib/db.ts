@@ -39,6 +39,9 @@ export type PersistedFileState = 'awaiting-processing' | 'pending' | 'uploading'
 export interface BatchRecord {
   id: string; // sessionId — crypto.randomUUID, stable across resume
   targetBucket: string;
+  // Decided once when the run starts; a resume never re-detects it. Rows
+  // written before the Media layout existed have none and are `legacy`.
+  layout?: import('./bundle').Layout;
   uploadPrefix: string; // Collections/<uuid>/Uploads/<stamp>_<slug>
   deploymentId: string;
   // The full location, redundant with `deploymentId` (which only embeds
@@ -77,7 +80,7 @@ export interface FileRecord {
   // `state === 'awaiting-processing'`; filled in the moment it finishes,
   // independent of whether any other file in the batch has.
   sanitizedObjectName?: string; // resolved object name (post-collision), key tail
-  remoteKey?: string; // full key = uploadPrefix/sanitizedObjectName (= media_path)
+  remoteKey?: string; // full key (= media_path): the Media/ key it resolved to, or uploadPrefix/sanitizedObjectName
   sha256?: string;
   timestampSource?: import('@sparcd/camtrap').TimestampSource;
   captureTimestamp?: string; // offset-bearing capture time (post-tz), media.csv col 4

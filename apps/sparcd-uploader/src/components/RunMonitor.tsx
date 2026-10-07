@@ -229,6 +229,9 @@ function Telemetry({ snap }: { snap: UploadSnapshot }) {
   );
 }
 
+/** The upload's own folder name, `<stamp>_<user>`, out of its full manifest path. */
+const uploadName = (uploadPath: string | undefined): string => uploadPath?.split('/').pop() ?? '';
+
 export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
   const counts = snap.files.reduce(
     (a, f) => ((a[f.state] = (a[f.state] ?? 0) + 1), a),
@@ -291,8 +294,8 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
         <Note
           message={
             snap.dryRun
-              ? `Dry run complete — ${snap.files.length} files would publish under ${snap.uploadPath}/. Nothing was written.`
-              : `Published ${snap.files.length} files under ${snap.uploadPath}/. Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
+              ? `Dry run complete — ${snap.files.length} files would publish under ${uploadName(snap.uploadPath)}. Nothing was written.`
+              : `Published ${snap.files.length} files under ${uploadName(snap.uploadPath)}. Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
           }
         />
       )}

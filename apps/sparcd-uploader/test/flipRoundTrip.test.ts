@@ -163,6 +163,7 @@ it('carries every kind of capture time out to the tagger and home into media.csv
     location: { key: 'SAN15|31.5,-110.2', id: 'SAN15', name: 'San Pedro 15', latitude: 31.5, longitude: -110.2, elevation: 1200 },
     collectionUuid: UUID,
     bucket: `sparcd-${UUID}`,
+    layout: 'legacy',
     uploaderSlug: 'jdoe',
     description: 'july',
     timeZone: 'UTC',

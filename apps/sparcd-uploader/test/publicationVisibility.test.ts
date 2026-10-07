@@ -16,6 +16,9 @@ class FakeClient {
 vi.mock('@sparcd/s3-safe', () => ({
   SafeS3Client: FakeClient,
   listCollections: vi.fn(),
+  // One bucket, every listed folder already past the media.csv check.
+  listUploadFolders: async (client: FakeClient, ref: { buckets: string[] }) =>
+    ((await client.listCommonPrefixes()) as string[]).map((prefix) => ({ bucket: ref.buckets[0], prefix })),
   parseCollectionKey: (key: string) => ({ bucket: 'bucket', uuid: key }),
   translateReadError: (error: unknown) => error,
 }));
@@ -34,6 +37,8 @@ const REF = {
   key: 'bucket::collection',
   bucket: 'bucket',
   uuid: 'collection',
+  buckets: ['bucket'],
+  dataBucket: null,
   name: null,
   organization: null,
   contact: null,

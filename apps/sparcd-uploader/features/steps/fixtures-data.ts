@@ -176,6 +176,20 @@ export function seedDefaultStorage(s3: S3Mock): void {
   seedPriorUpload(s3);
 }
 
+/**
+ * A data bucket: any name outside `sparcd` and `sparcd-*`, holding collections
+ * side by side and new images under `Media/<sha256>/`. Collection C lives only
+ * here; A and B keep only their legacy buckets.
+ */
+export const DATA_BUCKET = 'field-data';
+export const UUID_C = '33333333-3333-3333-3333-333333333333';
+export const COLLECTION_C_NAME = 'Gamma Collection';
+
+export function seedDataBucket(s3: S3Mock): void {
+  s3.addBucket(DATA_BUCKET);
+  s3.put(DATA_BUCKET, `Collections/${UUID_C}/collection.json`, collectionJson(COLLECTION_C_NAME, 'Gamma Org', 'gamma@example.org', 'The data-bucket test collection'), { contentType: 'application/json' });
+}
+
 /** One published upload in collection A, deployed at DEER3. */
 export function seedPriorUpload(s3: S3Mock): void {
   s3.put(BUCKET_A, `${PRIOR_UPLOAD_PREFIX}deployments.csv`, deploymentsCsv(UUID_A, USED_LOCATION_ID, USED_LOCATION_NAME), { contentType: 'text/csv' });

@@ -142,6 +142,13 @@ describe('discovery cache', () => {
     expect(readDiscovery(CFG)).toBeNull();
   });
 
+  it('ignores collections cached before they carried their buckets', () => {
+    const v1Ref = { key: 'sparcd-c::c', bucket: 'sparcd-c', uuid: 'c', name: 'C' };
+    const accounts = { [`${CFG.endpoint}\0${CFG.accessKey}`]: { at: 1, collections: [v1Ref] } };
+    store.set('sparcd-uploader-discovery', JSON.stringify({ v: 1, accounts }));
+    expect(readDiscovery(CFG)).toBeNull();
+  });
+
   it('clears one named field and leaves the rest of the account warm', () => {
     writeDiscovery(CFG, { settingsBucket: 'one', collections: [] });
 

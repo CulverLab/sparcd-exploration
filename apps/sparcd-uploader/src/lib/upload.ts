@@ -1,15 +1,17 @@
 // Upload orchestration. Runs the full publish sequence for one bundle:
 //
-//   1. Stream every image blob under the upload prefix (bounded concurrency,
-//      exponential backoff + jitter on transient failures).
-//   2. Write the three CSVs.
-//   3. Write UploadMeta.json — upstream SPARC'd's completion marker, so it
-//      lands after the blobs and CSVs.
-//   4. Write UploadComplete.json last — this project's richer integrity sentinel.
+//   1. Stream every image blob (bounded concurrency, exponential backoff +
+//      jitter on transient failures). Media layout: under `Media/<sha256>/`,
+//      reusing an original already stored for the same bytes. Legacy layout:
+//      under the upload prefix.
+//   2. Write the metadata files. Legacy: the three CSVs, then UploadMeta.json
+//      (upstream SPARC'd's completion marker), then UploadComplete.json, this
+//      project's richer integrity sentinel. Media: media.csv last, because an
+//      upload folder without it is not an upload yet.
 //
-// Ordering is the half-populated-directory guard: an upstream reader only
-// treats the prefix as complete once UploadMeta.json exists, by which point
-// the blobs and CSVs are already in place.
+// Ordering is the half-populated-directory guard: a reader only treats the
+// folder as complete once its marker exists, by which point everything the
+// metadata names is already in place.
 //
 // Dry-run (default on for the first session) walks the same sequence but issues
 // no PUTs — it logs every write the run would make (bucket, key, size, hash) —
@@ -45,14 +47,24 @@
 import { processingComplete } from './validation';
 import { estimateCaptureTimes } from './estimateCaptureTime';
 import type { S3Config } from '@sparcd/types';
-import { PreconditionFailedError, type SafeS3Client } from '@sparcd/s3-safe';
+import {
+  PreconditionFailedError,
+  type CollectionRef,
+  type ObjectInfo,
+  type ObjectStat,
+  type SafeS3Client,
+} from '@sparcd/s3-safe';
+import { existingOriginal, mediaFolder, mediaObjectName, parseMedia } from '@sparcd/camtrap';
 import { getClient, probeShardClients, type ShardSet } from './s3';
 import { createAdaptiveController, type AdaptiveController } from './adaptiveConcurrency';
 import {
   buildBundle,
+  buildBundleFromRecords,
   resolveBatchNaming,
   planItemFor,
   type BuildInput,
+  type Dropped,
+  type Layout,
   type UploadItem,
 } from './bundle';
 import { locationToDeployment } from './locations';
@@ -256,30 +268,52 @@ type PlanItem = {
   doneAlready: boolean;
 };
 
+type MetadataWrite = { name: string; body: string; contentType: string };
+type BuiltMetadata = { writes: MetadataWrite[]; metadataBundleSha256: string };
+
 type RunPlan = {
   sessionId: string;
   bucket: string;
   collectionUuid: string;
   uploadPath: string;
   totalBytes: number;
-  metadataBundleSha256: string;
   items: PlanItem[];
-  writes: { name: string; body: string; contentType: string }[];
+  /** The metadata to publish, asked for once every blob has landed. */
+  metadata: () => Promise<BuiltMetadata>;
 };
 
-const metadataWrites = (b: {
-  deploymentsCsv: string;
-  mediaCsv: string;
-  observationsCsv: string;
-  uploadMetaJson: string;
-  uploadCompleteJson: string;
-}): RunPlan['writes'] => [
-  { name: 'deployments.csv', body: b.deploymentsCsv, contentType: 'text/csv' },
-  { name: 'media.csv', body: b.mediaCsv, contentType: 'text/csv' },
-  { name: 'observations.csv', body: b.observationsCsv, contentType: 'text/csv' },
-  { name: 'UploadMeta.json', body: b.uploadMetaJson, contentType: 'application/json' },
-  { name: 'UploadComplete.json', body: b.uploadCompleteJson, contentType: 'application/json' },
-];
+/**
+ * Where a new upload goes. A collection with a data bucket gets the Media
+ * layout there; one with only its legacy bucket keeps the old layout in it.
+ */
+export function uploadTarget(c: Pick<CollectionRef, 'bucket' | 'dataBucket'>): { bucket: string; layout: Layout } {
+  return c.dataBucket ? { bucket: c.dataBucket, layout: 'media' } : { bucket: c.bucket, layout: 'legacy' };
+}
+
+const metadataWrites = (
+  b: {
+    deploymentsCsv: string;
+    mediaCsv: string;
+    observationsCsv: string;
+    uploadMetaJson: string;
+    uploadCompleteJson: string;
+  },
+  layout: Layout,
+): MetadataWrite[] => {
+  const media = { name: 'media.csv', body: b.mediaCsv, contentType: 'text/csv' };
+  const rest = [
+    { name: 'observations.csv', body: b.observationsCsv, contentType: 'text/csv' },
+    { name: 'UploadMeta.json', body: b.uploadMetaJson, contentType: 'application/json' },
+    { name: 'UploadComplete.json', body: b.uploadCompleteJson, contentType: 'application/json' },
+  ];
+  const deployments = { name: 'deployments.csv', body: b.deploymentsCsv, contentType: 'text/csv' };
+  // The Java desktop app reads legacy uploads straight from storage, so their
+  // order stays as it was. A Media-layout upload exists once media.csv does.
+  return layout === 'media' ? [deployments, ...rest, media] : [deployments, media, ...rest];
+};
+
+const droppedLine = (d: Dropped): string =>
+  `${d.localPath}: same bytes as another file in this upload, listed once as ${d.key}`;
 
 const fileRecordFor = (sessionId: string, it: UploadItem, state: FileRecord['state']): FileRecord => ({
   id: fileRecordId(sessionId, it.localPath),
@@ -386,15 +420,15 @@ function makeAsyncQueue<T>() {
  * The shared executor over a RunPlan. Used by both a fresh run and a resume; the
  * differences are: `persist` (write Dexie state as blobs land), `isResume`
  * (treat a metadata 412 as already-written rather than a collision to re-stamp),
- * and `dryRun` (log only).
+ * `dryRun` (log only), and `layout` (where blobs go and how they are checked).
  */
 function makeRunner(
   config: S3Config,
   concurrency: ConcurrencyControl,
   onUpdate: (snap: UploadSnapshot) => void,
-  opts: { persist: boolean; isResume: boolean; dryRun: boolean },
+  opts: { persist: boolean; isResume: boolean; dryRun: boolean; layout: Layout },
 ) {
-  const { persist, isResume, dryRun } = opts;
+  const { persist, isResume, dryRun, layout } = opts;
   const client = getClient(config); // metadata, listings, existing-object checks
   // Read at assignment time, never awaited: the run starts striping over
   // whatever has answered so far, so a shard port that blackholes costs a
@@ -490,9 +524,70 @@ function makeRunner(
     }
   };
 
+  // Whether a stored object is `it`'s bytes. Size + recorded SHA-256 metadata
+  // is the portable contract. A Media key names its hash in its folder, and an
+  // original another writer stored may lack our metadata, so there the
+  // metadata only has to agree when it is present.
+  const storedAs = (it: PlanItem, stat: ObjectStat): boolean =>
+    stat.size === it.size &&
+    (layout === 'media'
+      ? it.key.startsWith(mediaFolder(it.sha256)) && (stat.metadata.sha256 ?? it.sha256) === it.sha256
+      : stat.metadata.sha256 === it.sha256);
+
+  // The original already stored for these bytes, if any.
+  const originalOf = async (sha256: string): Promise<ObjectInfo | undefined> => {
+    const listed: ObjectInfo[] = [];
+    for await (const o of client.listObjects(snap.bucket, mediaFolder(sha256))) listed.push(o);
+    const key = existingOriginal(listed.map((o) => o.key));
+    return listed.find((o) => o.key === key);
+  };
+
+  // Settle a file on an original already in storage instead of writing its
+  // own. One whose size disagrees is a different file under the same hash
+  // folder: fail it and leave the stored object alone.
+  const reuseOriginal = (sessionId: string, fp: FileProgress, it: PlanItem, found: ObjectInfo): void => {
+    if (found.size !== it.size) {
+      fp.state = 'failed';
+      fp.error = `${found.key} is already stored at ${found.size} bytes, this file is ${it.size} — not overwritten`;
+      persistFile(sessionId, it.localPath, { state: 'failed', lastError: fp.error });
+      log('error', fp.error);
+      throw new Error(fp.error);
+    }
+    it.key = found.key;
+    fp.key = found.key;
+    fp.state = 'skipped';
+    snap.uploadedBytes += it.size - fp.loaded;
+    snap.skippedBytes += it.size;
+    fp.loaded = it.size;
+    persistFile(sessionId, it.localPath, {
+      state: 'done',
+      remoteKey: found.key,
+      sanitizedObjectName: mediaObjectName(found.key, snap.uploadPath!),
+    });
+    log('info', `already stored, skip: ${found.key}`);
+    emit(true);
+  };
+
+  // Two files with the same bytes go one after the other, so the second finds
+  // the first's original instead of racing it into a second one.
+  const hashTurns = new Map<string, Promise<void>>();
+  const processItem = (
+    sessionId: string,
+    fp: FileProgress,
+    it: PlanItem,
+    blobClient: SafeS3Client,
+  ): Promise<void> => {
+    if (layout !== 'media') return transfer(sessionId, fp, it, blobClient);
+    const turn = (hashTurns.get(it.sha256) ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => transfer(sessionId, fp, it, blobClient));
+    hashTurns.set(it.sha256, turn);
+    return turn;
+  };
+
   // Upload (or skip) one blob. Returns once the object is present and verified,
   // or throws on a non-recoverable failure.
-  const processItem = async (
+  const transfer = async (
     sessionId: string,
     fp: FileProgress,
     it: PlanItem,
@@ -529,7 +624,7 @@ function makeRunner(
     };
 
     // A completed blob from a prior run: sanity-check the remote copy before
-    // skipping it. Size + recorded SHA-256 metadata is the portable contract.
+    // skipping it (`storedAs`).
     // Transient statObject failures (network blip, 5xx) are retried with the
     // same backoff as uploads — without this, all verify lanes can trip
     // MAX_FILE_FAILURES from a single blip and trigger the systemic abort.
@@ -538,7 +633,7 @@ function makeRunner(
       for (;;) {
         try {
           const stat = await client.statObject(snap.bucket, it.key);
-          if (stat.size === it.size && stat.metadata.sha256 === it.sha256) {
+          if (storedAs(it, stat)) {
             fp.state = 'skipped';
             snap.uploadedBytes += it.size - fp.loaded;
             snap.skippedBytes += it.size;
@@ -588,6 +683,7 @@ function makeRunner(
     }
 
     let attempt = 0;
+    let raced: PreconditionFailedError | null = null;
     for (;;) {
       await ensureOnline();
       fp.attempt = attempt + 1;
@@ -595,27 +691,41 @@ function makeRunner(
       snap.uploadedBytes -= fp.loaded; // reset this file's contribution on retry
       fp.loaded = 0;
       emit(true);
+      let found: ObjectInfo | undefined;
       try {
-        const { etag } = await blobClient.writeImmutableStream(snap.bucket, it.key, it.file, {
-          sha256: it.sha256,
-          contentType: it.mimeType,
-          signal: abort.signal,
-          onProgress: (loaded) => {
-            snap.uploadedBytes += loaded - fp.loaded;
-            fp.loaded = loaded;
-            emit();
-          },
-        });
-        fp.state = 'done';
-        persistFile(sessionId, it.localPath, {
-          state: 'done',
-          remoteETag: etag,
-          attempt: fp.attempt,
-        });
-        emit(true);
-        return;
+        if (layout === 'media') {
+          found = await originalOf(it.sha256);
+          if (!found && raced) throw raced;
+        }
+        if (!found) {
+          const { etag } = await blobClient.writeImmutableStream(snap.bucket, it.key, it.file, {
+            sha256: it.sha256,
+            contentType: it.mimeType,
+            signal: abort.signal,
+            onProgress: (loaded) => {
+              snap.uploadedBytes += loaded - fp.loaded;
+              fp.loaded = loaded;
+              emit();
+            },
+          });
+          fp.state = 'done';
+          persistFile(sessionId, it.localPath, {
+            state: 'done',
+            remoteETag: etag,
+            attempt: fp.attempt,
+          });
+          emit(true);
+          return;
+        }
       } catch (err) {
         if (err instanceof PreconditionFailedError) {
+          // In a hash folder a 412 is another writer landing the same bytes
+          // first: list again and settle on its original.
+          if (layout === 'media') {
+            if (raced) throw err;
+            raced = err;
+            continue;
+          }
           // Fresh runs must not silently accept a blob collision. Resume can
           // accept an existing key only after the portable size/hash HEAD check.
           if (isResume && (await verifyExisting())) {
@@ -647,6 +757,7 @@ function makeRunner(
         attempt++;
         if (attempt >= 2) blobClient = client;
       }
+      if (found) return reuseOriginal(sessionId, fp, it, found);
     }
   };
 
@@ -706,16 +817,22 @@ function makeRunner(
    * that half of the contract. Sampling is enough because the way it breaks
    * is systematic — something in the path dropping `x-amz-meta-*` on write —
    * not one object at a time.
+   *
+   * The Media layout has no one folder holding the images, and each was
+   * written with If-None-Match or found by listing its own hash folder, so
+   * the sampled HEADs are the whole review.
    */
   const finalReview = async (
     sessionId: string,
     uploadPath: string,
     items: PlanItem[],
   ): Promise<void> => {
-    log('info', 'final review: listing uploaded objects…');
     const sizes = new Map<string, number>();
-    for await (const o of client.listObjects(snap.bucket, `${uploadPath}/`)) {
-      sizes.set(o.key, o.size);
+    if (layout === 'legacy') {
+      log('info', 'final review: listing uploaded objects…');
+      for await (const o of client.listObjects(snap.bucket, `${uploadPath}/`)) {
+        sizes.set(o.key, o.size);
+      }
     }
     const byId = new Map(snap.files.map((f) => [f.id, f]));
     const fail = (it: PlanItem, fp: FileProgress, reason: string) => {
@@ -731,6 +848,10 @@ function makeRunner(
       const fp = byId.get(it.id);
       if (!fp || (fp.state !== 'done' && fp.state !== 'skipped')) continue;
       reviewed++;
+      if (layout === 'media') {
+        confirmed.push(it);
+        continue;
+      }
       const size = sizes.get(it.key);
       if (size !== it.size) {
         mismatched++;
@@ -746,7 +867,7 @@ function makeRunner(
       }
     }
 
-    // First, middle, last of what the listing confirmed — spread across the
+    // First, middle, last of what is confirmed so far — spread across the
     // run so a sample lands in whichever lane or window went wrong.
     const n = confirmed.length;
     const picks = n === 0 ? [] : [...new Set([0, (n - 1) >> 1, n - 1])];
@@ -754,7 +875,7 @@ function makeRunner(
       const it = confirmed[i];
       const fp = byId.get(it.id)!;
       const stat = await client.statObject(snap.bucket, it.key);
-      if (stat.size === it.size && stat.metadata.sha256 === it.sha256) continue;
+      if (storedAs(it, stat)) continue;
       mismatched++;
       fail(
         it,
@@ -769,9 +890,11 @@ function makeRunner(
 
     log(
       'info',
-      mismatched === 0
-        ? `final review: all ${reviewed} objects confirmed by listing, ${picks.length} sampled for digest`
-        : `final review: ${mismatched} of ${reviewed} objects failed the final check`,
+      mismatched > 0
+        ? `final review: ${mismatched} of ${reviewed} objects failed the final check`
+        : layout === 'media'
+          ? `final review: ${picks.length} of ${reviewed} objects re-read and confirmed`
+          : `final review: all ${reviewed} objects confirmed by listing, ${picks.length} sampled for digest`,
     );
     emit(true);
   };
@@ -877,7 +1000,6 @@ function makeRunner(
     snap.bucket = plan.bucket;
     snap.collectionUuid = plan.collectionUuid;
     snap.uploadPath = plan.uploadPath;
-    snap.metadataBundleSha256 = plan.metadataBundleSha256;
     snap.totalBytes = plan.totalBytes;
     snap.uploadedBytes = 0;
     snap.skippedBytes = 0;
@@ -992,9 +1114,11 @@ function makeRunner(
     }
 
     // --- Phase 2: metadata, in publish order ---
+    const { writes, metadataBundleSha256 } = await plan.metadata();
+    snap.metadataBundleSha256 = metadataBundleSha256;
     snap.phase = 'metadata';
     emit(true);
-    await writeMetadata(plan.writes, plan.uploadPath).catch(endUnpublished);
+    await writeMetadata(writes, plan.uploadPath).catch(endUnpublished);
   };
 
   // Shared by a fixed-plan run and a streamed run: writes the CSVs/JSON in
@@ -1002,7 +1126,7 @@ function makeRunner(
   // already-written only on resume after verifying the existing bytes. A
   // fresh run must not silently accept a metadata collision, and a resumed
   // run must not accept a different publication under the same key.
-  const writeMetadata = async (writes: RunPlan['writes'], uploadPath: string): Promise<void> => {
+  const writeMetadata = async (writes: MetadataWrite[], uploadPath: string): Promise<void> => {
     const readExisting = async (key: string): Promise<Uint8Array> => {
       for (let attempt = 0; ; attempt++) {
         if (cancelled) throw new Error('cancelled');
@@ -1074,7 +1198,8 @@ function makeRunner(
    * the batch is known and enqueued) and every enqueued item has settled;
    * only then does it enter the metadata phase, building the bundle via
    * `buildMetadata` — called exactly once, after the blob queue is fully
-   * drained, so it always sees the complete set.
+   * drained, so it always sees the complete set and the key each file
+   * actually landed under.
    */
   const runStreaming = async (
     seed: {
@@ -1086,7 +1211,7 @@ function makeRunner(
       initialFiles: FileProgress[]; // placeholder ('inspecting') or real ('pending') entry per known file
     },
     queue: ReturnType<typeof makeAsyncQueue<PlanItem>>,
-    buildMetadata: () => Promise<{ writes: RunPlan['writes']; metadataBundleSha256: string }>,
+    buildMetadata: (resolvedKeys: Map<string, string>) => Promise<BuiltMetadata>,
   ): Promise<void> => {
     abort = new AbortController();
     activeQueue = queue;
@@ -1218,7 +1343,7 @@ function makeRunner(
     // unconditionally: on a partial failure this gives a later retry a real,
     // byte-identical ledger to resume from instead of starting over: it's
     // just not written to S3 until every blob has actually landed.
-    const { writes, metadataBundleSha256 } = await buildMetadata();
+    const { writes, metadataBundleSha256 } = await buildMetadata(new Map(pulled.map((it) => [it.id, it.key])));
     if (cancelled) throw new Error('cancelled');
     snap.metadataBundleSha256 = metadataBundleSha256;
     if (reviewError) return endUnpublished(reviewError);
@@ -1302,6 +1427,7 @@ export function runStreamingUpload(
     persist,
     isResume: false,
     dryRun,
+    layout: build.layout,
   });
   const sessionId = crypto.randomUUID();
   runner.snap.sessionId = sessionId;
@@ -1318,6 +1444,7 @@ export function runStreamingUpload(
     uploaderSlug: build.uploaderSlug,
     now,
     files: build.files,
+    layout: build.layout,
   });
 
   let estimates = processingComplete(build.files) ? estimateCaptureTimes(build.files, build.timeZone) : undefined;
@@ -1360,6 +1487,7 @@ export function runStreamingUpload(
     const batch: BatchRecord = {
       id: sessionId,
       targetBucket: build.bucket,
+      layout: build.layout,
       uploadPrefix: naming.uploadPath,
       deploymentId,
       location: build.location,
@@ -1406,9 +1534,10 @@ export function runStreamingUpload(
           initialFiles,
         },
         queue,
-        async () => {
+        async (resolvedKeys) => {
           const files = finalFiles ?? build.files;
-          const bundle = await buildBundle({ ...build, files, now, naming });
+          const bundle = await buildBundle({ ...build, files, now, naming, resolvedKeys });
+          for (const d of bundle.dropped) runner.log('info', droppedLine(d));
           if (persist) {
             const bundleRec: BundleRecord = {
               sessionId,
@@ -1421,7 +1550,7 @@ export function runStreamingUpload(
             };
             await attachBundle(bundleRec);
           }
-          return { writes: metadataWrites(bundle), metadataBundleSha256: bundle.metadataBundleSha256 };
+          return { writes: metadataWrites(bundle, build.layout), metadataBundleSha256: bundle.metadataBundleSha256 };
         },
       );
       if (runner.isCancelled()) throw new Error('cancelled');
@@ -1526,10 +1655,12 @@ export function resumeUpload(
 ): UploadRun {
   const { config, session, attached, concurrency } = params;
   const { batch, bundle, files } = session;
+  const layout = batch.layout ?? 'legacy';
   const runner = makeRunner(config, concurrency, onUpdate, {
     persist: true,
     isResume: true,
     dryRun: false,
+    layout,
   });
   runner.snap.sessionId = batch.id;
   runner.snap.collectionUuid = batch.collectionUuid;
@@ -1589,7 +1720,6 @@ export function resumeUpload(
     collectionUuid: batch.collectionUuid,
     uploadPath: batch.uploadPrefix,
     totalBytes: processedFiles.reduce((n, f) => n + f.size, 0),
-    metadataBundleSha256: bundle.metadataBundleSha256,
     items: processedFiles.map((r) => ({
       id: r.localPath,
       localPath: r.localPath,
@@ -1604,7 +1734,51 @@ export function resumeUpload(
       file: attached.get(r.localPath) ?? null,
       doneAlready: r.state === 'done',
     })),
-    writes: metadataWrites(bundle),
+    // The saved bundle is republished byte for byte while its media.csv still
+    // names exactly the keys the files resolved to, which a metadata write an
+    // earlier attempt already made depends on. A file that settled on an
+    // original stored since the bundle was saved, in this attempt or in one
+    // that stopped before publishing, moves its row, so then it is rebuilt.
+    metadata: async () => {
+      const keyOf = new Map(plan.items.map((it) => [it.id, it.key]));
+      const saved = new Set(parseMedia(bundle.mediaCsv).map((m) => m.mediaPath));
+      const resolved = new Set(keyOf.values());
+      if (layout === 'legacy' || (saved.size === resolved.size && [...resolved].every((k) => saved.has(k)))) {
+        return { writes: metadataWrites(bundle, layout), metadataBundleSha256: bundle.metadataBundleSha256 };
+      }
+      const rebuilt = await buildBundleFromRecords({
+        location: batch.location,
+        collectionUuid: batch.collectionUuid,
+        bucket: batch.targetBucket,
+        uploaderSlug: batch.uploaderSlug,
+        description: batch.description,
+        timeZone: batch.uploadTimeZone,
+        uploadPath: batch.uploadPrefix,
+        startedAt: new Date(batch.startedAt),
+        files: processedFiles.map((r) => ({
+          localPath: r.localPath,
+          fileName: r.fileName,
+          size: r.size,
+          sha256: r.sha256!,
+          remoteKey: keyOf.get(r.localPath)!,
+          timestampSource: r.timestampSource,
+          captureTimestamp: r.captureTimestamp,
+          mimeType: r.mimeType,
+          preTags: r.preTags,
+        })),
+      });
+      for (const d of rebuilt.dropped) runner.log('info', droppedLine(d));
+      await attachBundle({
+        sessionId: batch.id,
+        uploadMetaJson: rebuilt.uploadMetaJson,
+        deploymentsCsv: rebuilt.deploymentsCsv,
+        mediaCsv: rebuilt.mediaCsv,
+        observationsCsv: rebuilt.observationsCsv,
+        uploadCompleteJson: rebuilt.uploadCompleteJson,
+        metadataBundleSha256: rebuilt.metadataBundleSha256,
+      });
+      return { writes: metadataWrites(rebuilt, layout), metadataBundleSha256: rebuilt.metadataBundleSha256 };
+    },
   };
 
   const done = (async () => {
