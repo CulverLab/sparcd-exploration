@@ -121,7 +121,7 @@ one of exactly these:
 | `forbidden` | 403 | the caller may not do this |
 | `not_found` | 404 | no such endpoint, person, collection or invite |
 | `last_admin` | 409 | the change would leave no active admin |
-| `last_runner` | 409 | the change would leave the collection with no `run` member |
+| `last_runner` | 409 | the change would leave the collection with no active `run` member |
 | `changed_elsewhere` | 412 | the `If-Match` version is stale |
 | `too_large` | 413 | the body is over `MAX_BODY_BYTES` |
 | `busy` | 503 | `MAX_BUFFERED_BYTES` is already in flight |
@@ -140,8 +140,11 @@ Admin only:
 - `PATCH /-/admin/people/:id` `{ name?, email?, admin?, status?: "active"|"paused" }` → `{ person }`.
   `admin` must be a boolean and `status` one of the two words, or 400 `invalid`. The
   last active admin cannot be paused or demoted (409 `last_admin`), checked against the
-  resulting object and again after the write.
-- `POST /-/admin/people/:id/reset` → retires every key, status back to `invited`, → `{ invite }`
+  resulting object and again after the write. Pausing a person who is a collection's
+  last active `run` member is 409 `last_runner`.
+- `POST /-/admin/people/:id/reset` → retires every key, status back to `invited`, → `{ invite }`.
+  Resetting an active person who is a collection's last active `run` member is 409
+  `last_runner`; a paused or invited person can always be reset.
 - `GET /-/admin/collections` → `{ collections: [{ bucket, uuid, name, organization, membersVersion, members: [...with person names] }] }`.
   `membersVersion` is an opaque string, or `null` when the collection has no members
   file yet.
@@ -149,14 +152,15 @@ Admin only:
   → `{ members, membersVersion }`. Requires `If-Match: <membersVersion>`, or
   `If-None-Match: *` when it was `null`. A stale version is 412 `changed_elsewhere`.
   People with `run` on that collection may call it too. At least one member with `run`
-  is required (409 `last_runner`).
+  whose person is active is required (409 `last_runner`): a list whose only runner is
+  still `invited`, or `paused`, is refused.
 - `PUT /-/admin/collections/:bucket/members/:personId` `{ access, exactLocations? }` and
   `DELETE /-/admin/collections/:bucket/members/:personId` → `{ members, membersVersion }`.
   The server does the read-modify-write and retries up to three times on a conflict, so
   these need no `If-Match`. Same permission rule. The last-`run` rule here protects an
   existing runner rather than demanding one: an edit that would remove the collection's
-  last `run` member is 409 `last_runner`, while a collection that has no members yet can
-  receive its first at any level.
+  last active `run` member is 409 `last_runner`, while a collection that has no active
+  runner yet can receive any grant.
 - `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`.
   `kind` is a comma-separated list and matches any of them; a kind outside the set below is
   400 `invalid`, and no `kind` at all is every kind.

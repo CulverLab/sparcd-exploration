@@ -410,6 +410,10 @@ describe('joining, pausing and resetting', () => {
   test('a reset retires the old key at once', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const carolId = list.body.people.find((p) => p.name === 'carol').id;
+    const aliceId = list.body.people.find((p) => p.name === 'alice').id;
+    // Carol is the only runner on B in the base fixture. Give Alice a
+    // temporary second runner role so reset can exercise key retirement.
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'run' });
     const before = await status(
       people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` })));
     assert.equal(before, 200);
@@ -430,6 +434,7 @@ describe('joining, pausing and resetting', () => {
       await status(people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }))),
       200,
     );
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'look' });
   });
 });
 
@@ -637,6 +642,10 @@ describe('activity', () => {
   test('a download, a denial and an access change each leave a line', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const aliceId = list.body.people.find((p) => p.name === 'alice').id;
+    const carolId = list.body.people.find((p) => p.name === 'carol').id;
+    // Alice is the only runner on A in the base fixture. Add a temporary
+    // alternate runner so pausing her exercises the activity audit path.
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'run' });
 
     const downloadKey = `${prefixA}/a.jpg`;
     await people.alice.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: downloadKey }));
@@ -644,6 +653,7 @@ describe('activity', () => {
       new PutObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/nope.jpg`, Body: 'x' })));
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'paused' });
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'active' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'identify' });
 
     const all = await people.admin.api('GET', '/-/admin/activity?limit=1000');
     assert.equal(all.status, 200);

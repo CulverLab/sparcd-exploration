@@ -13,7 +13,7 @@ import {
 import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
 import { makeActivity, KINDS, MAX_RANGE_DAYS, rangeTooWide } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
-import { ERROR_CODES } from '../api.mjs';
+import { ERROR_CODES, makeApi } from '../api.mjs';
 import { listAroundProtectedTrees } from '../server.mjs';
 
 const ns = makeNamespace({ namespace: 't-', allow: 'sparcd,sparcd-*' });
@@ -718,5 +718,88 @@ describe('a settings listing pages through folders as well as keys', () => {
     assert.deepEqual(page.commonPrefixes, ['Settings/a/', 'Settings/b/']);
     assert.equal(page.truncated, true, 'a full page of folders reported as complete');
     assert.equal(page.nextToken, afterTree('Settings/b/'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The API over a store over one in-memory upstream. Two stores over the same
+// upstream are two proxies, each with a cache the other does not refresh.
+// ---------------------------------------------------------------------------
+
+const UUID = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
+const COLLECTION = `sparcd-${UUID}`;
+const SETTINGS_UP = 't-sparcd-settings-x';
+
+function memoryUpstream(people, members) {
+  const objects = new Map();
+  let writes = 0;
+  const upstream = {
+    objects,
+    listBuckets: async () => [SETTINGS_UP, `t-${COLLECTION}`],
+    getJson: async (bucket, key) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+    },
+    get: async () => ({ status: 404 }),
+    listKeys: async (bucket, prefix) => [...objects.keys()]
+      .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+      .map((k) => k.slice(bucket.length + 1)),
+    put: async (bucket, key, body, guard = {}) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      if (guard.ifNoneMatch === '*' && hit) return false;
+      if (guard.ifMatch && guard.ifMatch !== hit?.etag) return false;
+      writes += 1;
+      objects.set(`${bucket}/${key}`, { body: String(body), etag: `"w${writes}"` });
+      return true;
+    },
+  };
+  for (const p of people) {
+    objects.set(`${SETTINGS_UP}/Settings/access/people/${p.id}.json`, {
+      body: JSON.stringify({ admin: false, keys: [], ...p }), etag: `"${p.id}"`,
+    });
+  }
+  objects.set(`t-${COLLECTION}/Collections/${UUID}/members.json`, {
+    body: JSON.stringify({ schemaVersion: 1, members }), etag: '"members"',
+  });
+  return upstream;
+}
+
+async function accessApi(upstream) {
+  const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+  await store.reload();
+  const api = makeApi({
+    store, activity: { record() {} }, lastActive: new Map(), publicEndpoint: 'http://proxy.example.org',
+  });
+  const call = (actorId, method, path, body, headers = {}) => api.handle({
+    method, path, query: new URLSearchParams(), headers: new Headers(headers),
+    body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
+  });
+  return { store, call };
+}
+
+describe('a collection keeps a runner who can act on it', () => {
+  const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
+
+  test('a member list whose only runner is still invited is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'invited' }],
+      [{ personId: 'r1', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
+      members: [{ personId: 'r1', access: 'look' }, { personId: 'r2', access: 'run' }],
+    }, { 'if-match': '"members"' }), { code: 'last_runner' });
+  });
+
+  test('pausing or resetting the last active runner is refused, a paused one is not', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'paused' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    await assert.rejects(call('admin', 'POST', '/-/admin/people/r1/reset'), { code: 'last_runner' });
+    assert.equal((await call('admin', 'POST', '/-/admin/people/r2/reset')).status, 200);
   });
 });

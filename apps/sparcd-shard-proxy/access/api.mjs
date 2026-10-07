@@ -322,6 +322,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
 
+    if (person.status === 'active' && next.status !== 'active') {
+      requireActiveRunnerForPerson(person.id);
+    }
     const saved = await guard(() => store.savePerson(next, person.etag));
     if (activeAdmins().length === 0) {
       // Another proxy removed the other admin between the check and the write.
@@ -347,6 +350,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     const retiredAt = new Date().toISOString();
     const { token, record } = newInvite();
+    if (person.status === 'active') requireActiveRunnerForPerson(person.id);
     const saved = await guard(() => store.savePerson({
       ...person,
       status: 'invited',
@@ -386,7 +390,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     grantedAt: new Date().toISOString(),
   });
 
-  const hasRunner = (members) => members.some((m) => m.access === 'run');
+  // Invited and paused people cannot use collection access. A runner guard
+  // therefore counts only members whose person record is currently active.
+  const hasRunner = (members) => members.some((m) =>
+    m.access === 'run' && store.person(m.personId)?.status === 'active');
 
   function requireRunner(members) {
     if (!hasRunner(members)) {
@@ -402,6 +409,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   function requireNotStranded(before, after) {
     if (hasRunner(before) && !hasRunner(after)) {
       fail('last_runner', 'this would remove the collection\'s last member with run access');
+    }
+  }
+
+  function requireActiveRunnerForPerson(personId) {
+    for (const collection of store.collections()) {
+      const member = collection.members.find((m) => m.personId === personId && m.access === 'run');
+      if (!member) continue;
+      const remaining = collection.members.filter((m) => m.personId !== personId);
+      if (!hasRunner(remaining)) {
+        fail('last_runner', 'this would leave the collection without an active runner');
+      }
     }
   }
 
