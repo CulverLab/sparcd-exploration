@@ -847,11 +847,13 @@ export async function listAroundProtectedTrees({
     // are entries as far as `max-keys` goes. Counting only the keys hands
     // back a page of folders and calls it an empty listing. Both are taken in
     // the order the upstream sorts them: every folder first and then a resume
-    // past the last one skips the keys that sorted between them.
+    // past the last one skips the keys that sorted between them. The upstream
+    // sorts UTF-8 bytes, which JS string comparison does not: it compares
+    // UTF-16 code units, and puts U+10000 and above before U+E000–U+FFFF.
     const items = [
       ...got.commonPrefixes.map((name) => ({ name })),
       ...got.keys.map((entry) => ({ name: entry.key, entry })),
-    ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    ].sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)));
 
     let jumpedTo = null;
     for (const { name, entry } of items) {

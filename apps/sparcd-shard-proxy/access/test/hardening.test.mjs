@@ -762,6 +762,31 @@ describe('a settings listing pages through folders as well as keys', () => {
     }
   });
 
+  test('paging keeps the upstream\'s UTF-8 byte order', async () => {
+    // U+FF5A is EF BD 9A and U+1F600 is F0 9F 98 80, so S3 lists the first
+    // one first. Compared as UTF-16 code units they swap.
+    const names = ['Settings/ｚ.json', 'Settings/\u{1F600}.json'];
+    const utf8 = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => ({
+        keys: names.filter((n) => !startAfter || utf8(n, startAfter) > 0).map((key) => ({ key })),
+        commonPrefixes: [],
+        nextToken: null,
+      }),
+    };
+    const seen = [];
+    let after = null;
+    do {
+      const page = await listAroundProtectedTrees({
+        upstream, bucket: 'b', prefix: 'Settings/', delimiter: '', maxKeys: 1, after,
+        hidden: () => false, hiddenTrees: [],
+      });
+      seen.push(...page.keys.map((k) => k.key));
+      after = page.nextToken;
+    } while (after);
+    assert.deepEqual(seen, names);
+  });
+
   const walk = (upstream, hiddenTrees = []) => listAroundProtectedTrees({
     upstream,
     bucket: 't-sparcd-settings-x',
