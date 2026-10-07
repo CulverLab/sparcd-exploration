@@ -81,7 +81,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     await previous;
     try {
       // The caller was checked before the wait, and an edit queued ahead of
-      // this one may have paused or demoted them since.
+      // this one may have paused or demoted them since, or the store may have
+      // fallen behind a change that does.
+      if (store.behind()) fail('forbidden', 'access data could not be refreshed');
       const current = store.person(actor.id);
       if (current?.status !== 'active') fail('forbidden', 'person is no longer active');
       return await fn(current);

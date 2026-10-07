@@ -353,6 +353,12 @@ export async function createAccessProxy(input) {
         respondXml(res, 403, 'SignatureDoesNotMatch', verified.error, origin);
         return;
       }
+      // Checked again: the body can take long enough to arrive that access
+      // data fell behind after the check above.
+      if (store.behind()) {
+        respondXml(res, 403, 'AccessDenied', 'access data could not be refreshed', origin);
+        return;
+      }
       signedHeaders = verified.signedHeaders;
       person = store.byAccessKey(verified.accessKeyId)?.person ?? null;
       if (!person) {

@@ -1081,6 +1081,31 @@ describe('a poll that cannot load a change fails closed', () => {
       store.stop();
     }
   });
+
+  test('an edit queued before the store fell behind is refused when its turn comes', async () => {
+    const upstream = memoryUpstream([admin, { id: 'p1', status: 'active' }, { id: 'p2', status: 'active' }], []);
+    const { store, call } = await accessApi(upstream);
+    // The first edit's write waits for the test, holding the queue behind it.
+    const put = upstream.put;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let holding = false;
+    upstream.put = async (...args) => {
+      upstream.put = put;
+      holding = true;
+      await held;
+      return put(...args);
+    };
+    const first = call('admin', 'PATCH', '/-/admin/people/p1', { name: 'P one' });
+    const queued = call('admin', 'PATCH', '/-/admin/people/p2', { status: 'paused' });
+    while (!holding) await new Promise((resolve) => setImmediate(resolve));
+    store.behind = () => true;
+    release();
+    assert.equal((await first).status, 200);
+    await assert.rejects(queued, { code: 'forbidden' });
+    const p2 = JSON.parse(upstream.objects.get(`${SETTINGS_UP}/Settings/access/people/p2.json`).body);
+    assert.equal(p2.status, 'active');
+  });
 });
 
 describe('a reload already in flight cannot undo a write', () => {

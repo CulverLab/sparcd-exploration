@@ -1169,6 +1169,36 @@ describe('round 3 follow-ups', () => {
     }
   });
 
+  test('a body still arriving when access data falls behind is refused once it lands', async () => {
+    const key = `${prefixA}/arrived-late.jpg`;
+    const behind = proxy.store.behind;
+    let stale = false;
+    let checked;
+    const firstCheck = new Promise((resolve) => { checked = resolve; });
+    proxy.store.behind = () => { checked(); return stale; };
+    let finish;
+    const rest = new Promise((resolve) => { finish = resolve; });
+    const body = new ReadableStream({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode('first half, '));
+        await rest;
+        controller.enqueue(new TextEncoder().encode('second half'));
+        controller.close();
+      },
+    });
+    try {
+      const pending = people.bob.raw('PUT', `/${BUCKET_A}/${key}`, { body });
+      await firstCheck;
+      stale = true;
+      finish();
+      const res = await pending;
+      assert.equal(res.status, 403, res.text);
+      assert.equal((await root.get(`${NAMESPACE}${BUCKET_A}`, key)).status, 404);
+    } finally {
+      proxy.store.behind = behind;
+    }
+  });
+
   // N2 — a body with no declared length is still accounted
   test('a chunked body is counted, not waved through', async () => {
     const small = await startProxy(endpoint, { maxBufferedBytes: 4096 }, { bootstrap: false });
