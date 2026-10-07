@@ -1,8 +1,14 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
-import { FOLDER, jpegAt, publishableBatch, slowPublishableBatch } from './batches';
-import { BUCKET_A, UUID_A } from './fixtures-data';
-import { FAILING_FILE, producePartialRun as basePartialRun, writtenCsvRows } from './helpers';
+import { FOLDER, jpegAt, manyJpegs, publishableBatch, slowPublishableBatch } from './batches';
+import { BUCKET_A, COLLECTION_A_NAME, COLLECTION_B_NAME, UUID_A } from './fixtures-data';
+import {
+  FAILING_FILE,
+  produceCompleteRun,
+  producePartialRun as basePartialRun,
+  produceFatalRun as baseFatalRun,
+  writtenCsvRows,
+} from './helpers';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
 const METADATA_NAMES = ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json', 'UploadComplete.json'];
@@ -35,6 +41,12 @@ function uploadFolders(app: App): string[] {
 /** A partial run, remembering which upload folder it claimed. */
 async function producePartialRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
   await basePartialRun(app, specs);
+  app.notes.uploadFolder = uploadFolders(app).find((f) => !f.startsWith('2026.01.02'))!;
+}
+
+/** A run that stopped on a fatal refusal, remembering the folder it claimed. */
+async function produceFatalRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
+  await baseFatalRun(app, specs);
   app.notes.uploadFolder = uploadFolders(app).find((f) => !f.startsWith('2026.01.02'))!;
 }
 
@@ -106,6 +118,34 @@ Given('an upload was interrupted before its metadata was published', async ({ ap
   await producePartialRun(app);
 });
 
+Given('a completed upload started late in the day is recorded', async ({ app }) => {
+  await produceCompleteRun(app);
+  const [batch] = await app.readBatchRecords();
+  expect(batch).toBeTruthy();
+  await app.page.evaluate(async (id) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const tx = db.transaction('batches', 'readwrite');
+    const store = tx.objectStore('batches');
+    const request = store.get(id);
+    await new Promise<void>((resolve, reject) => {
+      request.onsuccess = () => {
+        store.put({ ...(request.result as Record<string, unknown>), startedAt: '2026-09-11T22:15:10-04:00' });
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }, batch.id);
+});
+
 When('History is opened', async ({ app }) => {
   await app.gotoSection('History');
 });
@@ -113,6 +153,10 @@ When('History is opened', async ({ app }) => {
 Then('that upload is listed as open', async ({ app }) => {
   await expect(app.page.getByText('open', { exact: true })).toBeVisible();
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(0);
+});
+
+Then('History shows the batch start as {string}', async ({ app }, expected: string) => {
+  await expect(app.page.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeVisible();
 });
 
 Then('it shows how many of its files are done and how many failed', async ({ app }) => {
@@ -142,12 +186,77 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await expect(app.page.getByText('open', { exact: true })).toHaveCount(1);
 });
 
+// --- found in the morning --------------------------------------------------
+
+Given('one upload finished while nobody was watching', async ({ app }) => {
+  await produceCompleteRun(app);
+});
+
+Given('a second upload was cut off part-way while nobody was watching', async ({ app }) => {
+  // Upload folders are stamped to the second; start the next run in a new one.
+  await app.page.waitForTimeout(1_100);
+  await app.page.getByRole('button', { name: 'Next batch' }).click();
+  await app.dropFolder(manyJpegs(4, 'NIGHT'));
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  // Next batch starts with nothing assigned (#338), so pick it all again.
+  await app.chooseCollection(COLLECTION_A_NAME);
+  await app.chooseDeployment('Bear Canyon');
+  await app.continueToUpload();
+  // Two files land; the rest are still in flight when the tab goes away.
+  let media = 0;
+  app.s3.holdPut = (_bucket, key) =>
+    !METADATA_NAMES.some((n) => key.endsWith(n)) && ++media > 2;
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await expect
+    .poll(async () => (await app.readFileRecords())
+      .filter((f) => String(f.remoteKey).includes('NIGHT') && f.state === 'done').length)
+    .toBe(2);
+  await app.reopen();
+  app.s3.releaseHeldPuts();
+  app.s3.holdPut = undefined;
+});
+
+Then('the finished upload is shown as complete with nothing left to do', async ({ app }) => {
+  const row = app.page.locator('li').filter({ has: app.page.getByText('complete', { exact: true }) });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByRole('button', { name: 'Resume upload' })).toHaveCount(0);
+  await expect(row).not.toContainText('Interrupted');
+});
+
+Then(
+  'the cut-off upload says how many files are still to send and names "Resume upload" as the next step',
+  async ({ app }) => {
+    const row = app.page.locator('li').filter({ has: app.page.getByText('open', { exact: true }) });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Interrupted with 2 of 4 files still to send. Resume upload to finish it.');
+    await expect(row.getByRole('button', { name: 'Resume upload' })).toBeEnabled();
+  },
+);
+
 // --- resuming --------------------------------------------------------------
 
 Given('an open upload is listed in History', async ({ app }) => {
   await producePartialRun(app);
   await app.gotoSection('History');
   await expect(app.page.getByRole('button', { name: 'Resume' })).toBeVisible();
+});
+
+Given('an interrupted upload has a matching UploadMeta publication already stored', async ({ app }) => {
+  await producePartialRun(app);
+  app.s3.putHooks.length = 0;
+  let collided = false;
+  app.s3.putHooks.push((bucket, key, body) => {
+    if (collided || !key.endsWith('UploadMeta.json')) return undefined;
+    collided = true;
+    // Simulate another writer winning the immutable PUT race with the exact
+    // bytes this resumed run is trying to publish.
+    app.s3.put(bucket, key, body, { contentType: 'application/json' });
+    return { status: 412, code: 'PreconditionFailed', message: 'already present' };
+  });
+  app.notes.publicationCollision = true;
 });
 
 Given('the user resumes it and the upload lands as partial', async ({ app }) => {
@@ -177,9 +286,23 @@ Then('the partial run retries automatically without any user interaction', async
 });
 
 When('it is resumed', async ({ app }) => {
-  app.s3.putHooks.length = 0;
+  if (!app.notes.publicationCollision) app.s3.putHooks.length = 0;
   app.notes.putsBeforeResume = app.s3.puts.length;
   await resumeFromHistory(app);
+});
+
+Then('the resumed publication completes without replacing that metadata', async ({ app }) => {
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  const folder = app.notes.uploadFolder as string;
+  const key = `${UPLOADS_PREFIX}${folder}/UploadMeta.json`;
+  expect(app.s3.has(BUCKET_A, key)).toBe(true);
+  expect(app.s3.puts.filter((p) => p.key === key)).toHaveLength(0);
+  await expect.poll(() => app.logText(), { timeout: 10_000 }).toContain('matching content, skip');
+});
+
+Then('its completion record is written', async ({ app }) => {
+  const folder = app.notes.uploadFolder as string;
+  expect(app.s3.has(BUCKET_A, `${UPLOADS_PREFIX}${folder}/UploadComplete.json`)).toBe(true);
 });
 
 Then(
@@ -281,6 +404,34 @@ Then(
   },
 );
 
+Given('another batch is set up for a different collection and location', async ({ app }) => {
+  await app.reopen();
+  await app.dropFolder([{ ...jpegAt('IMG_9001.JPG', '2026:07:01 12:00:00'), path: 'OTHERCARD/IMG_9001.JPG' }]);
+  await expect(app.fileListToggle()).toBeVisible({ timeout: 30_000 });
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.openCollectionList();
+  await app.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: COLLECTION_B_NAME }).click();
+  await app.chooseDeployment('Coyote Wash');
+  await app.continueToUpload();
+  await expect(app.page.locator('dl').filter({ hasText: 'Collection' })).toContainText(COLLECTION_B_NAME);
+  // The Resume folder dialog hands back the interrupted upload's source folder.
+  await app.seedPickedFolder(app.notes.sourceSpecs as FileSpec[]);
+});
+
+Then("the Upload step names the resumed upload's collection, location and folder", async ({ app }) => {
+  await app.expectStep('Upload');
+  const summary = app.page.locator('dl').filter({ hasText: 'Collection' });
+  await expect(summary).toContainText(COLLECTION_A_NAME, { timeout: 60_000 });
+  await expect(summary).toContainText('Bear Canyon');
+  await expect(summary).toContainText('BEAR1');
+  await expect(summary).toContainText(FOLDER);
+  await expect(summary).not.toContainText(COLLECTION_B_NAME);
+  await expect(summary).not.toContainText('Coyote Wash');
+  await expect(summary).not.toContainText('OTHERCARD');
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+});
+
 // --- retrying from the Upload step -----------------------------------------
 
 Given('a real upload finished as partial with some files failed', async ({ app }) => {
@@ -320,6 +471,36 @@ Then('when they all land, the metadata for that same upload folder is published'
 
 Then('exactly one upload exists in the destination', async ({ app }) => {
   expect(uploadFolders(app).filter((f) => !f.startsWith('2026.01.02'))).toHaveLength(1);
+});
+
+Given('a real upload failed outright', async ({ app }) => {
+  await produceFatalRun(app);
+});
+
+Then('"Resume upload" is offered', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload' })).toBeVisible();
+});
+
+Then(
+  'History says storage refused the file and to ask an administrator before resuming',
+  async ({ app }) => {
+    await app.gotoSection('History');
+    const row = app.page.locator('li').filter({ has: app.page.getByText('open', { exact: true }) });
+    await expect(row).toContainText(
+      'Storage refused 1 file (Access Denied); ask your administrator to fix that, then Resume upload.',
+    );
+    await expect(row).not.toContainText('Interrupted');
+    await app.gotoSection('New upload');
+  },
+);
+
+When('the refusal is cleared and "Resume upload" is chosen', async ({ app }) => {
+  app.s3.putHooks.length = 0;
+  await app.page.getByRole('button', { name: 'Resume upload' }).click();
+});
+
+Then('the upload completes', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
 });
 
 When('a failed upload is retried or resumed', async ({ app }) => {
@@ -476,7 +657,7 @@ Given('a resume is running', async ({ app }) => {
 });
 
 Then(
-  'the same per-file progress, byte totals and activity log are shown as for a fresh upload',
+  'the same per-file progress and byte totals are shown, and the same run log is kept, as for a fresh upload',
   async ({ app }) => {
     await expect(app.page.getByText(/[\d.]+ (B|KB|MB|GB) \/ [\d.]+ (B|KB|MB|GB)/)).toBeVisible();
     await expect(app.page.locator('div[data-index]').first()).toBeVisible();

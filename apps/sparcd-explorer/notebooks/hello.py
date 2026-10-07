@@ -628,6 +628,7 @@ def _(
     DEFAULT_ENDPOINT,
     DEFAULT_SECRET,
     DEFAULT_SECURE,
+    SPARCD_COLLECTION_DATA_CACHE,
     creds_form,
     mo,
     urlparse,
@@ -635,6 +636,15 @@ def _(
     # Build the MinIO client from the submitted credentials, falling back to .env
     # defaults on first load. Renders a compact connection chip.
     _form_value = creds_form.value
+    # Cached collections belong to the connection that loaded them. Any other one,
+    # including the .env connection after the form is cleared, starts clean.
+    _connection = (
+        (_form_value["endpoint"], _form_value["access"], _form_value["secure"]) if _form_value is not None
+        else (DEFAULT_ENDPOINT, DEFAULT_ACCESS, DEFAULT_SECURE)
+    )
+    if SPARCD_COLLECTION_DATA_CACHE.get("connection") != _connection:
+        SPARCD_COLLECTION_DATA_CACHE.clear()
+        SPARCD_COLLECTION_DATA_CACHE["connection"] = _connection
     if _form_value is None:
         _creds = {
             "endpoint": DEFAULT_ENDPOINT,
@@ -652,38 +662,88 @@ def _(
     # credentials. Instead, with no usable credentials we define client=None and let
     # the data cells degrade to empty-schema dataframes, so the whole app (and the
     # sidebar above all) always renders.
-    if not _creds or not _creds.get("endpoint") or not _creds.get("access") or not _creds.get("secret"):
+    _missing = [
+        _name
+        for _key, _name in (("endpoint", "endpoint"), ("access", "access key"), ("secret", "secret key"))
+        if not (_creds or {}).get(_key, "").strip()
+    ]
+    if _missing:
         client = None
         is_wildcats_s3_endpoint = False
+        _need = " and ".join([", ".join(_missing[:-1]), _missing[-1]] if len(_missing) > 1 else _missing)
         _connection_chip = mo.Html(
             "<div class='sparcd-chip'><span class='led' style='background:var(--warn);"
             "box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);'></span>"
-            "<span>Enter S3 credentials in the sidebar to load data.</span></div>"
+            f"<span>Enter your {_need} in the sidebar to load data.</span></div>"
         )
     else:
+        from html import escape as _esc_ep
         from minio import Minio
 
-        _raw = _creds["endpoint"]
-        if "://" in _raw:
-            _u = urlparse(_raw)
-            _ep = _u.netloc
-            _secure = _u.scheme == "https"
+        def parse_endpoint(raw, default_secure):
+            """Check a typed endpoint; returns (host[:port], secure, problem), problem None when usable.
+
+            Accepts a bare name with an optional :port, or an http(s) address, so localhost
+            and custom ports work. Each problem describes what is in the text, in plain words,
+            because the people signing in are not expected to know URL syntax.
+            """
+            import re
+            from urllib.parse import urlsplit
+
+            raw = raw.strip()
+            scheme = re.match(r"([a-z][a-z0-9+.-]*):(/*)", raw, re.IGNORECASE)
+            # "localhost:9000" matches too; with no slashes it is a name and a number.
+            if scheme and not scheme[2] and scheme[1].lower() not in {"http", "https"}:
+                scheme = None
+            secure = scheme[1].lower() == "https" if scheme else bool(default_secure)
+            if any(c.isspace() for c in raw):
+                return raw, secure, "Remove the spaces."
+            if scheme and scheme[1].lower() not in {"http", "https"}:
+                return raw, secure, f"Start it with https:// instead of {scheme[0]}"
+            if scheme and scheme[2] != "//":
+                return raw, secure, f"Use exactly two slashes after “{scheme[1]}:”."
+            try:
+                parts = urlsplit(raw if scheme else f"//{raw}")
+            except ValueError:
+                return raw, secure, "This doesn't look like a web address."
+            rest = raw[raw.index("//") + 2 + len(parts.netloc):] if scheme else raw[len(parts.netloc):]
+            try:
+                parts.port
+            except ValueError:
+                return raw, secure, "The number after the “:” isn't valid."
+            if not parts.hostname:
+                return raw, secure, "The server name is missing."
+            if "@" in parts.netloc:
+                return raw, secure, "Remove the “@” and everything before it."
+            if rest not in {"", "/"}:
+                return raw, secure, f"Remove “{rest}” from the end."
+            return parts.netloc, secure, None
+
+        _ep, _secure, _problem = parse_endpoint(_creds["endpoint"], _creds["secure"])
+
+        # An unusable endpoint gets no client, so the registry cell stays quiet and this
+        # is the one place that explains what to fix.
+        if _problem:
+            client = None
+            is_wildcats_s3_endpoint = False
+            _connection_chip = mo.Html(
+                "<div class='sparcd-callout'>"
+                "<div class='t'>The Endpoint doesn't look right.</div>"
+                f"<div>{_esc_ep(_problem)} It should look like <b>server.example.org</b> "
+                "or <b>https://server.example.org</b>, with your server's name.</div>"
+                f"<div class='d'>You entered: {_esc_ep(_creds['endpoint'])}</div>"
+                "</div>"
+            )
         else:
-            _ep = _raw
-            _secure = bool(_creds["secure"])
+            # Exact-site point display is a data-protection concern; gate it to the trusted host.
+            _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
+            is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
 
-        # Exact-site point display is a data-protection concern; gate it to the trusted host.
-        _host = (urlparse(f"//{_ep}").hostname or "").lower().rstrip(".")
-        is_wildcats_s3_endpoint = _host == "wildcats.sparcd.arizona.edu"
-
-        client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
-        _src = "form" if _form_value is not None else ".env"
-        from html import escape as _esc_ep
-        _connection_chip = mo.Html(
-            "<div class='sparcd-chip'><span class='led'></span>"
-            f"<span>Connected to <span class='host'>{_esc_ep(_ep)}</span></span>"
-            f"<span class='src'>· {'https' if _secure else 'http'} · from {_src}</span></div>"
-        )
+            client = Minio(_ep, access_key=_creds["access"], secret_key=_creds["secret"], secure=_secure)
+            _connection_chip = mo.Html(
+                "<div class='sparcd-chip'><span class='led'></span>"
+                f"<span>Endpoint OK: <span class='host'>{_esc_ep(_ep)}</span></span></div>"
+            )
     _connection_chip
     return client, is_wildcats_s3_endpoint
 
@@ -718,20 +778,19 @@ def _(client, mo):
             with mo.status.spinner(title="Reading collections…"):
                 _buckets = [b.name for b in client.list_buckets() if b.name.startswith("sparcd-")]
         except _S3Error as exc:
-            _detail = exc.code or exc.message or str(exc)
-            _hint = (
-                "Check the endpoint, access key, secret key, and HTTPS setting."
-                if exc.code in {"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"}
-                else "Check the endpoint, credentials, and network access."
-            )
-            _callout = _error_callout("Could not connect to S3.", _hint, "S3 response", _detail)
+            _hint = {
+                "InvalidAccessKeyId": "The access key wasn't recognized. Check it for typos.",
+                "SignatureDoesNotMatch": "The secret key doesn't match the access key. Check it for typos.",
+                "AccessDenied": "This account isn't allowed to see collections. Ask your SPARC'd administrator.",
+            }.get(exc.code, "Check the endpoint, access key, and secret key.")
+            _callout = _error_callout("Couldn't sign in.", _hint, "For support", exc.code or exc.message or str(exc))
             _connection_failed = True
             _buckets = []
         except Exception as exc:
             _callout = _error_callout(
-                "Could not connect to S3.",
-                "Check the endpoint, credentials, and network access.",
-                "Error",
+                "Couldn't reach the server.",
+                "Check the endpoint and your internet connection.",
+                "For support",
                 str(exc),
             )
             _connection_failed = True
@@ -740,9 +799,9 @@ def _(client, mo):
         if not _buckets and not _connection_failed:
             _callout = mo.Html(
                 "<div class='sparcd-callout'>"
-                "<div class='t'>No accessible SPARC'd collections found.</div>"
-                "<div>Check that the endpoint, access key, secret key, and HTTPS setting match an "
-                "account with access to the Educational Test collection.</div>"
+                "<div class='t'>No collections found.</div>"
+                "<div>You're signed in, but this account can't see any SPARC'd collections. "
+                "Ask your SPARC'd administrator for access.</div>"
                 "</div>"
             )
 
@@ -794,11 +853,14 @@ def _(collections_registry, mo):
 
 
 @app.cell(hide_code=True)
-def _(DEFAULT_COLLECTION_BUCKETS, collection_load_form):
+def _(DEFAULT_COLLECTION_BUCKETS, SPARCD_COLLECTION_DATA_CACHE, collection_load_form):
     # Selected buckets + their prefixes. Falls back to the default until the form
     # is submitted, so the app loads a collection on first render.
     _submitted = collection_load_form.value
     BUCKETS = list((_submitted or {}).get("collections") or DEFAULT_COLLECTION_BUCKETS)
+    if _submitted is not None:
+        # Pressing Load re-reads the collection, so tagging done since shows up.
+        SPARCD_COLLECTION_DATA_CACHE.pop(tuple(BUCKETS), None)
     UPLOADS_PREFIXES = [
         (b, f"Collections/{b.removeprefix('sparcd-')}/Uploads/")
         for b in BUCKETS
@@ -820,10 +882,52 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
         return [row for row in csv.reader(io.StringIO(raw)) if row]
 
 
+    def _upload_is_visible(bucket: str, prefix: str) -> bool:
+        # UploadMeta.json is the publication marker. Failed prefixes remain
+        # recoverable in storage, but are not application-visible until it exists.
+        try:
+            client.get_object(bucket, prefix + "UploadMeta.json").read()
+        except Exception as _exc:
+            if getattr(_exc, "code", None) != "NoSuchKey":
+                _skip(prefix.rstrip("/"), "UploadMeta.json", _exc)
+            return False
+        return True
+
+
+    def _load_visible_upload_rows(bucket: str, uploads: list[str]):
+        dep_rows, dep_uploads = [], []
+        media_rows, media_uploads = [], []
+        obs_rows, obs_uploads = [], []
+        visible_count = 0
+        for up in uploads:
+            if not _upload_is_visible(bucket, up):
+                continue
+            visible_count += 1
+            try:
+                rows = _read_csv(bucket, up + "deployments.csv")
+                dep_rows += rows
+                dep_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "deployments.csv", _exc)
+            try:
+                rows = _read_csv(bucket, up + "media.csv")
+                media_rows += rows
+                media_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "media.csv", _exc)
+            try:
+                rows = _read_csv(bucket, up + "observations.csv")
+                obs_rows += rows
+                obs_uploads += [up] * len(rows)
+            except Exception as _exc:
+                _skip(up.rstrip("/"), "observations.csv", _exc)
+        return dep_rows, dep_uploads, media_rows, media_uploads, obs_rows, obs_uploads, visible_count
+
+
     DEPLOY_COLS = ["deployment_id", "location_id", "location_name",
                    "longitude", "latitude", "_d5", "_d6", "_d7",
                    "_d8", "_d9", "_d10", "_d11", "elevation"]
-    MEDIA_COLS = ["media_path", "deployment_id", "_p2", "_p3", "_p4",
+    MEDIA_COLS = ["media_path", "deployment_id", "_p2", "_p3", "timestamp",
                   "_p5", "file_name", "mime_type"]
     OBS_COLS = ["_p0", "deployment_id", "_p2", "media_path", "timestamp",
                 "_p5", "_p6", "_p7", "scientific_name", "count",
@@ -831,22 +935,27 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                 "_p17", "_p18", "tags"]
 
 
-    def _to_df(rows, buckets, cols):
+    def _to_df(rows, buckets, uploads, cols):
         if not rows:
             sch = {c: pl.Utf8 for c in cols}
             sch["bucket"] = pl.Utf8
-            return pl.DataFrame({c: [] for c in cols + ["bucket"]}, schema=sch)
+            sch["upload"] = pl.Utf8
+            return pl.DataFrame({c: [] for c in cols + ["bucket", "upload"]}, schema=sch)
         width = len(cols)
         fixed = [(r + [""] * width)[:width] for r in rows]
         df = pl.DataFrame(fixed, schema=cols, orient="row")
-        df = df.with_columns(pl.Series("bucket", buckets))
-        return df.select(cols + ["bucket"])
+        df = df.with_columns(pl.Series("bucket", buckets), pl.Series("upload", uploads))
+        return df.select(cols + ["bucket", "upload"])
 
 
-    _dep_rows, _dep_buckets = [], []
-    _media_rows, _media_buckets = [], []
-    _obs_rows, _obs_buckets = [], []
+    _dep_rows, _dep_buckets, _dep_uploads = [], [], []
+    _media_rows, _media_buckets, _media_uploads = [], [], []
+    _obs_rows, _obs_buckets, _obs_uploads = [], [], []
     total_uploads = 0
+    _skipped = {}
+
+    def _skip(where, what, exc):
+        _skipped.setdefault(where, []).append(f"{what} ({getattr(exc, 'code', None) or type(exc).__name__})")
 
     _cache = SPARCD_COLLECTION_DATA_CACHE
     _cache_key = tuple(BUCKETS)
@@ -861,32 +970,25 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
                         for o in client.list_objects(bucket, prefix=prefix, recursive=False)
                         if o.is_dir and o.object_name != prefix
                     ]
-                except Exception:
+                except Exception as _exc:
+                    _skip(bucket, "listing uploads", _exc)
                     uploads = []
-                total_uploads += len(uploads)
-                for up in uploads:
-                    try:
-                        rows = _read_csv(bucket, up + "deployments.csv")
-                        _dep_rows += rows
-                        _dep_buckets += [bucket] * len(rows)
-                    except Exception:
-                        pass
-                    try:
-                        rows = _read_csv(bucket, up + "media.csv")
-                        _media_rows += rows
-                        _media_buckets += [bucket] * len(rows)
-                    except Exception:
-                        pass
-                    try:
-                        rows = _read_csv(bucket, up + "observations.csv")
-                        _obs_rows += rows
-                        _obs_buckets += [bucket] * len(rows)
-                    except Exception:
-                        pass
+                rows = _load_visible_upload_rows(bucket, uploads)
+                dep, dep_up, media, media_up, obs, obs_up, count = rows
+                _dep_rows += dep
+                _dep_buckets += [bucket] * len(dep)
+                _dep_uploads += dep_up
+                _media_rows += media
+                _media_buckets += [bucket] * len(media)
+                _media_uploads += media_up
+                _obs_rows += obs
+                _obs_buckets += [bucket] * len(obs)
+                _obs_uploads += obs_up
+                total_uploads += count
 
         deployments = (
-            _to_df(_dep_rows, _dep_buckets, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
-            .select(DEPLOY_COLS + ["bucket"])
+            _to_df(_dep_rows, _dep_buckets, _dep_uploads, DEPLOY_COLS + [f"_d{i}" for i in range(13, 50)])
+            .select(DEPLOY_COLS + ["bucket", "upload"])
             .with_columns(
                 pl.col("latitude").cast(pl.Float64, strict=False),
                 pl.col("longitude").cast(pl.Float64, strict=False),
@@ -895,18 +997,19 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
             .filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
         )
         media = (
-            _to_df(_media_rows, _media_buckets, MEDIA_COLS + [f"_m{i}" for i in range(50)])
-            .select(MEDIA_COLS + ["bucket"])
+            _to_df(_media_rows, _media_buckets, _media_uploads, MEDIA_COLS + [f"_m{i}" for i in range(50)])
+            .select(MEDIA_COLS + ["bucket", "upload"])
         )
         observations = (
-            _to_df(_obs_rows, _obs_buckets, OBS_COLS + [f"_o{i}" for i in range(50)])
-            .select(OBS_COLS + ["bucket"])
+            _to_df(_obs_rows, _obs_buckets, _obs_uploads, OBS_COLS + [f"_o{i}" for i in range(50)])
+            .select(OBS_COLS + ["bucket", "upload"])
         )
         _cached = {
             "deployments": deployments,
             "media": media,
             "observations": observations,
             "total_uploads": total_uploads,
+            "skipped": _skipped,
         }
         _cache[_cache_key] = _cached
 
@@ -914,22 +1017,40 @@ def _(BUCKETS, SPARCD_COLLECTION_DATA_CACHE, UPLOADS_PREFIXES, client, mo):
     media = _cached["media"]
     observations = _cached["observations"]
     total_uploads = _cached["total_uploads"]
-    None
+
+    # Name what couldn't be read instead of dropping it silently.
+    _load_note = None
+    if _cached["skipped"]:
+        from html import escape as _esc_skip
+
+        _load_note = mo.Html(
+            "<div class='sparcd-callout'>"
+            "<div class='t'>Some collection data could not be read.</div>"
+            "<div>Rows from these files are missing from everything below.</div>"
+            + "".join(
+                f"<div class='d'>{_esc_skip(_where)}: {_esc_skip(', '.join(_what))}</div>"
+                for _where, _what in _cached["skipped"].items()
+            )
+            + "</div>"
+        )
+    _load_note
     return deployments, media, observations, pl
 
 
 @app.cell(hide_code=True)
-def _(deployments, mo, observations, pl):
+def _(deployments, media, mo, observations, pl):
     # Query filters, batched into ONE form (D). Nothing recomputes while the user
     # adjusts controls; only "Search" applies them. Option lists are derived from
     # loaded observations/deployments and rebuild on collection load (that's fine).
     import datetime as _dt
     import re as _re
 
-    _ts = observations.filter(pl.col("timestamp").str.len_chars() >= 10)["timestamp"]
-    if _ts.len() > 0:
-        _min_d = _dt.date.fromisoformat(_ts.min()[:10])
-        _max_d = _dt.date.fromisoformat(_ts.max()[:10])
+    # Media timestamps too: images without observation rows are dated by them.
+    _all_ts = pl.concat([observations["timestamp"], media["timestamp"]])
+    _days = _all_ts.str.slice(0, 10).str.to_date("%Y-%m-%d", strict=False).drop_nulls()
+    if _days.len() > 0:
+        _min_d = _days.min()
+        _max_d = _days.max()
     else:
         _min_d = _dt.date(2010, 1, 1)
         _max_d = _dt.date(2030, 12, 31)
@@ -947,10 +1068,10 @@ def _(deployments, mo, observations, pl):
     _site_options = sorted({v for v in deployments["location_id"].to_list() if v and v != "0000"})
     _range_options = sorted({v[:3] for v in _site_options if len(v) >= 3})
     _year_options = sorted(
-        {str(v)[:4] for v in observations["timestamp"].to_list() if v and len(str(v)) >= 4}
+        {str(v)[:4] for v in _all_ts.to_list() if v and len(str(v)) >= 4}
     )
     _month_options = sorted(
-        {str(v)[5:7] for v in observations["timestamp"].to_list() if v and len(str(v)) >= 7}
+        {str(v)[5:7] for v in _all_ts.to_list() if v and len(str(v)) >= 7}
     )
     _elev = deployments.filter(pl.col("elevation").is_not_null())["elevation"]
     if _elev.len() > 0:
@@ -1178,15 +1299,19 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
     _obs_scope = observations.filter(pl.col("deployment_id").is_in(_deployment_ids))
     _media_scope = media.filter(pl.col("deployment_id").is_in(_deployment_ids))
 
-    _obs_dated = _obs_scope.filter(
-        (pl.col("timestamp").str.len_chars() < 10)
-        | ((pl.col("timestamp").str.slice(0, 10) >= _d_start_s)
-           & (pl.col("timestamp").str.slice(0, 10) <= _d_end_s))
-    )
-    if _years:
-        _obs_dated = _obs_dated.filter(pl.col("timestamp").str.slice(0, 4).is_in(list(_years)))
-    if _months:
-        _obs_dated = _obs_dated.filter(pl.col("timestamp").str.slice(5, 2).is_in(list(_months)))
+    def _dated(col):
+        # Undated rows pass the date range but not a year or month pick.
+        _ts = pl.col(col)
+        _ok = (_ts.str.len_chars() < 10) | (
+            (_ts.str.slice(0, 10) >= _d_start_s) & (_ts.str.slice(0, 10) <= _d_end_s)
+        )
+        if _years:
+            _ok = _ok & _ts.str.slice(0, 4).is_in(list(_years))
+        if _months:
+            _ok = _ok & _ts.str.slice(5, 2).is_in(list(_months))
+        return _ok
+
+    _obs_dated = _obs_scope.filter(_dated("timestamp"))
 
     if not _included and not _excluded:
         observations_filtered = _obs_dated
@@ -1204,18 +1329,24 @@ def _(SEARCH_DEFAULTS, deployments, media, observations, pl, search_form):
         _mask = [_keep_row(t) for t in _obs_dated["tags"].to_list()]
         observations_filtered = _obs_dated.filter(pl.Series("_keep", _mask))
 
-    # Keep untagged media in the totals: a path stays if it survived the species
-    # filter OR if it never appears in any dated observation (untagged frame).
+    # An image stays when one of its observations passes the filters. An image
+    # with no observation rows has no species, so an include filter drops it;
+    # otherwise its media.csv timestamp decides.
     _kept_paths = observations_filtered["media_path"].unique().to_list()
-    _dated_obs_paths = _obs_dated["media_path"].unique().to_list()
+    _observed_paths = _obs_scope["media_path"].unique().to_list()
     media_filtered = _media_scope.filter(
         pl.col("media_path").is_in(_kept_paths)
-        | ~pl.col("media_path").is_in(_dated_obs_paths)
+        | (~pl.col("media_path").is_in(_observed_paths) & _dated("timestamp") & pl.lit(not _included))
     )
-    # Derive from media_filtered so never-tagged deployments (media but zero
-    # observations) stay visible on the map and in the stat cards; sites whose
-    # observations all fail the species/date filters still drop out unless they
-    # also have untagged frames preserved by the C.2 filter above.
+    # From here on an observation is an identification. A placeholder row (no
+    # species, no common name) only records that the image exists: the uploader writes one
+    # per untagged image, the tagger writes one when every tag is removed, and
+    # sparcd-web writes one per uploaded image. Counting it would mark the image tagged.
+    observations_filtered = observations_filtered.filter(
+        (pl.col("scientific_name") != "") | pl.col("tags").str.contains("[COMMONNAME:", literal=True)
+    )
+    # Derive from media_filtered so sites whose images are all untagged stay on
+    # the map and in the stat cards.
     query_deployment_ids = media_filtered["deployment_id"].unique().to_list()
     applied_filters = {
         "include": sorted(_included),
@@ -1268,29 +1399,41 @@ def _(
     )
 
     # Total images from filtered media (includes untagged frames); tagged images
-    # from the filtered observations (distinct tagged media paths).
-    _image_counts = media_filtered.group_by("deployment_id").agg(
+    # from the filtered observations (distinct tagged media paths). Counted per
+    # upload and joined to that upload's own deployments.csv row: every upload to
+    # a location repeats its deployment_id, and a location id can name two sites.
+    _image_counts = media_filtered.group_by("bucket", "upload").agg(
         pl.col("media_path").n_unique().alias("image_count")
     )
-    _obs_counts = observations_filtered.group_by("deployment_id").agg(
+    _obs_counts = observations_filtered.group_by("bucket", "upload").agg(
         pl.col("media_path").n_unique().alias("tagged_image_count")
     )
 
     locations = (
         _locations_raw
-        .join(_image_counts, on="deployment_id", how="left")
-        .join(_obs_counts, on="deployment_id", how="left")
+        .join(_image_counts, on=["bucket", "upload"], how="left")
+        .join(_obs_counts, on=["bucket", "upload"], how="left")
         .group_by("mountain_range", "location_id", "location_name", "latitude", "longitude")
         .agg(
             pl.col("deployment_id").unique().alias("deployment_ids"),
+            pl.col("upload").unique().alias("uploads"),
             pl.col("elevation").mean().round(0).alias("elevation"),
             pl.col("image_count").sum().fill_null(0).alias("image_count"),
             pl.col("tagged_image_count").sum().fill_null(0).alias("tagged_image_count"),
         )
         .sort("location_name")
+        # One key per table row. Two sites can share a location id (and so a
+        # deployment_id), so selection and drill-downs go by this key and by upload.
+        .with_columns(
+            pl.concat_str(
+                [pl.col("location_id"), pl.col("location_name"),
+                 pl.col("latitude").cast(pl.Utf8), pl.col("longitude").cast(pl.Utf8)],
+                separator="|",
+            ).alias("site_key")
+        )
     )
 
-    _locations_table = locations.drop("deployment_ids")
+    _locations_table = locations.drop("deployment_ids", "uploads", "site_key")
     if elevation_unit.value == "feet":
         _locations_table = _locations_table.with_columns(
             (pl.col("elevation") * 3.28084).round(0).alias("elevation_ft")
@@ -1444,7 +1587,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(locations, observations_filtered, pl):
+def _(deployments, locations, observations_filtered, pl):
     # Pure-Python hexagonal binning (pointy-top axial grid). Replaces the `h3`
     # package, which is a compiled Cython extension with no Pyodide/wasm wheel —
     # `import h3` fails in the deployed WASM bundle. This keeps the same hex
@@ -1456,8 +1599,19 @@ def _(locations, observations_filtered, pl):
     _SQRT3 = _hexmath.sqrt(3.0)
     # Reference latitude to keep hexes visually regular on the map: projecting
     # longitude by cos(lat0) removes the meridian convergence, then the inverse
-    # stretch restores it so cells read as hexagons at the data's latitude.
-    _lat0 = float(locations["latitude"].mean()) if locations.height else 0.0
+    # stretch restores it so cells read as hexagons at the data's latitude. Taken
+    # from every loaded site, not the search results, so a search never moves the grid.
+    # Each site counts once, with swapped coordinates corrected as the locations
+    # cell does.
+    _anchor = (
+        deployments.filter(pl.col("location_id") != "0000")
+        .unique(["location_id", "latitude", "longitude"])
+        .select(
+            pl.when(pl.col("latitude").abs() > 90).then(pl.col("longitude")).otherwise(pl.col("latitude"))
+        )
+        .to_series()
+    )
+    _lat0 = float(_anchor.mean()) if _anchor.len() else 0.0
     _cos_lat0 = _hexmath.cos(_hexmath.radians(_lat0)) or 1.0
 
     def _latlng_to_cell(lat, lng):
@@ -1477,11 +1631,13 @@ def _(locations, observations_filtered, pl):
             _rz = -_rx - _ry
         return f"{int(_rx)}:{int(_rz)}"
 
-    def _cell_to_ring(cid):
+    def _cell_center(cid):
         _q_str, _r_str = cid.split(":")
         _q, _r = int(_q_str), int(_r_str)
-        _cx = HEX_SIZE_DEG * (_SQRT3 * _q + _SQRT3 / 2.0 * _r)
-        _cy = HEX_SIZE_DEG * (1.5 * _r)
+        return HEX_SIZE_DEG * (_SQRT3 * _q + _SQRT3 / 2.0 * _r), HEX_SIZE_DEG * (1.5 * _r)
+
+    def _cell_to_ring(cid):
+        _cx, _cy = _cell_center(cid)
         _ring = []
         for _i in range(6):
             _ang = _hexmath.radians(60 * _i - 30)
@@ -1498,6 +1654,7 @@ def _(locations, observations_filtered, pl):
                 "h3_id": [],
                 "camera_count": [],
                 "location_ids": [],
+                "site_keys": [],
                 "location_names": [],
                 "center_lat": [],
                 "center_lng": [],
@@ -1510,6 +1667,7 @@ def _(locations, observations_filtered, pl):
                 "h3_id": pl.Utf8,
                 "camera_count": pl.Int64,
                 "location_ids": pl.List(pl.Utf8),
+                "site_keys": pl.List(pl.Utf8),
                 "location_names": pl.List(pl.Utf8),
                 "center_lat": pl.Float64,
                 "center_lng": pl.Float64,
@@ -1529,20 +1687,21 @@ def _(locations, observations_filtered, pl):
             .alias("h3_id")
         )
 
-        _dep_to_hex = {}
+        _upload_to_hex = {}
         for _row in _loc_with_hex.iter_rows(named=True):
-            for _d in _row["deployment_ids"]:
-                _dep_to_hex[_d] = _row["h3_id"]
+            for _u in _row["uploads"]:
+                _upload_to_hex[_u] = _row["h3_id"]
 
         _obs_with_hex = observations_filtered.with_columns(
-            pl.col("deployment_id").replace_strict(_dep_to_hex, default=None).alias("h3_id")
+            pl.col("upload").replace_strict(_upload_to_hex, default=None).alias("h3_id")
         ).filter(pl.col("h3_id").is_not_null())
 
         _obs_agg = (
             _obs_with_hex
             .group_by("h3_id")
             .agg(
-                pl.col("scientific_name").filter(pl.col("scientific_name").str.len_chars() >= 3).n_unique().alias("species_richness"),
+                # Distinct common names, the same count as the map panel and stat card.
+                pl.col("tags").str.extract_all(r"COMMONNAME:[^\]]+").explode().drop_nulls().n_unique().alias("species_richness"),
                 pl.col("media_path").n_unique().alias("checklists"),
                 pl.col("timestamp").max().alias("most_recent"),
             )
@@ -1551,11 +1710,16 @@ def _(locations, observations_filtered, pl):
             _loc_with_hex
             .group_by("h3_id")
             .agg(
-                pl.col("location_id").n_unique().alias("camera_count"),
+                pl.col("site_key").n_unique().alias("camera_count"),
                 pl.col("location_id").alias("location_ids"),
+                pl.col("site_key").alias("site_keys"),
                 pl.col("location_name").alias("location_names"),
-                pl.col("latitude").mean().alias("center_lat"),
-                pl.col("longitude").mean().alias("center_lng"),
+            )
+            # The hex's own centre. An average of site coordinates is the exact site
+            # when a hex holds one, and the map centres on these.
+            .with_columns(
+                pl.col("h3_id").map_elements(lambda h: _cell_center(h)[1], return_dtype=pl.Float64).alias("center_lat"),
+                pl.col("h3_id").map_elements(lambda h: _cell_center(h)[0] / _cos_lat0, return_dtype=pl.Float64).alias("center_lng"),
             )
         )
 
@@ -1680,17 +1844,18 @@ def _(
         if _display_mode == "points":
             _hex_lookup = {}
             for _r in hex_summary.iter_rows(named=True):
-                for _lid in _r["location_ids"]:
-                    _hex_lookup[_lid] = _r
+                for _key in _r["site_keys"]:
+                    _hex_lookup[_key] = _r
             _point_rows = [
                 {
                     "location_id": _r["location_id"],
                     "location_name": _r["location_name"],
+                    "site_key": _r["site_key"],
                     "lat": _r["latitude"],
                     "lon": _r["longitude"],
-                    "species_richness": _hex_lookup.get(_r["location_id"], {}).get("species_richness", 0),
-                    "checklists": _hex_lookup.get(_r["location_id"], {}).get("checklists", 0),
-                    "most_recent": _hex_lookup.get(_r["location_id"], {}).get("most_recent", "—"),
+                    "species_richness": _hex_lookup.get(_r["site_key"], {}).get("species_richness", 0),
+                    "checklists": _hex_lookup.get(_r["site_key"], {}).get("checklists", 0),
+                    "most_recent": _hex_lookup.get(_r["site_key"], {}).get("most_recent", "—"),
                 }
                 for _r in locations.iter_rows(named=True)
             ]
@@ -1701,7 +1866,7 @@ def _(
                     mode="markers",
                     marker=dict(size=14, color="#5f3b24", opacity=0.9),
                     customdata=[
-                        (r["location_id"], r["location_name"], r["species_richness"], r["checklists"], r["most_recent"])
+                        (r["location_id"], r["location_name"], r["species_richness"], r["checklists"], r["most_recent"], r["site_key"])
                         for r in _point_rows
                     ],
                     hovertemplate=(
@@ -1777,6 +1942,8 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
     _v = camera_map.value if (camera_map is not None and hasattr(camera_map, "value")) else []
     _display_mode = map_display_mode.value if is_wildcats_s3_endpoint else "hex"
 
+    # Holds the locations' site_key values, not bare location ids, so a click on one
+    # of two sites sharing an id selects only that site.
     selected_location_ids = []
     if _v:
         if _display_mode == "points":
@@ -1784,7 +1951,7 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
             for _p in _v:
                 _cd = _p.get("customdata")
                 if _cd:
-                    _lid = _cd[0] if isinstance(_cd, (list, tuple)) else _cd
+                    _lid = _cd[5]
                     if _lid not in _seen:
                         _seen.add(_lid)
                         selected_location_ids.append(_lid)
@@ -1803,7 +1970,7 @@ def _(camera_map, hex_summary, is_wildcats_s3_endpoint, map_display_mode, pl):
                     _hex_ids.append(_hex_id_list[_idx])
             _seen = set()
             for _r in hex_summary.filter(pl.col("h3_id").is_in(_hex_ids)).iter_rows(named=True):
-                for _lid in _r["location_ids"]:
+                for _lid in _r["site_keys"]:
                     if _lid not in _seen:
                         _seen.add(_lid)
                         selected_location_ids.append(_lid)
@@ -1857,8 +2024,8 @@ def _(
             )
         return "".join(_rows)
 
-    def _species_list(dep_ids):
-        _obs = observations_filtered.filter(pl.col("deployment_id").is_in(dep_ids))
+    def _species_list(uploads):
+        _obs = observations_filtered.filter(pl.col("upload").is_in(uploads))
         _pat = _re.compile(r"COMMONNAME:([^\]]+)")
         _counts = {}
         for _row in _obs.select("tags", "media_path").iter_rows(named=True):
@@ -1868,9 +2035,8 @@ def _(
         return sorted(_counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
 
     if selected_location_ids:
-        _selected = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _selected["deployment_ids"].to_list() for d in ds]
-        _species = _species_list(_dep_ids)
+        _selected = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _species = _species_list([u for us in _selected["uploads"].to_list() for u in us])
         _species_rows = "".join(
             _card_row(_html.escape(name), count)
             for name, count in _species[:12]
@@ -1893,8 +2059,7 @@ def _(
             + _chart
         )
     else:
-        _dep_ids = [d for ds in locations["deployment_ids"].to_list() for d in ds] if locations.height else []
-        _species = _species_list(_dep_ids)
+        _species = _species_list([u for us in locations["uploads"].to_list() for u in us])
         _species_rows = "".join(
             _card_row(_html.escape(name), count)
             for name, count in _species[:10]
@@ -1936,7 +2101,7 @@ def _(locations, mo, pl, selected_location_ids):
     else:
         from html import escape as _esc
 
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
         _names = ", ".join(_esc(n) for n in _rows["location_name"].to_list())
         _img = int(_rows["image_count"].sum())
         _tag = int(_rows["tagged_image_count"].sum())
@@ -2004,10 +2169,10 @@ def _(
     if not selected_location_ids:
         location_summary_card = mo.md("")
     else:
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _rows["deployment_ids"].to_list() for d in ds]
-        _media_loc = media_filtered.filter(pl.col("deployment_id").is_in(_dep_ids)).unique("media_path")
-        _obs_loc = observations_filtered.filter(pl.col("deployment_id").is_in(_dep_ids))
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _uploads = [u for us in _rows["uploads"].to_list() for u in us]
+        _media_loc = media_filtered.filter(pl.col("upload").is_in(_uploads)).unique("media_path")
+        _obs_loc = observations_filtered.filter(pl.col("upload").is_in(_uploads))
 
         _total = _media_loc.height
         _tagged = _obs_loc["media_path"].unique().len()
@@ -2022,7 +2187,6 @@ def _(
             _sci_clean.group_by("scientific_name").len()
             .rename({"len": "images"}).sort("images", descending=True)
         )
-        _distinct_species = _species_counts.height
 
         import re as _re_card
         _pat_card = _re_card.compile(r"COMMONNAME:([^\]]+)")
@@ -2036,6 +2200,7 @@ def _(
             pl.DataFrame({"common_name": list(_cn_counts.keys()), "images": list(_cn_counts.values())})
             .sort("images", descending=True)
         )
+        _distinct_species = len(_cn_counts)
 
         _dates = _obs_loc.filter(pl.col("timestamp").str.len_chars() >= 10)["timestamp"]
         _date_range_str = "—"
@@ -2086,24 +2251,25 @@ def _(
         selected_images_all = pl.DataFrame()
         selected_total = 0
     else:
-        _rows = locations.filter(pl.col("location_id").is_in(selected_location_ids))
-        _dep_ids = [d for ds in _rows["deployment_ids"].to_list() for d in ds]
-        _dep_locations = pl.DataFrame([
+        _rows = locations.filter(pl.col("site_key").is_in(selected_location_ids))
+        _uploads = [u for us in _rows["uploads"].to_list() for u in us]
+        _upload_locations = pl.DataFrame([
             {
-                "deployment_id": d,
+                "upload": u,
                 "mountain_range": r["mountain_range"],
                 "location_id": r["location_id"],
                 "location_name": r["location_name"],
             }
             for r in _rows.iter_rows(named=True)
-            for d in r["deployment_ids"]
+            for u in r["uploads"]
         ])
         _selected_media = (
             media_filtered
-            .filter(pl.col("deployment_id").is_in(_dep_ids))
-            .select("media_path", "file_name", "deployment_id", "bucket")
+            .filter(pl.col("upload").is_in(_uploads))
+            .select("media_path", "file_name", "mime_type", "deployment_id", "bucket", "upload")
             .unique(subset=["bucket", "media_path"])
-            .join(_dep_locations, on="deployment_id", how="left")
+            .join(_upload_locations, on="upload", how="left")
+            .drop("upload")
         )
         _selected_keys = set(_selected_media.select("bucket", "media_path").iter_rows())
         import re as _re_events
@@ -2222,8 +2388,8 @@ def _(
     from datetime import timedelta
     from html import escape
 
-    def _presign_row(bucket: str, path: str) -> str:
-        return client.presigned_get_object(bucket, path, expires=timedelta(minutes=30))
+    def _presign_row(bucket: str, path: str, expires=timedelta(minutes=30)) -> str:
+        return client.presigned_get_object(bucket, path, expires=expires)
 
     def _parse_tags(raw: str) -> str:
         if not raw:
@@ -2262,9 +2428,17 @@ def _(
             "width:100%;aspect-ratio:4/3;object-fit:cover;display:block;"
             "background:var(--mark,#ead8a3);border:1px solid var(--ruleSoft,#cfc4a8);"
         )
+        # Videos keep their own shape inside the tile instead of being cropped to 4:3.
+        _video_style = _img_style.replace("object-fit:cover", "object-fit:contain")
         _tiles = []
         for _row in _page_df.iter_rows(named=True):
-            _url = _presign_row(_row["bucket"], _row["media_path"])
+            _is_video = (_row.get("mime_type") or "").startswith("video/")
+            # A video keeps requesting ranges as it plays and seeks, so its URL has to
+            # outlast a long stay on the page, not just the first load.
+            _url = _presign_row(
+                _row["bucket"], _row["media_path"],
+                timedelta(hours=12) if _is_video else timedelta(minutes=30),
+            )
             _tag = _parse_tags(_row.get("tags") or "")
             _sci = _row.get("scientific_name") or ""
             _ts = (_row.get("timestamp") or "").replace("T", " ")[:19]
@@ -2272,10 +2446,15 @@ def _(
             _u = escape(_url, quote=True)
             _f = escape(_row["file_name"])
             _m = escape(_caption) if _caption else "&nbsp;"
+            if _is_video:
+                _media = f"<video src='{_u}' controls preload='metadata' playsinline style='{_video_style}'></video>"
+            else:
+                _media = (
+                    f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
+                    f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                )
             _tiles.append(
-                f"<figure style='{_fig_style}'>"
-                f"<a href='{_u}' target='_blank' rel='noopener' title='Open full image' style='display:block; cursor:zoom-in;'>"
-                f"<img src='{_u}' loading='lazy' decoding='async' style='{_img_style}' /></a>"
+                f"<figure style='{_fig_style}'>{_media}"
                 "<figcaption style='font-size:12px;line-height:1.3;'>"
                 f"<div class='fname' style='font-weight:600;color:var(--ink,#1c1a14);'>{_f}</div>"
                 f"<div class='caption' style='color:var(--inkMute,#6b6555);word-break:break-word;'>{_m}</div>"
@@ -2285,7 +2464,7 @@ def _(
         _grid = f"<div class='sparcd-grid' style='{_grid_style}'>" + "".join(_tiles) + "</div>"
         _caption_line = mo.Html(
             f"<div class='sparcd-note'>Images {_start + 1}–{_end} of {selected_total} (tagged only). "
-            "Click a thumbnail to open the full image in a new tab.</div>"
+            "Click a thumbnail to open the full image in a new tab. Videos play in their tile.</div>"
         )
         thumbnail_grid = mo.vstack([page_controls, _caption_line, mo.Html(_grid)])
 
@@ -2346,6 +2525,10 @@ def _(
     selected_total,
     show_image_event_table,
 ):
+    def format_timestamp_24(value):
+        """Render stored ISO timestamps without locale-dependent AM/PM text."""
+        return str(value or "").replace("T", " ")[:19]
+
     if not selected_location_ids:
         image_event_table = mo.Html(
             "<div class='sparcd-note'>Select an area on the map to list its detections.</div>"
@@ -2390,6 +2573,9 @@ def _(
                 "deployment_id": "Deployment",
             })
         )
+        _event_rows = _event_rows.with_columns(
+            pl.col("Timestamp").map_elements(format_timestamp_24, return_dtype=pl.Utf8)
+        )
         if _event_rows.height == 0:
             image_event_table = mo.Html(
                 "<div class='sparcd-note'>No image events match the selected species filter.</div>"
@@ -2406,7 +2592,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(applied_filters, locations, mo, observations_filtered):
+def _(applied_filters, locations, mo, observations_filtered, pl):
     # Stat row (E.4): Sites, Images, Tagged %, Species — respecting current search.
     # Replaces every debug string.
     import re as _re_stat
@@ -2416,12 +2602,14 @@ def _(applied_filters, locations, mo, observations_filtered):
     _tagged = int(locations["tagged_image_count"].sum()) if locations.height else 0
     _tagged_pct = f"{(_tagged / _images * 100):.0f}%" if _images else "—"
 
-    # Species = distinct common-name tags, matching the map dashboard's count.
+    # Species = distinct common-name tags at the sites on the map, matching the map
+    # dashboard's count. Location 0000 and sites without coordinates are left out.
     # (Do not also union scientific_name — that's a separate namespace and would
     # double-count any observation carrying both.)
     _pat = _re_stat.compile(r"COMMONNAME:([^\]]+)")
     _species = set()
-    for _t in observations_filtered["tags"].to_list():
+    _map_deployments = [d for ds in locations["deployment_ids"].to_list() for d in ds] if locations.height else []
+    for _t in observations_filtered.filter(pl.col("deployment_id").is_in(_map_deployments))["tags"].to_list():
         if _t:
             _species.update(_pat.findall(_t))
 

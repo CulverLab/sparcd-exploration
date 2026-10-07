@@ -125,6 +125,15 @@ it('carries every kind of capture time out to the tagger and home into media.csv
 
   await handOffToTagger();
   const record = stored.record!;
+  record.taggerUser = 'anita';
+  record.tags = {
+    'trip/1-camera.jpg': [{
+      scientificName: 'Canis latrans', commonName: 'Coyote', count: 1,
+      requestedSpecies: '', freeTags: '',
+      classifiedBy: 'alice',
+      classificationTimestamp: '2026-07-02T10:00:00.000Z',
+    }],
+  };
   expect(record.files.map((f) => f.relPath)).toEqual(NAMES.map((n) => `trip/${n}`));
   expect(record.files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadStart)
     .toBe('2026-07-01T12:05:00');
@@ -147,6 +156,8 @@ it('carries every kind of capture time out to the tagger and home into media.csv
     .toEqual(at(12, 5));
   expect(useStore.getState().files.find((f) => f.fileName === '3-spread.jpg')?.manualSpreadMethod)
     .toBe('sequence');
+  expect(useStore.getState().files.find((f) => f.fileName === '1-camera.jpg'))
+    .toMatchObject({ preTaggerUser: 'anita' });
 
   const bundle = await buildBundle({
     location: { key: 'SAN15|31.5,-110.2', id: 'SAN15', name: 'San Pedro 15', latitude: 31.5, longitude: -110.2, elevation: 1200 },
@@ -164,9 +175,11 @@ it('carries every kind of capture time out to the tagger and home into media.csv
   expect(commentsFor(bundle.mediaCsv, '3-spread.jpg')).toBe('[TIMESTAMP:spread]');
   expect(commentsFor(bundle.mediaCsv, '4-none.jpg')).toBe('[TIMESTAMP:offset]');
   expect(commentsFor(bundle.mediaCsv, '5-modified.jpg')).toBe('[TIMESTAMP:manual]');
-  expect(bundle.mediaCsv).toContain('2026-07-01T12:08:00.000Z');
-  expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000Z');
+  expect(bundle.mediaCsv).toContain('2026-07-01T12:08:00.000+00:00');
+  expect(bundle.mediaCsv).toContain('2026-07-01T12:30:00.000+00:00');
   expect(bundle.deploymentsCsv.split(',')[15]).toBe('"true"'); // timestamp_issues
+  expect(bundle.observationsCsv.split('\n')[0].split(',')[16]).toBe('"alice"');
+  expect(bundle.observationsCsv.split('\n')[0].split(',')[17]).toBe('"2026-07-02T10:00:00.000Z"');
 });
 
 it('round-trips file-modified spread provenance, including its applied timezone', async () => {

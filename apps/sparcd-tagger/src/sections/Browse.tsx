@@ -10,6 +10,7 @@ import {
   type UploadSummary,
   type UploadDraftState,
 } from '../lib/queries';
+import { PawPads } from '../components/Paw';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
 
@@ -541,13 +542,7 @@ function PawStamp() {
         />
       ))}
       <g fill="var(--ink)" opacity="0.9">
-        {/* metacarpal pad */}
-        <path d="M54 86c-12 0-19-7-19-15 0-7 8-11 19-11s19 4 19 11c0 8-7 15-19 15Z" />
-        {/* toe pads */}
-        <ellipse cx="33" cy="49" rx="6" ry="8" transform="rotate(-18 33 49)" />
-        <ellipse cx="46" cy="38" rx="6" ry="9" transform="rotate(-6 46 38)" />
-        <ellipse cx="62" cy="38" rx="6" ry="9" transform="rotate(6 62 38)" />
-        <ellipse cx="75" cy="49" rx="6" ry="8" transform="rotate(18 75 49)" />
+        <PawPads />
       </g>
     </svg>
   );

@@ -30,6 +30,11 @@ export function DropZone() {
     return () => mq.removeEventListener('change', update);
   }, []);
 
+  const actionLabel = supportsFolderPick
+    ? 'Drop a folder of JPEGs or MP4 videos, or choose a folder'
+    : 'Choose JPEG photos or MP4 videos to upload';
+  const actionTitle = supportsFolderPick ? 'Drop a folder to upload' : 'Choose photos or videos to upload';
+
   async function commit(
     scan: () => Promise<ScannedFile[]> | ScannedFile[],
     dirHandle: FileSystemDirectoryHandle | null = null,
@@ -78,7 +83,7 @@ export function DropZone() {
       <div
         role="button"
         tabIndex={0}
-        aria-label="Drop a folder of JPEGs or MP4 videos, or choose a folder"
+        aria-label={actionLabel}
         onClick={() => void chooseFolder()}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -117,9 +122,13 @@ export function DropZone() {
           </>
         ) : (
           <>
-            <p className="font-display text-[20px] text-ink mb-1">Drop a folder of media</p>
+            <p className="font-display text-[20px] text-ink mb-1">
+              {actionTitle}
+            </p>
             <p className="font-body text-[14px] text-inkSoft mb-5">
-              JPEG and MP4 files. All files in this folder, and its sub-folders, are scanned.
+              {supportsFolderPick
+                ? 'or click Choose folder to browse. JPEG and MP4 files in the folder and its sub-folders are included.'
+                : 'JPEG and MP4 files.'}
             </p>
             <span className="inline-block min-h-11 md:min-h-0 bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600]">
               {supportsFolderPick ? 'Choose folder' : 'Choose photos or videos'}

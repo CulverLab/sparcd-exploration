@@ -22,7 +22,7 @@ Feature: Examine an image closely enough to catch every species
     Then it can be enlarged up to six times its fitted size
     And detail beyond the fitted view becomes legible
 
-  @H1
+  @H1 @H1-2
   Scenario: The enlarged image can be moved around
     Given the image is zoomed in
     When it is dragged
@@ -34,7 +34,7 @@ Feature: Examine an image closely enough to catch every species
     Then on-screen zoom-in and zoom-out controls are available over the image
     And double-clicking the image zooms in a step
 
-  @H1
+  @H1 @H1-3
   Scenario: Returning to the fitted view is one action away once zoomed
     Given the image is zoomed in
     Then a "Reset" control is offered
@@ -51,18 +51,53 @@ Feature: Examine an image closely enough to catch every species
     # The zoom surface is stretched to the full pane, so a backdrop click never
     # reaches the element that carries the dismiss handler. See CORRECTIONS.md.
 
-  @H1
+  @H1 @H1-5
   Scenario: Moving to another image starts it fitted to the pane
     Given the current image is zoomed in and panned
     When another image is opened
     Then the new image is shown fitted to the pane
     And no zoom or pan state carries over from the previous image
 
+  @H1 @H1-6
+  Scenario: Zoom and pan behave the same on portrait, landscape and panorama images
+    Given the upload holds a portrait, a landscape and a panorama image of differing sizes
+    When each of them is examined closely in the Focus view
+    Then each opens whole and undistorted at the fitted size
+    And each can be enlarged up to six times its fitted size
+    And each can be dragged around once enlarged without moving beyond its edges
+    And the portrait and the panorama stay in view when enlarged fullscreen too
+
   @H1
   Scenario: The focused image is prioritized over delayed filmstrip thumbnails
     Given filmstrip thumbnail downloads are delayed
     Then the Focus image is requested at high priority
     And the filmstrip thumbnails are requested at low priority
+    And the Focus image is the only media requested at high priority
+
+  Scenario: Returning to an image shows its loader until it is ready
+    Given the current Focus image's next download is delayed
+    When another image is opened and the first image is opened again
+    Then the Focus loading status stays visible until that image loads
+
+  Scenario: A video loader waits for its first displayable frame
+    Given the focused video is waiting for its first frame
+    When video metadata becomes available before its first frame
+    Then the Focus loading status is still visible
+    When the first video frame becomes available
+    Then the Focus loading status disappears
+
+  @H1
+  Scenario: A failed thumbnail download remains visibly failed
+    Given a thumbnail download fails after signing
+    Then the failed thumbnail is marked as failed rather than loaded
+
+  @H1
+  Scenario: A video thumbnail waits for its first displayable frame
+    Given a video thumbnail is waiting for its first frame
+    When thumbnail video metadata becomes available before its first frame
+    Then the thumbnail play marker is still hidden
+    When the thumbnail video frame becomes available
+    Then the thumbnail play marker is visible
 
   @H1
   Scenario: Only the images on screen are rendered while scrolling a large upload
@@ -106,6 +141,12 @@ Feature: Examine an image closely enough to catch every species
     When the adjustment panel is opened
     Then the adjustment panel leaves the Focus navigation usable
     And it stays in the viewport when neither side fits
+
+  @unmapped
+  Scenario: Adjustment controls stay off the image on a phone
+    Given the focused item is a still image
+    When the adjustment panel is opened on a phone-sized screen
+    Then the adjustment panel stays clear of the image and inside the window
 
   @H1
   Scenario: Adjustment controls follow the focused image

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Deployment } from '@sparcd/camtrap';
+import { correctedTimestamp } from '@sparcd/camtrap';
 import { useStore } from '../store';
 import { useDraftStore, type UploadCtx } from '../lib/drafts';
 import { performSync } from '../lib/syncRunner';
@@ -29,11 +30,13 @@ export function SyncDialog({
   ctx,
   images,
   drafts,
+  timeZone,
   onClose,
 }: {
   ctx: UploadCtx;
   images: TagImage[];
   drafts: Record<string, DraftRecord>;
+  timeZone?: string;
   onClose: () => void;
 }) {
   const cfg = useStore((s) => s.s3Config);
@@ -49,6 +52,7 @@ export function SyncDialog({
   const uploadName = uploadNameOf(ctx.uploadPrefix);
   const markUploadSynced = useDraftStore((s) => s.markUploadSynced);
   const setTimeOffset = useDraftStore((s) => s.setTimeOffset);
+  const timeOffset = useDraftStore((s) => s.timeOffset);
   const setPendingLocation = useDraftStore((s) => s.setPendingLocation);
   const discardUpload = useDraftStore((s) => s.discardUpload);
   const queryClient = useQueryClient();
@@ -73,8 +77,36 @@ export function SyncDialog({
     uploadPrefix: ctx.uploadPrefix,
     user,
     images,
-    drafts,
+      drafts,
+      timeZone,
   });
+
+  /**
+   * A successful time shift is written into media.csv by performSync. Keep
+   * the in-memory offset active until the refetched TagImage cache contains
+   * those written timestamps; clearing it sooner briefly renders the old
+   * canonical time while the query is still being committed.
+   */
+  const waitForCanonicalTimes = async (mediaIds: string[]) => {
+    if (!mediaIds.length) return;
+    const expected = new Map(
+      images
+        .filter((image) => mediaIds.includes(image.key))
+        .map((image) => [
+          image.key,
+          correctedTimestamp(image.baseTimestamp, timeOffset, drafts[image.key]?.timeOverride ?? null, timeZone),
+        ]),
+    );
+    if (!expected.size) return;
+    const queryKey = ['tagImages', connectionId, collectionKey, ctx.uploadPrefix] as const;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const fresh = queryClient.getQueryData<TagImage[]>(queryKey);
+      if (fresh && [...expected].every(([key, timestamp]) => fresh.find((image) => image.key === key)?.baseTimestamp === timestamp)) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('The refreshed tagger data did not include the written capture times.');
+  };
 
   // Preview on open — a forced dry-run that computes the diff and detects a
   // conflict without touching the bucket.
@@ -118,10 +150,11 @@ export function SyncDialog({
         // the pre-sync base, so the species/time just written would briefly
         // (or, on a slow backend, not-so-briefly) vanish from the tile.
         try {
-          await queryClient.invalidateQueries(
-            { queryKey: ['tagImages', connectionId] },
+          await queryClient.refetchQueries(
+            { queryKey: ['tagImages', connectionId], type: 'active' },
             { throwOnError: true },
           );
+          await waitForCanonicalTimes(r.syncedMediaIds ?? []);
           await queryClient.invalidateQueries({ queryKey: ['currentDeployment', connectionId] });
           // Clear dirty only on the drafts actually written — questionable-only
           // drafts (no canonical target) stay surfaced as unsaved.
@@ -191,8 +224,8 @@ export function SyncDialog({
 
           {!user && !error && (
             <p className="text-warn font-mono text-[13px] border border-warn px-3 py-2">
-              Set a Tagger identity in Settings first — it stamps the audit snapshot path and the
-              mandatory edit comment.
+              Connect with a storage username first — it supplies the attribution, audit snapshot
+              path and mandatory edit comment.
             </p>
           )}
 
@@ -320,16 +353,23 @@ function LocationChangeNote({ pendingLocation }: { pendingLocation: Deployment }
 function SummaryGrid({
   summary,
 }: {
-  summary: { additions: number; modifications: number; removals: number; timeCorrections: number };
+  summary: {
+    additions: number;
+    modifications: number;
+    removals: number;
+    timeCorrections: number;
+    confirmations: number;
+  };
 }) {
   const cells: [string, number][] = [
     ['Added', summary.additions],
     ['Changed', summary.modifications],
     ['Removed', summary.removals],
     ['Time-corrected', summary.timeCorrections],
+    ['Confirmed', summary.confirmations],
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
       {cells.map(([label, n]) => (
         <div key={label} className="border border-rule px-2 py-1.5 text-center">
           <div className="font-mono text-[18px] text-ink leading-none">{n}</div>

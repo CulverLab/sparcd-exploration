@@ -13,7 +13,7 @@ import {
   sectionTab,
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
-import { adjustmentPopupPosition } from '../../src/lib/adjustmentPopupPosition';
+import { makePng } from './support/png';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
 
@@ -27,6 +27,65 @@ async function readTransform(root: Locator): Promise<Transform> {
   const m = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)\s*scale\(([\d.]+)\)/.exec(style);
   if (!m) return { x: 0, y: 0, scale: 1 };
   return { x: Number(m[1]), y: Number(m[2]), scale: Number(m[3]) };
+}
+
+type Rect = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * The on-screen rect of the picture itself (any object-contain letterbox
+ * excluded) and of the pane framing it.
+ */
+async function imageInPane(root: Locator): Promise<{ image: Rect; pane: Rect }> {
+  const pane = await transformWrapper(root).first().evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  });
+  const image = await transformContent(root)
+    .first()
+    .locator('img')
+    .evaluate((el: HTMLImageElement) => {
+      const r = el.getBoundingClientRect();
+      const f = Math.min(r.width / el.naturalWidth, r.height / el.naturalHeight);
+      const w = el.naturalWidth * f;
+      const h = el.naturalHeight * f;
+      const left = r.left + (r.width - w) / 2;
+      const top = r.top + (r.height - h) / 2;
+      return { left, top, right: left + w, bottom: top + h };
+    });
+  return { image, pane };
+}
+
+const axes = ({ image, pane }: { image: Rect; pane: Rect }) =>
+  [
+    [image.left, image.right, pane.left, pane.right],
+    [image.top, image.bottom, pane.top, pane.bottom],
+  ] as const;
+
+// 3px of fudge: the library rounds positions and the workspace header trims the
+// pane's height by a fraction of a pixel.
+const FUDGE = 3;
+
+/** A picture larger than the pane keeps covering it; a smaller one stays wholly inside. */
+function expectImageInBounds(view: { image: Rect; pane: Rect }): void {
+  for (const [lo, hi, paneLo, paneHi] of axes(view)) {
+    if (hi - lo >= paneHi - paneLo) {
+      expect(lo).toBeLessThanOrEqual(paneLo + FUDGE);
+      expect(hi).toBeGreaterThanOrEqual(paneHi - FUDGE);
+    } else {
+      expect(lo).toBeGreaterThanOrEqual(paneLo - FUDGE);
+      expect(hi).toBeLessThanOrEqual(paneHi + FUDGE);
+    }
+  }
+}
+
+/** Whole, centred, and touching the pane on at least one axis. */
+function expectFitted(view: { image: Rect; pane: Rect }): void {
+  expectImageInBounds(view);
+  const gaps = axes(view).map(([lo, hi, paneLo, paneHi]) => {
+    expect(Math.abs(lo - paneLo - (paneHi - hi))).toBeLessThanOrEqual(FUDGE);
+    return paneHi - paneLo - (hi - lo);
+  });
+  expect(Math.min(...gaps)).toBeLessThanOrEqual(FUDGE);
 }
 
 /** Zoom is animated (300ms), so wait for the transform to settle between steps. */
@@ -89,6 +148,101 @@ Then('the filmstrip thumbnails are requested at low priority', async ({ page }) 
   await expect.poll(() => thumbs.evaluateAll((images) => images.some((image) => !image.complete))).toBe(true);
 });
 
+Given("the current Focus image's next download is delayed", async ({ page, s3 }) => {
+  await expect(page.locator('.react-transform-component img')).toBeVisible();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Network.clearBrowserCache');
+  s3.delay(mediaKey(PREFIX_A, MEDIA_A[0].file), 2_000);
+});
+
+When('another image is opened and the first image is opened again', async ({ page }) => {
+  await page.locator('button').filter({ hasText: MEDIA_A[1].file }).first().click();
+  await page.locator('button').filter({ hasText: MEDIA_A[0].file }).first().click();
+});
+
+Then('the Focus loading status stays visible until that image loads', async ({ page }) => {
+  const status = page.getByRole('status').filter({ hasText: 'loading' });
+  await expect(status).toBeVisible();
+  await expect(page.locator('.react-transform-component img')).toBeVisible();
+  await expect(status).toHaveCount(0);
+});
+
+Given('the focused video is waiting for its first frame', async ({ page, s3 }) => {
+  await sectionTab(page, 'Tag').click();
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  s3.delay(mediaKey(PREFIX_A, 'VID001.MP4'), 10_000);
+  await focusFrame(page, 'VID001.MP4');
+  await enterFocusViewForVideo(page);
+  await expect(page.getByRole('status').filter({ hasText: 'loading' })).toBeVisible();
+});
+
+When('video metadata becomes available before its first frame', async ({ page }) => {
+  await page.locator('video[controls]').evaluate((video) => {
+    video.dispatchEvent(new Event('loadedmetadata'));
+  });
+});
+
+When('the first video frame becomes available', async ({ page }) => {
+  await page.locator('video[controls]').evaluate((video) => {
+    video.dispatchEvent(new Event('loadeddata'));
+  });
+});
+
+Then('the Focus loading status is still visible', async ({ page }) => {
+  await expect(page.getByRole('status').filter({ hasText: 'loading' })).toBeVisible();
+});
+
+Then('the Focus loading status disappears', async ({ page }) => {
+  await expect(page.getByRole('status').filter({ hasText: 'loading' })).toHaveCount(0);
+});
+
+Given('a thumbnail download fails after signing', async ({ page, s3 }) => {
+  s3.failRead(mediaKey(PREFIX_A, 'IMG002.JPG'));
+  await page.reload();
+  await openWorkspace(page);
+  await expect(page.locator('button[title="IMG002.JPG"]')).toBeVisible();
+});
+
+Then('the failed thumbnail is marked as failed rather than loaded', async ({ page }) => {
+  const tile = page.locator('button[title="IMG002.JPG"]');
+  await expect(tile.getByTestId('thumbnail-failure')).toBeVisible();
+  await expect(tile.getByTestId('thumbnail-play')).toHaveCount(0);
+});
+
+Given('a video thumbnail is waiting for its first frame', async ({ page, s3 }) => {
+  s3.delay(mediaKey(PREFIX_A, 'VID001.MP4'), 10_000);
+  await page.reload();
+  await openWorkspace(page);
+  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('button[title="VID001.MP4"] video')).toBeVisible();
+});
+
+When('thumbnail video metadata becomes available before its first frame', async ({ page }) => {
+  await page.locator('button[title="VID001.MP4"] video').evaluate((video) => {
+    video.dispatchEvent(new Event('loadedmetadata'));
+  });
+});
+
+Then('the thumbnail play marker is still hidden', async ({ page }) => {
+  await expect(page.locator('button[title="VID001.MP4"] [data-testid="thumbnail-play"]')).toHaveCount(0);
+});
+
+When('the thumbnail video frame becomes available', async ({ page }) => {
+  await page.locator('button[title="VID001.MP4"] video').evaluate((video) => {
+    video.dispatchEvent(new Event('loadeddata'));
+  });
+});
+
+Then('the thumbnail play marker is visible', async ({ page }) => {
+  await expect(page.locator('button[title="VID001.MP4"] [data-testid="thumbnail-play"]')).toBeVisible();
+});
+
+// The selected filmstrip row must not ask for 'high' too: it would take the
+// scheduler slot kept free for Focus.
+Then('the Focus image is the only media requested at high priority', async ({ page }) => {
+  await expect(page.locator('[fetchpriority="high"]')).toHaveCount(1);
+});
+
 // --- Zoom -------------------------------------------------------------------
 
 // Used as both the action and the precondition ("Given the image is zoomed in").
@@ -139,8 +293,7 @@ Then('it cannot be dragged beyond the edges of the image', async ({ page }) => {
   const box = (await pane.boundingBox())!;
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
-  // Shove it hard in both directions; the offsets must stay inside the bounds
-  // the scaled content allows (0 …  -(scale-1) * size).
+  // Shove it hard in both directions; the picture must not leave the pane.
   for (const [dx, dy] of [
     [4000, 4000],
     [-8000, -8000],
@@ -150,15 +303,8 @@ Then('it cannot be dragged beyond the edges of the image', async ({ page }) => {
     await page.mouse.move(cx + dx, cy + dy, { steps: 10 });
     await page.mouse.up();
     await settle(page.locator('body'));
-    const t = await readTransform(page.locator('body'));
-    expect(t.x).toBeLessThanOrEqual(1);
-    expect(t.y).toBeLessThanOrEqual(1);
-    expect(t.x).toBeGreaterThanOrEqual(-(t.scale - 1) * box.width - 1);
-    // A couple more px than the x fudge: the workspace header (collection/
-    // upload name) trims the pane's available height, not its width, so the
-    // library's own bound settles a hair tighter here than the formula's
-    // exact math predicts.
-    expect(t.y).toBeGreaterThanOrEqual(-(t.scale - 1) * box.height - 3);
+    expect((await readTransform(page.locator('body'))).scale).toBeGreaterThan(1);
+    expectImageInBounds(await imageInPane(page.locator('body')));
   }
 });
 
@@ -257,8 +403,139 @@ Then('the new image is shown fitted to the pane', async ({ page }) => {
 });
 
 Then('no zoom or pan state carries over from the previous image', async ({ page }) => {
-  const t = await readTransform(page.locator('body'));
-  expect(t).toEqual({ x: 0, y: 0, scale: 1 });
+  expect((await readTransform(page.locator('body'))).scale).toBe(1);
+  // The fit settles once the new image has loaded.
+  await expect(async () => expectFitted(await imageInPane(page.locator('body')))).toPass();
+});
+
+// --- Differing image shapes -------------------------------------------------
+
+const SHAPES = [
+  { file: 'IMG001.JPG', w: 240, h: 420 },
+  { file: 'IMG002.JPG', w: 640, h: 360 },
+  { file: 'IMG003.JPG', w: 1200, h: 200 },
+];
+
+type Examination = {
+  natural: { w: number; h: number };
+  objectFit: string;
+  fitted: { t: Transform; view: { image: Rect; pane: Rect } };
+  enlarged: Transform;
+  dragged: Transform;
+  shoved: { image: Rect; pane: Rect }[];
+  // Enlarged to the limit in the fullscreen view, then shoved the same way.
+  fullscreen?: { image: Rect; pane: Rect }[];
+};
+
+/** Drag hard towards one corner, then the opposite one, recording where the picture ends up. */
+async function shoveBothWays(page: Page, root: Locator): Promise<{ image: Rect; pane: Rect }[]> {
+  const box = (await transformWrapper(root).first().boundingBox())!;
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const views: { image: Rect; pane: Rect }[] = [];
+  for (const [dx, dy] of [
+    [4000, 4000],
+    [-8000, -8000],
+  ] as const) {
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + dx, cy + dy, { steps: 10 });
+    await page.mouse.up();
+    await settle(root);
+    views.push(await imageInPane(root));
+  }
+  return views;
+}
+
+Given(
+  'the upload holds a portrait, a landscape and a panorama image of differing sizes',
+  async ({ page, s3 }) => {
+    SHAPES.forEach((s, i) =>
+      s3.put(BUCKET, mediaKey(PREFIX_A, s.file), makePng(s.w, s.h, i + 100), 'image/png'),
+    );
+    await page.reload();
+    await openWorkspace(page);
+    await enterFocusView(page);
+  },
+);
+
+When('each of them is examined closely in the Focus view', async ({ page, scratch }) => {
+  const body = page.locator('body');
+  const exams: Examination[] = [];
+  for (const shape of SHAPES) {
+    await page.locator('button').filter({ hasText: shape.file }).first().click();
+    const img = page.locator('.react-transform-component img').first();
+    await expect
+      .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
+      .toBe(shape.w);
+    const [natural, objectFit] = await img.evaluate((el: HTMLImageElement) => [
+      { w: el.naturalWidth, h: el.naturalHeight },
+      getComputedStyle(el).objectFit,
+    ] as const);
+    await settle(body);
+    const fitted = { t: await readTransform(body), view: await imageInPane(body) };
+    await zoomToLimit(body);
+    const enlarged = await readTransform(body);
+
+    const pane = transformWrapper(body).first();
+    const box = (await pane.boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx - 60, cy - 40, { steps: 12 });
+    await page.mouse.up();
+    await settle(body);
+    const dragged = await readTransform(body);
+
+    const shoved = await shoveBothWays(page, body);
+
+    // The portrait and the panorama are the letterboxed ones; check the
+    // fullscreen view holds them too.
+    let fullscreen: Examination['fullscreen'];
+    if (shape.h > shape.w || shape.w > 3 * shape.h) {
+      await page.getByRole('button', { name: 'Open fullscreen' }).click();
+      await expect(lightbox(page)).toBeVisible();
+      await expect.poll(() => lightbox(page).locator('img').evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(shape.w);
+      await zoomToLimit(lightbox(page));
+      fullscreen = await shoveBothWays(page, lightbox(page));
+      await page.keyboard.press('Escape');
+      await expect(lightbox(page)).toHaveCount(0);
+    }
+    exams.push({ natural, objectFit, fitted, enlarged, dragged, shoved, fullscreen });
+  }
+  scratch.exams = exams;
+});
+
+Then('each opens whole and undistorted at the fitted size', async ({ scratch }) => {
+  const exams = scratch.exams as Examination[];
+  exams.forEach((e, i) => {
+    expect(e.natural).toEqual({ w: SHAPES[i].w, h: SHAPES[i].h });
+    expect(e.objectFit).toBe('contain');
+    expect(e.fitted.t.scale).toBe(1);
+    expectFitted(e.fitted.view);
+  });
+});
+
+Then('each can be enlarged up to six times its fitted size', async ({ scratch }) => {
+  for (const e of scratch.exams as Examination[]) expect(e.enlarged.scale).toBeCloseTo(6, 1);
+});
+
+Then(
+  'each can be dragged around once enlarged without moving beyond its edges',
+  async ({ scratch }) => {
+    for (const e of scratch.exams as Examination[]) {
+      expect(e.dragged.scale).toBeCloseTo(e.enlarged.scale, 2);
+      expect(Math.abs(e.dragged.x - e.enlarged.x) + Math.abs(e.dragged.y - e.enlarged.y)).toBeGreaterThan(5);
+      for (const view of e.shoved) expectImageInBounds(view);
+    }
+  },
+);
+
+Then('the portrait and the panorama stay in view when enlarged fullscreen too', async ({ scratch }) => {
+  const checked = (scratch.exams as Examination[]).filter((e) => e.fullscreen);
+  expect(checked.map((e) => e.natural.w)).toEqual([SHAPES[0].w, SHAPES[2].w]);
+  for (const e of checked) for (const view of e.fullscreen!) expectImageInBounds(view);
 });
 
 // --- Virtualization ---------------------------------------------------------
@@ -359,6 +636,11 @@ When('the adjustment panel is opened', async ({ page }) => {
 const adjustmentPanel = (page: Page): Locator => page.getByRole('dialog', { name: 'Image adjustments' });
 const focusedImage = (page: Page): Locator => page.locator('.react-transform-component img');
 
+type Box = { x: number; y: number; width: number; height: number };
+
+const intersects = (a: Box, b: Box) =>
+  a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
 Then('the adjustment panel leaves the Focus navigation usable', async ({ page }) => {
   const [panel, navigation] = await Promise.all([
     adjustmentPanel(page).boundingBox(),
@@ -366,7 +648,7 @@ Then('the adjustment panel leaves the Focus navigation usable', async ({ page })
   ]);
   expect(panel).not.toBeNull();
   expect(navigation).not.toBeNull();
-  expect(panel!.x + panel!.width <= navigation!.x || navigation!.x + navigation!.width <= panel!.x).toBe(true);
+  expect(intersects(panel!, navigation!)).toBe(false);
   const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label'), {
     x: navigation!.x + navigation!.width / 2,
     y: navigation!.y + navigation!.height / 2,
@@ -409,35 +691,93 @@ Then('focusing another control dismisses it', async ({ page }) => {
 });
 
 When('the focused image moves while the adjustment panel is open', async ({ page, scratch }) => {
-  scratch.adjustmentBeforeMove = await adjustmentPanel(page).boundingBox();
+  const [panel, media] = await Promise.all([
+    adjustmentPanel(page).boundingBox(),
+    focusedImage(page).boundingBox(),
+  ]);
+  scratch.adjustmentBeforeMove = { panel, media };
   await transformContent(page.locator('body')).first().evaluate((element) => {
     (element as HTMLElement).style.transform = 'translate(40px, 0px) scale(1)';
   });
 });
 
+/** Which slot the panel took, named the way the placement rule thinks of them. */
+const placementOf = (panel: Box, media: Box) => {
+  if (panel.x + panel.width <= media.x) return 'left of the image';
+  if (panel.x >= media.x + media.width) return 'right of the image';
+  if (panel.y + panel.height <= media.y) return 'over the image';
+  if (panel.y >= media.y + media.height) return 'under the image';
+  return 'on the image';
+};
+
+/**
+ * Where the panel may not go, read off the rendered page rather than off the
+ * placement function the app itself uses — asking that for the expected answer
+ * would make any placement pass.
+ */
+async function expectPanelClearOfEverything(page: Page) {
+  await expect
+    .poll(async () => {
+      const [panel, media, species, viewport] = await Promise.all([
+        adjustmentPanel(page).boundingBox(),
+        focusedImage(page).boundingBox(),
+        page.locator('[data-testid="species-panel"]').boundingBox(),
+        page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
+      ]);
+      if (!panel || !media) return ['no panel or media'];
+      const problems: string[] = [];
+      if (intersects(panel, media)) problems.push('covers the image');
+      // Only beside the image is the species list a rail the panel must dodge;
+      // narrow layouts stack it below the fold.
+      if (species && species.x >= media.x + media.width && intersects(panel, species))
+        problems.push('covers the species list');
+      if (
+        panel.x < 0 ||
+        panel.y < 0 ||
+        panel.x + panel.width > viewport.width ||
+        panel.y + panel.height > viewport.height
+      )
+        problems.push('leaves the window');
+      return problems;
+    })
+    .toEqual([]);
+}
+
 Then('the adjustment panel follows the focused image', async ({ page, scratch }) => {
-  const before = scratch.adjustmentBeforeMove as { x: number; y: number };
-  await expect.poll(async () => {
-    const [panel, media, focus, viewport] = await Promise.all([
-      adjustmentPanel(page).boundingBox(),
-      focusedImage(page).boundingBox(),
-      page.locator('[data-testid="focus-drop-zone"]').boundingBox(),
-      page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
-    ]);
-    if (!panel || !media) return Infinity;
-    const blocked = focus && focus.x > 0
-      ? [{ left: 0, right: focus.x, top: focus.y, width: focus.x, height: focus.height }]
-      : [];
-    const expected = adjustmentPopupPosition(
-      { left: media.x, right: media.x + media.width, top: media.y, width: media.width, height: media.height },
-      { left: 0, right: panel.width, top: 0, width: panel.width, height: panel.height },
-      viewport,
-      blocked,
-    );
-    return Math.abs(panel.x - expected.left) + Math.abs(panel.y - expected.top);
-  }).toBeLessThanOrEqual(1);
-  const after = await adjustmentPanel(page).boundingBox();
-  expect(Math.abs(after!.x - before.x) + Math.abs(after!.y - before.y)).toBeGreaterThan(5);
+  const before = scratch.adjustmentBeforeMove as { panel: Box; media: Box };
+  await expect
+    .poll(async () => {
+      const panel = await adjustmentPanel(page).boundingBox();
+      return panel ? Math.abs(panel.x - before.panel.x) + Math.abs(panel.y - before.panel.y) : 0;
+    })
+    .toBeGreaterThan(5);
+  const [panel, media] = await Promise.all([
+    adjustmentPanel(page).boundingBox(),
+    focusedImage(page).boundingBox(),
+  ]);
+  const shift = media!.x - before.media.x;
+  expect(shift).toBeGreaterThan(5);
+  const was = placementOf(before.panel, before.media);
+  const now = placementOf(panel!, media!);
+  if (now === was) {
+    expect(Math.abs(panel!.x - before.panel.x - shift)).toBeLessThanOrEqual(2);
+  } else {
+    // Moving the image right only ever closes the gap on its right, so that is
+    // the one slot the panel may be pushed out of.
+    expect(was).toBe('right of the image');
+    expect(['left of the image', 'over the image', 'under the image']).toContain(now);
+  }
+  await expectPanelClearOfEverything(page);
+});
+
+When('the adjustment panel is opened on a phone-sized screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await adjustToggle(page).click();
+  await expect(page.getByLabel('Brightness')).toBeVisible();
+});
+
+Then('the adjustment panel stays clear of the image and inside the window', async ({ page }) => {
+  await expectPanelClearOfEverything(page);
 });
 
 Then('keyboard focus enters the adjustment panel', async ({ page }) => {

@@ -22,22 +22,33 @@ Coverage notes for the as-built uploader feature files.
   exists anywhere in the app** (`navigator.onLine` is never consulted), so that
   criterion is unmet.
 - **F2 / A2** (assign a camera location) — the "cannot finalize without a
-  location" criterion is fully met and tested. The "only locations valid for the
+  location" criterion is fully met and tested, and so is the stored location:
+  every media row and every observation row, including species identified
+  before upload, points at the deployment carrying the assigned location's id,
+  name and coordinates. The "only locations valid for the
   collection" criterion is **not**: as-built *any* location in the registry can
   be assigned; locations the collection has already used are merely sorted to
   the top. Flagged in a trailing comment on that scenario.
-- **AL1** (interrupted uploads continue on their own) — partly met: verified
-  data is not resent, and an interrupted upload is always visibly "open", never
-  silently stuck. **Continuation is manual** — the user clicks Resume; there is
-  no connectivity watcher and no automatic restart. Flagged in a comment.
+- **AL1** (interrupted uploads continue on their own) — met, apart from the
+  untestable "never stuck" criterion. A run open in the tab waits out a dropped
+  connection and carries on by itself when it returns; if the browser never
+  noticed the drop, the run stops as partial and retries on a backoff timer,
+  giving up after five retries in a row that send nothing (History then says
+  storage can't be reached).
+  Repeated drops still end in one upload, verified data is not resent, and
+  History shows each upload as complete, as interrupted with "Resume upload"
+  named as the next step, or as refused by storage with who to ask. Resuming
+  from History is still a click, because it needs the source folder back.
 - **AL2** (retry to the same destination) — met, and the strongest-covered story:
   the upload folder and object paths are reused verbatim, done objects are
-  skipped after a size + fingerprint check, and location/identity are never
-  re-entered.
+  skipped after a size + fingerprint check, and location, identity and species
+  identifications are never re-entered.
 - **A1** (tag species before upload) — now met, but not by this app alone.
   There is still **no tagging surface here**: the batch is handed to the tagger
   and comes back with species on it, which the uploader shows read-only and
-  publishes as observation rows in the same upload. An untagged batch is still
+  publishes as observation rows in the same upload. Until then the tags live in
+  the hand-off record, which is swept only after 30 days without being opened
+  or tagged, so a batch can wait weeks for a connection. An untagged batch is still
   accepted and recorded as carrying no species. Attribution (the tagger's
   identity travelling with the tags) is recorded on the hand-off record but is
   **not written into the published data** — that criterion stays unmet.

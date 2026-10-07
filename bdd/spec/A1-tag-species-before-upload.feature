@@ -17,41 +17,41 @@ Feature: Identify species before uploading
   Background:
     Given Anita has images that have not yet been uploaded
 
-  @A1
+  @A1 @A1-1
   Scenario: Tags assigned without a connection are retained
     Given Anita has no internet connection
     When she assigns species to her images
     Then those tags are retained
     And they are still present when she next returns to the images
 
-  @A1
+  @A1 @A1-2
   Scenario: Images and their tags enter the system in a single upload
     Given Anita has tagged species on her images
     When she uploads them
     Then the uploaded data contains both the images and the species she assigned
     And no separate later tagging step is required for those images
 
-  @A1
+  @A1 @A1-3
   Scenario: Untagged images are accepted and marked as untagged
     Given Anita has tagged some of her images and left others untagged
     When she uploads them
     Then all the images are accepted, tagged and untagged alike
     And the untagged images are marked as untagged
 
-  @A1
+  @A1 @A1-4
   Scenario: An upload with no tags at all is still accepted
     Given Anita has tagged none of her images
     When she uploads them
     Then the upload is accepted
     And every image in it is marked as untagged
 
-  @A1 @unmapped
+  @A1 @unmapped @A1-5
   Scenario: Tags made before upload are attributed to Anita
     Given Anita has tagged species on her images
     When the upload completes
     Then those identifications are attributed to Anita
 
-  @A1
+  @A1 @A1-6
   Scenario: Tags are not lost while waiting for a connection
     Given Anita tagged her images and then waited days before regaining a connection
     When she uploads them

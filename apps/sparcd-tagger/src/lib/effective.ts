@@ -5,6 +5,25 @@
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 
+export type ReviewStatus = 'reviewed' | 'unreviewed';
+export type ReviewSummary = ReviewStatus | 'mixed';
+
+/** An identification is reviewed only when a review event was recorded for it.
+ * Original attribution (`classifiedBy`) does not imply that anyone later
+ * reviewed the identification. */
+export function reviewStatus(observation: DraftObservation): ReviewStatus {
+  return observation.reviewEvents?.length ? 'reviewed' : 'unreviewed';
+}
+
+/** Summarize per-identification review state for an image-level indicator. */
+export function reviewSummary(observations: DraftObservation[]): ReviewSummary | null {
+  if (!observations.length) return null;
+  const reviewed = observations.filter((o) => reviewStatus(o) === 'reviewed').length;
+  if (reviewed === 0) return 'unreviewed';
+  if (reviewed === observations.length) return 'reviewed';
+  return 'mixed';
+}
+
 export type Effective = {
   observations: DraftObservation[];
   questionable: boolean;

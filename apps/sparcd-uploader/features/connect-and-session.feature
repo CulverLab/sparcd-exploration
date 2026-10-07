@@ -1,6 +1,5 @@
 # DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-uploader (src/App.tsx, src/store.ts, src/components/Chrome.tsx, src/lib/s3.ts) and packages/auth-ui (Connection.tsx, ConnectionChip.tsx, session.ts).
 
-@unmapped
 Feature: Connect the uploader to storage and manage the session
 
   """
@@ -31,7 +30,10 @@ Feature: Connect the uploader to storage and manage the session
     Then it shows the connection screen instead of a collection picker
     And going back from it returns to Inspect with the batch intact
 
-  @unmapped @offline
+  # F1-2's offline boundary is the end of Inspect: dropping and examining the
+  # batch work without a connection. Assign intentionally remains online-only;
+  # returning to Inspect must preserve the batch until the user can connect.
+  @F1-2 @offline
   Scenario: A loaded uploader can inspect its first batch without network access
     Given no connection has been made in this browser session
     And the browser is offline before deferring login
@@ -134,15 +136,11 @@ Feature: Connect the uploader to storage and manage the session
     And no result cached under the previous connection is reused
 
   @unmapped
-  Scenario: The uploader identity starts from the connected access key
+  Scenario: The uploader identity starts blank
     Given no uploader identity has been entered
     When a connection is made
-    Then the uploader identity is pre-filled with the connected access key
-    And an identity carried over from a previous connection in this browser is not overwritten by connecting
-    # Correction: as-built the guard is `uploaderUser || accessKey`, and both
-    # disconnect paths blank the identity — so a typed identity never survives to
-    # meet it. What it actually protects is the identity seeded from the previous
-    # connection's remembered access key on a fresh page load.
+    Then the uploader identity is blank
+    And the header shows the access key only in its masked form
 
   @unmapped
   Scenario: What the tool may read or write is decided by the credentials, not the page

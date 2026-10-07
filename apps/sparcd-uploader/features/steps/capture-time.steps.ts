@@ -60,7 +60,7 @@ Then('that choice stands for as long as the same location stays selected', async
 
 Then('the timezone list offers every timezone the browser knows', async ({ app }) => {
   const known = await app.page.evaluate(() => Intl.supportedValuesOf('timeZone'));
-  const offered = await app.timeZoneSelect().locator('option').allTextContents();
+  const offered = await app.timeZoneSelect().locator('option:not([value=""])').allTextContents();
   expect(offered).toEqual(known);
 });
 
@@ -69,7 +69,7 @@ Then('the currently chosen timezone is always offered even if it is not in that 
   expect(known).not.toContain(LEGACY_ZONE);
   await app.chooseDeployment('Offshore Buoy');
   await expect(app.timeZoneSelect()).toHaveValue(LEGACY_ZONE);
-  const offered = await app.timeZoneSelect().locator('option').allTextContents();
+  const offered = await app.timeZoneSelect().locator('option:not([value=""])').allTextContents();
   expect(offered[0]).toBe(LEGACY_ZONE);
   expect(offered).toHaveLength(known.length + 1);
 });
@@ -83,6 +83,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
     clipVideo(),
   ]);
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
   // Berlin so both a DST and a non-DST date are exercised, and so the result
   // cannot coincide with the uploading machine's own zone.
   await app.timeZoneSelect().selectOption('Europe/Berlin');
@@ -98,21 +99,21 @@ When('the batch is published', async ({ app }) => {
 Then('the stored capture time is that wall-clock read in the upload timezone', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   const summer = rows.find((r) => r[6] === 'SUMMER.JPG')!;
-  expect(summer[4]).toBe('2026-07-01T10:00:00.000Z'); // 12:00 CEST = 10:00Z
+  expect(summer[4]).toBe('2026-07-01T12:00:00.000+02:00'); // 12:00 CEST with its numeric offset
 });
 
 Then('daylight-saving time in force on that date is accounted for', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   const winter = rows.find((r) => r[6] === 'WINTER.JPG')!;
-  expect(winter[4]).toBe('2026-01-15T11:00:00.000Z'); // 12:00 CET = 11:00Z
+  expect(winter[4]).toBe('2026-01-15T12:00:00.000+01:00'); // 12:00 CET with its numeric offset
 });
 
 Then('the stored time does not depend on the timezone of the machine uploading', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   const summer = rows.find((r) => r[6] === 'SUMMER.JPG')!;
   // In the machine's own zone (America/New_York, UTC-4 in July) the same
-  // wall-clock would have become 16:00Z.
-  expect(summer[4]).not.toBe('2026-07-01T16:00:00.000Z');
+  // wall-clock would carry a different offset.
+  expect(summer[4]).not.toBe('2026-07-01T12:00:00.000-04:00');
 });
 
 // --- times the camera did not write ---------------------------------------
@@ -133,6 +134,7 @@ const card = (app: App, fileName: string) =>
 Given('some examined files carry no camera capture time', async ({ app }) => {
   await rescanFromAssign(app, gappyBatch());
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
 });
 
 Then('each of them already shows an estimated time, marked as an estimate', async ({ app }) => {
@@ -286,7 +288,7 @@ Then('each file whose time the camera did not write carries a marker saying wher
 Then('files the camera did time carry no marker', async ({ app }) => {
   const rows = writtenCsvRows(app, 'media.csv');
   expect(rows.find((r) => r[6] === 'IMG_0001.JPG')![10]).toBe('');
-  expect(rows.find((r) => r[6] === 'IMG_0002.JPG')![4]).toBe('2026-07-01T19:05:00.000Z');
+  expect(rows.find((r) => r[6] === 'IMG_0002.JPG')![4]).toBe('2026-07-01T12:05:00.000-07:00');
 });
 
 Then('the batch can be published without anyone entering a time', async ({ app }) => {
@@ -317,6 +319,7 @@ Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.expectStep('Inspect');
   await app.stubTagger();
   await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  await app.page.waitForURL(/\/tagger\/\?batch=/);
   const [record] = await app.readFlipRecords();
   expect(record.files[0]).toMatchObject({
     exifTimestamp: '2026-07-01T12:00:00',

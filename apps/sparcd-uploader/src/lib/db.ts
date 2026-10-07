@@ -59,6 +59,9 @@ export interface BatchRecord {
   // Structured-cloned into IndexedDB on Chromium when permission was granted;
   // absent when the access mode is `reselect-required`.
   dirHandle?: FileSystemDirectoryHandle;
+  // Set when the app stopped retrying on its own because storage could not be
+  // reached; cleared as soon as a later attempt gets a file through.
+  storageUnreachable?: boolean;
 }
 
 export interface FileRecord {
@@ -77,16 +80,22 @@ export interface FileRecord {
   remoteKey?: string; // full key = uploadPrefix/sanitizedObjectName (= media_path)
   sha256?: string;
   timestampSource?: import('@sparcd/camtrap').TimestampSource;
-  captureTimestamp?: string; // resolved naive-UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing capture time (post-tz), media.csv col 4
   exifCamera?: string;
   mediaKind?: MediaKind;
   mimeType?: string;
   remoteETag?: string;
   lastError?: string;
+  // Set when storage answered and said no (a 4xx such as AccessDenied), as
+  // opposed to the request never getting an answer. Resuming alone cannot fix
+  // a refusal, so History names a different next step for it.
+  refused?: boolean;
   // Species applied in the tagger before this batch was ever uploaded. Not
   // indexed, so it needs no schema bump; persisted so a batch interrupted days
   // after tagging still publishes the identifications it left with.
   preTags?: FlipObservation[];
+  /** Person who applied the pre-upload tags in the Tagger. */
+  preTaggerUser?: string;
 }
 
 export interface BundleRecord {
@@ -116,7 +125,7 @@ class UploaderDb extends Dexie {
     // fields aren't indexed), but the field shapes changed, so a forward-carrying
     // upgrade rewrites legacy in-flight rows. Legacy rows pre-date tz support:
     // their `exifTimestamp` was a browser-zone ISO; carry it verbatim as
-    // `captureTimestamp` so a resume reproduces the prior bytes, and stamp UTC
+    // `captureTimestamp` so a resume reproduces the prior bytes, including its offset
     // as the upload zone so the bundle rebuild doesn't re-derive a different
     // instant. Default `mediaKind`/`mimeType` to image (the only legacy type).
     this.version(2)
@@ -161,11 +170,14 @@ export async function listResumable(): Promise<BatchRecord[]> {
   return (await listBatches()).filter((b) => !b.completedAt);
 }
 
-/** Per-state file tallies for a session — drives the History progress line. */
-export async function fileStateCounts(
-  sessionId: string,
-): Promise<Record<PersistedFileState, number>> {
-  const rows = await db.files.where('sessionId').equals(sessionId).toArray();
+export type SessionTally = {
+  counts: Record<PersistedFileState, number>;
+  // Files storage refused outright in the last attempt, with the first reason given.
+  refused: { count: number; reason?: string };
+};
+
+/** Per-state file tallies for a session, in one pass — drives the History row. */
+export async function sessionTally(sessionId: string): Promise<SessionTally> {
   const counts: Record<PersistedFileState, number> = {
     'awaiting-processing': 0,
     pending: 0,
@@ -173,8 +185,19 @@ export async function fileStateCounts(
     done: 0,
     failed: 0,
   };
-  for (const r of rows) counts[r.state]++;
-  return counts;
+  const refused: SessionTally['refused'] = { count: 0 };
+  await db.files.where('sessionId').equals(sessionId).each((r) => {
+    counts[r.state]++;
+    if (r.state === 'failed' && r.refused) {
+      refused.count++;
+      refused.reason ??= r.lastError;
+    }
+  });
+  return { counts, refused };
+}
+
+export async function fileStateCounts(sessionId: string): Promise<Record<PersistedFileState, number>> {
+  return (await sessionTally(sessionId)).counts;
 }
 
 export type LoadedSession = {

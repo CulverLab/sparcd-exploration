@@ -1,6 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
-import { standardBatch } from './batches';
-import { reconnectAndReturnToAssign } from './helpers';
+import type { App } from './app';
+import { jpegAt, standardBatch } from './batches';
+import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign } from './helpers';
 import {
   BUCKET_A,
   BUCKET_B,
@@ -9,6 +10,8 @@ import {
   LOCATIONS_KEY,
   SETTINGS_BUCKET,
   SKIPPED_LOCATION_NAMES,
+  RAW_LOCATIONS,
+  locationsJson,
   USED_LOCATION_NAME,
   UUID_A,
   UUID_B,
@@ -59,6 +62,7 @@ Then('the first of them is already selected', async ({ app }) => {
 
 Then('the Continue gate never has to ask for a collection', async ({ app }) => {
   await expect(app.continueButton()).toHaveAttribute('title', 'Select a deployment location first');
+  await app.setUploader('Ada Lovelace');
   await app.chooseDeployment('Bear Canyon');
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
@@ -132,6 +136,71 @@ Given('the chosen collection has already published uploads for some locations', 
   );
 });
 
+Given('the chosen collection has a collection-specific location list', async ({ app }) => {
+  const allowed = RAW_LOCATIONS.filter((location) => ['DEER3', 'BEAR1'].includes(location.idProperty));
+  app.s3.put(
+    BUCKET_A,
+    `Collections/${UUID_A}/locations.json`,
+    locationsJson(allowed),
+    { contentType: 'application/json' },
+  );
+  await reconnectAndReturnToAssign(app);
+});
+
+Given('the collections have different collection-specific location lists', async ({ app }) => {
+  app.s3.put(
+    BUCKET_A,
+    `Collections/${UUID_A}/locations.json`,
+    locationsJson(RAW_LOCATIONS.filter((location) => ['DEER3', 'BEAR1'].includes(location.idProperty))),
+    { contentType: 'application/json' },
+  );
+  app.s3.put(
+    BUCKET_B,
+    `Collections/${UUID_B}/locations.json`,
+    locationsJson(RAW_LOCATIONS.filter((location) => location.idProperty === 'COY2')),
+    { contentType: 'application/json' },
+  );
+  await reconnectAndReturnToAssign(app);
+});
+
+Then('only the collection-specific locations are offered', async ({ app }) => {
+  await app.openDeploymentList();
+  await expect(app.deploymentOptions()).toHaveCount(2);
+  const text = (await app.deploymentOptions().allTextContents()).join('\n');
+  expect(text).toContain('Bear Canyon');
+  expect(text).toContain('Deer Springs');
+  expect(text).not.toContain('Coyote Wash');
+});
+
+When('an outside collection location is searched', async ({ app }) => {
+  await app.openDeploymentList();
+  await app.page.getByPlaceholder('Filter by name or id…').fill('coy');
+});
+
+Then('the outside location is not offered and assignment remains unavailable', async ({ app }) => {
+  await expect(app.deploymentOptions()).toHaveCount(0);
+  await expect(app.deploymentTrigger()).toContainText('Select a deployment location…');
+  await expect(app.continueButton()).toBeDisabled();
+});
+
+Given('a collection-specific location is selected', async ({ app }) => {
+  await app.chooseDeployment('Bear Canyon');
+});
+
+When('the user switches to the other collection', async ({ app }) => {
+  await app.openCollectionList();
+  await app.page
+    .locator('ul[role="listbox"] li[role="option"]')
+    .filter({ hasText: COLLECTION_B_NAME })
+    .click();
+  await expect(app.collectionTrigger()).toContainText(COLLECTION_B_NAME);
+});
+
+Then('the previous location is cleared because it is not allowed for the new collection', async ({ app }) => {
+  await expect(app.deploymentTrigger()).toContainText('Select a deployment location…');
+  await expect(app.continueButton()).toBeDisabled();
+});
+
 When('the deployment list is shown', async ({ app }) => {
   await app.openDeploymentList();
   await expect(app.deploymentOptions().first()).toBeVisible();
@@ -142,8 +211,8 @@ Then('those already-used locations are listed first', async ({ app }) => {
 });
 
 Then("the list states how many of the registry's locations that collection has used", async ({ app }) => {
-  await expect(app.page.getByText(/1 of 6 locations\s+already deployed by/)).toBeVisible();
-  await expect(app.page.getByText(/but any location can be assigned/)).toBeVisible();
+  await expect(app.page.getByText(/1 of 7 locations\s+currently allowed for/)).toBeVisible();
+  await expect(app.page.getByText(/currently allowed for/)).toBeVisible();
 });
 
 When("part of a location's name or identifier is typed", async ({ app }) => {
@@ -259,6 +328,7 @@ Then(
 
 When('a description is entered', async ({ app }) => {
   await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
   await app.setDescription('South ridge, July retrieval');
 });
 
@@ -309,4 +379,59 @@ Then('the complete metadata bundle is still written', async ({ app }) => {
   expect(metadata.find((put) => put.key.endsWith('UploadMeta.json'))?.body).toContain(
     '"uploadUser": "ada-lovelace"',
   );
+});
+
+// --- the stored location ---------------------------------------------------
+
+type PublishedBatch = { prefix: string; location: string; files: number };
+
+async function uploadAt(app: App, location: string): Promise<void> {
+  await app.chooseDeployment(location);
+  await app.setUploader('Ada Lovelace');
+  await app.continueToUpload();
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+  const uploads = (app.notes.uploads ??= []) as PublishedBatch[];
+  uploads.push({ prefix: publishedUploads(app).at(-1)!, location, files: app.lastSpecs.length });
+}
+
+When('the batch is uploaded with {string} as its location', async ({ app }, location: string) => {
+  await uploadAt(app, location);
+});
+
+When('the next batch is uploaded with {string} as its location', async ({ app }, location: string) => {
+  // Upload folders are stamped to the second, so a second upload inside the
+  // same second would claim the first one's folder. Moving the page clock a
+  // minute ahead puts the next stamp in a later second by construction.
+  await app.page.clock.setSystemTime(Date.now() + 60_000);
+  await app.page.getByRole('button', { name: 'Next batch' }).click();
+  await app.dropFolder([
+    jpegAt('IMG_0101.JPG', '2026:07:08 06:00:00'),
+    jpegAt('IMG_0102.JPG', '2026:07:08 06:05:00'),
+  ]);
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  // Next batch starts with nothing assigned (#338), so pick the collection again.
+  await app.chooseCollection(COLLECTION_A_NAME);
+  await uploadAt(app, location);
+});
+
+Then(
+  'each upload stores the location assigned to its batch, with its id, name and coordinates',
+  async ({ app }) => {
+    const uploads = app.notes.uploads as PublishedBatch[];
+    expect(publishedUploads(app)).toEqual(uploads.map((u) => u.prefix));
+    expect(new Set(uploads.map((u) => u.prefix)).size).toBe(2);
+    for (const u of uploads) expectStoredAtLocation(app, u.prefix, u.location);
+  },
+);
+
+Then('every image and every observation in each upload points at that location', async ({ app }) => {
+  for (const u of app.notes.uploads as PublishedBatch[]) {
+    const { media, observations } = expectStoredAtLocation(app, u.prefix, u.location);
+    expect(media).toHaveLength(u.files);
+    expect(new Set(observations.map((r) => r[3]))).toEqual(new Set(media.map((r) => r[0])));
+  }
 });

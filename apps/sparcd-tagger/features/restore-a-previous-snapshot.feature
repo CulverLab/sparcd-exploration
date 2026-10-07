@@ -18,7 +18,7 @@ Feature: Recover a previous state of an upload
   Scenario: The recoverable states of an upload are listed
     When the snapshots list is opened
     Then every complete snapshot of this upload is listed, most recent first
-    And each entry states when it was taken, by which tagger identity, and how many files it holds
+    And each entry states when it was taken, by which connected account or local handoff identity, and how many files it holds
 
   @unmapped
   Scenario: An incomplete snapshot is never offered for recovery
@@ -37,12 +37,6 @@ Feature: Recover a previous state of an upload
     Then it is compared against the currently stored files without writing anything
     And the files it would rewrite are listed
     And which collection and upload it would write to
-
-  @unmapped
-  Scenario: A restore is gated exactly like a sync
-    Given a snapshot has been chosen
-    Then a restore cannot be run without a tagger identity
-    And while the dry-run setting is on, running it reports that nothing was written
 
   @unmapped
   Scenario: The state being replaced is itself preserved

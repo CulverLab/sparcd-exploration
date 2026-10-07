@@ -26,7 +26,9 @@ function keyConfig(
 }
 
 /** Activates the user's keybinding profile and reconciles vocabulary changes
- * as soon as the app has a species list, before the user enters Tag. */
+ * as soon as the app has a species list, before the user enters Tag. Lists are
+ * reconciled per source file: a collection's own list seen for the first time
+ * is accepted silently, and only a change to a list already seen is reported. */
 export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   const cfg = useStore((state) => state.s3Config);
   const connectionId = useStore((state) => state.connectionId);
@@ -45,21 +47,26 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
     : localRecord
       ? keyProfileId('local-batch', localRecord.taggerUser || 'anonymous')
       : null;
-  const pending = useKeyBindings((state) =>
-    state.activeProfileId === profileId
-      ? activeKeyProfile(state).pendingSpeciesChange
-      : undefined,
-  );
-  const currentSpecies = useMemo(
+  const current = useMemo(
     () =>
       cfg
         ? species.data
-          ? keyConfig(species.data.species)
+          ? {
+              source: `${species.data.sourceBucket}/${species.data.sourceKey}`,
+              shared: species.data.settingsBucket !== null,
+              species: keyConfig(species.data.species),
+            }
           : null
         : localRecord
-          ? keyConfig(DEFAULT_SPECIES)
+          ? { source: 'local-batch', shared: true, species: keyConfig(DEFAULT_SPECIES) }
           : null,
     [cfg, localRecord, species.data],
+  );
+  const source = current?.source;
+  const pending = useKeyBindings((state) =>
+    state.activeProfileId === profileId && source
+      ? activeKeyProfile(state).speciesSources?.[source]?.pendingSpeciesChange
+      : undefined,
   );
 
   useEffect(() => {
@@ -67,18 +74,20 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   }, [activateProfile, profileId]);
 
   useEffect(() => {
-    if (profileId === activeProfileId && currentSpecies) stageSpecies(currentSpecies);
-  }, [activeProfileId, currentSpecies, profileId, stageSpecies]);
+    if (profileId === activeProfileId && current) {
+      stageSpecies(current.source, current.species, current.shared);
+    }
+  }, [activeProfileId, current, profileId, stageSpecies]);
 
   return (
     <>
       {children}
-      {pending && (
+      {pending && source && (
         <SpeciesChangedModal
           added={pending.diff.added.map((entry) => entry.commonName)}
           removed={pending.diff.removed.map((entry) => entry.commonName)}
           modified={pending.diff.modified.map((entry) => entry.after.commonName)}
-          onAcknowledge={acknowledgeSpeciesChange}
+          onAcknowledge={() => acknowledgeSpeciesChange(source)}
         />
       )}
     </>

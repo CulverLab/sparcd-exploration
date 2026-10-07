@@ -409,7 +409,8 @@ export class SafeS3Client {
           Bucket: bucket,
           Key: key,
           Body: body,
-          IfMatch: opts.etag,
+          // Ceph RGW (Jetstream2) answers 412 to a quoted If-Match even when current.
+          IfMatch: opts.etag.replace(/^W\//, '').replace(/^"(.*)"$/, '$1'),
           ContentType: opts.contentType,
           Metadata: opts.metadata,
         }),

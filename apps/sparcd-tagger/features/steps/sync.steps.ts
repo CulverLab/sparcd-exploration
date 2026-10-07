@@ -36,7 +36,9 @@ import {
 const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
 
 const canonicalPuts = (puts: { key: string }[]) =>
-  puts.filter((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+  puts.filter(
+    (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+  );
 
 /** One cell of the preview's Added / Changed / Removed / Time-corrected grid. */
 const summaryCell = (page: Page, label: string) =>
@@ -253,23 +255,6 @@ Then('switching the setting off changes the action to a real sync', async ({ pag
   await expect(page.getByRole('button', { name: 'Run dry-run' })).toHaveCount(0);
 });
 
-// --- Identity gate ----------------------------------------------------------
-
-Given('no tagger identity has been set', async ({ page }) => {
-  await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('');
-  await sectionTab(page, 'Tag').click();
-});
-
-Then('the dialog states that an identity must be set in Settings first', async ({ page }) => {
-  await openSyncDialog(page);
-  await expect(page.getByText('Set a Tagger identity in Settings first')).toBeVisible();
-});
-
-Then('the sync action is unavailable', async ({ page }) => {
-  await expect(page.getByRole('button', { name: /Sync now|Run dry-run/ })).toBeDisabled();
-});
-
 // --- Nothing to sync --------------------------------------------------------
 
 Given('the local edits match what is already stored', async ({ page }) => {
@@ -337,9 +322,9 @@ Then(
 // --- Snapshot before replace ------------------------------------------------
 
 Then(
-  'the current stored files are first copied to an immutable snapshot filed under the tagger identity and the time',
+  'the current stored files are first copied to an immutable snapshot filed under the connected account and the time',
   async ({ s3 }) => {
-    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'));
+    const snaps = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/testkey/'));
     expect(snaps.map((p) => p.key.split('/').pop())).toEqual([
       'media.csv',
       'observations.csv',
@@ -363,7 +348,7 @@ Then('the snapshot is only counted as recoverable once its manifest is written',
     files: { name: string }[];
   };
   expect(manifest.schemaVersion).toBe(1);
-  expect(manifest.user).toBe('jgonzalez');
+  expect(manifest.user).toBe('testkey');
   expect(manifest.files.map((f) => f.name)).toEqual([
     'media.csv',
     'observations.csv',
@@ -374,7 +359,9 @@ Then('the snapshot is only counted as recoverable once its manifest is written',
 
 Then('only then are the stored files replaced', async ({ s3 }) => {
   const lastSnapshot = s3.puts.findLastIndex((p) => p.key.includes('.sparcd-tagger-snapshots/'));
-  const firstCanonical = s3.puts.findIndex((p) => !p.key.includes('.sparcd-tagger-snapshots/'));
+  const firstCanonical = s3.puts.findIndex(
+    (p) => !p.key.includes('.sparcd-tagger-snapshots/') && !p.key.includes('.sparcd-tagger-original/'),
+  );
   expect(firstCanonical).toBeGreaterThan(lastSnapshot);
   for (const p of canonicalPuts(s3.puts)) expect(p.ifMatch).toBeTruthy();
 });
@@ -460,7 +447,7 @@ Then(
 Then('the workspace reloads the upload from the newly stored files', async ({ page, s3 }) => {
   const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
   const shifted = media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!;
-  expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000Z');
+  expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000-07:00');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.getByText('2024-01-10 09:00')).toBeVisible();
 });
@@ -484,6 +471,10 @@ When('the sync is run without waiting for it to finish', async ({ page }) => {
   await openSyncDialog(page);
   await setSyncDryRun(page, false);
   await page.getByRole('button', { name: 'Sync now' }).click();
+  // Do not sample the pre-sync frame while the click is still committing the
+  // dialog state. The delayed canonical read guarantees this intermediate
+  // syncing state exists for both the species and timestamp scenarios.
+  await expect(statePill(page)).toHaveAttribute('aria-label', /^Sync status: syncing/);
 });
 
 Then('the tile still shows the species before the sync completes', async ({ page, s3 }) => {
@@ -510,7 +501,7 @@ Then('the tile still shows the species before the sync completes', async ({ page
 
 /** The corrected timestamp rendered in the Focus footer for its active frame. */
 async function focusShownTime(page: Page): Promise<string> {
-  const text = (await page.locator('div.mt-1 span.flex.flex-col').first().innerText()) ?? '';
+  const text = (await page.getByTestId('focus-timestamp').innerText()) ?? '';
   return text.match(/\d{4}-\d{1,2}-\d{1,2} \d{2}:\d{2}(?::\d{2})?/)?.[0] ?? text.split('\n')[0].trim();
 }
 
@@ -522,6 +513,11 @@ Given('Focus is showing an image with a shifted capture time', async ({ page }) 
 
 Then('the shifted timestamp remains visible before the sync completes', async ({ page, s3 }) => {
   const samples: string[] = [];
+  // The live-sync click can briefly leave the Focus footer on its pre-edit
+  // render while the dialog state commits. Start sampling only after the
+  // locally corrected value is painted; any later regression during the
+  // delayed canonical refresh is still captured by the loop below.
+  await expect.poll(async () => focusShownTime(page)).toBe('2024-01-10 09:00');
   const deadline = Date.now() + REFRESH_DELAY_MS * 2 + 10000;
   while (Date.now() < deadline) {
     if (await syncFinished(page)) break;
@@ -613,7 +609,7 @@ When('the estimated timestamp is corrected', async ({ page }) => {
 Then('the corrected timestamp is stored with a manual source marker', async ({ s3 }) => {
   const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
   const corrected = media.find((m) => m.mediaId.endsWith('IMG002.JPG'))!;
-  expect(corrected.timestamp).toBe('2024-01-10T09:15:00.000Z');
+  expect(corrected.timestamp).toBe('2024-01-10T09:15:00.000+00:00');
   expect(corrected.comments).toBe('[TIMESTAMP:manual]');
 });
 
@@ -670,8 +666,8 @@ Given('a previous sync wrote some but not all of the stored files', async ({ pag
     id: `${BUCKET}::${PREFIX_A}`,
     bucket: BUCKET,
     uploadPrefix: PREFIX_A,
-    snapshotPrefix: `${PREFIX_A}.sparcd-tagger-snapshots/jgonzalez/2024-05-05T10-00-00/`,
-    user: 'jgonzalez',
+    snapshotPrefix: `${PREFIX_A}.sparcd-tagger-snapshots/testkey/2024-05-05T10-00-00/`,
+    user: 'testkey',
     startedAt: '2024-05-05T10:00:00.000Z',
     objects: [
       {

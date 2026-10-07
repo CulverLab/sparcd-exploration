@@ -13,6 +13,7 @@ Feature: Tag a batch that has not been uploaded yet
 
   Background:
     Given the Uploader has handed over a batch of images
+    And the local batch identity is set to Anita
 
   @A1
   Scenario: The workspace opens with no connection at all
@@ -34,7 +35,7 @@ Feature: Tag a batch that has not been uploaded yet
   Scenario: The species list is available with no connection
     Then the species panel lists species to apply
 
-  @A1
+  @A1 @A1-1
   Scenario: A species applied to an image is kept on the batch
     When Coyote is applied to an image
     Then the batch records Coyote against that image
@@ -54,7 +55,7 @@ Feature: Tag a batch that has not been uploaded yet
     # Batches live in storage any page on this origin can write, so where a
     # batch says to go back to is not taken on trust.
 
-  @A1
+  @A1 @A1-1
   Scenario: Coming back to the batch resumes the tagging
     Given a species has been applied to an image
     When the batch is opened again

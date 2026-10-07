@@ -1,10 +1,12 @@
 // The page-driving helper every step goes through. Keeps the Gherkin steps
 // declarative: they say what happened, this says how.
 
+import { fileURLToPath } from 'node:url';
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { S3Mock } from './s3mock';
 
 export const APP_PATH = '/sparcd-exploration/uploader/';
+const FLIP_MODULE = fileURLToPath(new URL('../../../../packages/flip/src/index.ts', import.meta.url));
 export const S3_ORIGIN = `http://localhost:${process.env.UPLOADER_TEST_PORT ?? 5311}`;
 export const ACCESS_KEY = 'AKIATESTKEY0001';
 export const SECRET_KEY = 'test-secret-key';
@@ -293,7 +295,7 @@ export class App {
       }
 
       if (!drop) return;
-      const zone = document.querySelector('[aria-label^="Drop a folder"]')!;
+      const zone = document.querySelector('[aria-label^="Drop a folder"], [aria-label^="Choose JPEG photos"]')!;
       const ev = new DragEvent('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer });
       zone.dispatchEvent(ev);
@@ -355,6 +357,21 @@ export class App {
         db.close();
       },
       { id, patch },
+    );
+  }
+
+  /**
+   * The Tagger's own hand-back write, through the real `@sparcd/flip` module
+   * served by the dev server — so it stamps the record exactly as the Tagger
+   * would, last-used time included.
+   */
+  async finishFlipRecord(id: string, tags: Record<string, unknown>, taggerUser: string): Promise<void> {
+    await this.page.evaluate(
+      async ({ url, id, tags, taggerUser }) => {
+        const flip = await import(/* @vite-ignore */ url);
+        await flip.finishFlipRecord(id, tags, taggerUser);
+      },
+      { url: `${APP_PATH}@fs${FLIP_MODULE}`, id, tags, taggerUser },
     );
   }
 
@@ -496,7 +513,7 @@ export class App {
       });
       const items = roots.map((r) => ({ webkitGetAsEntry: () => r }));
       const dataTransfer = { items: Object.assign(items, { length: items.length }) };
-      const zone = document.querySelector('[aria-label^="Drop a folder"]')!;
+      const zone = document.querySelector('[aria-label^="Drop a folder"], [aria-label^="Choose JPEG photos"]')!;
       const ev = new DragEvent('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer });
       zone.dispatchEvent(ev);
@@ -507,17 +524,23 @@ export class App {
     return this.page.locator('[aria-label^="Scanned files"]');
   }
 
+  /** Inspect keeps the file list folded behind this toggle until asked. */
+  fileListToggle(): Locator {
+    return this.page.getByRole('button', { name: /^(Show|Hide) files$/ });
+  }
+
+  async showFileList(): Promise<void> {
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    if ((await this.fileListToggle().getAttribute('aria-expanded')) === 'false') {
+      await this.fileListToggle().click();
+    }
+    await expect(this.fileListPane()).toBeVisible();
+  }
+
   /** Wait until every file in the batch has finished the Inspect worker pass. */
   async waitForInspected(): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
-    await this.page.waitForFunction(
-      () => {
-        const t = document.body.innerText;
-        return !/\d+\s+processing/.test(t) && !t.includes('Processing…') && !t.includes('Queued');
-      },
-      undefined,
-      { timeout: 30_000 },
-    );
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => this.pendingCount(), { timeout: 30_000 }).toBe(0);
   }
 
   /** One row per file currently drawn in the (virtualised) Inspect list. */
@@ -535,6 +558,7 @@ export class App {
       species: string;
     }[]
   > {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       if (!root) return [];
@@ -568,6 +592,7 @@ export class App {
 
   /** Rows the virtualiser has actually drawn — the whole point of virtualising. */
   async drawnRowCount(): Promise<number> {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       return root ? root.querySelectorAll('div[style*="translateY"]').length : 0;
@@ -576,6 +601,7 @@ export class App {
 
   /** Step to a row with J and drop it with D — the list's keyboard affordances. */
   async dropFileFromList(index: number): Promise<void> {
+    await this.showFileList();
     await this.fileListPane().focus();
     for (let i = 0; i < index; i++) await this.page.keyboard.press('j');
     await this.page.keyboard.press('d');
@@ -597,19 +623,25 @@ export class App {
     );
   }
 
-  /** The Inspect summary line ("N files · 1.2 KB · 1 warnings"). */
+  /** The Inspect summary line ("2 of 4 files processed · 1.2 KB · 1 warnings"). */
   async batchSummary(): Promise<string> {
     return this.page.evaluate(() => {
       const p = Array.from(document.querySelectorAll('p')).find((el) =>
-        /\d+\s*files\s*·/.test(el.textContent ?? ''),
+        /\d+\s*of\s*\d+\s*files processed\s*·/.test(el.textContent ?? ''),
       );
       return p?.textContent ?? '';
     });
   }
 
   async fileCount(): Promise<number> {
-    const m = /(\d+)\s*files/.exec(await this.batchSummary());
+    const m = /of\s*(\d+)\s*files/.exec(await this.batchSummary());
     return m ? Number(m[1]) : 0;
+  }
+
+  /** Files the Inspect worker pass has not finished yet. */
+  async pendingCount(): Promise<number> {
+    const m = /(\d+)\s*of\s*(\d+)\s*files processed/.exec(await this.batchSummary());
+    return m ? Number(m[2]) - Number(m[1]) : Number.NaN;
   }
 
   /** Read one IndexedDB store, retrying the Settings logout reload once. */
@@ -677,12 +709,12 @@ export class App {
   async walkToUploadStep(
     opts: { deployment?: string; uploader?: string; description?: string } = {},
   ): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.waitForCollections();
     await this.chooseDeployment(opts.deployment ?? 'Bear Canyon');
-    if (opts.uploader !== undefined) await this.setUploader(opts.uploader);
+    await this.setUploader(opts.uploader ?? 'Ada Lovelace');
     if (opts.description !== undefined) await this.setDescription(opts.description);
     await this.continueToUpload();
   }
@@ -692,9 +724,9 @@ export class App {
     await this.page.getByRole('button', { name: 'Back' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.page.getByRole('button', { name: 'Back' }).click();
-    await expect(this.fileListPane()).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
     await this.rescan(this.lastSpecs);
-    await expect(this.fileListPane()).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
     await this.continueToUpload();
@@ -721,6 +753,11 @@ export class App {
 
   async openCollectionList(): Promise<void> {
     await this.setListOpen(this.collectionTrigger(), true);
+  }
+
+  async chooseCollection(name: string): Promise<void> {
+    await this.openCollectionList();
+    await this.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: name }).click();
   }
 
   async closeCollectionList(): Promise<void> {
@@ -812,14 +849,14 @@ export class App {
     return this.page.locator('select').filter({ hasText: 'Select a collection…' });
   }
 
+  /** The run's log lines. Run state only — it has no on-screen panel (#108). */
   async logText(): Promise<string> {
-    return this.page.evaluate(() => {
-      const panels = Array.from(document.querySelectorAll('div'));
-      const el = panels.find(
-        (d) => d.className.includes('font-mono') && d.className.includes('text-[11.5px]'),
-      );
-      return el?.textContent ?? '';
-    });
+    return this.page.evaluate(
+      () =>
+        ((window as unknown as { __uploadLog?: { text: string }[] }).__uploadLog ?? [])
+          .map((l) => l.text)
+          .join('\n'),
+    );
   }
 
   /**

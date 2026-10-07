@@ -11,6 +11,7 @@ import {
   type RevisionedKeyProfiles,
   type SpeciesDiff,
   type SpeciesKeyConfig,
+  type SpeciesListState,
 } from '@sparcd/auth-ui';
 
 export type KeyOverrides = Record<string, string | null>;
@@ -20,6 +21,8 @@ export { keyProfileId };
 
 type KeyBindingState = {
   profiles: RevisionedKeyProfiles;
+  /** The last write to localStorage failed, so changes live only in this tab. */
+  unsaved: boolean;
   activeProfileId: string | null;
   activateProfile: (profileId: string) => void;
   assignKey: (
@@ -28,8 +31,10 @@ type KeyBindingState = {
     displacedScientificNames?: string[],
   ) => void;
   clearKey: (scientificName: string) => void;
-  stageSpecies: (current: SpeciesKeyConfig[]) => void;
-  acknowledgeSpeciesChange: () => void;
+  /** `source` names the file the list came from; `shared` marks the settings
+   * list, which inherits the snapshot stored before lists were kept per source. */
+  stageSpecies: (source: string, current: SpeciesKeyConfig[], shared?: boolean) => void;
+  acknowledgeSpeciesChange: (source: string) => void;
 };
 
 const LEGACY_PROFILE = '__legacy__';
@@ -83,19 +88,55 @@ export function effectiveKey(
   return resolved && !/^\d$/.test(resolved) ? resolved : null;
 }
 
+function ownersByKey<T extends SpeciesKeyConfig>(
+  species: readonly T[],
+  overrides: KeyOverrides,
+): Map<string, T[]> {
+  const owners = new Map<string, T[]>();
+  for (const candidate of species) {
+    const key = effectiveKey(candidate.scientificName, candidate.keyBinding, overrides);
+    if (!key) continue;
+    const held = owners.get(key);
+    if (held) held.push(candidate);
+    else owners.set(key, [candidate]);
+  }
+  return owners;
+}
+
 export function conflictingKeyOwners(
   species: readonly SpeciesKeyConfig[],
   targetScientificName: string,
   key: string,
   overrides: KeyOverrides,
 ): string[] {
-  return species
-    .filter(
-      (candidate) =>
-        candidate.scientificName !== targetScientificName &&
-        effectiveKey(candidate.scientificName, candidate.keyBinding, overrides) === key,
-    )
+  return (ownersByKey(species, overrides).get(key) ?? [])
+    .filter((candidate) => candidate.scientificName !== targetScientificName)
     .map((candidate) => candidate.scientificName);
+}
+
+export type ResolvedKeys<T> = {
+  /** Keys owned by exactly one species — the only ones that act. */
+  byKey: Map<string, T>;
+  /** Keys claimed by two or more species; nobody gets them until one gives way. */
+  shared: Map<string, T[]>;
+};
+
+/**
+ * A key a second species also claims belongs to neither. A server default and a
+ * local override collide on equal terms: silently letting one win is how a
+ * volunteer ends up tagging the wrong animal.
+ */
+export function resolveSpeciesKeys<T extends SpeciesKeyConfig>(
+  species: readonly T[],
+  overrides: KeyOverrides,
+): ResolvedKeys<T> {
+  const byKey = new Map<string, T>();
+  const shared = new Map<string, T[]>();
+  for (const [key, owners] of ownersByKey(species, overrides)) {
+    if (owners.length > 1) shared.set(key, owners);
+    else byKey.set(key, owners[0]);
+  }
+  return { byKey, shared };
 }
 
 export function diffSpecies(
@@ -139,10 +180,12 @@ function latestProfiles(local: RevisionedKeyProfiles): RevisionedKeyProfiles {
   return mergeRevisionedProfiles(local, storedProfiles());
 }
 
-function commitProfiles(profiles: RevisionedKeyProfiles): RevisionedKeyProfiles {
-  return typeof localStorage === 'undefined'
-    ? profiles
-    : mergeAndWriteRevisionedProfiles(localStorage, profiles);
+function commitProfiles(
+  profiles: RevisionedKeyProfiles,
+): Pick<KeyBindingState, 'profiles' | 'unsaved'> {
+  if (typeof localStorage === 'undefined') return { profiles, unsaved: false };
+  const { profiles: merged, saved } = mergeAndWriteRevisionedProfiles(localStorage, profiles);
+  return { profiles: merged, unsaved: !saved };
 }
 
 function updateActiveProfile(
@@ -152,29 +195,53 @@ function updateActiveProfile(
   if (!state.activeProfileId) return {};
   const profiles = latestProfiles(state.profiles);
   const profile = profiles[state.activeProfileId] ?? emptyRevisionedProfile();
-  return {
-    profiles: commitProfiles({
-      ...profiles,
-      [state.activeProfileId]: update(profile),
-    }),
-  };
+  return commitProfiles({ ...profiles, [state.activeProfileId]: update(profile) });
+}
+
+function legacyList({
+  acceptedSpecies,
+  acceptedRevision,
+  pendingSpeciesChange,
+  pendingRevision,
+}: RevisionedKeyProfile): SpeciesListState {
+  return { acceptedSpecies, acceptedRevision, pendingSpeciesChange, pendingRevision };
+}
+
+function isMostRecent(profile: RevisionedKeyProfile, source: string): boolean {
+  const lists = Object.entries(profile.speciesSources ?? {});
+  const usedAt = profile.speciesSources?.[source]?.usedAt ?? 0;
+  return lists.every(([other, list]) => other === source || (list.usedAt ?? 0) < usedAt);
+}
+
+function nextUsedAt(profile: RevisionedKeyProfile): number {
+  const lists = Object.values(profile.speciesSources ?? {});
+  return Math.max(Date.now(), ...lists.map((list) => (list.usedAt ?? 0) + 1));
+}
+
+function withSource(
+  profile: RevisionedKeyProfile,
+  source: string,
+  list: SpeciesListState,
+): RevisionedKeyProfile {
+  return { ...profile, speciesSources: { ...profile.speciesSources, [source]: list } };
 }
 
 export const useKeyBindings = create<KeyBindingState>()((set) => ({
   profiles: storedProfiles(),
+  unsaved: false,
   activeProfileId: null,
   activateProfile: (profileId) =>
     set((state) => {
       if (state.activeProfileId === profileId) return state;
-      let profiles = latestProfiles(state.profiles);
-      if (!profiles[profileId]) {
-        const legacy = Object.keys(profiles).some((id) => id !== LEGACY_PROFILE)
-          ? undefined
-          : profiles[LEGACY_PROFILE];
-        profiles = { ...profiles, [profileId]: legacy ?? emptyRevisionedProfile() };
-        profiles = commitProfiles(profiles);
-      }
-      return { profiles, activeProfileId: profileId };
+      const profiles = latestProfiles(state.profiles);
+      if (profiles[profileId]) return { profiles, activeProfileId: profileId };
+      const legacy = Object.keys(profiles).some((id) => id !== LEGACY_PROFILE)
+        ? undefined
+        : profiles[LEGACY_PROFILE];
+      return {
+        ...commitProfiles({ ...profiles, [profileId]: legacy ?? emptyRevisionedProfile() }),
+        activeProfileId: profileId,
+      };
     }),
   assignKey: (scientificName, key, displacedScientificNames = []) =>
     set((state) =>
@@ -206,44 +273,54 @@ export const useKeyBindings = create<KeyBindingState>()((set) => ({
         },
       })),
     ),
-  stageSpecies: (current) =>
+  stageSpecies: (source, current, shared = false) =>
     set((state) =>
       updateActiveProfile(state, (profile) => {
+        const known = profile.speciesSources?.[source];
+        // Recency is written only on a switch, so a refetch of the open list stays a no-op.
+        const latest = !!known && isMostRecent(profile, source);
+        const list = {
+          ...(known ?? (shared ? legacyList(profile) : {})),
+          usedAt: latest ? known.usedAt : nextUsedAt(profile),
+        };
         const next = normalizedSpecies(current);
-        if (!profile.acceptedSpecies) {
-          return {
-            ...profile,
+        if (!list.acceptedSpecies) {
+          return withSource(profile, source, {
+            usedAt: list.usedAt,
             acceptedSpecies: next,
-            acceptedRevision: nextKeyProfileRevision(profile.acceptedRevision),
-          };
+            acceptedRevision: nextKeyProfileRevision(list.acceptedRevision),
+          });
         }
         if (
-          profile.pendingSpeciesChange &&
-          JSON.stringify(profile.pendingSpeciesChange.next) === JSON.stringify(next)
+          list.pendingSpeciesChange &&
+          JSON.stringify(list.pendingSpeciesChange.next) === JSON.stringify(next)
         ) {
-          return profile;
+          return latest ? profile : withSource(profile, source, list);
         }
-        const diff = diffSpecies(profile.acceptedSpecies, next);
-        if (!hasDiff(diff) && !profile.pendingSpeciesChange) return profile;
-        return {
-          ...profile,
+        const diff = diffSpecies(list.acceptedSpecies, next);
+        if (!hasDiff(diff) && !list.pendingSpeciesChange) {
+          return latest ? profile : withSource(profile, source, list);
+        }
+        return withSource(profile, source, {
+          ...list,
           pendingSpeciesChange: hasDiff(diff) ? { next, diff } : undefined,
-          pendingRevision: nextKeyProfileRevision(profile.pendingRevision),
-        };
+          pendingRevision: nextKeyProfileRevision(list.pendingRevision),
+        });
       }),
     ),
-  acknowledgeSpeciesChange: () =>
+  acknowledgeSpeciesChange: (source) =>
     set((state) =>
       updateActiveProfile(state, (profile) => {
-        const pending = profile.pendingSpeciesChange;
+        const list = profile.speciesSources?.[source];
+        const pending = list?.pendingSpeciesChange;
         if (!pending) return profile;
-        return {
-          ...profile,
+        return withSource(profile, source, {
+          usedAt: list.usedAt,
           acceptedSpecies: pending.next,
-          acceptedRevision: nextKeyProfileRevision(profile.acceptedRevision),
+          acceptedRevision: nextKeyProfileRevision(list.acceptedRevision),
           pendingSpeciesChange: undefined,
-          pendingRevision: nextKeyProfileRevision(profile.pendingRevision),
-        };
+          pendingRevision: nextKeyProfileRevision(list.pendingRevision),
+        });
       }),
     ),
 }));
@@ -255,9 +332,9 @@ export function activeKeyProfile(state: KeyBindingState): KeyProfile {
 }
 
 export function rehydrateKeyBindings(): void {
-  useKeyBindings.setState((state) => ({
-    profiles: commitProfiles(mergeRevisionedProfiles(state.profiles, storedProfiles())),
-  }));
+  useKeyBindings.setState((state) =>
+    commitProfiles(mergeRevisionedProfiles(state.profiles, storedProfiles())),
+  );
 }
 
 if (typeof window !== 'undefined') {

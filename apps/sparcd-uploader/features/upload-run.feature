@@ -25,6 +25,12 @@ Feature: Upload and publish a batch
     Then the complete status explains itself on hover and keyboard focus
 
   @unmapped
+  Scenario: The Upload step names where the batch is going
+    Given the upload has not been started
+    Then it names the collection, the location with its id, and the chosen folder
+    And no storage path is shown
+
+  @unmapped
   Scenario: A real upload is offered by default; a dry run is opt-in
     Given the upload has not been started
     Then dry run is switched off by default
@@ -52,7 +58,7 @@ Feature: Upload and publish a batch
     When a real upload is started and completes
     Then the admin setup guidance note is not visible
 
-  @F1
+  @F1 @F1-1
   Scenario: Every file in the batch is stored under one upload folder in the collection
     When a real upload is started and completes
     Then every media file of the batch is stored under a single upload folder in the chosen collection
@@ -65,7 +71,7 @@ Feature: Upload and publish a batch
     Then the completion dialog states the file count and collection ID
     And dismissing it closes the dialog
 
-  @F1
+  @F1 @F1-1
   Scenario: Every stored object is confirmed once the batch is written
     When a file has been uploaded
     Then the tool lists the upload folder and confirms every object is stored at its recorded size
@@ -95,7 +101,7 @@ Feature: Upload and publish a batch
     And the user returns to the New upload section
     Then the run completes successfully
 
-  @F1 @F3
+  @F1 @F3 @F1-3
   Scenario: The upload is only published once every file has landed
     Given a real upload is running
     Then the metadata files are written only after every file in the batch has been stored and verified
@@ -104,7 +110,7 @@ Feature: Upload and publish a batch
     # signal that the folder is complete, which is why it is written after the
     # media and the tables.
 
-  @F1
+  @F1 @F1-3
   Scenario: A batch where some files failed is left unpublished and shown as partial
     Given a real upload in which some files failed after their retries
     Then no metadata files are written
@@ -112,7 +118,7 @@ Feature: Upload and publish a batch
     And the tool states that the upload is not yet visible and can be completed by retrying the failed files
     And the admin setup guidance note is shown with the collection ID
 
-  @F3
+  @F3 @F1 @F1-7
   Scenario: An upload that fails or is abandoned announces nothing
     Given a real upload that was cancelled or ended in failure
     Then no upload metadata file was written for it
@@ -120,7 +126,7 @@ Feature: Upload and publish a batch
     # There is no notification mechanism as-built; publishing the metadata is the
     # only thing that makes an upload discoverable.
 
-  @A1
+  @A1 @A1-4
   Scenario: A batch with no species identifications is accepted and recorded as untagged
     When a batch is published
     Then a placeholder observations table is written alongside the media table
@@ -140,7 +146,7 @@ Feature: Upload and publish a batch
     Given a run is in progress
     Then each file shows its own state and percentage
     And the batch shows bytes uploaded against the total, and counts of done, skipped and failed files
-    And an activity log records each retry, each warning and each metadata write as it happens
+    And the run log records each retry, each warning and each metadata write
     # Correction: a real upload does not log successful blob writes at all — the
     # log carries retries, warnings, skips, and the five metadata writes. The
     # per-object "PUT …" listing only appears in a dry run.
@@ -160,7 +166,18 @@ Feature: Upload and publish a batch
   Scenario: A momentary failure is retried before the file is given up on
     Given a file's upload fails with a network error, a server error or a clock-skew rejection
     Then it is retried up to five attempts with an increasing, randomized delay
-    And the retry is recorded in the activity log
+    And the retry is recorded in the run log
+
+  @F1 @F1-4
+  Scenario: Upload availability is visible as the browser goes offline and online
+    Given the upload has not been started
+    When the browser reports offline before upload
+    Then the upload status says it is offline and real upload is disabled
+    And dry run remains available while offline
+    When the operator allows a real upload while offline
+    Then the real upload action is available despite the offline signal
+    When the browser reports online again
+    Then the upload status says it is online and real upload is enabled
 
   @unmapped
   Scenario: A transient error during the resume verify pass is retried rather than counted as a file failure
@@ -173,14 +190,51 @@ Feature: Upload and publish a batch
     # the systemic abort — the same problem #35 fixed on the upload path.
 
   @unmapped
-  Scenario: The run monitor shows one offline warning per outage, not one per poll tick
+  Scenario: The run records one offline warning per outage, not one per poll tick
     Given a run pauses because the network is reported offline
-    Then the activity log records the offline wait exactly once
+    Then the run log records the offline wait exactly once
     When the network returns
-    Then the activity log records the recovery exactly once
+    Then the run log records the recovery exactly once
     And no further offline entries appear for that outage
     # Before this fix, ensureOnline logged inside the poll loop — a 5-minute
     # outage with 10 lanes produced 100 warning lines in the run monitor.
+
+  @AL1 @AL1-1
+  Scenario: An upload cut off by a dropped connection carries on by itself when the connection returns
+    Given a real upload of many images is under way
+    And the connection drops while the upload is in progress
+    When the connection returns
+    Then the upload continues and is published with every image
+    And nothing had to be clicked to restart it
+
+  @AL1 @AL1-1
+  Scenario: An upload whose connection dies while the browser still reports online finishes by itself
+    Given a real upload of many images is under way
+    When storage stops answering while the browser still reports being online
+    Then the run stops as partial and says it picks up again on its own
+    When storage answers again
+    Then the upload continues and is published with every image
+    And nothing had to be clicked to restart it
+    # No `online` event comes in this case, so the retry is on a backoff timer
+    # that starts at 15 seconds.
+
+  @AL1 @AL1-1
+  Scenario: An upload whose connection drops while it is being published finishes by itself
+    Given a real upload of many images is under way
+    When storage stops answering just as the upload is being published
+    Then the run stops as partial and says it picks up again on its own
+    When storage answers again
+    Then the upload continues and is published with every image
+    And nothing had to be clicked to restart it
+
+  @AL1 @AL1-5
+  Scenario: Repeated connection drops still end in one finished upload
+    Given a real upload of many images is under way
+    When the connection drops and returns three times during the upload
+    And the upload finally completes
+    Then the collection holds the batch in exactly one upload folder
+    And History lists that upload once, as complete
+    And every image appears exactly once in the stored media.csv
 
   @unmapped
   Scenario: A run paused because the browser reports offline still completes if packets actually flow
@@ -236,12 +290,14 @@ Feature: Upload and publish a batch
     Given a run is in progress
     Then the Back button is disabled
 
-  @unmapped
-  Scenario: The next batch from the same site keeps the previous choices
+  @US-007
+  Scenario: The next batch starts with assignment details cleared
     Given a real upload has completed
     When "Next batch" is chosen
     Then the wizard returns to the Files step with an empty batch
-    And the collection, deployment, uploader identity, description and timezone of the previous batch are kept
+    And the next batch has no collection, deployment, description or timezone selected
+    And the uploader identity is still filled in
+    And continuing without a timezone is disabled
 
   @unmapped
   Scenario: The screen wake lock is held while a dry run is in progress
@@ -255,6 +311,6 @@ Feature: Upload and publish a batch
     Given the browser wake lock API is available in this session
     And the first media blob is held at the mock
     When a real upload is started
-    Then the activity log has the preparing-upload entry
+    Then the run log has the preparing-upload entry
     And the browser wake lock was requested
     And releasing the held blob lets the upload complete

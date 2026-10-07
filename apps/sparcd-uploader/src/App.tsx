@@ -8,6 +8,8 @@ import { History } from './sections/History';
 import { Settings } from './sections/Settings';
 import { uploadStateOf } from './lib/uploadState';
 import { cancelProcessing } from './lib/processing';
+import { planAutoRetry, type AutoRetryState } from './lib/autoRetry';
+import { updateBatch } from './lib/db';
 
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
@@ -77,6 +79,25 @@ export function App() {
       window.removeEventListener('online', tryAutoResume);
     };
   }, [retryPartialRun]);
+
+  // A connection can die while the browser still reports itself online, so
+  // no `online` event will ever come. A run that stopped only for want of an
+  // answer is retried on a backoff timer instead, until too many retries in
+  // a row get nothing through; History then says storage can't be reached.
+  const autoRetryPhase = activeSnap?.autoRetry ? activeSnap.phase : null;
+  const autoRetry = useRef<AutoRetryState>({ sessionId: null, fruitless: 0 });
+  useEffect(() => {
+    const snap = useStore.getState().activeSnap;
+    if (autoRetryPhase !== 'partial' || !snap) return;
+    const plan = planAutoRetry(autoRetry.current, snap);
+    autoRetry.current = plan.state;
+    void updateBatch(snap.sessionId, { storageUnreachable: plan.delay === null });
+    if (plan.delay === null) return;
+    const timer = setTimeout(() => {
+      if (navigator.onLine !== false) void retryPartialRun();
+    }, plan.delay);
+    return () => clearTimeout(timer);
+  }, [autoRetryPhase, retryPartialRun]);
 
   // Hold a screen wake lock while any run is in flight (including dry runs and
   // the preparing phase). Lives here (not in Upload) so it survives the user

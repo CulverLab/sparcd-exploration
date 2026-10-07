@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { parseObservations } from '@sparcd/camtrap';
 import {
   Given,
   When,
@@ -10,6 +11,7 @@ import {
   enterFocusView,
   focusFrame,
   gridCell,
+  sectionTab,
   speciesRow,
   speciesTile,
   speciesApply,
@@ -20,16 +22,24 @@ import {
   speciesBadge,
   ghostRow,
   positionReadout,
+  listRow,
 } from './support/world';
 import {
   BUCKET,
+  BUCKET_B,
+  COLLECTION_B_NAME,
+  COLLECTION_NAME,
+  UUID,
+  UUID_B,
   PREFIX_A,
+  PREFIX_C,
   SETTINGS_BUCKET,
   SPECIES_JSON,
   observationsCsv,
   OBS_A,
 } from './support/data';
-import { readStore, waitForDirtyDrafts } from './support/flows';
+import { readStore, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
+import type { MockS3 } from './support/s3mock';
 
 const VOCAB = [
   { common: 'Coyote', scientific: 'Canis latrans' },
@@ -321,6 +331,24 @@ Then('that species is recorded on the image', async ({ page }) => {
   await expect(gridCell(page, 'IMG002.JPG')).toContainText('Javelina');
 });
 
+Given('the browser has no room left to save key settings', async ({ page }) => {
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith('sparcd-tagger-keybindings')) {
+        throw new DOMException('full', 'QuotaExceededError');
+      }
+      setItem.call(this, key, value);
+    };
+  });
+});
+
+Then('a notice says the key settings will reset on reload', async ({ page }) => {
+  await expect(page.getByTestId('species-panel').getByRole('alert')).toHaveText(
+    "Couldn't save your key settings in this browser. They'll reset when you reload.",
+  );
+});
+
 Then('the assigned key is shown on the species row', async ({ page }) => {
   await expect(speciesBadge(page, 'Pecari tajacu')).toHaveText('V');
 });
@@ -450,6 +478,59 @@ Then('the new species takes the key', async ({ page }) => {
 
 Then('the previous species is left without one', async ({ page }) => {
   await expect(speciesBadge(page, 'Canis latrans')).toHaveCount(0);
+});
+
+Given('the vocabulary gives two species the same key', async ({ page, s3 }) => {
+  const vocabulary = JSON.parse(SPECIES_JSON) as Record<string, unknown>[];
+  vocabulary.find((entry) => entry.scientificName === 'Puma concolor')!.keyBinding = 'D';
+  s3.put(SETTINGS_BUCKET, SPECIES_KEY, JSON.stringify(vocabulary), 'application/json');
+  // Start from a bare profile so the duplicate arrives as the vocabulary's own
+  // defaults rather than as a server change waiting to be acknowledged.
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await connect(page);
+  await selectCollection(page);
+  await openUpload(page);
+  await expect(speciesBadge(page, 'Puma concolor')).toHaveText('D');
+});
+
+When('the shared key is pressed', async ({ page }) => {
+  await page.keyboard.press('d');
+});
+
+Then('neither of the two species is recorded on the image', async ({ page }) => {
+  await expect(gridCell(page, 'IMG002.JPG')).not.toContainText('Mule Deer');
+  await expect(gridCell(page, 'IMG002.JPG')).not.toContainText('Mountain Lion');
+  expect(await draftSpecies(page, 'IMG002.JPG')).toEqual([]);
+});
+
+Then('both of their rows mark the key as shared', async ({ page }) => {
+  for (const scientific of ['Odocoileus hemionus', 'Puma concolor']) {
+    await expect(speciesBadge(page, scientific)).toHaveText('D');
+    await expect(speciesBadge(page, scientific)).toHaveAttribute(
+      'title',
+      /^Key shared with .+; pick a new key$/,
+    );
+    await expect(speciesBadge(page, scientific)).toHaveClass(/line-through/);
+    await expect(
+      speciesRow(page, scientific).getByText(/^Key shared with .+; pick a new key$/),
+    ).toBeVisible();
+  }
+});
+
+When('one of the two is given a key of its own', async ({ page }) => {
+  await speciesAssignKey(page, 'Puma concolor').click();
+  await page.keyboard.press('k');
+  await expect(speciesBadge(page, 'Puma concolor')).toHaveText('K');
+});
+
+Then('the shared key applies the species that kept it', async ({ page }) => {
+  await page.keyboard.press('d');
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Mule Deer');
+});
+
+Then('no row marks a key as shared', async ({ page }) => {
+  await expect(page.locator('div.group kbd[title]')).toHaveCount(0);
 });
 
 When('its key is assigned to a different species', async ({ page }) => {
@@ -658,19 +739,17 @@ Then('each selected image increments the species from its own count', async ({ p
 });
 
 Given('the saved user profile contains an older species configuration', async ({ page }) => {
-  await page.evaluate(() => {
-    const key = 'sparcd-tagger-keybindings';
+  await page.evaluate((source) => {
+    const key = 'sparcd-tagger-keybindings-v5';
+    type Revision = { at: number; sequence: number; writer: string };
     const stored = JSON.parse(localStorage.getItem(key)!) as {
       state: {
         profiles: Record<
           string,
           {
             overrides: Record<string, string | null>;
-            overrideRevisions: Record<string, { at: number; sequence: number; writer: string }>;
-            acceptedSpecies?: { scientificName: string; commonName: string; keyBinding: string | null }[];
-            acceptedRevision?: { at: number; sequence: number; writer: string };
-            pendingSpeciesChange?: unknown;
-            pendingRevision?: { at: number; sequence: number; writer: string };
+            overrideRevisions: Record<string, Revision>;
+            speciesSources?: Record<string, Record<string, unknown>>;
           }
         >;
       };
@@ -680,15 +759,19 @@ Given('the saved user profile contains an older species configuration', async ({
     const revision = { at: Date.now() + 1, sequence: 1, writer: 'bdd-fixture' };
     profile.overrides['Former species'] = '!';
     profile.overrideRevisions['Former species'] = revision;
-    profile.acceptedSpecies = [
-      { scientificName: 'Odocoileus hemionus', commonName: 'Old Deer Name', keyBinding: 'M' },
-      { scientificName: 'Former species', commonName: 'Former Species', keyBinding: 'F' },
-    ];
-    profile.acceptedRevision = revision;
-    delete profile.pendingSpeciesChange;
-    profile.pendingRevision = revision;
+    profile.speciesSources = {
+      ...profile.speciesSources,
+      [source]: {
+        acceptedSpecies: [
+          { scientificName: 'Odocoileus hemionus', commonName: 'Old Deer Name', keyBinding: 'M' },
+          { scientificName: 'Former species', commonName: 'Former Species', keyBinding: 'F' },
+        ],
+        acceptedRevision: revision,
+        pendingRevision: revision,
+      },
+    };
     localStorage.setItem(key, JSON.stringify(stored));
-  });
+  }, `${SETTINGS_BUCKET}/${SPECIES_KEY}`);
 });
 
 When('the tagger is refreshed with its restored session', async ({ page }) => {
@@ -719,7 +802,7 @@ When('the vocabulary change is acknowledged', async ({ page }) => {
 
 Then('the binding the user set for the removed species is kept and the message stays acknowledged', async ({ page }) => {
   const removed = await page.evaluate(() => {
-    const stored = JSON.parse(localStorage.getItem('sparcd-tagger-keybindings')!) as {
+    const stored = JSON.parse(localStorage.getItem('sparcd-tagger-keybindings-v5')!) as {
       state: { profiles: Record<string, { overrides: Record<string, string | null> }> };
     };
     return Object.values(stored.state.profiles)[0].overrides['Former species'];
@@ -744,14 +827,20 @@ Given('the server vocabulary gains Ringtail', async ({ s3 }) => {
 Given('the current species profile is recorded', async ({ page, scratch }) => {
   await expect.poll(() =>
     page.evaluate(() => {
-      const stored = JSON.parse(localStorage.getItem('sparcd-tagger-keybindings')!) as {
-        state: { profiles: Record<string, { acceptedSpecies?: unknown[] }> };
+      const stored = JSON.parse(localStorage.getItem('sparcd-tagger-keybindings-v5')!) as {
+        state: {
+          profiles: Record<
+            string,
+            { speciesSources?: Record<string, { acceptedSpecies?: unknown[] }> }
+          >;
+        };
       };
-      return Object.values(stored.state.profiles)[0]?.acceptedSpecies?.length ?? 0;
+      const sources = Object.values(stored.state.profiles)[0]?.speciesSources ?? {};
+      return Object.values(sources)[0]?.acceptedSpecies?.length ?? 0;
     }),
   ).toBeGreaterThan(0);
   scratch.speciesProfile = await page.evaluate(() =>
-    localStorage.getItem('sparcd-tagger-keybindings'),
+    localStorage.getItem('sparcd-tagger-keybindings-v5'),
   );
 });
 
@@ -770,6 +859,58 @@ When('the stale tagger tab regains focus', async ({ page, s3, scratch }) => {
   await page.clock.fastForward(100);
 });
 
+// --- Per-collection species lists --------------------------------------------
+
+const COLLECTIONS: Record<string, { bucket: string; key: string }> = {
+  [COLLECTION_NAME]: { bucket: BUCKET, key: `Collections/${UUID}/species.json` },
+  [COLLECTION_B_NAME]: { bucket: BUCKET_B, key: `Collections/${UUID_B}/species.json` },
+};
+
+const entry = (name: string, scientificName: string, keyBinding: string | null = null) => ({
+  name,
+  scientificName,
+  speciesIconURL: '',
+  keyBinding,
+});
+const BACKCOUNTRY_SPECIES = [entry('Bobcat', 'Lynx rufus', 'B'), entry('Coyote', 'Canis latrans')];
+
+function putCollectionSpecies(s3: MockS3, name: string, list: unknown[]) {
+  const { bucket, key } = COLLECTIONS[name];
+  s3.put(bucket, key, JSON.stringify(list), 'application/json');
+}
+
+Given('Backcountry Survey has its own species list', async ({ s3 }) => {
+  putCollectionSpecies(s3, COLLECTION_B_NAME, BACKCOUNTRY_SPECIES);
+});
+
+Given("Backcountry Survey's species list gains Ringtail on the server", async ({ s3 }) => {
+  putCollectionSpecies(s3, COLLECTION_B_NAME, [
+    ...BACKCOUNTRY_SPECIES,
+    entry('Ringtail', 'Bassariscus astutus'),
+  ]);
+});
+
+/** Opens a collection and waits until the Tagger has reconciled its species list,
+ * so a missing message means none was raised rather than none raised yet. */
+Given(/^(Backcountry Survey|Educational Test) is opened from Browse$/, async ({ page, s3 }, name: string) => {
+  await sectionTab(page, 'Browse').click();
+  await selectCollection(page, name);
+  const { bucket, key } = COLLECTIONS[name];
+  const source = s3.has(bucket, key) ? `${bucket}/${key}` : `${SETTINGS_BUCKET}/${SPECIES_KEY}`;
+  await expect
+    .poll(() =>
+      page.evaluate((source) => {
+        const stored = JSON.parse(localStorage.getItem('sparcd-tagger-keybindings-v5') ?? '{}') as {
+          state?: { profiles?: Record<string, { speciesSources?: Record<string, unknown> }> };
+        };
+        return Object.values(stored.state?.profiles ?? {}).some(
+          (profile) => !!profile.speciesSources?.[source],
+        );
+      }, source),
+    )
+    .toBe(true);
+});
+
 Then('Ringtail is available in the refreshed species vocabulary', async ({ page }) => {
   await expect(speciesRow(page, 'Bassariscus astutus')).toContainText('Ringtail');
 });
@@ -784,7 +925,7 @@ Then('no vocabulary-change message is shown', async ({ page }) => {
 
 Then('the recorded species profile is unchanged', async ({ page, scratch }) => {
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem('sparcd-tagger-keybindings')))
+    .poll(() => page.evaluate(() => localStorage.getItem('sparcd-tagger-keybindings-v5')))
     .toBe(scratch.speciesProfile);
 });
 
@@ -945,4 +1086,39 @@ Then("the collection's stored files are unchanged until a sync is run", async ({
   expect(s3.puts).toHaveLength(0);
   expect(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).toBe(observationsCsv(PREFIX_A, OBS_A));
   await expect(positionReadout(page)).toBeVisible();
+});
+
+// --- Leaving an image untagged ----------------------------------------------
+
+Given('its first image is focused', async ({ page }) => {
+  await focusFrame(page, 'IMG001.JPG');
+});
+
+When('focus moves on to the next image without a species being applied', async ({ page }) => {
+  await page.keyboard.press('ArrowDown');
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAttribute('aria-current', 'true');
+});
+
+When('a species is applied to that next image', async ({ page }) => {
+  await speciesApply(page, 'Canis latrans').click();
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
+});
+
+Then('the image left behind still reads as untagged', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+  await page.getByRole('button', { name: '☰ List' }).click();
+  await expect(listRow(page, 'IMG001.JPG').locator('[data-column="species"]')).toHaveText('untagged');
+});
+
+Then('the stored observations record no species for the image left behind', async ({ s3 }) => {
+  const obs = parseObservations(s3.text(BUCKET, `${PREFIX_C}observations.csv`));
+  expect(obs.some((o) => o.mediaId.endsWith('IMG002.JPG') && o.scientificName === 'Canis latrans')).toBe(true);
+  const left = obs.filter((o) => o.mediaId.endsWith('IMG001.JPG'));
+  expect(left.length).toBeGreaterThan(0);
+  for (const o of left) {
+    expect(o.scientificName).toBe('');
+    expect(o.observationType).toBe('blank');
+  }
+  const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_C}UploadMeta.json`)) as { imagesWithSpecies: number };
+  expect(meta.imagesWithSpecies).toBe(1);
 });

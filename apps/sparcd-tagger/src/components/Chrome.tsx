@@ -30,6 +30,8 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const taggerUser = useStore((s) => s.taggerUser);
+  const section = useStore((s) => s.section);
+  const setSection = useStore((s) => s.setSection);
   const record = useLocalBatch((s) => s.record)!;
   const flushSaves = useDraftStore((s) => s.flushSaves);
   const [leaving, setLeaving] = useState(false);
@@ -49,12 +51,17 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
           Local batch · {fileCount} files · from Uploader
         </span>
 
+        <nav className="flex items-stretch" aria-label="Sections">
+          <button onClick={() => setSection('tag')} aria-current={section === 'tag' ? 'page' : undefined} className="px-3 text-[14px] font-body text-inkSoft hover:text-ink">Tag</button>
+          <button onClick={() => setSection('settings')} aria-current={section === 'settings' ? 'page' : undefined} className="px-3 text-[14px] font-body text-inkSoft hover:text-ink">Settings</button>
+        </nav>
+
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => void done()}
-            disabled={leaving}
+            disabled={leaving || !taggerUser.trim()}
+            title={taggerUser.trim() ? 'Save the tags and go back to the Uploader' : 'Set the local batch identity in Settings first'}
             className="min-h-11 md:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 md:py-1.5 text-[14px] font-body font-[600] hover:opacity-90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-            title="Save the tags and go back to the Uploader"
           >
             {leaving ? 'Saving…' : 'Done · back to Uploader'}
           </button>
@@ -81,7 +88,6 @@ function CollectionChrome({ children }: { children: ReactNode }) {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const syncState = useStore((s) => s.syncState);
   const hasUpload = useStore((s) => !!s.selectedUploadPrefix);
-  const taggerUser = useStore((s) => s.taggerUser);
   const disconnect = useStore((s) => s.disconnect);
   // Local-only in P1: surface unsaved edits so the pill is honest before the P4
   // write path exists. `syncState` stays the source of truth once sync ships.
@@ -119,12 +125,15 @@ function CollectionChrome({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
           {/* Sync pill is textual; drop it below sm so the right cluster stays icon-only on phones. */}
           <span className="hidden sm:flex items-center">
             <StatePill state={displayState} />
           </span>
-          <ConnectionChip identity={taggerUser || undefined} onDisconnect={disconnect} />
+          {/* The connected access key is the attribution identity internally,
+              but ConnectionChip already renders only its masked form. Do not
+              pass the raw key into the header as a second identity label. */}
+          <ConnectionChip onDisconnect={disconnect} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 md:w-8 md:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"

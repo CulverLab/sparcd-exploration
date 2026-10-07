@@ -190,7 +190,7 @@ When('the detailed Overview list is opened', async ({ page }) => {
 Then('list columns follow the Name, Type, Date, Species sort-control order', async ({ page }) => {
   const tagged = listRow(page, 'IMG001.JPG');
   expect(await tagged.locator('[data-column]').evaluateAll((cells) => cells.map((cell) => cell.getAttribute('data-column'))))
-    .toEqual(['filename', 'media-type', 'timestamp', 'species', 'markers']);
+    .toEqual(['filename', 'media-type', 'timestamp', 'species', 'review-status', 'markers']);
   await expect(tagged.locator('[data-column="filename"]')).toHaveAttribute(
     'aria-label',
     'Filename: IMG001.JPG',

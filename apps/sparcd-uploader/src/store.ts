@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { S3Config } from '@sparcd/types';
 import {
-  loadPersistedConnection,
   loadSessionConnection,
   saveSharedConnection,
   clearSharedConnection,
@@ -76,6 +75,8 @@ export type FileEntry = ScannedFile & {
   // opaquely: the uploader displays it read-only and emits it as observation
   // rows, and never edits it.
   preTags?: FlipObservation[];
+  /** Person who applied the pre-upload tags in the Tagger. */
+  preTaggerUser?: string;
 };
 
 type UploaderState = {
@@ -102,8 +103,9 @@ type UploaderState = {
   // shared record's id, so "Edit tags" re-enters the same tagging session.
   flipId: string | null;
   uploaderUser: string; // free-text identity, normalized into a slug for keys
-  selectedLocationKey: string | null; // chosen deployment location key (Assign)
+  selectedLocationId: string | null; // chosen deployment location ID (Assign)
   selectedBucket: string | null; // selected collection key `${bucket}::${uuid}` (Assign)
+  requireCollectionSelection: boolean; // keep a new batch visibly unassigned
   uploadDescription: string; // free-text description for UploadMeta
   uploadTimeZone: string; // IANA zone EXIF naive times are interpreted in; default = browser zone
   dryRun: boolean; // off by default; when on, logs PUTs and writes nothing
@@ -184,7 +186,7 @@ type UploaderState = {
   ) => void;
   resetBatch: () => void;
   setUploaderUser: (value: string) => void;
-  setSelectedLocationKey: (key: string | null) => void;
+  setSelectedLocationId: (id: string | null) => void;
   setSelectedBucket: (bucket: string | null) => void;
   setUploadDescription: (value: string) => void;
   setUploadTimeZone: (value: string) => void;
@@ -212,8 +214,9 @@ function disconnectedState(s: UploaderState): Partial<UploaderState> {
     dirHandle: null,
     fileAccessMode: 'reselect-required',
     flipId: null,
-    selectedLocationKey: null,
+    selectedLocationId: null,
     selectedBucket: null,
+    requireCollectionSelection: false,
     uploaderUser: '',
     uploadTimeZone: localTimeZone(),
     pendingResume: null,
@@ -268,10 +271,6 @@ function getFileIndex(files: FileEntry[]): Map<string, number> {
   }
   return fileIndexById;
 }
-
-// Read once at module init for the initial uploaderUser default below (the
-// access key is non-secret, so it's safe to have persisted).
-const initialPersisted = loadPersistedConnection();
 
 // This tab's own session, if it has one — same tab, so a BrandSwitcher hop to
 // another SPARC'd tool or a reload lands straight back in the app. Nothing is
@@ -330,12 +329,10 @@ export const useStore = create<UploaderState>()(
       dirHandle: null,
       fileAccessMode: 'reselect-required',
       flipId: null,
-      // Defaults to the connected access key (the closest thing to a "login
-      // name" this app has) — but only ever as a fill-in for blank; a value the
-      // user typed or already had is never overwritten.
-      uploaderUser: initialPersisted?.accessKey ?? '',
-      selectedLocationKey: null,
+      uploaderUser: '',
+      selectedLocationId: null,
       selectedBucket: null,
+      requireCollectionSelection: false,
       uploadDescription: '',
       uploadTimeZone: localTimeZone(),
       dryRun: false,
@@ -360,9 +357,9 @@ export const useStore = create<UploaderState>()(
           s3Config: config,
           connectionId: s.connectionId + 1,
           loginDeferred: false,
-          selectedLocationKey: null,
+          selectedLocationId: null,
           selectedBucket: null,
-          uploaderUser: s.uploaderUser || config.accessKey,
+          requireCollectionSelection: false,
         }));
       },
       setLoginDeferred: (value) => set({ loginDeferred: value }),
@@ -650,8 +647,8 @@ export const useStore = create<UploaderState>()(
 
       // Stored raw; sanitizeUploaderUser derives the key-safe slug at point of use.
       setUploaderUser: (value) => set({ uploaderUser: value }),
-      setSelectedLocationKey: (key) => set({ selectedLocationKey: key }),
-      setSelectedBucket: (bucket) => set({ selectedBucket: bucket }),
+      setSelectedLocationId: (id) => set({ selectedLocationId: id }),
+      setSelectedBucket: (bucket) => set({ selectedBucket: bucket, requireCollectionSelection: false }),
       setUploadDescription: (value) => set({ uploadDescription: value }),
       setUploadTimeZone: (value) => set({ uploadTimeZone: value }),
       setDryRun: (value) => set({ dryRun: value }),
@@ -699,9 +696,9 @@ export const useStore = create<UploaderState>()(
         }
       },
 
-      // Start a fresh batch after a completed upload, keeping the deployment,
-      // uploader, target collection, and description so a researcher can chain
-      // batches for the same site without re-entering everything.
+      // Start a fresh batch after a completed upload. Assignment values belong
+      // to the card that just finished and must not silently carry over to the
+      // next card; the uploader identity and run preferences remain available.
       nextBatch: () => {
         invalidateRetryPartialRun();
         invalidateFileIndex();
@@ -713,6 +710,11 @@ export const useStore = create<UploaderState>()(
           dirHandle: null,
           fileAccessMode: 'reselect-required',
           flipId: null,
+          selectedLocationId: null,
+          selectedBucket: null,
+          uploadDescription: '',
+          uploadTimeZone: '',
+          requireCollectionSelection: true,
           activeRun: null,
           streamingRun: null,
           streamingQueueClosed: false,
@@ -732,15 +734,16 @@ export const useStore = create<UploaderState>()(
       // timezone, description) are plain strings — safe to persist, unlike
       // files/handles — and nextBatch() already keeps them in memory across
       // batches with exactly this in mind; this just makes that survive a
-      // reload too. A stale selectedLocationKey/selectedBucket from a
+      // reload too. A stale selectedLocationId/selectedBucket from a
       // different connection is harmless: Assign already clears/reselects
       // either one when it doesn't match the connected backend's data. The run
       // options ride along for the same reason.
       partialize: (s) => ({
         elevationUnit: s.elevationUnit,
         uploaderUser: s.uploaderUser,
-        selectedLocationKey: s.selectedLocationKey,
+        selectedLocationId: s.selectedLocationId,
         selectedBucket: s.selectedBucket,
+        requireCollectionSelection: s.requireCollectionSelection,
         uploadDescription: s.uploadDescription,
         uploadTimeZone: s.uploadTimeZone,
         dryRun: s.dryRun,
@@ -767,7 +770,7 @@ subscribeSharedConnection((cfg) => {
     const run = current.activeRun;
     useStore.setState((s) => ({
       ...disconnectedState(s),
-      ...(cfg ? { s3Config: cfg, uploaderUser: cfg.accessKey } : {}),
+      ...(cfg ? { s3Config: cfg } : {}),
     }));
     run?.cancel();
     return;
@@ -776,6 +779,5 @@ subscribeSharedConnection((cfg) => {
     s3Config: cfg,
     connectionId: s.connectionId + 1,
     loginDeferred: false,
-    uploaderUser: s.uploaderUser || cfg.accessKey,
   }));
 }, () => useStore.getState().s3Config);

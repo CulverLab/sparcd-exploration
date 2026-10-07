@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
+import { useOnline } from '@sparcd/auth-ui';
 import { deleteFlipRecord } from '@sparcd/flip';
 import { useStore } from '../store';
 import { useLocations } from '../lib/useLocations';
+import { findAllowedLocation } from '../lib/allowedLocations';
 import { useCollections } from '../lib/useCollections';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { formatBytes } from '../lib/scanFiles';
-import { loadSession } from '../lib/db';
+import { loadSession, type BatchRecord } from '../lib/db';
 import type { ReconcileProblem } from '../lib/resume';
 import {
   resumeUpload,
@@ -18,6 +19,13 @@ import type { ProcessResponse } from '../lib/processPool';
 import { ensureBundle } from '../lib/resume';
 import { Note, RunMonitor } from '../components/RunMonitor';
 import { UploadCompleteDialog } from '../components/UploadCompleteDialog';
+
+// Every scan path keys files as `<picked folder>/<sub>/<file>`; loose files
+// picked on a phone have no folder to name.
+function folderOf(paths: string[]): string | null {
+  const top = paths[0]?.split('/')[0];
+  return top && paths.every((p) => p.startsWith(`${top}/`)) ? top : null;
+}
 
 const sectionLabel = 'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
 
@@ -66,6 +74,48 @@ function AdaptiveInfo() {
   );
 }
 
+const uploadConnectivityStatusId = 'upload-connectivity-status';
+
+function UploadConnectivityStatus({
+  online,
+  offlineOverride,
+  onAllowOfflineUpload,
+}: {
+  online: boolean;
+  offlineOverride: boolean;
+  onAllowOfflineUpload: () => void;
+}) {
+  const message = online
+    ? 'Online — network detected; real uploads can be attempted'
+    : offlineOverride
+      ? 'Offline — trying a real upload; the browser signal may be stale'
+      : 'Offline — real uploads paused; dry runs remain available';
+
+  return (
+    <div
+      id={uploadConnectivityStatusId}
+      aria-live="polite"
+      aria-atomic="true"
+      className={`flex items-center gap-2 border px-3 py-2.5 font-body text-[13px] ${
+        online ? 'border-ruleSoft bg-panel text-inkSoft' : 'border-warn/40 bg-paper text-warn'
+      }`}
+    >
+      <span aria-hidden className={`h-2 w-2 rounded-full ${online ? 'bg-accent' : 'bg-warn'}`} />
+      <span>{message}</span>
+      {!online && !offlineOverride && (
+        <button
+          type="button"
+          onClick={onAllowOfflineUpload}
+          aria-describedby={uploadConnectivityStatusId}
+          className="ml-auto shrink-0 border border-warn px-2 py-1 font-[600] text-[12px] text-warn hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+        >
+          Try real upload anyway
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Upload() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
@@ -74,7 +124,7 @@ export function Upload() {
   const uploaderUser = useStore((s) => s.uploaderUser);
   const description = useStore((s) => s.uploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
-  const selectedLocationKey = useStore((s) => s.selectedLocationKey);
+  const selectedLocationId = useStore((s) => s.selectedLocationId);
   const selectedBucket = useStore((s) => s.selectedBucket);
   const dryRun = useStore((s) => s.dryRun);
   const setDryRun = useStore((s) => s.setDryRun);
@@ -86,12 +136,13 @@ export function Upload() {
   const fileAccessMode = useStore((s) => s.fileAccessMode);
   const dirHandle = useStore((s) => s.dirHandle);
   const pendingResume = useStore((s) => s.pendingResume);
+  const attachedFiles = useStore((s) => s.attachedFiles);
 
   const { data: locData } = useLocations(s3Config, connectionId, selectedBucket);
   const collections = useCollections(s3Config, connectionId);
 
   const slug = sanitizeUploaderUser(uploaderUser);
-  const location = locData?.locations.find((l) => l.key === selectedLocationKey) ?? null;
+  const location = findAllowedLocation(locData?.locations ?? [], selectedLocationId);
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
@@ -120,6 +171,11 @@ export function Upload() {
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
+  const [offlineOverride, setOfflineOverride] = useState(false);
+  useEffect(() => {
+    if (online) setOfflineOverride(false);
+  }, [online]);
+  const realUploadAllowed = online || offlineOverride;
 
 
   // Run and snapshot live in the store so they survive section navigation —
@@ -174,6 +230,46 @@ export function Upload() {
 
   const ready = useMemo(() => files.filter((f) => f.processState === 'ready' && f.sha256), [files]);
   const stillInspecting = files.length - ready.length;
+  const folder = useMemo(() => folderOf(files.map((f) => f.relPath)), [files]);
+
+  // A run resumed from History goes to its saved destination, whatever Assign
+  // holds now, so the summary has to name that one.
+  const resumedSessionId = attachedFiles ? snap?.sessionId : undefined;
+  const [resumedBatch, setResumedBatch] = useState<BatchRecord | null>(null);
+  useEffect(() => {
+    setResumedBatch(null);
+    if (!resumedSessionId) return;
+    let live = true;
+    void loadSession(resumedSessionId).then((s) => {
+      if (live) setResumedBatch(s?.batch ?? null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [resumedSessionId]);
+  // A resume may render before the asynchronous session read completes. Keep
+  // the saved session's destination as the only source of truth during that
+  // gap; falling back to Assign here can briefly name a different batch.
+  const savedBatch = resumedBatch ?? pendingResume?.session.batch ?? null;
+  const isResumed = Boolean(attachedFiles || pendingResume || resumedSessionId);
+  const dest = savedBatch
+    ? {
+        collectionName:
+          collections.data?.find(
+            (c) => c.bucket === savedBatch.targetBucket && c.uuid === savedBatch.collectionUuid,
+          )?.name ?? savedBatch.targetBucket,
+        collectionUuid: savedBatch.collectionUuid,
+        location: savedBatch.location,
+        folder: folderOf([...(attachedFiles?.keys() ?? [])]),
+      }
+    : isResumed
+      ? null
+      : collection && {
+        collectionName: collection.name ?? '(unnamed)',
+        collectionUuid: collection.uuid,
+        location,
+        folder,
+      };
 
   const start = () => {
     if (!s3Config || !location || !collection || !slug) return;
@@ -329,40 +425,72 @@ export function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
-      <OfflineBanner message="You're offline — the dry run still works, but a real upload won't until your connection is back." />
+      <UploadConnectivityStatus
+        online={online}
+        offlineOverride={offlineOverride}
+        onAllowOfflineUpload={() => setOfflineOverride(true)}
+      />
       {/* Run configuration. A resume handed off from History replays a persisted
           bundle with no Assign state behind it, so the options collapse away. */}
       <section className="space-y-3">
         <h2 className={sectionLabel}>Upload</h2>
-        {collection && (
+        {dest && (
           <>
-            <p className="font-body text-[13px] text-inkSoft">
-              {ready.length} file{ready.length === 1 ? '' : 's'} ready
-              {stillInspecting > 0 && ` (${stillInspecting} still being inspected)`} ·{' '}
-              {formatBytes(ready.reduce((n, f) => n + f.size, 0))} →{' '}
-              <span className="font-mono text-ink break-all">
-                {collection.bucket}/Collections/{collection.uuid}/Uploads/
-              </span>
-            </p>
+            {!isResumed && (
+              <p className="font-body text-[13px] text-inkSoft">
+                {ready.length} file{ready.length === 1 ? '' : 's'} ready
+                {stillInspecting > 0 && ` (${stillInspecting} still being inspected)`} ·{' '}
+                {formatBytes(ready.reduce((n, f) => n + f.size, 0))}
+              </p>
+            )}
 
-            <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
-              <input
-                type="checkbox"
-                checked={effectiveDryRun}
-                disabled={anyRunActive}
-                onChange={(e) => setDryRun(e.target.checked)}
-                className="accent-accent"
-              />
-              Test the upload, nothing is written
-            </label>
+            <dl className="space-y-1.5 font-body text-[13px]">
+              <div className="flex items-baseline gap-3">
+                <dt className="text-inkSoft w-28 shrink-0">Collection</dt>
+                <dd className="text-ink min-w-0 break-words">{dest.collectionName}</dd>
+              </div>
+              {dest.location && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Location</dt>
+                  <dd className="min-w-0">
+                    <span className="block break-words text-ink">{dest.location.name}</span>
+                    <span className="block break-all font-mono text-[12px] text-inkMute">
+                      {dest.location.id}
+                    </span>
+                  </dd>
+                </div>
+              )}
+              {dest.folder && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Folder</dt>
+                  <dd className="font-mono text-ink min-w-0 break-all">{dest.folder}</dd>
+                </div>
+              )}
+            </dl>
+
+            {!isResumed && (
+              <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={effectiveDryRun}
+                  disabled={anyRunActive}
+                  onChange={(e) => setDryRun(e.target.checked)}
+                  className="accent-accent"
+                />
+                Test the upload, nothing is written
+              </label>
+            )}
 
             {snap && (snap.phase === 'error' || snap.phase === 'partial') && !snap.dryRun && (
               <Note
                 tone="warn"
-                message={`Upload failed. If it keeps happening, ask your administrator to check: the bucket's CORS policy must allow this web origin for PUT, HEAD, and OPTIONS requests, and the credentials need PUT, HEAD, and LIST permissions on the upload prefix. Collection ID: ${collection.uuid}.`}
+                message={`Upload failed. If it keeps happening, ask your administrator to check: the bucket's CORS policy must allow this web origin for PUT, HEAD, and OPTIONS requests, and the credentials need PUT, HEAD, and LIST permissions on the upload prefix. Collection ID: ${dest.collectionUuid}.`}
               />
             )}
           </>
+        )}
+        {isResumed && !dest && (
+          <p className="font-body text-[13px] text-inkSoft">Loading the saved upload destination…</p>
         )}
 
         {stillInspecting > 0 && (
@@ -483,16 +611,20 @@ export function Upload() {
           ) : (snap?.phase === 'partial' || snap?.phase === 'error') && !snap.dryRun ? (
             <button
               onClick={retryFailed}
-              title={!online ? "You're offline" : undefined}
-              className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              disabled={!realUploadAllowed}
+              title={!realUploadAllowed ? "You're offline — reconnect or choose Try real upload anyway" : undefined}
+              aria-describedby={!realUploadAllowed ? uploadConnectivityStatusId : undefined}
+              className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}
             >
-              {snap.phase === 'error' ? 'Retry' : 'Retry failed files'}
+              {snap.phase === 'error' ? 'Resume upload' : 'Retry failed files'}
             </button>
           ) : (
             <button
               onClick={start}
-              title={!effectiveDryRun && !online ? "You're offline" : undefined}
-              className="bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              disabled={!effectiveDryRun && !realUploadAllowed}
+              title={!effectiveDryRun && !realUploadAllowed ? "You're offline — reconnect or choose Try real upload anyway" : undefined}
+              aria-describedby={!effectiveDryRun && !realUploadAllowed ? uploadConnectivityStatusId : undefined}
+              className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!effectiveDryRun && !realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}
             >
               {effectiveDryRun ? 'Start dry run' : 'Start upload'}
             </button>

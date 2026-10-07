@@ -5,7 +5,7 @@ import { Thumb } from './Thumb';
 import { useDraftStore } from '../lib/drafts';
 import { useStore } from '../store';
 import { formatDateTime, formatTime, type TimeFormat } from '../lib/formatting';
-import { effectiveOf, isEditedFromBase, isGhostObs } from '../lib/effective';
+import { effectiveOf, isEditedFromBase, isGhostObs, reviewSummary } from '../lib/effective';
 import { isRangeFullySelected } from '../lib/selection';
 import type { Burst, BurstGrouping } from '../lib/bursts';
 import { isVideoImage, type TagImage } from '../lib/workspace';
@@ -21,6 +21,13 @@ function summarize(obs: DraftObservation[]): string {
   const name = isGhostObs(first) ? 'Ghost' : first.commonName || first.scientificName;
   const head = first.count > 1 ? `${name} ×${first.count}` : name;
   return obs.length > 1 ? `${head} +${obs.length - 1}` : head;
+}
+
+function reviewSummaryLabel(observations: DraftObservation[]): string | null {
+  const summary = reviewSummary(observations);
+  if (!summary) return null;
+  if (summary === 'mixed') return 'Mixed review';
+  return summary === 'reviewed' ? 'Reviewed' : 'Not reviewed';
 }
 
 // The Overview is the primary bulk-tagging surface: a virtualized, burst-banded
@@ -47,6 +54,7 @@ type OverviewProps = {
   onDrill?: (i: number) => void;
   /** A spatial drop affects this image only, regardless of selection. */
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
+  timeZone?: string;
 };
 
 const BAND_H = 30;
@@ -93,6 +101,7 @@ export function Overview({
   onSelectBurst,
   onDrill,
   onDropSpecies,
+  timeZone,
 }: OverviewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(parentRef);
@@ -178,6 +187,7 @@ export function Overview({
                   onPick={onPick}
                   onDrill={onDrill}
                   onDropSpecies={onDropSpecies}
+                  timeZone={timeZone}
                   narrow={width < DETAILED_LIST_MIN_WIDTH}
                 />
               ) : (
@@ -259,6 +269,7 @@ function ListCell({
   onDrill,
   onDropSpecies,
   narrow,
+  timeZone,
 }: {
   img: TagImage;
   index: number;
@@ -268,6 +279,7 @@ function ListCell({
   onDrill?: (i: number) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
   narrow?: boolean;
+  timeZone?: string;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const timeOffset = useDraftStore((s) => s.timeOffset);
@@ -276,15 +288,17 @@ function ListCell({
   const eff = effectiveOf(img, draft);
   const isVideo = isVideoImage(img);
   const species = summarize(eff.observations) || 'untagged';
-  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null);
+  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null, timeZone);
   const timestampDisplay = timestamp ? formatDateTime(timestamp, dateFormat, timeFormat) : null;
   const edited = isEditedFromBase(eff);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
   const rowLabel = [
     `Filename: ${img.fileName}`,
     ...(!narrow
       ? [`Media type: ${isVideo ? 'video' : 'image'}`, timestamp ? `Capture time: ${timestamp}` : 'Capture time unavailable']
       : []),
     `Species: ${species}`,
+    ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
     ...(edited ? ['Unsaved edit'] : []),
     ...(eff.questionable ? ['Questionable'] : []),
   ].join('; ');
@@ -308,7 +322,6 @@ function ListCell({
           objectKey={img.key}
           alt={img.fileName}
           isVideo={isVideo}
-          priority={active ? 'high' : 'low'}
         />
       </span>
       <span
@@ -354,6 +367,16 @@ function ListCell({
       >
         {species}
       </span>
+      {reviewLabel && (
+        <span
+          data-column="review-status"
+          aria-label={`Review status: ${reviewLabel}`}
+          title={`Review status: ${reviewLabel}`}
+          className="w-20 shrink-0 text-[10px] font-mono text-inkMute truncate"
+        >
+          {reviewLabel}
+        </span>
+      )}
       <span data-column="markers" className="shrink-0 flex flex-col items-center gap-0.5 w-4">
         {edited && (
           <span
@@ -405,6 +428,7 @@ function GridCell({
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const eff = effectiveOf(img, draft);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
@@ -425,7 +449,6 @@ function GridCell({
           objectKey={img.key}
           alt={img.fileName}
           isVideo={isVideoImage(img)}
-          priority={active ? 'high' : 'low'}
         />
         {isVideoImage(img) && (
           <span className="absolute top-1 left-1 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
@@ -463,6 +486,16 @@ function GridCell({
             <span className="text-inkMute font-mono">{img.fileName}</span>
           )}
         </span>
+        {reviewLabel && (
+          <span
+            data-column="review-status"
+            aria-label={`Review status: ${reviewLabel}`}
+            title={`Review status: ${reviewLabel}`}
+            className="shrink-0 text-[9px] font-mono text-inkMute"
+          >
+            {reviewLabel}
+          </span>
+        )}
       </span>
     </button>
   );

@@ -16,6 +16,7 @@ export function PerImageTime({
   hasUploadShift,
   overridden,
   timestampSource,
+  timeZone,
   onSet,
   onClear,
 }: {
@@ -24,6 +25,7 @@ export function PerImageTime({
   hasUploadShift: boolean; // an upload-level offset is active
   overridden: boolean; // this image carries a per-image override
   timestampSource?: TimestampSource; // set when the camera wrote no time
+  timeZone?: string; // the deployment's IANA zone, for a bare typed time
   onSet: (iso: string) => void;
   onClear: () => void;
 }) {
@@ -40,7 +42,8 @@ export function PerImageTime({
   };
 
   const commit = () => {
-    const iso = normalizeTimestampInput(text);
+    const existingOffset = corrected.match(/(Z|[+-]\d{2}:?\d{2})$/)?.[1];
+    const iso = normalizeTimestampInput(text, existingOffset, timeZone);
     if (!iso) {
       setInvalid(true);
       return;
@@ -92,7 +95,7 @@ export function PerImageTime({
 
   return (
     <span className="inline-flex flex-wrap items-center gap-2.5 min-w-0">
-      <span className="flex flex-col leading-tight">
+      <span className="flex flex-col leading-tight" data-testid="focus-timestamp">
         <span className="font-mono text-[13.5px] font-[600] text-ink">
           {corrected
             ? formatDateTime(corrected, dateFormat, timeFormat)

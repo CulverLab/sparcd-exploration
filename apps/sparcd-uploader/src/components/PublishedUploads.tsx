@@ -23,10 +23,12 @@ import {
   type EditResult,
 } from '../lib/publishedEdit';
 import { locationToDeployment, type Location } from '../lib/locations';
-import { javaEditStamp } from '@sparcd/camtrap';
+import { findAllowedLocation } from '../lib/allowedLocations';
+import { javaEditStamp, parseDeployments, parseUploadMeta } from '@sparcd/camtrap';
 import { formatUploadHeader } from '../lib/uploadDisplay';
 import { DeploymentPicker } from './DeploymentPicker';
 import { Note } from './RunMonitor';
+import { timeZoneForCoords } from '../lib/coords';
 
 const stampOf = (prefix: string) => prefix.replace(/\/$/, '').split('/').pop() ?? prefix;
 
@@ -74,7 +76,10 @@ function UploadCard({
   const edits = Array.isArray(upload.meta.editComments) ? upload.meta.editComments : [];
   const [mode, setMode] = useState<'none' | 'description' | 'deployment'>('none');
   const [description, setDescription] = useState(upload.meta.description ?? '');
-  const [locationKey, setLocationKey] = useState<string | null>(null);
+  // DeploymentPicker is keyed by the authoritative location ID. Published
+  // corrections must use the same identity as new assignments so a selected
+  // location can be resolved after the picker changed from composite keys.
+  const [locationId, setLocationId] = useState<string | null>(null);
   const [showEdits, setShowEdits] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ tone: 'mute' | 'warn'; message: string } | null>(null);
@@ -118,21 +123,34 @@ function UploadCard({
 
   async function saveDeployment() {
     if (!cfg) return;
-    const loc = locations.find((l) => l.key === locationKey);
+    const loc = findAllowedLocation(locations, locationId);
     if (!loc) return;
     setBusy(true);
     setNote(null);
     try {
-      const roles = ['deployments', 'media', 'observations'] as const;
+      const roles = ['deployments', 'media', 'observations', 'uploadMeta'] as const;
       const fresh = await loadPublishedCanonical(cfg, collection.bucket, upload.prefix, [...roles]);
       const deployment = locationToDeployment(loc, uuid);
+      const previousDeployment = parseDeployments(fresh.deployments!.text)[0];
+      const captureTimeZone = fresh.uploadMeta
+        ? parseUploadMeta(fresh.uploadMeta.text).captureTimeZone
+        : undefined;
       const next = restampDeployment(
         {
           deployments: fresh.deployments!.text,
           media: fresh.media!.text,
           observations: fresh.observations!.text,
         },
-        { fromDeploymentId: upload.deploymentId ?? undefined, toDeploymentId: deployment.deploymentId, location: deployment },
+        {
+          fromDeploymentId: upload.deploymentId ?? previousDeployment?.deploymentId,
+          toDeploymentId: deployment.deploymentId,
+          location: deployment,
+          fromTimeZone: previousDeployment
+            ? timeZoneForCoords(previousDeployment.latitude, previousDeployment.longitude)
+            : undefined,
+          legacyTimeZone: captureTimeZone,
+          toTimeZone: timeZoneForCoords(deployment.latitude, deployment.longitude),
+        },
       );
       const result = await runPublishedEdit(
         {
@@ -261,13 +279,13 @@ function UploadCard({
         <div className="space-y-2 pt-1">
           <DeploymentPicker
             locations={locations}
-            value={locationKey}
-            onChange={setLocationKey}
+            value={locationId}
+            onChange={setLocationId}
             elevationUnit={elevationUnit}
           />
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <button
-              disabled={busy || !locationKey}
+              disabled={busy || !locationId}
               onClick={() => void saveDeployment()}
               className="bg-ink text-paper border border-ink min-h-[44px] px-4 py-1 sm:min-h-0 sm:px-3 text-[13px] font-body font-[600] hover:opacity-90 disabled:opacity-40"
             >

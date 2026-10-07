@@ -1,11 +1,12 @@
 import { expect } from '@playwright/test';
 import type { App, FileSpec } from './app';
 import { publishableBatch, standardBatch } from './batches';
+import { RAW_LOCATIONS } from './fixtures-data';
 
 /** Replace the batch without leaving the connection, ending back on Assign. */
 export async function rescanFromAssign(app: App, specs: FileSpec[], opts: { raw?: boolean } = {}): Promise<void> {
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs, opts);
   await app.continueToAssign();
   await app.waitForCollections();
@@ -61,6 +62,40 @@ export function writtenCsvRows(app: App, suffix: string): string[][] {
     });
 }
 
+/** The folder of every upload published so far, in order, as a key prefix. */
+export function publishedUploads(app: App): string[] {
+  return app.s3.puts
+    .filter((p) => p.key.endsWith('/UploadComplete.json'))
+    .map((p) => p.key.slice(0, -'UploadComplete.json'.length));
+}
+
+/**
+ * Assert that one published upload stores the named registry location for
+ * every image and every observation: the deployment row carries the location's
+ * id, name and coordinates, and every media and observation row points at it.
+ * Returns the media and observation rows for further checks.
+ */
+export function expectStoredAtLocation(
+  app: App,
+  uploadPrefix: string,
+  locationName: string,
+): { media: string[][]; observations: string[][] } {
+  const loc = RAW_LOCATIONS.find((l) => l.nameProperty === locationName)!;
+  const deployments = writtenCsvRows(app, `${uploadPrefix}deployments.csv`);
+  expect(deployments).toHaveLength(1);
+  const [deployment] = deployments;
+  expect(deployment[1]).toBe(loc.idProperty);
+  expect(deployment[2]).toBe(loc.nameProperty);
+  expect(Number(deployment[3])).toBe(loc.lngProperty);
+  expect(Number(deployment[4])).toBe(loc.latProperty);
+
+  const media = writtenCsvRows(app, `${uploadPrefix}media.csv`);
+  const observations = writtenCsvRows(app, `${uploadPrefix}observations.csv`);
+  expect(media.length).toBeGreaterThan(0);
+  for (const row of [...media, ...observations]) expect(row[1]).toBe(deployment[0]);
+  return { media, observations };
+}
+
 /**
  * Swap the batch while keeping the Assign choices, ending back on Upload.
  * Upload paths are stamped to the second, so a re-run started inside the same
@@ -72,7 +107,7 @@ export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<voi
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs);
   await app.page.getByRole('button', { name: 'Continue' }).click();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
@@ -95,6 +130,20 @@ export async function producePartialRun(app: App, specs: FileSpec[] = publishabl
   await app.dryRunCheckbox().uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
+}
+
+/** Drive a wet run that ends `error`, with one file refused outright. */
+export async function produceFatalRun(app: App, specs: FileSpec[] = publishableBatch()): Promise<void> {
+  app.s3.putDelayMs = 150;
+  app.notes.sourceSpecs = specs;
+  await app.dropFolder(specs);
+  await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+  app.s3.putHooks.push((_b, key) =>
+    key.endsWith(FAILING_FILE) ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
+  );
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('error', 120_000);
 }
 
 /** Drive a wet run all the way through to a published upload. */

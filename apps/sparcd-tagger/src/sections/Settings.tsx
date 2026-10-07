@@ -7,8 +7,13 @@ const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase tex
 const input =
   'w-full bg-paper border border-rule px-3 py-2 text-[14px] font-mono text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2';
 
-// Per the simplified-login design: identity and the dry-run default live in
-// Settings, not on the connection gate.
+function maskedIdentity(value: string): string {
+  if (value.length <= 6) return '••••••';
+  return `${value.slice(0, 3)}…${value.slice(-3)}`;
+}
+
+// Connected sessions derive attribution from the storage account username.
+// Local-batch mode has no S3 connection, so it keeps the handoff identity here.
 export function Settings() {
   const taggerUser = useStore((s) => s.taggerUser);
   const setTaggerUser = useStore((s) => s.setTaggerUser);
@@ -52,20 +57,24 @@ export function Settings() {
     <div className="max-w-[560px] mx-auto p-8 space-y-8">
       <section>
         <label htmlFor="user" className={kicker}>
-          Tagger identity
+          {cfg ? 'Connected account' : 'Local batch identity'}
         </label>
         <input
           id="user"
           className={input}
-          placeholder="e.g. jgonzalez"
-          value={taggerUser}
-          onChange={(e) => setTaggerUser(e.target.value)}
+          placeholder={cfg ? 'Connected storage username' : 'e.g. jgonzalez'}
+          value={cfg ? maskedIdentity(taggerUser) : taggerUser}
+          onChange={(e) => {
+            if (!cfg) setTaggerUser(e.target.value);
+          }}
+          readOnly={!!cfg}
           autoComplete="off"
           spellCheck={false}
         />
         <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Stamps the audit-snapshot path and the mandatory edit comment on every sync. Required
-          before a live sync can run.
+          {cfg
+            ? 'Derived from the username used to connect to storage. It stamps identification attribution, audit snapshots, and edit comments.'
+            : 'Local batches have no storage connection, so enter the handoff identity before returning tags to the Uploader.'}
         </p>
       </section>
 
@@ -222,23 +231,32 @@ export function Settings() {
           ))}
         </div>
         <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Not shown anywhere yet — this sets the unit ahead of an upcoming location display.
+          Sets the unit emphasized when a location's elevation is shown.
         </p>
       </section>
 
       <section className="border-t border-ruleSoft pt-6">
         <span className={kicker}>Connection</span>
-        <p className="text-[13px] font-mono text-inkSoft break-all">{cfg?.endpoint}</p>
-        <button
-          onClick={() => void logout()}
-          className="mt-3 inline-flex items-center min-h-11 md:min-h-0 text-[14px] border border-ink px-3 py-2.5 md:py-1.5 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          Disconnect
-        </button>
-        <p className="mt-2 text-[13px] text-inkMute font-body">
-          Clears this browser's local drafts and settings so the next person connects to a clean
-          app.
-        </p>
+        {cfg ? (
+          <>
+            <p className="text-[13px] font-mono text-inkSoft break-all">{cfg.endpoint}</p>
+            <button
+              onClick={() => void logout()}
+              className="mt-3 inline-flex items-center min-h-11 md:min-h-0 text-[14px] border border-ink px-3 py-2.5 md:py-1.5 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Disconnect
+            </button>
+            <p className="mt-2 text-[13px] text-inkMute font-body">
+              Clears this browser's local drafts and settings so the next person connects to a clean
+              app.
+            </p>
+          </>
+        ) : (
+          <p className="text-[13px] text-inkMute font-body">
+            Local batch — no storage connection. Return to the Uploader with Done when tagging is
+            complete.
+          </p>
+        )}
       </section>
 
       {pendingDirty !== null && (

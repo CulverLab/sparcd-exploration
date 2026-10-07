@@ -12,6 +12,7 @@ import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
 import { timeZoneForCoords } from '../lib/coords';
+import { findAllowedLocation, orderAllowedLocations } from '../lib/allowedLocations';
 
 const sectionLabel =
   'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
@@ -72,10 +73,11 @@ export function Assign() {
   const setDescription = useStore((s) => s.setUploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
   const setUploadTimeZone = useStore((s) => s.setUploadTimeZone);
-  const selectedLocationKey = useStore((s) => s.selectedLocationKey);
-  const setSelectedLocationKey = useStore((s) => s.setSelectedLocationKey);
+  const selectedLocationId = useStore((s) => s.selectedLocationId);
+  const setSelectedLocationId = useStore((s) => s.setSelectedLocationId);
   const selectedBucket = useStore((s) => s.selectedBucket);
   const setSelectedBucket = useStore((s) => s.setSelectedBucket);
+  const requireCollectionSelection = useStore((s) => s.requireCollectionSelection);
   const elevationUnit = useStore((s) => s.elevationUnit);
   const files = useStore((s) => s.files);
 
@@ -109,19 +111,19 @@ export function Assign() {
 
   // Preselect the first collection the connected credentials can read.
   useEffect(() => {
-    if (!collections.data?.length) return;
+    if (!collections.data?.length || requireCollectionSelection) return;
     if (selectedBucket && collections.data.some((c) => c.key === selectedBucket || c.bucket === selectedBucket)) {
       return;
     }
     setSelectedBucket(collections.data[0].key);
-  }, [collections.data, selectedBucket, setSelectedBucket]);
+  }, [collections.data, requireCollectionSelection, selectedBucket, setSelectedBucket]);
 
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
 
-  // Every location is assignable, not just ones this collection has already
-  // deployed — but the ones it has already deployed (derived from its uploads'
-  // deployments.csv) are listed first, since they're the likely picks.
+  // The selected collection's location file is authoritative for new
+  // assignments. Historical deployments only order locations that are still
+  // present in that current allowed list; removed locations never reappear.
   const deployments = useCollectionDeployments(s3Config, connectionId, collection);
 
   // react-query pauses a query's in-flight fetch while offline and resumes it
@@ -142,35 +144,42 @@ export function Assign() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
-  const usedLocationCount = useMemo(
-    () => new Set(deployments.data ?? []).size,
-    [deployments.data],
-  );
+  const usedLocationCount = useMemo(() => {
+    const allowed = new Set(data?.locations.map((l) => l.id) ?? []);
+    return new Set((deployments.data ?? []).filter((id) => allowed.has(id))).size;
+  }, [data?.locations, deployments.data]);
   const collectionLocations = useMemo(() => {
-    if (!data?.locations || !deployments.data) return [];
-    const used = new Set(deployments.data);
-    const already = data.locations.filter((l) => used.has(l.id));
-    const rest = data.locations.filter((l) => !used.has(l.id));
-    return [...already, ...rest];
+    if (!data?.locations) return [];
+    return orderAllowedLocations(data.locations, deployments.data ?? []);
   }, [data?.locations, deployments.data]);
 
-  const location = collectionLocations.find((l) => l.key === selectedLocationKey) ?? null;
+  const location = findAllowedLocation(collectionLocations, selectedLocationId);
+
+  // A collection switch can leave the old key in the persisted store while
+  // the new scoped list is loading. Clear it once the new list is available so
+  // a removed location cannot be carried into a new upload.
+  useEffect(() => {
+    if (!data || !selectedLocationId) return;
+    if (!findAllowedLocation(data.locations, selectedLocationId)) {
+      setSelectedLocationId(null);
+    }
+  }, [data, selectedLocationId, setSelectedLocationId]);
 
   // Picking a deployment implies a zone — the camera's naive EXIF wall-clock
   // needs to be interpreted in wherever it physically sits, not the browser's
   // zone. Fires only when the *selection* changes, so a manual override the
   // user makes afterward for the same location sticks. The mount-time run is
-  // special-cased: uploadTimeZone/selectedLocationKey are both restored from
+  // special-cased: uploadTimeZone/selectedLocationId are both restored from
   // sessionStorage before this component ever renders, so if the location on
   // mount is the same one that was already selected, re-deriving here would
   // clobber a manual override that survived the reload.
-  const mountedLocationKeyRef = useRef(selectedLocationKey);
+  const mountedLocationIdRef = useRef(selectedLocationId);
   const isFirstLocationEffect = useRef(true);
   useEffect(() => {
     if (!location) return;
     if (isFirstLocationEffect.current) {
       isFirstLocationEffect.current = false;
-      if (location.key === mountedLocationKeyRef.current) return;
+      if (selectedLocationId === mountedLocationIdRef.current) return;
     }
     setUploadTimeZone(timeZoneForCoords(location.latitude, location.longitude));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,7 +193,16 @@ export function Assign() {
   // Background processing finishing is no longer part of this gate: Upload
   // streams blobs as files individually become ready and only publishes once
   // processing genuinely completes, so there's nothing to wait for here.
-  const baseReady = !!selectedLocationKey && !!slug && !!collection;
+  const baseReady = !!location && !!slug && !!collection && !!uploadTimeZone;
+  const continueHint = !location
+    ? 'Select a deployment location first'
+    : !collection
+      ? 'Select a target collection first'
+      : !slug
+        ? 'Set an uploader identity first'
+        : !uploadTimeZone
+          ? 'Select a timezone first'
+          : null;
 
   function handleContinue() {
     if (!baseReady) return;
@@ -194,7 +212,7 @@ export function Assign() {
   // The chosen zone is always offered even if it isn't in the platform's list.
   const timeZones = useMemo(() => {
     const all = supportedTimeZones();
-    return all.includes(uploadTimeZone) ? all : [uploadTimeZone, ...all];
+    return all.includes(uploadTimeZone) || !uploadTimeZone ? all : [uploadTimeZone, ...all];
   }, [uploadTimeZone]);
 
   // A deferred login reaches here eventually — picking a collection and a
@@ -285,23 +303,31 @@ export function Assign() {
         {data && !collection && (
           <LocationsState tone="mute" message="Select a target collection first." />
         )}
-        {data && collection && deployments.data && (
+        {data && collection && (
           <div className="space-y-2">
             {collectionLocations.length === 0 ? (
-              <LocationsState tone="warn" message="No locations found in this connection's registry." />
+              <LocationsState tone="warn" message="No locations are currently allowed for this collection." />
             ) : (
               <DeploymentPicker
                 locations={collectionLocations}
-                value={selectedLocationKey}
-                onChange={setSelectedLocationKey}
+                value={selectedLocationId}
+                onChange={setSelectedLocationId}
                 elevationUnit={elevationUnit}
               />
             )}
-            <p className="font-body text-[12px] text-inkMute">
-              <span className="font-mono text-inkSoft">{usedLocationCount}</span> of{' '}
-              <span className="font-mono text-inkSoft">{collectionLocations.length}</span> locations
-              already deployed by <span className="text-inkSoft">{collection.name ?? 'this collection'}</span> —
-              listed first, but any location can be assigned.
+            <p className="font-body text-[12px] text-inkMute" aria-live="polite">
+              {deployments.isSuccess ? (
+                <>
+                  <span className="font-mono text-inkSoft">{usedLocationCount}</span> of{' '}
+                  <span className="font-mono text-inkSoft">{collectionLocations.length}</span> locations
+                  currently allowed for <span className="text-inkSoft">{collection.name ?? 'this collection'}</span> —
+                  previously used locations are listed first.
+                </>
+              ) : deployments.isFetching ? (
+                'Deployment history is loading; allowed locations are shown in registry order.'
+              ) : (
+                'Deployment history is unavailable; allowed locations are shown without historical ordering.'
+              )}
             </p>
           </div>
         )}
@@ -319,24 +345,30 @@ export function Assign() {
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Defaults to your access key unless you set one in Settings.
+          Required. Recorded with every upload you make.
         </p>
       </section>
 
       <section>
-        <h2 className={sectionLabel}>Timezone</h2>
+        <h2 id="upload-timezone-label" className={sectionLabel}>Timezone</h2>
         <select
+          id="uploadTimeZone"
           value={uploadTimeZone}
           onChange={(e) => setUploadTimeZone(e.target.value)}
+          aria-labelledby="upload-timezone-label"
+          aria-describedby="upload-timezone-help"
+          aria-invalid={!uploadTimeZone}
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         >
+          <option value="">Select a timezone…</option>
           {timeZones.map((tz) => (
             <option key={tz} value={tz}>
               {tz}
             </option>
           ))}
         </select>
-        <p className="font-body text-[12px] text-inkMute mt-1.5">
+        <p id="upload-timezone-help" className="font-body text-[12px] text-inkMute mt-1.5">
+          {!uploadTimeZone && <span className="text-warn">Select a timezone before continuing. </span>}
           Defaults to the selected deployment location's zone — change it here if the camera's
           clock was actually set to a different one.
         </p>
@@ -369,6 +401,11 @@ export function Assign() {
         </p>
       </section>
 
+      {!baseReady && continueHint && (
+        <p id="upload-continue-help" role="status" className="font-body text-[12px] text-warn">
+          {continueHint}
+        </p>
+      )}
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">
         <button
           onClick={() => setStep('inspect')}
@@ -379,15 +416,8 @@ export function Assign() {
         <button
           disabled={!baseReady}
           onClick={handleContinue}
-          title={
-            !baseReady
-              ? !selectedLocationKey
-                ? 'Select a deployment location first'
-                : !collection
-                  ? 'Select a target collection first'
-                  : 'Set an uploader identity first'
-              : 'Continue to upload'
-          }
+          aria-describedby={!baseReady ? 'upload-continue-help' : undefined}
+          title={continueHint ?? 'Continue to upload'}
           className={`bg-ink text-paper border border-ink px-3.5 py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
             baseReady ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
           }`}

@@ -68,22 +68,7 @@ as a whole".
 five metadata writes. A blob that uploads and verifies first time logs nothing.
 The per-object `PUT …` listing exists only in a dry run.
 
-### 5. A typed uploader identity never survives to meet the guard
-
-*File:* `connect-and-session.feature` — "The uploader identity starts from the
-connected access key".
-
-**Claimed:** an identity the user has already typed is never overwritten by
-connecting.
-
-**Actually:** `connect()` does keep an existing `uploaderUser` (`s.uploaderUser
-|| config.accessKey`), but both disconnect paths blank it first — the header
-Disconnect sets it to `''`, and the Settings disconnect wipes local state and
-reloads. What the guard actually protects is the identity seeded on a fresh page
-load from the *previous connection's remembered access key*, which is what the
-corrected scenario now asserts.
-
-### 6. A verification mismatch dies on the append-only guard, not on retries
+### 5. A verification mismatch dies on the append-only guard, not on retries
 
 *File:* `upload-run.feature` — trailing comment on "Each stored object is
 verified after it is written".

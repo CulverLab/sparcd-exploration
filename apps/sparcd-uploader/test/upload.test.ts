@@ -17,6 +17,7 @@ type FakeClient = {
   writeImmutableStream: ReturnType<typeof vi.fn>;
   writeImmutable: ReturnType<typeof vi.fn>;
   listObjects: ReturnType<typeof vi.fn>;
+  getObject: ReturnType<typeof vi.fn>;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -174,6 +175,7 @@ function makeClient(records: FileRecord[], failingKeys = new Set<string>()): Fak
       return { etag: `etag-${key}` };
     }),
     writeImmutable: vi.fn(async () => undefined),
+    getObject: vi.fn(async () => new Uint8Array()),
     listObjects: vi.fn(async function* () {
       for (const r of records) yield { key: r.remoteKey, size: r.size };
     }),
@@ -205,6 +207,7 @@ function makeStreamingClient(
       return { etag: `etag-${key}` };
     }),
     writeImmutable: vi.fn(async () => undefined),
+    getObject: vi.fn(async () => new Uint8Array()),
     listObjects: vi.fn(async function* () {
       for (const [key, w] of written) {
         if (hooks.omitFromListing?.(key)) continue;
@@ -234,6 +237,7 @@ async function collect(run: { done: Promise<void> }, onDone: () => UploadSnapsho
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.markFileState.mockReset();
   mocks.client = null;
   mocks.shardClients = null;
 });
@@ -339,6 +343,198 @@ describe('upload runs continue past per-file blob failures', () => {
 
     expect(snap.phase).toBe('error');
     expect(snap.error).toMatch(/file failures/);
+  });
+
+  it('stops as a retryable partial run when files get no answer while the browser reports online', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession(Array.from({ length: 15 }, () => 'pending'));
+      mocks.client = makeClient(session.files);
+      mocks.client.writeImmutableStream.mockImplementation(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(4) },
+        (snap) => { last = snap; },
+      );
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('partial');
+      expect(snap.autoRetry).toBe(true);
+      expect(snap.files.every((f) => f.state === 'failed' && f.network)).toBe(true);
+      // Ten files spend their retries; the rest are not tried at all.
+      expect(mocks.client.writeImmutableStream.mock.calls.length).toBeLessThan(15 * 5);
+      expect(mocks.client.listObjects).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('classifies a verify that gets no answer as a lost connection, not a refusal', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession(Array.from({ length: 15 }, () => 'done'));
+      mocks.client = makeClient(session.files);
+      mocks.client.statObject.mockImplementation(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(4) },
+        (snap) => { last = snap; },
+      );
+      await vi.runAllTimersAsync();
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('partial');
+      expect(snap.autoRetry).toBe(true);
+      const failed = snap.files.filter((f) => f.state === 'failed');
+      expect(failed.length).toBeGreaterThanOrEqual(10);
+      expect(failed.every((f) => f.network)).toBe(true);
+      expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops as a retryable partial run when the final listing gets no answer', async () => {
+    const session = makeSession(Array.from({ length: 3 }, () => 'pending'));
+    mocks.client = makeClient(session.files);
+    mocks.client.listObjects.mockImplementation(async function* () {
+      yield* [];
+      throw new TypeError('Failed to fetch');
+    });
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(3) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('partial');
+    expect(snap.autoRetry).toBe(true);
+    expect(snap.log.some((l) => l.text.includes('the upload picks up again on its own'))).toBe(true);
+    expect(mocks.client.writeImmutable).not.toHaveBeenCalled();
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('stops as a retryable partial run when a metadata write gets no answer, but errors on a refusal', async () => {
+    vi.useFakeTimers();
+    try {
+      for (const [failure, phase] of [
+        [() => new TypeError('Failed to fetch'), 'partial'],
+        [forbidden, 'error'],
+      ] as const) {
+        vi.clearAllMocks();
+        const session = makeSession(Array.from({ length: 2 }, () => 'pending'));
+        mocks.client = makeClient(session.files);
+        mocks.client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => {
+          if (key.endsWith('UploadMeta.json')) throw failure();
+        });
+        let last: UploadSnapshot | null = null;
+        const run = resumeUpload(
+          { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+          (snap) => { last = snap; },
+        );
+        await vi.runAllTimersAsync();
+        const snap = await collect(run, () => last);
+
+        expect(snap.phase).toBe(phase);
+        if (phase === 'partial') expect(snap.autoRetry).toBe(true);
+        expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears an earlier refusal when a file fails its final review', async () => {
+    const session = makeSession(['failed', 'pending']);
+    session.files[0].refused = true;
+    mocks.client = makeClient(session.files);
+    mocks.client.listObjects.mockImplementation(async function* () {
+      yield { key: session.files[1].remoteKey, size: session.files[1].size };
+    });
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('partial');
+    const patches = mocks.markFileState.mock.calls.filter((c) => c[0] === session.files[0].id).map((c) => c[1]);
+    expect(patches.at(-1)).toMatchObject({ state: 'failed', refused: false });
+  });
+
+  it('stamps a resumed batch complete only after its per-file writes land', async () => {
+    const session = makeSession(['pending', 'pending']);
+    mocks.client = makeClient(session.files);
+    let releaseWrites!: () => void;
+    const writesHeld = new Promise<void>((resolve) => { releaseWrites = resolve; });
+    mocks.markFileState.mockImplementation(() => writesHeld);
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => { last = snap; },
+    );
+
+    await vi.waitFor(() => expect(mocks.client!.writeImmutable).toHaveBeenCalledTimes(5));
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+    releaseWrites();
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('on resume, accepts an existing metadata object only when it holds the same bytes', async () => {
+    for (const [stored, phase] of [
+      ['deployments', 'done'],
+      ['someone else', 'error'],
+    ] as const) {
+      vi.clearAllMocks();
+      const session = makeSession(['pending', 'pending']);
+      mocks.client = makeClient(session.files);
+      mocks.client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => {
+        if (key.endsWith('deployments.csv')) throw new PreconditionFailedError(key);
+      });
+      mocks.client.getObject.mockImplementation(async () => new TextEncoder().encode(stored));
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+        (snap) => { last = snap; },
+      );
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe(phase);
+      const keys = mocks.client.writeImmutable.mock.calls.map((c) => c[1] as string);
+      if (phase === 'error') {
+        expect(snap.error).toMatch(/already holds different content/);
+        expect(keys.some((k) => k.endsWith('UploadMeta.json'))).toBe(false);
+        expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+      } else {
+        expect(keys.some((k) => k.endsWith('UploadComplete.json'))).toBe(true);
+      }
+    }
+  });
+
+  it('leaves a batch open when a per-file ledger write failed', async () => {
+    const session = makeSession(['pending', 'pending']);
+    mocks.client = makeClient(session.files);
+    mocks.markFileState.mockRejectedValueOnce(new Error('quota exceeded'));
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+    expect(snap.log.some((l) => l.text.includes('History keeps this upload open'))).toBe(true);
   });
 
   it('aborts immediately on systemic access failures', async () => {
@@ -599,6 +795,166 @@ describe('upload runs continue past per-file blob failures', () => {
       'Collections/c/Uploads/u/UploadMeta.json',
       'Collections/c/Uploads/u/UploadComplete.json',
     ]);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient publication failure before moving to the next metadata object', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const mediaKey = `${session.batch.uploadPrefix}/media.csv`;
+    let failedOnce = false;
+    client.writeImmutable.mockImplementation(async (_bucket: string, key: string) => {
+      if (key === mediaKey && !failedOnce) {
+        failedOnce = true;
+        throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+      }
+    });
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+      `${session.batch.uploadPrefix}/deployments.csv`,
+      mediaKey,
+      mediaKey,
+      `${session.batch.uploadPrefix}/observations.csv`,
+      `${session.batch.uploadPrefix}/UploadMeta.json`,
+      `${session.batch.uploadPrefix}/UploadComplete.json`,
+    ]);
+    expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['deployments.csv', 'deployments'],
+    ['media.csv', 'media'],
+    ['observations.csv', 'observations'],
+    ['UploadMeta.json', '{"meta":true}'],
+    ['UploadComplete.json', '{"complete":true}'],
+  ])(
+    'accepts matching existing %s during a resumed publication and continues',
+    async (name, body) => {
+      const session = makeSession(['done']);
+      const client = makeClient(session.files);
+      mocks.client = client;
+      const key = `${session.batch.uploadPrefix}/${name}`;
+      let collided = false;
+      client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+        if (candidate === key && !collided) {
+          collided = true;
+          throw new PreconditionFailedError(candidate);
+        }
+      });
+      client.getObject.mockImplementation(async (_bucket: string, candidate: string) => {
+        expect(candidate).toBe(key);
+        return new TextEncoder().encode(body);
+      });
+
+      let last: UploadSnapshot | null = null;
+      const run = resumeUpload(
+        { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+        (snap) => { last = snap; },
+      );
+      const snap = await collect(run, () => last);
+
+      expect(snap.phase).toBe('done');
+      expect(client.getObject).toHaveBeenCalledWith('bucket', key);
+      expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+        `${session.batch.uploadPrefix}/deployments.csv`,
+        `${session.batch.uploadPrefix}/media.csv`,
+        `${session.batch.uploadPrefix}/observations.csv`,
+        `${session.batch.uploadPrefix}/UploadMeta.json`,
+        `${session.batch.uploadPrefix}/UploadComplete.json`,
+      ]);
+      expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rejects a resumed publication when an existing metadata object has different content', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/media.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    client.getObject.mockResolvedValue(new TextEncoder().encode('someone else published this'));
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toMatch(/already holds different content/);
+    expect(snap.error).toContain('media.csv');
+    expect(client.writeImmutable.mock.calls.map((call) => call[1])).toEqual([
+      `${session.batch.uploadPrefix}/deployments.csv`,
+      `${session.batch.uploadPrefix}/media.csv`,
+    ]);
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('rejects a resumed publication when existing metadata has a UTF-8 BOM', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/deployments.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    const expected = new TextEncoder().encode('deployments');
+    const withBom = new Uint8Array(expected.length + 3);
+    withBom.set([0xef, 0xbb, 0xbf]);
+    withBom.set(expected, 3);
+    client.getObject.mockResolvedValue(withBom);
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('error');
+    expect(snap.error).toMatch(/already holds different content/);
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('retries a transient existing-metadata read before accepting matching bytes', async () => {
+    const session = makeSession(['done']);
+    const client = makeClient(session.files);
+    mocks.client = client;
+    const key = `${session.batch.uploadPrefix}/media.csv`;
+    client.writeImmutable.mockImplementation(async (_bucket: string, candidate: string) => {
+      if (candidate === key) throw new PreconditionFailedError(candidate);
+    });
+    let reads = 0;
+    client.getObject.mockImplementation(async (_bucket: string, candidate: string) => {
+      expect(candidate).toBe(key);
+      reads++;
+      if (reads === 1) {
+        throw Object.assign(new Error('service unavailable'), { $metadata: { httpStatusCode: 503 } });
+      }
+      return new TextEncoder().encode('media');
+    });
+
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload(
+      { config: CONFIG, session, attached: new Map(), concurrency: manual(1) },
+      (snap) => { last = snap; },
+    );
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('done');
+    expect(client.getObject).toHaveBeenCalledTimes(2);
     expect(mocks.markBatchComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -994,6 +1350,47 @@ describe('streamed runs upload as files individually become ready', () => {
     expect(snap.files.filter((f) => f.state === 'done')).toHaveLength(2);
     // The bundle is built (and persisted) once the full batch is known, even
     // though this run failed — so a retry has a real ledger to resume from.
+    expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
+    expect(client.writeImmutable).not.toHaveBeenCalled();
+    expect(mocks.markBatchComplete).not.toHaveBeenCalled();
+  });
+
+  it('still persists the bundle when the final listing gets no answer, so the retry can resume', async () => {
+    const entries = [makeFileEntry(0), makeFileEntry(1)];
+    const client = makeStreamingClient();
+    client.listObjects.mockImplementation(async function* () {
+      yield* [];
+      throw new TypeError('Failed to fetch');
+    });
+    mocks.client = client;
+    let last: UploadSnapshot | null = null;
+
+    const run = runStreamingUpload(
+      {
+        config: CONFIG,
+        dryRun: false,
+        concurrency: manual(2),
+        uploaderUser: 'user',
+        fileAccessMode: 'reselect-required',
+        build: {
+          location: LOCATION,
+          collectionUuid: 'collection',
+          bucket: 'bucket',
+          uploaderSlug: 'user',
+          description: 'description',
+          timeZone: 'UTC',
+          files: entries,
+        },
+      },
+      (snap) => {
+        last = snap;
+      },
+    );
+    run.close(entries);
+    const snap = await collect(run, () => last);
+
+    expect(snap.phase).toBe('partial');
+    expect(snap.autoRetry).toBe(true);
     expect(mocks.attachBundle).toHaveBeenCalledTimes(1);
     expect(client.writeImmutable).not.toHaveBeenCalled();
     expect(mocks.markBatchComplete).not.toHaveBeenCalled();

@@ -43,10 +43,11 @@ export type UploadItem = {
   size: number;
   sha256: string;
   timestampSource?: TimestampSource;
-  captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing ISO capture time (post-tz), media.csv col 4
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload
+  preTaggerUser?: string;
 };
 
 export type BundlePreview = {
@@ -88,6 +89,7 @@ function observationRowsFor(
     deploymentId: string;
     timestamp: string;
     preTags?: FlipObservation[];
+    preTaggerUser?: string;
   },
   untagged: () => Observation[],
 ): Observation[] {
@@ -107,8 +109,11 @@ function observationRowsFor(
     tags: buildObservationComments({
       commonName: o.commonName || undefined,
       requestedSpecies: o.requestedSpecies || undefined,
+      reviewEvents: o.reviewEvents,
       extra: parseTagMarkers(o.freeTags),
     }),
+    classifiedBy: (o.classifiedBy ?? file.preTaggerUser) || undefined,
+    classificationTimestamp: o.classificationTimestamp,
   }));
 }
 
@@ -211,6 +216,7 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
     mediaKind: f.mediaKind,
     mimeType: mimeFor(f),
     preTags: f.preTags,
+    preTaggerUser: f.preTaggerUser,
   };
 }
 
@@ -277,6 +283,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
         deploymentId: deployment.deploymentId,
         timestamp: it.captureTimestamp ?? '',
         preTags: it.preTags,
+        preTaggerUser: it.preTaggerUser,
       },
       () => [
         {
@@ -305,6 +312,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       bucket,
       uploadPath,
       description,
+      captureTimeZone: timeZone,
     }),
   );
 
@@ -359,6 +367,7 @@ export type ResolvedFileRecord = {
   captureTimestamp?: string;
   mimeType?: string;
   preTags?: FlipObservation[];
+  preTaggerUser?: string;
 };
 
 export type ResumeBundle = {
@@ -385,11 +394,12 @@ export async function buildBundleFromRecords(input: {
   bucket: string;
   uploaderSlug: string;
   description: string;
+  timeZone?: string;
   uploadPath: string;
   startedAt: Date;
   files: ResolvedFileRecord[];
 }): Promise<ResumeBundle> {
-  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt, files } = input;
+  const { location, collectionUuid, bucket, uploaderSlug, description, timeZone, uploadPath, startedAt, files } = input;
   const deployment = locationToDeployment(location, collectionUuid);
 
   deployment.timestampIssues = files.some((f) => !!f.timestampSource);
@@ -415,6 +425,7 @@ export async function buildBundleFromRecords(input: {
         deploymentId: deployment.deploymentId,
         timestamp: f.captureTimestamp ?? '',
         preTags: f.preTags,
+        preTaggerUser: f.preTaggerUser,
       },
       () => [
         {
@@ -443,6 +454,7 @@ export async function buildBundleFromRecords(input: {
       bucket,
       uploadPath,
       description,
+      captureTimeZone: timeZone,
     }),
   );
 

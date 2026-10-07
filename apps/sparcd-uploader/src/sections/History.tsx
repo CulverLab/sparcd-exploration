@@ -7,17 +7,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
+import { formatHistoryBatchStart } from '../lib/uploadDisplay';
 import { useStore } from '../store';
 import { formatBytes } from '../lib/scanFiles';
 import {
   listBatches,
   loadSession,
   discardSession,
-  fileStateCounts,
+  sessionTally,
   updateBatch,
   type BatchRecord,
   type LoadedSession,
-  type PersistedFileState,
+  type SessionTally,
 } from '../lib/db';
 import {
   restoreFromHandle,
@@ -31,7 +32,7 @@ import type { ProcessResponse } from '../lib/processPool';
 import { Note } from '../components/RunMonitor';
 import { PublishedUploads } from '../components/PublishedUploads';
 
-type Row = { batch: BatchRecord; counts: Record<PersistedFileState, number> };
+type Row = { batch: BatchRecord } & SessionTally;
 
 const stampOf = (prefix: string) => prefix.slice(prefix.lastIndexOf('/') + 1);
 
@@ -86,22 +87,42 @@ export function History() {
   // True while the fallback <input> picker is open. Separate from the shared
   // preparation lock because a cancelled native picker may fire no change event.
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [offlineResumeOverride, setOfflineResumeOverride] = useState(false);
   const pickerOpenRef = useRef(false);
   const pickerCleanupRef = useRef<(() => void) | null>(null);
   const reselectRef = useRef<HTMLInputElement>(null);
   const pendingReselect = useRef<BatchRecord | null>(null);
 
+  // Only the newest refresh may land: an older one still reading the ledger
+  // would publish stale rows, and one finishing after unmount has nowhere to go.
+  const refreshSeq = useRef(0);
+  const rowsById = useRef(new Map<string, Row>());
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const batches = await listBatches();
-    const withCounts = await Promise.all(
-      batches.map(async (batch) => ({ batch, counts: await fileStateCounts(batch.id) })),
+    const next = await Promise.all(
+      batches.map(async (batch) => {
+        // A finished upload's ledger no longer changes.
+        const known = rowsById.current.get(batch.id);
+        if (known?.batch.completedAt && batch.completedAt) return known;
+        return { batch, ...(await sessionTally(batch.id)) };
+      }),
     );
-    setRows(withCounts);
+    if (seq !== refreshSeq.current) return;
+    rowsById.current = new Map(next.map((row) => [row.batch.id, row]));
+    setRows(next);
   }, []);
+  useEffect(() => () => void ++refreshSeq.current, []);
 
+  // Rows come from the local ledger, which a live run keeps writing to: reload
+  // whenever the run changes phase, and every couple of seconds while it runs.
+  // Per-file ledger writes trail the phase change, so look once more shortly after.
+  const runPhase = useStore((s) => s.activeSnap?.phase);
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    const settle = setTimeout(() => void refresh(), 1_000);
+    return () => clearTimeout(settle);
+  }, [refresh, runPhase]);
 
   const closePicker = useCallback(() => {
     pickerOpenRef.current = false;
@@ -117,7 +138,15 @@ export function History() {
   }, []);
 
   const running = activeSessionId !== null;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => void refresh(), 2_000);
+    return () => clearInterval(timer);
+  }, [running, refresh]);
   const online = useOnline();
+  useEffect(() => {
+    if (online) setOfflineResumeOverride(false);
+  }, [online]);
 
   const launch = useCallback(
     (
@@ -436,7 +465,7 @@ export function History() {
       )}
 
       <ul className="space-y-3">
-        {rows.map(({ batch, counts }) => {
+        {rows.map(({ batch, counts, refused }) => {
           const isActive = activeSessionId === batch.id;
           const isPreparing = preparation?.sessionId === batch.id;
           const verifyProgress = isPreparing ? preparation.progress : null;
@@ -449,7 +478,7 @@ export function History() {
                     {stampOf(batch.uploadPrefix)}
                   </p>
                   <p className="font-body text-[12px] text-inkSoft truncate">
-                    {batch.targetBucket} · {new Date(batch.startedAt).toLocaleString()}
+                    {batch.targetBucket} · {formatHistoryBatchStart(batch.startedAt)}
                   </p>
                 </div>
                 <Badge batch={batch} />
@@ -467,6 +496,29 @@ export function History() {
                 )}
               </p>
 
+              {!batch.completedAt && !isActive && !isPreparing && refused.count > 0 && (
+                <p className="font-body text-[12px] text-warn">
+                  Storage refused {refused.count} file{refused.count === 1 ? '' : 's'} ({refused.reason});{' '}
+                  <span className="text-ink">ask your administrator to fix that, then Resume upload.</span>
+                </p>
+              )}
+
+              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && batch.storageUnreachable && (
+                <p className="font-body text-[12px] text-warn">
+                  Storage can't be reached, so automatic retries have stopped;{' '}
+                  <span className="text-ink">check the connection, then Resume upload.</span>
+                </p>
+              )}
+
+              {!batch.completedAt && !isActive && !isPreparing && refused.count === 0 && !batch.storageUnreachable && (
+                <p className="font-body text-[12px] text-warn">
+                  {total - counts.done > 0
+                    ? `Interrupted with ${total - counts.done} of ${total} file${total === 1 ? '' : 's'} still to send.`
+                    : 'Interrupted before publishing.'}{' '}
+                  <span className="text-ink">Resume upload to finish it.</span>
+                </p>
+              )}
+
               {isPreparing && verifyProgress && (
                 <p className="font-body text-[12px] text-inkSoft">
                   Verifying <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
@@ -477,16 +529,28 @@ export function History() {
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
                 {!batch.completedAt && (
-                  <button
-                    disabled={activeRunReserved || preparation !== null || pickerOpen}
-                    title={!online ? "You're offline" : undefined}
-                    onClick={() => void beginResume(batch)}
-                    className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
-                      activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    {isPreparing ? 'Verifying…' : 'Resume'}
-                  </button>
+                  <>
+                    <button
+                      disabled={(!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen}
+                      title={!online && !offlineResumeOverride ? "You're offline — reconnect or choose Try resume anyway" : undefined}
+                      onClick={() => void beginResume(batch)}
+                      className={`bg-ink text-paper border border-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:opacity-90 ${
+                        (!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {isPreparing ? 'Verifying…' : 'Resume upload'}
+                    </button>
+                    {!online && !offlineResumeOverride && (
+                      <button
+                        type="button"
+                        onClick={() => setOfflineResumeOverride(true)}
+                        title="Allow Resume despite the browser offline signal"
+                        className="border border-warn text-warn min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body font-[600] hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                      >
+                        Try resume anyway
+                      </button>
+                    )}
+                  </>
                 )}
                 <button
                   disabled={(running && isActive) || isPreparing}

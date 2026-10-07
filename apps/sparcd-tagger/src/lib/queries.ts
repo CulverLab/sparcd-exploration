@@ -226,12 +226,16 @@ export function useSpecies(cfg: S3Config | null, connectionId: number, collectio
   });
 }
 
-/** The camera-location registry, loaded once per connection from the settings
- *  bucket — the same shared registry the uploader's location picker reads. */
-export function useLocations(cfg: S3Config | null, connectionId: number) {
+/** The selected collection's camera-location registry, falling back to the
+ *  settings registry — the same lookup the uploader's location picker uses. */
+export function useLocations(
+  cfg: S3Config | null,
+  connectionId: number,
+  collectionKey: string | null = null,
+) {
   return useQuery<LocationsResult>({
-    queryKey: ['locations', connectionId, cfg?.endpoint],
-    queryFn: () => fetchLocations(cfg!),
+    queryKey: ['locations', connectionId, cfg?.endpoint, collectionKey],
+    queryFn: () => fetchLocations(cfg!, collectionKey),
     enabled: !!cfg,
     staleTime: Infinity, // registry is stable for a session
     retry: 1,

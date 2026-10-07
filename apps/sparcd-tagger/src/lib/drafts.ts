@@ -59,13 +59,41 @@ export type AppliedTag = {
   count: number; // floored to ≥1
   requestedSpecies?: string;
   freeTags?: string;
+  /** Identity captured when the edit is made, before a later account switch. */
+  classifiedBy?: string;
+  /** ISO timestamp paired with classifiedBy — when that attribution was made. */
+  classificationTimestamp?: string;
 };
+
+function appendReviewEvent(
+  observations: DraftObservation[],
+  scientificName: string,
+  reviewedBy?: string,
+  reviewedAt?: string,
+): DraftObservation[] {
+  if (!reviewedBy || !reviewedAt) return observations;
+  return observations.map((o) =>
+    o.scientificName === scientificName
+      ? {
+          ...o,
+          reviewEvents: (o.reviewEvents ?? []).some(
+            (event) => event.reviewedBy === reviewedBy && event.reviewedAt === reviewedAt,
+          )
+            ? o.reviewEvents
+            : [...(o.reviewEvents ?? []), { reviewedBy, reviewedAt }],
+        }
+      : o,
+  );
+}
 
 // --- Pure array transforms (exported for unit tests) -----------------------
 
-/** Add-only: applying a species already present is a NO-OP (no dup, no count
- *  change). Mutual exclusivity: applying Ghost replaces the whole set; applying
- *  a real species first clears any Ghost. Order is preserved (append last). */
+/** Add-only: applying a species already present leaves its content untouched
+ *  (no dup, no count change) while preserving its original attribution;
+ *  re-applying an already-present species is recorded as a separate review
+ *  event by the store action. Mutual exclusivity:
+ *  applying Ghost replaces the whole set; applying a real species first clears
+ *  any Ghost. Order is preserved (append last). */
 export function addObservation(obs: DraftObservation[], tag: AppliedTag): DraftObservation[] {
   const next: DraftObservation = {
     scientificName: tag.scientificName,
@@ -73,10 +101,36 @@ export function addObservation(obs: DraftObservation[], tag: AppliedTag): DraftO
     count: Math.max(1, tag.count),
     requestedSpecies: tag.requestedSpecies ?? '',
     freeTags: tag.freeTags ?? '',
+    classifiedBy: tag.classifiedBy?.trim() || undefined,
+    classificationTimestamp: tag.classificationTimestamp,
   };
-  if (isGhost(next)) return [next]; // Ghost replaces all real species
+  if (isGhost(next)) {
+    const existingGhost = obs.find((o) => isGhost(o));
+    return [
+      existingGhost
+        ? {
+            ...next,
+            classifiedBy: existingGhost.classifiedBy,
+            classificationTimestamp: existingGhost.classificationTimestamp,
+            reviewEvents: existingGhost.reviewEvents,
+          }
+        : next,
+    ]; // Ghost replaces all real species
+  }
   const withoutGhost = obs.filter((o) => !isGhost(o)); // a real species clears Ghost
-  if (withoutGhost.some((o) => o.scientificName === next.scientificName)) return withoutGhost; // NO-OP
+  const existing = withoutGhost.find((o) => o.scientificName === next.scientificName);
+  if (existing) {
+    return withoutGhost.map((o) =>
+      o === existing
+      ? {
+          ...o,
+          classifiedBy: o.classifiedBy,
+          classificationTimestamp: o.classificationTimestamp,
+          reviewEvents: o.reviewEvents,
+        }
+        : o,
+    );
+  }
   return [...withoutGhost, next];
 }
 
@@ -91,7 +145,15 @@ export function incrementObservation(obs: DraftObservation[], tag: AppliedTag): 
   const existing = withoutGhost.find((o) => o.scientificName === tag.scientificName);
   if (existing) {
     return withoutGhost.map((o) =>
-      o.scientificName === tag.scientificName ? { ...o, count: o.count + 1 } : o,
+      o.scientificName === tag.scientificName
+        ? {
+            ...o,
+            count: o.count + 1,
+            classifiedBy: o.classifiedBy,
+            classificationTimestamp: o.classificationTimestamp,
+            reviewEvents: o.reviewEvents,
+          }
+        : o,
     );
   }
   return addObservation(withoutGhost, { ...tag, count: 1 });
@@ -145,6 +207,8 @@ type DraftState = {
     base: BaseSeed | undefined,
     scientificName: string,
     count: number,
+    classifiedBy?: string,
+    classificationTimestamp?: string,
   ) => void;
   /** Detag = clear ALL species on one focused image OR every target in a selection. */
   detag: (ctx: UploadCtx, targets: TagTarget[]) => void;
@@ -180,6 +244,7 @@ type DraftState = {
     ctx: UploadCtx,
     targets: BulkTimeTarget[],
     delta: TimeOffsetRecord,
+    timeZone?: string,
   ) => void;
 
   /** Flush every pending debounced Dexie write now (manual Cmd/Ctrl+S confirm). */
@@ -301,22 +366,83 @@ export const useDraftStore = create<DraftState>((set, get) => {
     },
 
     addSpecies: (ctx, targets, tag) =>
-      mutateMany(ctx, targets, (prev) => ({ observations: addObservation(prev.observations, tag) })),
+      mutateMany(ctx, targets, (prev) => {
+        const alreadyPresent = prev.observations.some((o) => o.scientificName === tag.scientificName);
+        const wasCanonical = targets.some((target) =>
+          target.mediaPath === prev.mediaPath &&
+          target.base?.observations.some((o) => o.scientificName === tag.scientificName),
+        );
+        const confirmed = alreadyPresent && wasCanonical && tag.scientificName !== GHOST.label;
+        const confirmedSpecies = confirmed
+          ? [...new Set([...(prev.confirmedSpecies ?? []), tag.scientificName])]
+          : prev.confirmedSpecies;
+        const observations = addObservation(prev.observations, tag);
+        const removedSpecies = (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName);
+        return {
+          observations: confirmed
+            ? appendReviewEvent(observations, tag.scientificName, tag.classifiedBy, tag.classificationTimestamp)
+            : observations,
+          confirmedSpecies,
+          removedSpecies,
+        };
+      }),
 
     incrementSpecies: (ctx, targets, tag) =>
-      mutateMany(ctx, targets, (prev) => ({ observations: incrementObservation(prev.observations, tag) })),
+      mutateMany(ctx, targets, (prev) => {
+        const wasPresent = prev.observations.some((o) => o.scientificName === tag.scientificName);
+        const wasCanonical = targets.some((target) =>
+          target.mediaPath === prev.mediaPath &&
+          target.base?.observations.some((o) => o.scientificName === tag.scientificName),
+        );
+        const observations = incrementObservation(prev.observations, tag);
+        return {
+          observations: wasPresent && wasCanonical
+            ? appendReviewEvent(observations, tag.scientificName, tag.classifiedBy, tag.classificationTimestamp)
+            : observations,
+          confirmedSpecies: wasPresent && wasCanonical
+            ? [...new Set([...(prev.confirmedSpecies ?? []), tag.scientificName])]
+            : prev.confirmedSpecies,
+          removedSpecies: (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName),
+        };
+      }),
 
     removeSpecies: (ctx, mediaPath, deploymentId, base, sci) =>
-      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => ({
-        observations: removeObservation(prev.observations, sci),
-      })),
+      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
+        const wasCanonical = base?.observations.some((o) => o.scientificName === sci) ?? false;
+        const removedSpecies = wasCanonical
+          ? [...new Set([...(prev.removedSpecies ?? []), sci])]
+          : prev.removedSpecies;
+        return {
+          observations: removeObservation(prev.observations, sci),
+          confirmedSpecies: (prev.confirmedSpecies ?? []).filter((name) => name !== sci),
+          removedSpecies,
+        };
+      }),
 
-    setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count) =>
-      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => ({
-        observations: setObservationCount(prev.observations, sci, count),
-      })),
+    setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count, classifiedBy, classificationTimestamp) =>
+      mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
+        const wasCanonical = base?.observations.some((o) => o.scientificName === sci) ?? false;
+        return {
+          observations: wasCanonical
+            ? appendReviewEvent(setObservationCount(prev.observations, sci, count), sci, classifiedBy, classificationTimestamp)
+            : setObservationCount(prev.observations, sci, count),
+          confirmedSpecies: wasCanonical
+            ? [...new Set([...(prev.confirmedSpecies ?? []), sci])]
+            : prev.confirmedSpecies,
+        };
+      }),
 
-    detag: (ctx, targets) => mutateMany(ctx, targets, { observations: [] }),
+    detag: (ctx, targets) => mutateMany(ctx, targets, (prev) => {
+      const canonical = targets.find((target) => target.mediaPath === prev.mediaPath)?.base?.observations ?? [];
+      const removedSpecies = canonical
+        .filter((o) => prev.observations.some((current) => current.scientificName === o.scientificName))
+        .map((o) => o.scientificName);
+      return {
+        observations: [],
+        confirmedSpecies: [],
+        removedSpecies: [...new Set([...(prev.removedSpecies ?? []), ...removedSpecies])],
+      };
+    }),
 
     setTimeOffset: (ctx, offset) => {
       // Optimistic Zustand update (hot path) + durable Dexie mirror. Unlike a
@@ -337,13 +463,13 @@ export const useDraftStore = create<DraftState>((set, get) => {
     setQuestionableMany: (ctx, targets, value) =>
       mutateMany(ctx, targets, { questionable: value }),
 
-    applyTimeOffsetToSelection: (ctx, targets, delta) => {
+    applyTimeOffsetToSelection: (ctx, targets, delta, timeZone) => {
       // Precompute the new absolute override per image (delta on top of the
       // already-corrected time), keyed by media path so the shared mutateMany
       // reducer — which only sees `prev` — can look each one up.
       const overrideByPath: Record<string, string> = {};
       for (const t of targets) {
-        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta);
+        overrideByPath[t.mediaPath] = shiftTimestamp(t.currentCorrected, delta, timeZone);
       }
       mutateMany(
         ctx,
@@ -426,7 +552,18 @@ export const useDraftStore = create<DraftState>((set, get) => {
           clearTimeout(timer);
           pending.delete(rec.id);
         }
-        const clean = { ...rec, dirty: false };
+        const clean = {
+          ...rec,
+          dirty: false,
+          confirmedSpecies: undefined,
+          removedSpecies: undefined,
+          // Review events are now in the canonical observations.csv. Remove
+          // the pending copy so a later sync cannot write the same marker twice.
+          observations: rec.observations.map((observation) => ({
+            ...observation,
+            reviewEvents: undefined,
+          })),
+        };
         next[path] = clean;
         changed.push(clean);
       }

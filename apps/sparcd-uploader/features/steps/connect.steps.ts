@@ -65,6 +65,9 @@ Then('the New upload, History and Settings sections become reachable', async ({ 
 Then('a batch can be dropped and inspected with no connection', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
+  // Unfolding the file list draws the rows before their thumbnails; wait for
+  // those too, or the "intact" comparison later sees them appear.
+  await expect.poll(async () => (await app.listedFiles()).every((f) => f.hasThumbnail)).toBe(true);
   const files = await app.listedFiles();
   expect(files).toHaveLength(standardBatch().length);
   for (const file of files) {
@@ -89,7 +92,7 @@ Then('it shows the connection screen instead of a collection picker', async ({ a
 
 Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await expect.poll(() => app.listedFiles()).toEqual(app.notes.deferredFiles);
 });
 
@@ -224,7 +227,7 @@ Given('the connected uploader is inspecting a held file', async ({ app }) => {
   });
   await app.holdInspect('BIG_CLIP.MP4');
   await app.dropFolder(slowPublishableBatch());
-  await expect.poll(() => app.batchSummary()).toMatch(/processing/);
+  await expect.poll(() => app.pendingCount()).toBeGreaterThan(0);
 });
 
 When('one of them disconnects', async ({ app }) => {
@@ -258,7 +261,7 @@ Then('its in-progress batch, chosen collection and chosen deployment are cleared
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
   await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
 Then('the live upload stops without publishing metadata', async ({ app }) => {
@@ -292,7 +295,9 @@ Then('the header shows the endpoint host and a masked form of the access key', a
 });
 
 Then('it shows the uploader identity when one has been set', async ({ app }) => {
-  await expect(app.page.locator('header')).toContainText(ACCESS_KEY);
+  await app.gotoSection('Settings');
+  await app.setUploader('Ada Lovelace');
+  await expect(app.page.locator('header')).toContainText('Ada Lovelace');
 });
 
 Then('it never displays the secret key', async ({ app }) => {
@@ -346,23 +351,16 @@ When('a connection is made', async ({ app }) => {
   await app.connect();
 });
 
-Then('the uploader identity is pre-filled with the connected access key', async ({ app }) => {
-  await expect(app.page.locator('header')).toContainText(ACCESS_KEY);
+Then('the uploader identity is blank', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
 });
 
-Then(
-  'an identity carried over from a previous connection in this browser is not overwritten by connecting',
-  async ({ app }) => {
-    await app.reopenInNewTab();
-    await app.fillConnection({ accessKey: 'AKIADIFFERENT002' });
-    await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
-    await app.gotoSection('Settings');
-    await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
-  },
-);
+Then('the header shows the access key only in its masked form', async ({ app }) => {
+  const header = app.page.locator('header');
+  await expect(header).toContainText(`${ACCESS_KEY.slice(0, 2)}…${ACCESS_KEY.slice(-2)}`);
+  await expect(header).not.toContainText(ACCESS_KEY);
+});
 
 Then('the tool offers no list of permitted buckets of its own', async ({ app }) => {
   await app.gotoSection('History');

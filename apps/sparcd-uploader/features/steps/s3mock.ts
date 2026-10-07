@@ -45,6 +45,7 @@ const errorBody = (code: string, message: string): string =>
 let etagCounter = 0;
 let mpuCounter = 0;
 const nextEtag = (): string => `"etag-${++etagCounter}"`;
+const bareEtag = (etag: string): string => etag.replace(/^W\//, '').replace(/^"(.*)"$/, '$1');
 
 export class S3Mock {
   buckets: string[] = [];
@@ -67,6 +68,30 @@ export class S3Mock {
 
   /** Artificial latency on every object write, for observing a run in flight. */
   putDelayMs = 0;
+
+  /**
+   * Refuse every signed request as a dropped connection would. Playwright's
+   * `setOffline` does not reach requests served by `page.route`, so this is
+   * what makes a write already in flight fail.
+   */
+  offline = false;
+  /** `bucket/key` of every request refused because `offline` was set. */
+  refusedOffline: string[] = [];
+
+  /**
+   * Hold matching PUTs at the door, before anything is stored, until
+   * `releaseGatedPut`. A scenario can go offline while one is held and then
+   * release it, so that exact write fails as a dropped connection would.
+   */
+  gatePut?: (bucket: string, key: string) => boolean;
+  /** Keys that have reached the gate, in arrival order. */
+  gated: string[] = [];
+  private gateResolvers = new Map<string, () => void>();
+
+  releaseGatedPut(key: string): void {
+    this.gateResolvers.get(key)?.();
+    this.gateResolvers.delete(key);
+  }
 
   /**
    * Hold matching PUTs after storage records them but before S3 responds. This
@@ -214,6 +239,13 @@ export class S3Mock {
       const bucket = slash < 0 ? path : path.slice(0, slash);
       const key = slash < 0 ? '' : path.slice(slash + 1);
       const method = req.method();
+      const refuseIfOffline = async (): Promise<boolean> => {
+        if (!this.offline) return false;
+        this.refusedOffline.push(`${bucket}/${key}`);
+        await route.abort('internetdisconnected');
+        return true;
+      };
+      if (await refuseIfOffline()) return;
 
       const fail = (e: S3Error) =>
         route.fulfill({
@@ -349,7 +381,12 @@ export class S3Mock {
       }
 
       if (method === 'PUT') {
+        if (this.gatePut?.(bucket, key)) {
+          this.gated.push(key);
+          await new Promise<void>((resolve) => this.gateResolvers.set(key, resolve));
+        }
         if (this.putDelayMs) await new Promise((r) => setTimeout(r, this.putDelayMs));
+        if (await refuseIfOffline()) return;
         const body = req.postDataBuffer() ?? Buffer.alloc(0);
         const meta: Record<string, string> = {};
         for (const [h, v] of Object.entries(req.headers())) {
@@ -373,7 +410,7 @@ export class S3Mock {
           await fail({ status: 412, code: 'PreconditionFailed', message: 'At least one of the pre-conditions you specified did not hold' });
           return;
         }
-        if (ifMatch !== undefined && (!existing || existing.etag !== ifMatch)) {
+        if (ifMatch !== undefined && (!existing || bareEtag(existing.etag) !== bareEtag(ifMatch))) {
           await fail({ status: 412, code: 'PreconditionFailed', message: 'ETag mismatch' });
           return;
         }

@@ -19,6 +19,7 @@ export { loadSharedTheme, saveSharedTheme } from './theme';
 export type { Theme } from './theme';
 export {
   KEYBINDING_STORAGE_KEY,
+  MAX_SPECIES_SOURCES,
   emptyRevisionedProfile,
   keyProfileId,
   mergeAndWriteRevisionedProfiles,
@@ -31,4 +32,5 @@ export type {
   RevisionedKeyProfiles,
   SpeciesDiff,
   SpeciesKeyConfig,
+  SpeciesListState,
 } from './speciesKeyProfiles';

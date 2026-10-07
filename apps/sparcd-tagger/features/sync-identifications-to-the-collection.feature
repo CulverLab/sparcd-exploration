@@ -5,14 +5,15 @@ Feature: Publish local identifications back to the collection
 
   """
   As-built flow: Sync is the only action in the tagger that changes stored
-  data. It always previews first, refuses to write without a tagger identity,
+  data. It always previews first, refuses to write without a connected or local
+  handoff identity,
   refuses to write over a version it did not read, and takes an immutable
   snapshot of the previous state before replacing anything.
   """
 
   Background:
     Given an upload with local edits is open in the tagging workspace
-    And a tagger identity has been set in Settings
+    And the connected account is ready for attribution
 
   @H2 @H3
   Scenario: Synced identifications become visible to everyone with access
@@ -69,13 +70,6 @@ Feature: Publish local identifications back to the collection
     And switching the setting off changes the action to a real sync
 
   @unmapped
-  Scenario: A write cannot be run without a tagger identity
-    Given no tagger identity has been set
-    Then the dialog states that an identity must be set in Settings first
-    And the sync action is unavailable
-    # The identity stamps the snapshot path and the mandatory edit comment.
-
-  @unmapped
   Scenario: Nothing to sync is reported as such
     Given the local edits match what is already stored
     When the sync preview finishes
@@ -95,7 +89,7 @@ Feature: Publish local identifications back to the collection
   Scenario: The previous state is preserved before anything is replaced
     Given the dry-run setting has been switched off
     When the sync is run
-    Then the current stored files are first copied to an immutable snapshot filed under the tagger identity and the time
+    Then the current stored files are first copied to an immutable snapshot filed under the connected account and the time
     And the snapshot is only counted as recoverable once its manifest is written
     And only then are the stored files replaced
 

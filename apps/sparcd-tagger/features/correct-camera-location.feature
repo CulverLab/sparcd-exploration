@@ -9,15 +9,16 @@ Feature: Correct the camera location recorded for an upload
   """
   As-built flow: cameras occasionally get logged under the wrong location.
   The tagger can correct the whole upload's recorded location by picking a
-  replacement from the same shared `Settings/locations.json` registry the
-  uploader reads — there is no way to create a new location. The correction
+  replacement from the same registry the uploader reads — the collection's
+  own list, or `Settings/locations.json` when it has none. There is no way
+  to create a new location from either app. The correction
   is held alongside the original until a sync writes it: `deployments.csv` is
   replaced and every media/observation row's deployment id is rewritten.
   """
 
   Background:
     Given an upload is open in the tagging workspace
-    And a tagger identity has been set in Settings
+    And the connected account is ready for attribution
 
   @unmapped
   Scenario: The upload's location can be corrected from the shared registry
@@ -67,6 +68,7 @@ Feature: Correct the camera location recorded for an upload
     And the dry-run setting has been switched off
     When the sync is run live
     Then every image's deployment is the new location
+    And media and observation timestamps are rebased to the new location offset
     And the workspace toolbar no longer shows a pending location change
 
   @unmapped
