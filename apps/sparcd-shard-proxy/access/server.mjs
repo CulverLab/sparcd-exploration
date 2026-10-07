@@ -852,7 +852,15 @@ export async function listAroundProtectedTrees({
       resumeAt = entry.key;
     }
     if (truncated) break;
-    if (jumpedTo) { cursor = jumpedTo; continue; }
+    if (jumpedTo) {
+      cursor = jumpedTo;
+      if (page === 19 && got.nextToken) {
+        truncated = true;
+        resumeAt = resumeAt ?? cursor ?? after ?? '';
+        break;
+      }
+      continue;
+    }
     if (!got.nextToken) break;
     // A page of nothing but folders still has a position to go on from.
     // Stopping there because it held no keys drops every page after it.
@@ -860,7 +868,11 @@ export async function listAroundProtectedTrees({
     else if (got.commonPrefixes.length > 0) {
       cursor = afterTree(got.commonPrefixes[got.commonPrefixes.length - 1]);
     } else break;
+    if (page === 19 && got.nextToken) {
+      truncated = true;
+      resumeAt = resumeAt ?? cursor ?? after ?? '';
+    }
   }
 
-  return { keys, commonPrefixes, truncated, nextToken: truncated ? resumeAt : null };
+  return { keys, commonPrefixes, truncated, nextToken: truncated && resumeAt ? resumeAt : null };
 }

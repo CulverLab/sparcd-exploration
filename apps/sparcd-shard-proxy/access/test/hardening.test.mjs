@@ -719,6 +719,42 @@ describe('a settings listing pages through folders as well as keys', () => {
     assert.equal(page.truncated, true, 'a full page of folders reported as complete');
     assert.equal(page.nextToken, afterTree('Settings/b/'));
   });
+
+  const walk = (upstream, hiddenTrees = []) => listAroundProtectedTrees({
+    upstream,
+    bucket: 't-sparcd-settings-x',
+    prefix: 'Settings/',
+    delimiter: '',
+    maxKeys: 1000,
+    after: null,
+    hidden: (k) => hiddenTrees.some((t) => k.startsWith(t)),
+    hiddenTrees,
+  });
+
+  test('a walk that runs out of upstream pages says so and can be resumed', async () => {
+    const page = await walk({
+      listPage: async (bucket, { startAfter }) => {
+        const n = startAfter ? Number(startAfter.slice(-3)) + 1 : 0;
+        return {
+          keys: [{ key: `Settings/k${String(n).padStart(3, '0')}` }], commonPrefixes: [], nextToken: 'more',
+        };
+      },
+    });
+    assert.equal(page.keys.length, 20);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.equal(page.nextToken, 'Settings/k019');
+  });
+
+  test('a walk spent stepping over hidden trees still ends truncated', async () => {
+    const page = await walk({
+      listPage: async () => ({
+        keys: [{ key: 'Settings/access/people/p.json' }], commonPrefixes: [], nextToken: 'more',
+      }),
+    }, ['Settings/access/']);
+    assert.equal(page.keys.length, 0);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.ok(page.nextToken);
+  });
 });
 
 // ---------------------------------------------------------------------------
