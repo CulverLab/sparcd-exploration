@@ -21,6 +21,7 @@ function siblingTools(): Tool[] {
     { name: 'Explorer', href: `${root}explorer/` },
     { name: 'Uploader', href: `${root}uploader/` },
     { name: 'Tagger', href: `${root}tagger/` },
+    { name: 'Admin', href: `${root}admin/` },
   ];
 }
 

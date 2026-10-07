@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const homePage = fileURLToPath(new URL('../index.html', import.meta.url));
 
-test('lists focusable app cards in the Uploader, Tagger, Explorer order', async () => {
+test('lists focusable app cards in the Uploader, Tagger, Explorer, Admin order', async () => {
   const html = await readFile(homePage, 'utf8');
   const tools = html.match(/<nav class="deck" aria-label="Tools">([\s\S]*?)<\/nav>/)?.[1];
 
@@ -19,6 +19,7 @@ test('lists focusable app cards in the Uploader, Tagger, Explorer order', async 
       { href: 'uploader/', heading: 'Uploader' },
       { href: 'tagger/', heading: 'Tagger' },
       { href: 'explorer/', heading: 'Explorer' },
+      { href: 'admin/', heading: 'Admin' },
     ],
   );
 });

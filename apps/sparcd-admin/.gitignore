@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+*.local
+.turbo
+
+# Written while the browser suite runs: the live stack descriptor, the state
+# one scenario hands the next, and Playwright's own artefacts. The screenshots
+# under e2e/shots/ are committed on purpose.
+e2e/.stack.json
+e2e/.state.json
+e2e/.results
+playwright-report
+blob-report

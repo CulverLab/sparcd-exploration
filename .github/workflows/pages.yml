@@ -8,6 +8,7 @@ on:
       - "apps/sparcd-explorer/**"
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
+      - "apps/sparcd-admin/**"
       - "packages/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/pages.yml"
@@ -75,12 +76,15 @@ jobs:
       - name: Build tagger
         run: pnpm --filter sparcd-tagger build
 
+      - name: Build admin
+        run: pnpm --filter sparcd-admin build
+
       # --- Assemble combined site ---
       - name: Assemble site
         run: |
           set -euo pipefail
           rm -rf _site
-          mkdir -p _site/explorer _site/uploader _site/tagger
+          mkdir -p _site/explorer _site/uploader _site/tagger _site/admin
           # Static landing page at the family root.
           cp apps/sparcd-home/index.html _site/index.html
           cp apps/sparcd-home/sparcd.png _site/sparcd.png
@@ -89,6 +93,7 @@ jobs:
           cp -r apps/sparcd-explorer/dist/. _site/explorer/
           cp -r apps/sparcd-uploader/dist/. _site/uploader/
           cp -r apps/sparcd-tagger/dist/. _site/tagger/
+          cp -r apps/sparcd-admin/dist/. _site/admin/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
