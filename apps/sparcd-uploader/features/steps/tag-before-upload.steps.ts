@@ -242,7 +242,7 @@ When('the page is reloaded and the upload is resumed from History', async ({ app
 
 Then('the upload finishes without going back to Inspect or the Tagger', async ({ app }) => {
   await app.expectStep('Upload');
-  await expect(app.page.getByText(/Published \d+ files as upload/)).toBeVisible({ timeout: 120_000 });
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
   expect((app.notes.visited as string[]).filter((u) => u.includes('/tagger/'))).toEqual([]);
   await expect(app.page.getByRole('button', { name: /Tag species first|Edit tags/ })).toHaveCount(0);
 });
