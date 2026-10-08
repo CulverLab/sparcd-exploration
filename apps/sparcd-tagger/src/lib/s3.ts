@@ -9,6 +9,7 @@ import {
   SafeS3Client,
   listCollections as listCollectionsWith,
   parseCollectionKey,
+  readErrorDetails,
   translateReadError,
   type CollectionRef,
 } from '@sparcd/s3-safe';
@@ -220,6 +221,48 @@ const CANONICAL_FILE = {
   uploadMeta: 'UploadMeta.json',
 } as const;
 
+const CANONICAL_READ_ATTEMPTS = 3;
+const CANONICAL_READ_BACKOFF_MS = 100;
+const CLOCK_SKEW_CODES = new Set(['RequestTimeTooSkewed', 'RequestExpired', 'RequestInTheFuture']);
+const CANCELED_READ_CODES = new Set(['AbortError', 'CanceledError', 'TimeoutError', 'TargetClosedError']);
+
+/** Only retry failures that may change without user intervention. */
+export function shouldRetryCanonicalRead(err: unknown): boolean {
+  const { code, status } = readErrorDetails(err);
+  if (code && CANCELED_READ_CODES.has(code)) return false;
+  if (code === 'AccessDenied' || code === 'InvalidAccessKeyId' || code === 'SignatureDoesNotMatch') {
+    return false;
+  }
+  if (code && CLOCK_SKEW_CODES.has(code)) return true;
+  if (status === undefined) return true; // network/CORS/DNS failure
+  if (status >= 500 || status === 429) return true;
+  return status === 403 && !code;
+}
+
+/**
+ * Retry one canonical HEAD+GET attempt with bounded backoff. Keeping HEAD and
+ * GET in the same attempt prevents a successful HEAD from being paired with a
+ * response from a different transient credential/proxy state.
+ */
+export async function withCanonicalReadRetry<T>(
+  read: () => Promise<T>,
+  options: { attempts?: number; wait?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const attempts = Math.max(1, options.attempts ?? CANONICAL_READ_ATTEMPTS);
+  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await read();
+    } catch (err) {
+      lastError = err;
+      if (attempt === attempts - 1 || !shouldRetryCanonicalRead(err)) throw err;
+      await wait(CANONICAL_READ_BACKOFF_MS * 2 ** attempt);
+    }
+  }
+  throw lastError;
+}
+
 /** Load one canonical object with its ETag + content hash, preserving raw S3
  * errors for callers that need to distinguish a missing optional object. */
 async function loadObjectRaw(
@@ -231,9 +274,11 @@ async function loadObjectRaw(
   // ground; a concurrent change between the two only risks a spurious sync
   // conflict (safe-fail), never a bad write — the write re-checks IfMatch.
   const client = getClient(cfg);
-  const stat = await client.statObject(bucket, key);
-  const bytes = await client.getObject(bucket, key);
-  return { text: new TextDecoder().decode(bytes), etag: stat.etag ?? '', hash: await sha256Hex(bytes) };
+  return withCanonicalReadRetry(async () => {
+    const stat = await client.statObject(bucket, key);
+    const bytes = await client.getObject(bucket, key);
+    return { text: new TextDecoder().decode(bytes), etag: stat.etag ?? '', hash: await sha256Hex(bytes) };
+  });
 }
 
 /** Load one required canonical object, translating any S3 read failure. */

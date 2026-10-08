@@ -48,8 +48,13 @@ export class MockS3 {
   /** Persistent GET failures for error-state coverage. */
   private readonly failedReads = new Set<string>();
 
+  /** Temporary HEAD failures used to model a transient anonymous 403. */
+  readonly headFailures = new Map<string, { remaining: number; code?: string }>();
+
   /** Fail GETs after a fixed number of successful reads of an object. */
   readonly getFailures = new Map<string, { successfulReadsRemaining: number }>();
+  /** Optional status/code returned when a configured GET failure is reached. */
+  readonly getFailureResponses = new Map<string, { status: number; code: string }>();
 
   /** Delay one GET after a fixed number of successful reads of an object. */
   readonly delayedGets = new Map<string, { successfulReadsRemaining: number; ms: number }>();
@@ -62,12 +67,21 @@ export class MockS3 {
     this.failedReads.add(key);
   }
 
+  failHeads(key: string, remaining = 1, code?: string): void {
+    this.headFailures.set(key, { remaining, code });
+  }
+
   readCount(key: string): number {
     return this.reads.get(key) ?? 0;
   }
 
   failGetsAfter(key: string, successfulReads: number): void {
     this.getFailures.set(key, { successfulReadsRemaining: successfulReads });
+  }
+
+  failGetsWith(key: string, successfulReads: number, status: number, code: string): void {
+    this.failGetsAfter(key, successfulReads);
+    this.getFailureResponses.set(key, { status, code });
   }
 
   delayGetAfter(key: string, successfulReads: number, ms: number): void {
@@ -266,6 +280,19 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     const existing = s3.get(bucket, key);
 
     if (request.method() === 'HEAD') {
+      const headFailure = s3.headFailures.get(key);
+      if (headFailure && headFailure.remaining > 0) {
+        headFailure.remaining -= 1;
+        if (headFailure.remaining === 0) s3.headFailures.delete(key);
+        await route.fulfill({
+          status: 403,
+          headers: XML,
+          // HEAD responses have no browser-readable body. The optional code is
+          // retained in the mock for future header-based diagnostics tests.
+          body: headFailure.code ? errorXml(headFailure.code, 'temporary HEAD failure') : '',
+        });
+        return;
+      }
       if (!existing) {
         await route.fulfill({ status: 404, headers: XML, body: '' });
         return;
@@ -291,10 +318,14 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
       const getDelay = s3.consumeGetDelay(key);
       if (getDelay) await new Promise((r) => setTimeout(r, getDelay));
       if (s3.shouldFailGet(key)) {
-        await route.fulfill({
+        const response = s3.getFailureResponses.get(key) ?? {
           status: 503,
+          code: 'ServiceUnavailable',
+        };
+        await route.fulfill({
+          status: response.status,
           headers: XML,
-          body: errorXml('ServiceUnavailable', `temporary read failure for ${key}`),
+          body: errorXml(response.code, `temporary read failure for ${key}`),
         });
         return;
       }

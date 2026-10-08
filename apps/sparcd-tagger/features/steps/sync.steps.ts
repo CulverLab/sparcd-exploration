@@ -62,6 +62,22 @@ Given('an upload with local edits is open in the tagging workspace', async ({ pa
   await waitForDirtyDrafts(page, 1);
 });
 
+Given('the next canonical media HEAD fails without an S3 error code', async ({ s3 }) => {
+  s3.failHeads(`${PREFIX_A}media.csv`);
+});
+
+Given('the next canonical media GET is denied with AccessDenied', async ({ s3 }) => {
+  s3.failGetsWith(`${PREFIX_A}media.csv`, 0, 403, 'AccessDenied');
+});
+
+Then('the Sync dialog does not show an access-denied error', async ({ page }) => {
+  await expect(page.getByText(/Access denied reading media\.csv/)).toHaveCount(0);
+});
+
+Then('the Sync dialog shows the confirmed access-denied error', async ({ page }) => {
+  await expect(page.getByText(/Access denied reading media\.csv/)).toBeVisible();
+});
+
 // --- The write itself -------------------------------------------------------
 
 When('the sync is run', async ({ page }) => {
@@ -566,8 +582,11 @@ When('the sync is run and only its own post-sync refresh fails', async ({ page, 
   await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: synced', {
     timeout: 15_000,
   });
-  s3.delays.delete(obsKey);
+  // Arm the persistent failure while the delayed refresh is still in flight.
+  // Clearing the delay first lets that request succeed before the failure is
+  // observed, which is especially easy to hit now that canonical reads retry.
   s3.failGetsAfter(obsKey, 0);
+  s3.delays.delete(obsKey);
 });
 
 Then('the sync dialog reports the refresh failure', async ({ page, s3 }) => {

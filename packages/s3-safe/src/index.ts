@@ -108,6 +108,78 @@ export class ConditionalReplaceConflictError extends Error {
   }
 }
 
+export type S3ReadErrorDetails = {
+  code?: string;
+  status?: number;
+  requestId?: string;
+  extendedRequestId?: string;
+};
+
+/**
+ * A read failure with the information the browser/S3 adapter exposed.
+ *
+ * HEAD responses commonly have no readable body in a browser, so callers must
+ * not depend on parsing the XML response body to diagnose a failure. The AWS
+ * SDK usually exposes the code and request identifiers on the error object or
+ * its metadata; retain those fields even when the user-facing message is
+ * translated.
+ */
+export class S3ReadError extends Error {
+  readonly code?: string;
+  readonly status?: number;
+  readonly requestId?: string;
+  readonly extendedRequestId?: string;
+
+  constructor(message: string, details: S3ReadErrorDetails, cause: unknown) {
+    super(message, { cause });
+    this.name = 'S3ReadError';
+    this.code = details.code;
+    this.status = details.status;
+    this.requestId = details.requestId;
+    this.extendedRequestId = details.extendedRequestId;
+  }
+}
+
+const GENERIC_SDK_ERROR_NAMES = new Set(['Error', 'UnknownError', 'HttpResponse']);
+
+function responseHeader(response: unknown, name: string): string | undefined {
+  const headers = (response as { headers?: Record<string, string> } | undefined)?.headers;
+  if (!headers) return undefined;
+  const wanted = name.toLowerCase();
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === wanted);
+  return entry?.[1] || undefined;
+}
+
+/** Extract the stable diagnostic fields exposed by AWS SDK errors. */
+export function readErrorDetails(err: unknown): S3ReadErrorDetails {
+  const e = err as {
+    name?: unknown;
+    code?: unknown;
+    Code?: unknown;
+    $metadata?: {
+      httpStatusCode?: number;
+      requestId?: string;
+      extendedRequestId?: string;
+      cfId?: string;
+    };
+    $response?: { headers?: Record<string, string> };
+  };
+  const metadata = e.$metadata;
+  const candidate = [e.code, e.Code, e.name].find(
+    (value): value is string =>
+      typeof value === 'string' && value.length > 0 && !GENERIC_SDK_ERROR_NAMES.has(value),
+  );
+  return {
+    code: candidate,
+    status: metadata?.httpStatusCode,
+    requestId: metadata?.requestId ?? responseHeader(e.$response, 'x-amz-request-id'),
+    extendedRequestId:
+      metadata?.extendedRequestId ??
+      metadata?.cfId ??
+      responseHeader(e.$response, 'x-amz-id-2'),
+  };
+}
+
 function endpointUrl(cfg: S3Config): string {
   if (/^https?:\/\//i.test(cfg.endpoint)) return cfg.endpoint;
   const scheme = cfg.secure === false ? 'http' : 'https';
@@ -169,17 +241,36 @@ function translateReplaceError(err: unknown, key: string): Error {
  */
 export function translateReadError(err: unknown, what: string): Error {
   if (err instanceof BucketNotAllowedError) return err;
-  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
-  const status = e.$metadata?.httpStatusCode;
-  if (status === 404 || e.name === 'NoSuchKey') return new Error(`${what} not found.`);
-  if (status === 403 || e.name === 'AccessDenied')
-    return new Error(`Access denied reading ${what} — check the key's read permissions.`);
+  const details = readErrorDetails(err);
+  const { code, status } = details;
+  if (status === 404 || code === 'NoSuchKey' || code === 'NotFound') {
+    return new S3ReadError(`${what} not found.`, details, err);
+  }
+  if (code === 'AccessDenied') {
+    return new S3ReadError(`Access denied reading ${what} — check the key's read permissions.`, details, err);
+  }
+  if (status === 403 && code) {
+    return new S3ReadError(`S3 rejected reading ${what}: ${code} (HTTP 403).`, details, err);
+  }
+  if (status === 403) {
+    return new S3ReadError(
+      `S3 returned HTTP 403 while reading ${what}, but the service did not expose an error code.`,
+      details,
+      err,
+    );
+  }
   if (status === undefined)
-    return new Error(
+    return new S3ReadError(
       `Could not reach the endpoint to read ${what}. If the endpoint is correct, the ` +
         `bucket's CORS policy likely needs to allow GET/HEAD from this origin.`,
+      details,
+      err,
     );
-  return new Error(`Failed to read ${what} (HTTP ${status}).`);
+  return new S3ReadError(
+    `Failed to read ${what} (HTTP ${status}).`,
+    details,
+    err,
+  );
 }
 
 export type WriteStreamResult = { etag?: string };
