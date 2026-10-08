@@ -44,6 +44,18 @@ class SpeciesCountsTest(unittest.TestCase):
         self.assertEqual(len(scopes["map_dashboard"]["_species"]), 1)
         self.assertEqual(scopes["location_summary_card"]["_distinct_species"], 1)
 
+    def test_hex_counts_distinct_names_not_observations(self):
+        tagged = [("owl1.jpg", "Owl"), ("deer.jpg", "Deer"), ("owl2.jpg", "Owl")]
+        client = FakeS3().upload(
+            "u1",
+            deployments=[deployment("CCC01", "Charlie", 34.0, -112.0)],
+            media=[media("u1", file, "CCC01", "2024-01-01T10:00:00") for file, _ in tagged],
+            observations=[observation("u1", file, "CCC01", "2024-01-01T10:00:00", common=name) for file, name in tagged],
+        )
+        ns, _ = run_explorer(client)
+
+        self.assertEqual(ns["hex_summary"]["species_richness"].to_list(), [2])
+
 
 if __name__ == "__main__":
     unittest.main()
