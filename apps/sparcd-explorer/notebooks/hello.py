@@ -1697,7 +1697,7 @@ def _(deployments, locations, observations_filtered, pl):
         ).filter(pl.col("h3_id").is_not_null())
 
         # Distinct common names, the same count as the map panel and stat card, and
-        # parsed in Python like those: Pyodide's polars 1.18 panics ("capacity
+        # parsed in Python like those: polars' wasm build panics ("capacity
         # overflow") on str.extract_all over a filtered column.
         import re as _re_hex
         _pat_hex = _re_hex.compile(r"COMMONNAME:([^\]]+)")
