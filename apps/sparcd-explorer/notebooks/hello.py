@@ -1696,14 +1696,27 @@ def _(deployments, locations, observations_filtered, pl):
             pl.col("upload").replace_strict(_upload_to_hex, default=None).alias("h3_id")
         ).filter(pl.col("h3_id").is_not_null())
 
+        # Distinct common names, the same count as the map panel and stat card, and
+        # parsed in Python like those: Pyodide's polars 1.18 panics ("capacity
+        # overflow") on str.extract_all over a filtered column.
+        import re as _re_hex
+        _pat_hex = _re_hex.compile(r"COMMONNAME:([^\]]+)")
+        _species_by_hex = {}
+        for _h, _t in _obs_with_hex.select("h3_id", "tags").iter_rows():
+            _species_by_hex.setdefault(_h, set()).update(_pat_hex.findall(_t or ""))
         _obs_agg = (
             _obs_with_hex
             .group_by("h3_id")
             .agg(
-                # Distinct common names, the same count as the map panel and stat card.
-                pl.col("tags").str.extract_all(r"COMMONNAME:[^\]]+").explode().drop_nulls().n_unique().alias("species_richness"),
                 pl.col("media_path").n_unique().alias("checklists"),
                 pl.col("timestamp").max().alias("most_recent"),
+            )
+            .join(
+                pl.DataFrame(
+                    {"h3_id": list(_species_by_hex), "species_richness": [len(_s) for _s in _species_by_hex.values()]},
+                    schema={"h3_id": pl.Utf8, "species_richness": pl.Int64},
+                ),
+                on="h3_id",
             )
         )
         _cam_agg = (
