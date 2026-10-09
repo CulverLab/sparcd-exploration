@@ -1,0 +1,1169 @@
+// The security review's findings, at the level each one lives at. Socket-free.
+
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  makeNamespace, parseBucketNames, buildListBuckets, leaksNamespace, scrubErrorDetail,
+  safeKeySegments, safeRequestTarget,
+} from '../namespace.mjs';
+import {
+  listingGuard, buildListing, afterTree, decodeListingToken,
+} from '../rules.mjs';
+import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
+import { makeActivity, KINDS, MAX_RANGE_DAYS, rangeTooWide } from '../activity.mjs';
+import { makeStore } from '../store.mjs';
+import { ERROR_CODES, makeApi } from '../api.mjs';
+import { listAroundProtectedTrees } from '../server.mjs';
+
+const ns = makeNamespace({ namespace: 't-', allow: 'sparcd,sparcd-*' });
+
+describe('finding 1: the service root is built, never filtered', () => {
+  test('bucket names are parsed out of a real ListAllMyBucketsResult', () => {
+    const xml = '<?xml version="1.0"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+      + '<Owner><ID>upstream-owner</ID><DisplayName>upstream</DisplayName></Owner><Buckets>'
+      + '<Bucket><Name>t-sparcd-aaa</Name><CreationDate>2026-01-01T00:00:00.000Z</CreationDate></Bucket>'
+      + '<Bucket xmlns="urn:x"><Name>canary-outside</Name><CreationDate>x</CreationDate></Bucket>'
+      + '</Buckets></ListAllMyBucketsResult>';
+    assert.deepEqual(parseBucketNames(xml), ['t-sparcd-aaa', 'canary-outside']);
+  });
+
+  test('a body that is not a bucket listing is unparseable, not empty', () => {
+    assert.equal(parseBucketNames('{"buckets":["canary-outside"]}'), null);
+    assert.equal(parseBucketNames('<Error><Code>AccessDenied</Code></Error>'), null);
+    assert.equal(parseBucketNames(''), null);
+  });
+
+  test('the response is built from approved names with a placeholder owner', () => {
+    const xml = buildListBuckets(['sparcd-aaa', 'sparcd-settings-test']);
+    assert.match(xml, /<Name>sparcd-aaa<\/Name>/);
+    assert.match(xml, /<Name>sparcd-settings-test<\/Name>/);
+    assert.equal(xml.includes('upstream-owner'), false);
+    assert.equal(xml.includes('canary'), false);
+    assert.equal(xml.includes('t-sparcd'), false);
+    assert.match(xml, /<Owner><ID>sparcd<\/ID><DisplayName>sparcd<\/DisplayName><\/Owner>/);
+    // Exactly as many Bucket blocks as names given, whatever the upstream had.
+    assert.equal([...xml.matchAll(/<Bucket>/g)].length, 2);
+  });
+
+  test('an upstream name surviving in a response is a leak', () => {
+    assert.equal(leaksNamespace('<Name>t-sparcd-aaa</Name>', 't-'), true);
+    assert.equal(leaksNamespace('<Bucket>t-sparcd-aaa</Bucket>', 't-'), true);
+    assert.equal(leaksNamespace('<Resource>/t-sparcd-aaa/k</Resource>', 't-'), true);
+    assert.equal(leaksNamespace('<Name>sparcd-aaa</Name>', 't-'), false);
+    // A key that happens to start with the namespace is not a bucket name.
+    assert.equal(leaksNamespace('<Key>t-notes/x.txt</Key>', 't-'), false);
+    assert.equal(leaksNamespace('<Name>anything</Name>', ''), false);
+  });
+
+  test('Resource and HostId are dropped from an error body', () => {
+    const xml = '<Error><Code>NoSuchKey</Code><Message>m</Message>'
+      + '<Resource>/t-sparcd-aaa/k</Resource><HostId>abc123</HostId>'
+      + '<RequestId>r</RequestId></Error>';
+    const out = scrubErrorDetail(xml);
+    assert.equal(out.includes('Resource'), false);
+    assert.equal(out.includes('HostId'), false);
+    assert.equal(out.includes('abc123'), false);
+    assert.match(out, /<Code>NoSuchKey<\/Code>/);
+  });
+});
+
+describe('finding 12: object keys', () => {
+  test('traversal, backslashes, NUL and leading slashes are refused', () => {
+    for (const key of [
+      'Collections/u/../../etc', 'Collections/u/./x', 'a\\b', 'a\u0000b', '/leading',
+      '..', '.',
+    ]) assert.equal(safeKeySegments(key), false, key);
+  });
+  test('ordinary keys, including UTF-8 and spaces, are fine', () => {
+    for (const key of [
+      'Collections/u/Uploads/s/a.jpg', 'Collections/u/Uploads/s/sub dir/ñ.jpg',
+      'Settings/locations.json', '',
+      'Collections/u/Uploads/s/.sparcd-tagger-snapshots/a%40b/t/manifest.json',
+    ]) assert.equal(safeKeySegments(key), true, key);
+  });
+});
+
+describe('finding 7: settings-bucket listings', () => {
+  const member = { admin: false, status: 'active' };
+  const admin = { admin: true, status: 'active' };
+  const guard = (prefix, person, isSettings = true) =>
+    listingGuard({ prefix, person, isSettings });
+
+  test('a prefix inside a protected tree is refused', () => {
+    assert.equal(guard('Settings/access/', member).allow, false);
+    assert.equal(guard('Settings/access/people/', admin).allow, false);
+    assert.equal(guard('Settings/activity/2026-01-01/', member).allow, false);
+    assert.equal(guard('Settings/activity/2026-01-01/', admin).allow, true);
+  });
+
+  test('a prefix that can only ever match a protected tree is refused', () => {
+    assert.equal(guard('Settings/acc', member).allow, false);
+    assert.equal(guard('Settings/activ', member).allow, false);
+    assert.equal(guard('Settings/activ', admin).allow, true);
+  });
+
+  test('a prefix that straddles is allowed and filtered instead', () => {
+    assert.equal(guard('Settings/', member).allow, true);
+    assert.equal(guard('', member).allow, true);
+    assert.equal(guard('Settings/locations', member).allow, true);
+  });
+
+  test('a collection bucket is not gated this way', () => {
+    assert.equal(guard('Settings/access/', member, false).allow, true);
+  });
+
+  test('a built listing is one complete page with no continuation', () => {
+    const xml = buildListing({
+      bucket: 'sparcd-settings-test',
+      prefix: 'Settings/',
+      delimiter: '/',
+      keys: [{ key: 'Settings/locations.json', size: 12, lastModified: '2026-01-01T00:00:00.000Z', etag: '"e"' }],
+      commonPrefixes: ['Settings/species/'],
+    });
+    assert.match(xml, /<IsTruncated>false<\/IsTruncated>/);
+    assert.equal(xml.includes('NextContinuationToken'), false);
+    assert.equal(xml.includes('NextMarker'), false);
+    assert.match(xml, /<KeyCount>1<\/KeyCount>/);
+    assert.match(xml, /<Name>sparcd-settings-test<\/Name>/);
+    assert.match(xml, /<Key>Settings\/locations\.json<\/Key>/);
+    assert.match(xml, /<Prefix>Settings\/species\/<\/Prefix>/);
+  });
+});
+
+describe('finding 3: the key is resolved before the body is read', () => {
+  test('the access key id is readable from the header form alone', () => {
+    const headers = new Headers({
+      authorization: 'AWS4-HMAC-SHA256 Credential=SPKABC/20260101/us-east-1/s3/aws4_request, '
+        + 'SignedHeaders=host, Signature=ff',
+    });
+    assert.equal(peekAccessKeyId({ headers, url: new URL('http://h/b/k') }), 'SPKABC');
+  });
+
+  test('and from the presigned form alone', () => {
+    const url = new URL('http://h/b/k?X-Amz-Algorithm=AWS4-HMAC-SHA256'
+      + '&X-Amz-Credential=SPKXYZ%2F20260101%2Fus-east-1%2Fs3%2Faws4_request');
+    assert.equal(peekAccessKeyId({ headers: new Headers(), url }), 'SPKXYZ');
+  });
+
+  test('nothing to peek at is null, not a throw', () => {
+    assert.equal(peekAccessKeyId({ headers: new Headers(), url: new URL('http://h/') }), null);
+    assert.equal(
+      peekAccessKeyId({ headers: new Headers({ authorization: 'Basic abc' }), url: new URL('http://h/') }),
+      null,
+    );
+  });
+});
+
+describe('finding 8: presigned URLs are read-only', () => {
+  test('a presigned PUT is refused before anything else', async () => {
+    const url = new URL('http://h/b/k?X-Amz-Algorithm=AWS4-HMAC-SHA256'
+      + '&X-Amz-Credential=SPKXYZ%2F20260101%2Fus-east-1%2Fs3%2Faws4_request'
+      + '&X-Amz-Date=20260101T000000Z&X-Amz-Expires=900&X-Amz-SignedHeaders=host&X-Amz-Signature=ff');
+    for (const method of ['PUT', 'POST', 'DELETE']) {
+      const out = await verifySignature({
+        method, url, headers: new Headers(), lookupSecret: () => 'x', allowPresigned: true,
+      });
+      assert.equal(out.error, 'presigned URLs are read-only', method);
+    }
+  });
+});
+
+describe('finding 13: the activity writer under back-pressure', () => {
+  const stubUpstream = (behaviour) => {
+    const written = [];
+    return {
+      written,
+      client: () => ({
+        put: async (bucket, key, body) => {
+          if (behaviour.failing) return false;
+          written.push({ key, body });
+          return true;
+        },
+      }),
+    };
+  };
+
+  test('a failed flush is re-queued, not lost', async () => {
+    const behaviour = { failing: true };
+    const stub = stubUpstream(behaviour);
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5,
+    });
+    activity.record({ personId: 'p', kind: 'download', bucket: 'x', status: 200 });
+    await activity.drain();
+    assert.equal(stub.written.length, 0);
+
+    behaviour.failing = false;
+    await activity.drain();
+    assert.equal(stub.written.length, 1);
+    assert.match(stub.written[0].body, /"kind":"download"/);
+  });
+
+  test('past the queue cap the oldest go and a log-gap says how many', async () => {
+    const behaviour = { failing: true };
+    const stub = stubUpstream(behaviour);
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5, maxQueue: 10,
+    });
+    for (let i = 0; i < 25; i += 1) {
+      activity.record({ personId: `p${i}`, kind: 'download', bucket: 'x', status: 200 });
+    }
+    await activity.drain();
+
+    behaviour.failing = false;
+    await activity.drain();
+    const lines = stub.written.flatMap((w) => w.body.trim().split('\n')).map(JSON.parse);
+    assert.ok(lines.length <= 11, `kept ${lines.length}`);
+    const gap = lines.find((l) => l.kind === 'log-gap');
+    assert.ok(gap, 'no log-gap event');
+    assert.ok(gap.detail.dropped >= 14, `dropped ${gap.detail?.dropped}`);
+    // The newest survived; the oldest are the ones that went.
+    assert.equal(lines.some((l) => l.personId === 'p24'), true);
+    assert.equal(lines.some((l) => l.personId === 'p0'), false);
+  });
+
+  test('bad signatures are one aggregated line per source per minute', async () => {
+    const stub = stubUpstream({ failing: false });
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5,
+    });
+    for (let i = 0; i < 50; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    for (let i = 0; i < 3; i += 1) activity.badSignature('10.0.0.2', { detail: 'unknown access key' });
+    await activity.drain();
+    const lines = stub.written.flatMap((w) => w.body.trim().split('\n')).map(JSON.parse);
+    const bad = lines.filter((l) => l.kind === 'bad-signature');
+    assert.equal(bad.length, 2, `got ${bad.length} lines`);
+    assert.equal(bad.find((l) => l.ip === '10.0.0.1').detail.count, 50);
+    assert.equal(bad.find((l) => l.ip === '10.0.0.2').detail.count, 3);
+  });
+
+  test('failures after their line is written are counted on a new line', async () => {
+    const stub = stubUpstream({ failing: false });
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5,
+    });
+    for (let i = 0; i < 2; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    while (stub.written.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    for (let i = 0; i < 3; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    await activity.drain();
+    const lines = stub.written.flatMap((w) => w.body.trim().split('\n')).map(JSON.parse);
+    assert.deepEqual(lines.filter((l) => l.kind === 'bad-signature').map((l) => l.detail.count), [2, 3]);
+  });
+});
+
+describe('finding 5: a failed generation bump still applies locally', () => {
+  // A store whose upstream writes the person fine but cannot bump the counter.
+  const stubStore = () => {
+    const objects = new Map();
+    const upstream = {
+      listBuckets: async () => ['t-sparcd-settings-x'],
+      getJson: async (bucket, key) => {
+        const hit = objects.get(`${bucket}/${key}`);
+        return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+      },
+      get: async () => ({ status: 404 }),
+      listKeys: async (bucket, prefix) =>
+        [...objects.keys()]
+          .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+          .map((k) => k.slice(bucket.length + 1)),
+      put: async (bucket, key, body) => {
+        if (key.endsWith('generation.json')) throw new Error('upstream is down for this one key');
+        objects.set(`${bucket}/${key}`, { body, etag: `"${objects.size}"` });
+        return true;
+      },
+    };
+    return { store: makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' }) };
+  };
+
+  test('savePerson reloads even when the generation write throws', async () => {
+    const { store } = stubStore();
+    await store.reload();
+    // The person write lands; only the counter bump fails. The change has to
+    // be in force on this proxy anyway, which means the reload has to run.
+    await assert.rejects(() => store.savePerson({
+      id: 'p1', name: 'P', status: 'paused', admin: false, keys: [],
+    }, 'new'));
+    assert.equal(store.person('p1')?.status, 'paused', 'the pause did not take effect locally');
+  });
+});
+
+describe('finding 6 and contract c: the published error codes', () => {
+  test('the set is exactly the nine the contract names', () => {
+    assert.deepEqual([...ERROR_CODES].sort(), [
+      'busy', 'changed_elsewhere', 'forbidden', 'invalid', 'last_admin',
+      'last_runner', 'not_found', 'too_large', 'upstream',
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 3: the follow-ups from reviewing the rewrite.
+// ---------------------------------------------------------------------------
+
+describe('N3: responses are scrubbed by shape, not by tag name', () => {
+  test('Location and Endpoint go the way Resource and HostId did', () => {
+    const xml = '<CompleteMultipartUploadResult>'
+      + '<Location>http://upstream.internal:9000/t-sparcd-aaa/k.jpg</Location>'
+      + '<Endpoint>upstream.internal:9000</Endpoint>'
+      + '<Bucket>t-sparcd-aaa</Bucket><Key>k.jpg</Key><ETag>"e"</ETag>'
+      + '</CompleteMultipartUploadResult>';
+    const out = scrubErrorDetail(xml);
+    assert.equal(out.includes('Location'), false);
+    assert.equal(out.includes('Endpoint'), false);
+    assert.equal(out.includes('upstream.internal'), false);
+    assert.match(out, /<Key>k\.jpg<\/Key>/);
+  });
+
+  test('a namespaced name anywhere but a Key or a Prefix is a leak', () => {
+    assert.equal(leaksNamespace('<Message>bucket t-sparcd-aaa is missing</Message>', 't-'), true);
+    assert.equal(leaksNamespace('<Location>http://h/t-sparcd-aaa/k</Location>', 't-'), true);
+    assert.equal(leaksNamespace('<Endpoint>t-sparcd-aaa.h</Endpoint>', 't-'), true);
+    // Object keys and listing prefixes are the caller's own strings.
+    assert.equal(leaksNamespace('<Key>t-notes/x.txt</Key>', 't-'), false);
+    assert.equal(leaksNamespace('<Prefix>t-notes/</Prefix>', 't-'), false);
+    // A namespace that appears mid-word is not a bucket name.
+    assert.equal(leaksNamespace('<Message>the widget-t-shirt failed</Message>', 't-'), false);
+  });
+});
+
+describe('N4: a settings listing steps around the protected trees', () => {
+  test('the jump target sorts after everything in the tree', () => {
+    const after = afterTree('Settings/access/');
+    assert.ok(after > 'Settings/access/zzzzzzzz');
+    assert.ok(after > 'Settings/access/￿');
+    assert.ok(after < 'Settings/activity/');
+    assert.ok(after < 'Settings/locations.json');
+  });
+
+  test('a page that had to stop says so, with a token of our own', () => {
+    const xml = buildListing({
+      bucket: 'b',
+      prefix: 'Settings/',
+      keys: [{ key: 'Settings/a.json' }, { key: 'Settings/b.json' }],
+      commonPrefixes: [],
+      truncated: true,
+      nextToken: 'Settings/b.json',
+    });
+    assert.match(xml, /<IsTruncated>true<\/IsTruncated>/);
+    const token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1];
+    assert.ok(token, 'no continuation token');
+    assert.equal(token.includes('Settings/'), false, 'the token is not opaque');
+    assert.equal(decodeListingToken(token), 'Settings/b.json');
+  });
+
+  test('an untruncated page still carries no token', () => {
+    const xml = buildListing({ bucket: 'b', keys: [], commonPrefixes: [] });
+    assert.match(xml, /<IsTruncated>false<\/IsTruncated>/);
+    assert.equal(xml.includes('NextContinuationToken'), false);
+  });
+
+  test('a token that is not ours reads as no token at all', () => {
+    assert.equal(decodeListingToken('not base64url !!!'), null);
+    assert.equal(decodeListingToken(''), null);
+  });
+});
+
+describe('N5: the Host is the one the signature is checked against', () => {
+  test('a backslash in the target is refused before parsing', () => {
+    // `new URL('/\\evil.example/x', 'http://good')` yields host `evil.example`,
+    // so the check has to happen on the raw bytes.
+    assert.equal(safeRequestTarget('/\\evil.example/x'), false);
+    assert.equal(safeRequestTarget('/b/k?a=\\'), false);
+    assert.equal(safeRequestTarget('//evil.example/x'), false);
+    assert.equal(safeRequestTarget('http://evil.example/x'), false);
+    assert.equal(safeRequestTarget('/b/Collections/u/Uploads/s/a.jpg?x-id=PutObject'), true);
+    assert.equal(safeRequestTarget('/'), true);
+  });
+});
+
+describe('N7: the activity writer does one flush at a time', () => {
+  test('recording during a stuck flush does not start a second one', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let failing = true;
+    const written = [];
+    const client = () => ({
+      put: async (bucket, key, body) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        if (failing) return false;
+        written.push(body);
+        return true;
+      },
+    });
+    const activity = makeActivity({
+      upstream: client, settingsBucket: () => 'b', flushMs: 1,
+    });
+    for (let i = 0; i < 400; i += 1) {
+      activity.record({ personId: `p${i}`, kind: 'download', bucket: 'x', status: 200 });
+    }
+    await activity.drain();
+    assert.equal(peak, 1, `${peak} flushes overlapped`);
+
+    failing = false;
+    await activity.drain();
+    const lines = written.flatMap((b) => b.trim().split('\n'));
+    assert.equal(lines.length, 400, `kept ${lines.length} of 400`);
+  });
+
+  test('a source that stops misbehaving is forgotten', async () => {
+    const activity = makeActivity({
+      upstream: () => ({ put: async () => true }), settingsBucket: () => 'b', flushMs: 1,
+    });
+    activity.badSignature('10.0.0.9', { detail: 'x' });
+    assert.equal(activity.trackedSources(), 1);
+    activity.sweep(Date.now() + 120000);
+    assert.equal(activity.trackedSources(), 0);
+  });
+});
+
+describe('N8: reloads are serialized and never go backwards', () => {
+  const slowStore = () => {
+    let running = 0;
+    let peak = 0;
+    let runs = 0;
+    const upstream = {
+      listBuckets: async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        runs += 1;
+        await new Promise((r) => setTimeout(r, 10));
+        running -= 1;
+        return ['t-sparcd-settings-x'];
+      },
+      getJson: async () => ({ status: 404 }),
+      get: async () => ({ status: 404 }),
+      listKeys: async () => [],
+      listCommonPrefixes: async () => [],
+      put: async () => true,
+    };
+    return {
+      store: makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' }),
+      peak: () => peak,
+      runs: () => runs,
+    };
+  };
+
+  test('five callers at once become one reload and one follow-up', async () => {
+    const { store, peak, runs } = slowStore();
+    await Promise.all([
+      store.reload(), store.reload(), store.reload(), store.reload(), store.reload(),
+    ]);
+    assert.equal(peak(), 1, `${peak()} reloads overlapped`);
+    assert.equal(runs(), 2, `${runs()} reloads ran, expected one plus one follow-up`);
+  });
+
+  test('a caller arriving mid-reload still sees the result of its own request', async () => {
+    const { store } = slowStore();
+    const first = store.reload();
+    const second = store.reload();
+    await Promise.all([first, second]);
+    assert.equal(store.snapshot().settingsBucket, 'sparcd-settings-x');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 4: what the admin screens actually ask for.
+// ---------------------------------------------------------------------------
+
+describe('activity queries the admin screens make', () => {
+  const EVENTS = [
+    { ts: '2026-01-01T00:00:01.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/s/IMG_0412.JPG' },
+    { ts: '2026-01-01T00:00:02.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/t/IMG_0412.JPG' },
+    { ts: '2026-01-01T00:00:03.000Z', kind: 'download', bucket: 'b', key: 'Collections/u/Uploads/s/img_0412.jpg' },
+    { ts: '2026-01-01T00:00:04.000Z', kind: 'denied', bucket: 'b' },
+    { ts: '2026-01-01T00:00:05.000Z', kind: 'bad-signature', bucket: 'b' },
+    { ts: '2026-01-01T00:00:06.000Z', kind: 'list-change', bucket: 'b' },
+    { ts: '2026-01-01T00:00:07.000Z', kind: 'collection-change', bucket: 'b' },
+    { ts: '2026-01-01T00:00:08.000Z', kind: 'upload', bucket: 'b' },
+  ];
+  const canned = () => makeActivity({
+    settingsBucket: () => 'b',
+    upstream: () => ({
+      put: async () => true,
+      listCommonPrefixes: async () => ['Settings/activity/2026-01-01/'],
+      listKeys: async () => ['Settings/activity/2026-01-01/1-00000000.ndjson'],
+      get: async () => ({
+        status: 200, text: `${EVENTS.map((e) => JSON.stringify(e)).join('\n')}\n`,
+      }),
+    }),
+  });
+
+  test('a single kind still filters to that kind', async () => {
+    const { events } = await canned().query({ kinds: ['denied'] });
+    assert.deepEqual(events.map((e) => e.kind), ['denied']);
+  });
+
+  test('several kinds come back together, newest first', async () => {
+    const { events } = await canned().query({ kinds: ['denied', 'bad-signature'] });
+    assert.deepEqual(events.map((e) => e.kind), ['bad-signature', 'denied']);
+    const changes = await canned().query({ kinds: ['list-change', 'collection-change'] });
+    assert.deepEqual(changes.events.map((e) => e.kind), ['collection-change', 'list-change']);
+  });
+
+  test('no kinds at all is every kind', async () => {
+    const { events } = await canned().query({});
+    assert.equal(events.length, EVENTS.length);
+  });
+
+  test('the downloads query takes a file name as well as a whole key', async () => {
+    const byName = await canned().downloads({ bucket: 'b', key: 'IMG_0412.JPG' });
+    assert.deepEqual(byName.events.map((e) => e.key), [
+      'Collections/u/Uploads/t/IMG_0412.JPG',
+      'Collections/u/Uploads/s/IMG_0412.JPG',
+    ]);
+
+    const byKey = await canned().downloads({
+      bucket: 'b', key: 'Collections/u/Uploads/s/IMG_0412.JPG',
+    });
+    assert.deepEqual(byKey.events.map((e) => e.key), ['Collections/u/Uploads/s/IMG_0412.JPG']);
+  });
+
+  test('the file-name match is case-sensitive', async () => {
+    const { events } = await canned().downloads({ bucket: 'b', key: 'img_0412.jpg' });
+    assert.deepEqual(events.map((e) => e.key), ['Collections/u/Uploads/s/img_0412.jpg']);
+  });
+
+  test('the kinds the contract names are the ones the API will take', () => {
+    assert.deepEqual([...KINDS].sort(), [
+      'access-change', 'bad-signature', 'collection-change', 'denied', 'download',
+      'identify', 'list-change', 'log-gap', 'sign-in', 'upload',
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 5: reviewing the pull request.
+// ---------------------------------------------------------------------------
+
+describe('a revocation is in force before the reload confirms it', () => {
+  // A store whose reads can be turned off after the first reload, so the
+  // reload that follows a write fails the way a flaky upstream makes it fail.
+  const stubStore = (extra = []) => {
+    const objects = new Map();
+    const reads = { failing: false };
+    const refuse = () => { throw new Error('upstream is down for reads'); };
+    const upstream = {
+      listBuckets: async () => (reads.failing ? refuse() : ['t-sparcd-settings-x', ...extra]),
+      getJson: async (bucket, key) => {
+        if (reads.failing) refuse();
+        const hit = objects.get(`${bucket}/${key}`);
+        return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+      },
+      get: async () => ({ status: 404 }),
+      listKeys: async (bucket, prefix) => (reads.failing ? refuse() : [...objects.keys()]
+        .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+        .map((k) => k.slice(bucket.length + 1))),
+      put: async (bucket, key, body) => {
+        objects.set(`${bucket}/${key}`, { body, etag: `"${objects.size}"` });
+        return true;
+      },
+    };
+    return { store: makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' }), reads };
+  };
+
+  const KEY = { accessKeyId: 'SPKAAAAAAAAAAAAAAAAAA', wrapped: 'v1.x.y' };
+
+  test('a pause and a key retirement hold even when the reload fails', async () => {
+    const { store, reads } = stubStore();
+    await store.reload();
+    await store.savePerson({
+      id: 'p1', name: 'P', status: 'active', admin: false, keys: [KEY],
+    }, 'new');
+    assert.equal(store.byAccessKey(KEY.accessKeyId)?.person.id, 'p1', 'setup: the key works');
+
+    reads.failing = true;
+    const person = store.person('p1');
+    await assert.rejects(() => store.savePerson({
+      ...person,
+      status: 'paused',
+      keys: [{ ...KEY, retiredAt: '2026-01-01T00:00:00.000Z' }],
+    }, person.etag), /upstream is down for reads/);
+
+    assert.equal(store.person('p1').status, 'paused', 'the pause waited for a reload');
+    assert.equal(store.byAccessKey(KEY.accessKeyId), null, 'the retired key still opens the door');
+  });
+
+  test('a removed member is out of the collection at once', async () => {
+    const uuid = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
+    const bucket = `sparcd-${uuid}`;
+    const { store, reads } = stubStore([`t-${bucket}`]);
+    await store.reload();
+    await store.saveMembers(bucket, [{ personId: 'p1', access: 'run' }], null);
+    assert.equal(store.membership('p1', bucket)?.access, 'run', 'setup: the member is in');
+
+    reads.failing = true;
+    await assert.rejects(() => store.saveMembers(bucket, [], store.collection(bucket).membersEtag),
+      /upstream is down for reads/);
+    assert.equal(store.membership('p1', bucket), null, 'the removal waited for a reload');
+  });
+});
+
+describe('an activity query reads a bounded slice of the log', () => {
+  const dayOfEvents = (day, count) => Array.from({ length: count }, (_, i) => ({
+    ts: `${day}T00:00:0${i}.000Z`, kind: 'download', bucket: 'b', personId: `p${i}`,
+  }));
+
+  const threeDays = () => {
+    const read = [];
+    const days = {
+      '2026-03-01': dayOfEvents('2026-03-01', 6),
+      '2026-03-02': dayOfEvents('2026-03-02', 6),
+      '2026-03-03': dayOfEvents('2026-03-03', 6),
+    };
+    const activity = makeActivity({
+      settingsBucket: () => 'b',
+      upstream: () => ({
+        put: async () => true,
+        listCommonPrefixes: async () => Object.keys(days).map((d) => `Settings/activity/${d}/`),
+        listKeys: async (bucket, prefix) => [`${prefix}1-00000000.ndjson`],
+        get: async (bucket, key) => {
+          read.push(key);
+          const day = key.slice('Settings/activity/'.length, -'/1-00000000.ndjson'.length);
+          return { status: 200, text: `${days[day].map((e) => JSON.stringify(e)).join('\n')}\n` };
+        },
+      }),
+    });
+    return { activity, read };
+  };
+
+  test('a full page stops the walk at the newest day', async () => {
+    const { activity, read } = threeDays();
+    const { events, truncated } = await activity.query({ limit: 5 });
+    assert.equal(events.length, 5);
+    assert.equal(truncated, true);
+    assert.equal(events[0].ts.startsWith('2026-03-03'), true, 'not newest first');
+    assert.deepEqual(read, ['Settings/activity/2026-03-03/1-00000000.ndjson'],
+      `read ${read.length} day objects, expected the newest one only`);
+  });
+
+  test('a page that is not filled still reads every day in range', async () => {
+    const { activity, read } = threeDays();
+    const { events } = await activity.query({ limit: 200 });
+    assert.equal(events.length, 18);
+    assert.equal(read.length, 3);
+  });
+
+  test('a range wider than a month is refused, not silently narrowed', () => {
+    assert.equal(rangeTooWide('2026-01-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z'), true);
+    assert.equal(rangeTooWide('2026-01-01T00:00:00.000Z', '2026-01-31T00:00:00.000Z'), false);
+    assert.equal(MAX_RANGE_DAYS, 31);
+  });
+
+  test('a query with no range reads at most a month of days', async () => {
+    const asked = [];
+    const activity = makeActivity({
+      settingsBucket: () => 'b',
+      upstream: () => ({
+        put: async () => true,
+        listCommonPrefixes: async () => Array.from({ length: 90 }, (_, i) =>
+          `Settings/activity/2026-01-${String((i % 28) + 1).padStart(2, '0')}/`),
+        listKeys: async (bucket, prefix) => { asked.push(prefix); return []; },
+        get: async () => ({ status: 404 }),
+      }),
+    });
+    await activity.query({ limit: 200 });
+    assert.ok(asked.length <= MAX_RANGE_DAYS, `listed ${asked.length} days`);
+  });
+});
+
+describe('a settings listing pages through folders as well as keys', () => {
+  const pager = (pages) => {
+    const asked = [];
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => {
+        asked.push(startAfter ?? null);
+        return pages[asked.length - 1] ?? { keys: [], commonPrefixes: [], nextToken: null };
+      },
+    };
+    return { upstream, asked };
+  };
+
+  test('a page of nothing but folders is followed, not treated as the end', async () => {
+    const { upstream, asked } = pager([
+      {
+        keys: [],
+        commonPrefixes: ['Settings/species/', 'Settings/locations/'],
+        nextToken: 'more',
+      },
+      {
+        keys: [{ key: 'Settings/zones.json' }],
+        commonPrefixes: [],
+        nextToken: null,
+      },
+    ]);
+    const page = await listAroundProtectedTrees({
+      upstream,
+      bucket: 't-sparcd-settings-x',
+      prefix: 'Settings/',
+      delimiter: '/',
+      maxKeys: 1000,
+      after: null,
+      hidden: () => false,
+      hiddenTrees: [],
+    });
+    assert.equal(asked.length >= 2, true, 'the second page was never asked for');
+    assert.deepEqual(page.keys.map((k) => k.key), ['Settings/zones.json']);
+    assert.equal(page.commonPrefixes.length, 2);
+  });
+
+  test('folders count against max-keys and carry the continuation token', async () => {
+    const { upstream } = pager([
+      {
+        keys: [],
+        commonPrefixes: ['Settings/a/', 'Settings/b/', 'Settings/c/'],
+        nextToken: 'more',
+      },
+    ]);
+    const page = await listAroundProtectedTrees({
+      upstream,
+      bucket: 't-sparcd-settings-x',
+      prefix: 'Settings/',
+      delimiter: '/',
+      maxKeys: 2,
+      after: null,
+      hidden: () => false,
+      hiddenTrees: [],
+    });
+    assert.deepEqual(page.commonPrefixes, ['Settings/a/', 'Settings/b/']);
+    assert.equal(page.truncated, true, 'a full page of folders reported as complete');
+    assert.equal(page.nextToken, afterTree('Settings/b/'));
+  });
+
+  test('paging returns every folder and key once, whatever the page size', async () => {
+    const names = ['Settings/a.json', 'Settings/b/', 'Settings/c.json', 'Settings/d/', 'Settings/e.json'];
+    // An upstream that honours start-after and answers two entries at a time.
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => {
+        const rest = names.filter((n) => !startAfter || n > startAfter);
+        const page = rest.slice(0, 2);
+        return {
+          keys: page.filter((n) => !n.endsWith('/')).map((key) => ({ key })),
+          commonPrefixes: page.filter((n) => n.endsWith('/')),
+          nextToken: rest.length > 2 ? 'more' : null,
+        };
+      },
+    };
+    for (const maxKeys of [1, 2, 1000]) {
+      const seen = [];
+      let after = null;
+      do {
+        const page = await listAroundProtectedTrees({
+          upstream, bucket: 'b', prefix: 'Settings/', delimiter: '/', maxKeys, after,
+          hidden: () => false, hiddenTrees: [],
+        });
+        seen.push(...page.commonPrefixes, ...page.keys.map((k) => k.key));
+        after = page.nextToken;
+      } while (after);
+      assert.deepEqual(seen.sort(), names, `max-keys ${maxKeys}`);
+    }
+  });
+
+  test('paging keeps the upstream\'s UTF-8 byte order', async () => {
+    // U+FF5A is EF BD 9A and U+1F600 is F0 9F 98 80, so S3 lists the first
+    // one first. Compared as UTF-16 code units they swap.
+    const names = ['Settings/ｚ.json', 'Settings/\u{1F600}.json'];
+    const utf8 = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => ({
+        keys: names.filter((n) => !startAfter || utf8(n, startAfter) > 0).map((key) => ({ key })),
+        commonPrefixes: [],
+        nextToken: null,
+      }),
+    };
+    const seen = [];
+    let after = null;
+    do {
+      const page = await listAroundProtectedTrees({
+        upstream, bucket: 'b', prefix: 'Settings/', delimiter: '', maxKeys: 1, after,
+        hidden: () => false, hiddenTrees: [],
+      });
+      seen.push(...page.keys.map((k) => k.key));
+      after = page.nextToken;
+    } while (after);
+    assert.deepEqual(seen, names);
+  });
+
+  const walk = (upstream, hiddenTrees = []) => listAroundProtectedTrees({
+    upstream,
+    bucket: 't-sparcd-settings-x',
+    prefix: 'Settings/',
+    delimiter: '',
+    maxKeys: 1000,
+    after: null,
+    hidden: (k) => hiddenTrees.some((t) => k.startsWith(t)),
+    hiddenTrees,
+  });
+
+  test('a walk that runs out of upstream pages says so and can be resumed', async () => {
+    const page = await walk({
+      listPage: async (bucket, { startAfter }) => {
+        const n = startAfter ? Number(startAfter.slice(-3)) + 1 : 0;
+        return {
+          keys: [{ key: `Settings/k${String(n).padStart(3, '0')}` }], commonPrefixes: [], nextToken: 'more',
+        };
+      },
+    });
+    assert.equal(page.keys.length, 20);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.equal(page.nextToken, 'Settings/k019');
+  });
+
+  test('a walk spent stepping over hidden trees still ends truncated', async () => {
+    const page = await walk({
+      listPage: async () => ({
+        keys: [{ key: 'Settings/access/people/p.json' }], commonPrefixes: [], nextToken: 'more',
+      }),
+    }, ['Settings/access/']);
+    assert.equal(page.keys.length, 0);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.ok(page.nextToken);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The API over a store over one in-memory upstream. Two stores over the same
+// upstream are two proxies, each with a cache the other does not refresh.
+// ---------------------------------------------------------------------------
+
+const UUID = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
+const COLLECTION = `sparcd-${UUID}`;
+const SETTINGS_UP = 't-sparcd-settings-x';
+
+function memoryUpstream(people, members) {
+  const objects = new Map();
+  let writes = 0;
+  const upstream = {
+    objects,
+    listBuckets: async () => [SETTINGS_UP, `t-${COLLECTION}`],
+    getJson: async (bucket, key) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+    },
+    get: async () => ({ status: 404 }),
+    listKeys: async (bucket, prefix) => [...objects.keys()]
+      .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+      .map((k) => k.slice(bucket.length + 1)),
+    put: async (bucket, key, body, guard = {}) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      if (guard.ifNoneMatch === '*' && hit) return false;
+      if (guard.ifMatch && guard.ifMatch !== hit?.etag) return false;
+      writes += 1;
+      const etag = `"w${writes}"`;
+      objects.set(`${bucket}/${key}`, { body: String(body), etag });
+      return etag;
+    },
+  };
+  for (const p of people) {
+    objects.set(`${SETTINGS_UP}/Settings/access/people/${p.id}.json`, {
+      body: JSON.stringify({ admin: false, keys: [], ...p }), etag: `"${p.id}"`,
+    });
+  }
+  objects.set(`t-${COLLECTION}/Collections/${UUID}/members.json`, {
+    body: JSON.stringify({ schemaVersion: 1, members }), etag: '"members"',
+  });
+  return upstream;
+}
+
+async function accessApi(upstream) {
+  const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+  await store.reload();
+  const activity = {
+    record() {},
+    drain: async () => {},
+    query: async () => ({ events: [], truncated: false }),
+    downloads: async () => ({ events: [] }),
+  };
+  const api = makeApi({
+    store, activity, lastActive: new Map(), publicEndpoint: 'http://proxy.example.org',
+  });
+  const call = (actorId, method, target, body, headers = {}) => {
+    const url = new URL(target, 'http://proxy.example.org');
+    return api.handle({
+      method, path: url.pathname, query: url.searchParams, headers: new Headers(headers),
+      body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
+    });
+  };
+  return { store, call };
+}
+
+const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
+
+describe('activity filters the API takes', () => {
+  test('an unparseable or reversed date is invalid, not a server error', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const q of ['from=yesterday', 'to=nope', 'from=2026-02-02T00:00:00Z&to=2026-02-01T00:00:00Z']) {
+      for (const path of ['/-/admin/activity', '/-/admin/activity/downloads']) {
+        await assert.rejects(call('admin', 'GET', `${path}?${q}`), { code: 'invalid' }, `${path}?${q}`);
+      }
+    }
+    const ok = await call('admin', 'GET', '/-/admin/activity?from=2026-02-01T00:00:00Z&to=2026-02-02T00:00:00Z');
+    assert.equal(ok.status, 200);
+  });
+
+  test('a limit that is not a positive integer is invalid, not an empty page', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const limit of ['abc', '0', '-5', '2.5']) {
+      await assert.rejects(call('admin', 'GET', `/-/admin/activity?limit=${limit}`), { code: 'invalid' }, limit);
+    }
+    assert.equal((await call('admin', 'GET', '/-/admin/activity?limit=50')).status, 200);
+  });
+});
+
+describe('a collection keeps a runner who can act on it', () => {
+  test('a member list whose only runner is still invited is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'invited' }],
+      [{ personId: 'r1', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
+      members: [{ personId: 'r1', access: 'look' }, { personId: 'r2', access: 'run' }],
+    }, { 'if-match': '"members"' }), { code: 'last_runner' });
+  });
+
+  test('pausing or resetting the last active runner is refused, a paused one is not', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'paused' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    await assert.rejects(call('admin', 'POST', '/-/admin/people/r1/reset'), { code: 'last_runner' });
+    assert.equal((await call('admin', 'POST', '/-/admin/people/r2/reset')).status, 200);
+  });
+
+  test('two pauses at once on one proxy cannot both pass the check', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    const results = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(results.find((r) => r.status === 'rejected').reason.code, 'last_runner');
+  });
+
+  test('an edit queued behind its caller\'s own pause is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'a2', status: 'active', admin: true }, { id: 'p1', status: 'active' }],
+      [],
+    );
+    const { call } = await accessApi(upstream);
+    // a2 is checked and queued while still an active admin, then paused ahead of their turn.
+    const [pause, queued] = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/a2', { status: 'paused' }),
+      call('a2', 'PATCH', '/-/admin/people/p1', { status: 'paused' }),
+    ]);
+    assert.equal(pause.status, 'fulfilled');
+    assert.equal(queued.reason?.code, 'forbidden');
+  });
+});
+
+describe('two proxies cannot strand a collection between them', () => {
+  const twoRunners = () => memoryUpstream(
+    [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+    [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+  );
+  const stored = (upstream, key) => JSON.parse(upstream.objects.get(key).body);
+  const personKey = (id) => `${SETTINGS_UP}/Settings/access/people/${id}.json`;
+  const membersKey = `t-${COLLECTION}/Collections/${UUID}/members.json`;
+
+  // The second proxy has not polled since the first paused r1, so its own
+  // check still counts r1 as an active runner.
+  test('a pause that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+      { code: 'last_runner' });
+    assert.equal(stored(upstream, personKey('r2')).status, 'active', 'the pause was not put back');
+  });
+
+  test('a member removal that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access === 'run'),
+      'the removal was not put back');
+  });
+
+  // Runs `between` once, right after the next write to `key` lands and before
+  // the writer reloads: the other proxy acting in that gap.
+  const afterWrite = (upstream, key, between) => {
+    const put = upstream.put;
+    upstream.put = async (bucket, k, ...rest) => {
+      const written = await put(bucket, k, ...rest);
+      if (`${bucket}/${k}` === key) { upstream.put = put; await between(); }
+      return written;
+    };
+  };
+
+  test('a rollback leaves the other proxy\'s later reset in place', async () => {
+    const KEY = { accessKeyId: 'SPKR1AAAAAAAAAAAAAAAA', wrappedSecret: 'v1.x.y' };
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active', keys: [KEY] }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' })).status, 200);
+    afterWrite(upstream, personKey('r1'), async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'POST', '/-/admin/people/r1/reset')).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    const r1 = stored(upstream, personKey('r1'));
+    assert.equal(r1.status, 'invited', 'the rollback undid the reset');
+    assert.ok(r1.keys.every((k) => k.retiredAt), 'the retired key works again');
+  });
+
+  test('a member rollback leaves the other proxy\'s later grant in place', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }, { id: 'p3', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    afterWrite(upstream, membersKey, async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members/p3`,
+        { access: 'look' })).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'p3'),
+      'the rollback undid the grant');
+  });
+});
+
+describe('a poll that cannot load a change fails closed', () => {
+  test('a newer generation that will not load holds the store behind until it does', { timeout: 5000 }, async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5 });
+    await store.reload();
+    assert.equal(store.behind(), false);
+
+    // Another proxy bumps the counter, and this one can then read nothing else.
+    upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+      body: '{"generation":1}', etag: '"g1"',
+    });
+    const listBuckets = upstream.listBuckets;
+    upstream.listBuckets = async () => { throw new Error('upstream is down for this'); };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+    store.start();
+    try {
+      while (!store.behind()) await tick();
+      upstream.listBuckets = listBuckets;
+      while (store.behind()) await tick();
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
+
+  test('a failing periodic full reload still notices a newer generation', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    // Every poll is due a full reload.
+    const store = makeStore({
+      upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5, fullReloadMs: 0,
+    });
+    await store.reload();
+    const listBuckets = upstream.listBuckets;
+    let failures = 0;
+    upstream.listBuckets = async () => { failures += 1; throw new Error('upstream is down for this'); };
+    const until = async (done, message) => {
+      for (let i = 0; i < 400 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.ok(done(), message);
+    };
+    store.start();
+    try {
+      // Nothing is known to have changed, so failing reloads alone refuse nobody.
+      await until(() => failures >= 3, 'no full reload was attempted');
+      assert.equal(store.behind(), false);
+
+      upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+        body: '{"generation":1}', etag: '"g1"',
+      });
+      await until(() => store.behind(), 'a known change was never noticed');
+      upstream.listBuckets = listBuckets;
+      await until(() => !store.behind(), 'still behind after a reload succeeded');
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
+
+  test('an edit queued before the store fell behind is refused when its turn comes', async () => {
+    const upstream = memoryUpstream([admin, { id: 'p1', status: 'active' }, { id: 'p2', status: 'active' }], []);
+    const { store, call } = await accessApi(upstream);
+    // The first edit's write waits for the test, holding the queue behind it.
+    const put = upstream.put;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let holding = false;
+    upstream.put = async (...args) => {
+      upstream.put = put;
+      holding = true;
+      await held;
+      return put(...args);
+    };
+    const first = call('admin', 'PATCH', '/-/admin/people/p1', { name: 'P one' });
+    const queued = call('admin', 'PATCH', '/-/admin/people/p2', { status: 'paused' });
+    while (!holding) await new Promise((resolve) => setImmediate(resolve));
+    store.behind = () => true;
+    release();
+    assert.equal((await first).status, 200);
+    await assert.rejects(queued, { code: 'forbidden' });
+    const p2 = JSON.parse(upstream.objects.get(`${SETTINGS_UP}/Settings/access/people/p2.json`).body);
+    assert.equal(p2.status, 'active');
+  });
+});
+
+describe('a reload already in flight cannot undo a write', () => {
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  test('a reload that read a person before their pause does not bring them back', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+    await store.reload();
+
+    // Person reads answer with what was stored when they were asked, but only
+    // when the test lets them.
+    const read = upstream.getJson;
+    const held = [];
+    let holding = true;
+    upstream.getJson = async (bucket, key) => {
+      const value = await read(bucket, key);
+      if (holding && key.includes('/people/')) await new Promise((resolve) => held.push(resolve));
+      return value;
+    };
+
+    const stale = store.reload();
+    while (held.length === 0) await turn();
+    const saving = store.savePerson({ ...store.person('p1'), status: 'paused' }, store.person('p1').etag);
+    while (store.person('p1').status !== 'paused') await turn();
+
+    held.splice(0).forEach((release) => release());
+    await stale;
+    assert.equal(store.person('p1').status, 'paused', 'the older reload put the person back');
+
+    holding = false;
+    held.splice(0).forEach((release) => release());
+    await saving;
+    assert.equal(store.person('p1').status, 'paused');
+  });
+});
