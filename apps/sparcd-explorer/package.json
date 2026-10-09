@@ -12,9 +12,11 @@
     "lint": "uv run python -m compileall -q notebooks",
     "install:py": "uv sync",
     "test:wasm": "node tests/remember_connection_wasm.mjs dist",
-    "test:connection": "uv run python -m unittest discover -s tests -p 'test_*.py'"
+    "test:connection": "uv run python -m unittest discover -s tests -p 'test_*.py'",
+    "test:pyodide": "node tests/unit_tests_pyodide.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1"
+    "@playwright/test": "^1.62.1",
+    "pyodide": "0.27.7"
   }
 }
