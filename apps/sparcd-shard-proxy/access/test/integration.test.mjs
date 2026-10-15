@@ -527,6 +527,15 @@ describe('the access table', () => {
     );
   });
 
+  test('the Tagger\'s original baseline is writable at identify, once', async () => {
+    const key = `${prefixA}/.sparcd-tagger-original/media.csv`;
+    const write = () => people.carol.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'first', headers: { 'if-none-match': '*' },
+    });
+    assert.equal((await write()).status, 200);
+    assert.equal((await write()).status, 412);
+  });
+
   test('DeleteObject needs run', async () => {
     const key = `${prefixA}/doomed.jpg`;
     await people.bob.s3().send(new PutObjectCommand({ Bucket: BUCKET_A, Key: key, Body: 'x' }));

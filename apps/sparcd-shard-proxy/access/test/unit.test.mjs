@@ -354,6 +354,19 @@ describe('the access table', () => {
     );
   });
 
+  test('identify writes the original baseline, and nothing else beside it', () => {
+    const original = `${base}/Uploads/2026.01.01.00.00.00_jo/.sparcd-tagger-original`;
+    for (const leaf of ['media.csv', 'observations.csv', 'deployments.csv', 'UploadMeta.json', 'manifest.json']) {
+      assert.equal(at('PutObject', `${original}/${leaf}`, 'identify').allow, true, leaf);
+    }
+    for (const key of [
+      `${original}/a.jpg`,
+      `${original}/sub/media.csv`,
+      `${original}/../media.csv`,
+    ]) assert.equal(at('PutObject', key, 'identify').allow, false, key);
+    assert.equal(at('PutObject', `${original}/media.csv`, 'look').allow, false);
+  });
+
   test('the rule itself refuses dot segments for every Tagger file', () => {
     const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
     for (const leaf of ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json']) {
@@ -479,6 +492,7 @@ describe('activity shaping', () => {
   test('writes split into identify, upload and list-change', () => {
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/media.csv' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'upload');
+    assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/.sparcd-tagger-original/manifest.json' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: true, key: 'Settings/locations.json' }), 'list-change');
     assert.equal(eventKind('DeleteObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'collection-change');
   });
