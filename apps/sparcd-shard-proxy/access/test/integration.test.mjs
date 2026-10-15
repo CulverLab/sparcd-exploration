@@ -890,6 +890,15 @@ describe('signature handling', () => {
     assert.equal(await res.text(), `image-bytes-${UUID_A}`);
   });
 
+  test('a presigned GET honours the unsigned Range a video seek sends', async () => {
+    const res = await fetch(await people.alice.presign(path, 900), {
+      headers: { range: 'bytes=6-10' },
+    });
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), `bytes 6-10/${`image-bytes-${UUID_A}`.length}`);
+    assert.equal(await res.text(), 'bytes');
+  });
+
   test('a presigned GET still obeys the rules', async () => {
     const res = await fetch(await people.bob.presign(`/${BUCKET_B}/${prefixB}/a.jpg`, 900));
     assert.equal(res.status, 403);

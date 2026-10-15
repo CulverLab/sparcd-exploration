@@ -53,7 +53,7 @@ const EXPOSE_HEADERS =
 
 // Ordinary headers that may travel upstream — and only when the caller signed
 // them. An unsigned `if-match` is an attacker's precondition on someone else's
-// captured request; an unsigned `range` is a different read.
+// captured request. `range` on a GET is the one exception, in proxyFetch.
 const FORWARD_HEADERS = new Set([
   'content-type', 'content-md5', 'cache-control', 'content-disposition',
   'content-encoding', 'content-language', 'expires',
@@ -878,7 +878,10 @@ export async function createAccessProxy(input) {
       if (AMZ_ACCEPT_AND_DROP.has(name)) continue;
       // A header the caller did not sign is a header someone else added to a
       // captured request, so it does not travel even when it is on the list.
-      if (!signedHeaders.has(name)) continue;
+      // `range` on a GET only narrows a read the signature already allows, and
+      // a presigned URL signs nothing but `host`, so a video seeking through
+      // one always sends it unsigned.
+      if (!signedHeaders.has(name) && !(name === 'range' && req.method === 'GET')) continue;
       if (!(FORWARD_HEADERS.has(name) || forwardableAmz(name))) continue;
       // The caller's signature was verified against the value they sent; the
       // quotes come off only here, after that check and before re-signing.
