@@ -10,6 +10,7 @@ import {
   DeleteObjectCommand, ListObjectsV2Command, HeadBucketCommand,
   CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import {
   startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest, rawTarget,
@@ -868,6 +869,16 @@ describe('signature handling', () => {
     const tooLong = await fetch(await people.alice.presign(path, 7200));
     assert.equal(tooLong.status, 403);
     assert.match(await tooLong.text(), /exceeds one hour/);
+  });
+
+  test('a presigned GET from the AWS SDK presigner works', async () => {
+    const url = await getSignedUrl(
+      people.alice.s3(), new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }),
+      { expiresIn: 3600 },
+    );
+    const res = await fetch(url);
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.equal(await res.text(), `image-bytes-${UUID_A}`);
   });
 
   test('a presigned GET still obeys the rules', async () => {

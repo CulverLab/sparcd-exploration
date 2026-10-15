@@ -24,6 +24,9 @@ const KNOWN_QUERY = new Set([
   'response-content-language', 'response-expires',
   'X-Amz-Algorithm', 'X-Amz-Credential', 'X-Amz-Date', 'X-Amz-Expires',
   'X-Amz-SignedHeaders', 'X-Amz-Signature', 'X-Amz-Security-Token',
+  // The AWS SDK presigner hoists its `UNSIGNED-PAYLOAD` declaration into the
+  // query, so every presigned URL from the browser apps carries it.
+  'X-Amz-Content-Sha256',
 ]);
 
 /**

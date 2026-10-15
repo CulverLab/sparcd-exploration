@@ -42,6 +42,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1058.0
         version: 3.1058.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.1058.0
+        version: 3.1058.0
 
   apps/sparcd-tagger:
     dependencies:
