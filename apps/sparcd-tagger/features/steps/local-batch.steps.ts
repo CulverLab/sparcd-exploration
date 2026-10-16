@@ -178,6 +178,16 @@ Then('it offers "Done · back to Uploader"', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Done · back to Uploader' })).toBeVisible();
 });
 
+When('the local batch identity is cleared', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('#user').fill('');
+  await page.getByRole('button', { name: 'Tag', exact: true }).click();
+});
+
+Then('"Done · back to Uploader" is enabled', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Done · back to Uploader' })).toBeEnabled();
+});
+
 Then('there is no Browse, History, Sync or Snapshots', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Browse', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveCount(0);
@@ -261,4 +271,78 @@ Then('the workspace says there is no such batch', async ({ page }) => {
 
 Then('it explains that the two tools only share batches on the same origin', async ({ page }) => {
   await expect(page.getByText(/served from the same origin/)).toBeVisible();
+});
+
+Then('the returned batch remains untagged with a blank identity', async ({ page }) => {
+  const batch = await readBatch(page);
+  expect(batch?.taggerUser).toBe('');
+  expect(Object.values(batch?.tags ?? {}).every(tags => tags.length === 0)).toBe(true);
+});
+
+Given('the next local {word} save fails', async ({ page }, stage: string) => {
+  if (stage === 'draft') {
+    await page.evaluate(async () => {
+      const path = '/sparcd-exploration/tagger/src/lib/drafts.ts';
+      const { useDraftStore } = await import(/* @vite-ignore */ path);
+      const original = useDraftStore.getState().flushSaves;
+      useDraftStore.setState({ flushSaves: async () => {
+        useDraftStore.setState({ flushSaves: original });
+        throw new DOMException('Draft save failed', 'QuotaExceededError');
+      } });
+    });
+  } else {
+    // Fail the actual shared-record transaction, after the debounced tag write
+    // has settled, then restore storage so the next activation can succeed.
+    await page.evaluate(() => {
+      const original = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        if (this.name === 'records' && this.transaction.db.name === 'sparcd-flip') {
+          IDBObjectStore.prototype.put = original;
+          throw new DOMException('Shared record save failed', 'QuotaExceededError');
+        }
+        return original.apply(this, args);
+      };
+    });
+  }
+});
+
+When('Done is attempted while saving fails', async ({ page }) => {
+  await page.getByRole('button', { name: 'Done · back to Uploader', exact: true }).click();
+});
+
+Then('the return failure is announced and Done can be retried', async ({ page }) => {
+  const error = page.getByRole('alert');
+  await expect(error).toContainText('Could not save the batch for the Uploader.');
+  const button = page.getByRole('button', { name: 'Done · back to Uploader', exact: true });
+  await expect(button).toBeEnabled();
+  await expect(button).toBeFocused();
+  await expect(button).toHaveAccessibleDescription(/Your edits are still open here/);
+  expect(page.url()).toContain(`batch=${BATCH_ID}`);
+  await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
+});
+
+When('Done is activated twice while a save is pending', async ({ page }) => {
+  await page.evaluate(async () => {
+    const path = '/sparcd-exploration/tagger/src/lib/drafts.ts';
+    const { useDraftStore } = await import(/* @vite-ignore */ path);
+    const original = useDraftStore.getState().flushSaves;
+    const state = window as unknown as { doneSaveCalls: number; releaseDoneSave: () => void };
+    state.doneSaveCalls = 0;
+    const gate = new Promise<void>(resolve => { state.releaseDoneSave = resolve; });
+    useDraftStore.setState({ flushSaves: async () => { state.doneSaveCalls++; await gate; await original(); } });
+    // Let React subscribe the injected gate before activating the live handler.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    const button = Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Done · back to Uploader')!;
+    button.click(); button.click();
+  });
+  await expect(page.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled();
+});
+
+Then('only one handoff is started and the batch returns with its tags', async ({ page }) => {
+  expect(await page.evaluate(() => (window as unknown as { doneSaveCalls: number }).doneSaveCalls)).toBe(1);
+  await page.evaluate(() => (window as unknown as { releaseDoneSave: () => void }).releaseDoneSave());
+  await page.waitForURL(/\/uploader\//);
+  expect(page.url()).toContain(RETURN_URL);
+  const batch = await readBatch(page);
+  expect(batch?.tags['SDCARD/IMG002.JPG'][0].commonName).toBe('Coyote');
 });
