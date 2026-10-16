@@ -1,3 +1,4 @@
+import { InspectPreview } from './InspectPreview';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { FlipObservation } from '@sparcd/flip';
@@ -114,6 +115,7 @@ function Row({
   timeZone,
   onSelect,
   onRemove,
+  onPreview,
 }: {
   entry: FileEntry;
   validation?: FileValidation;
@@ -123,6 +125,7 @@ function Row({
   timeZone: string;
   onSelect: () => void;
   onRemove: () => void;
+  onPreview: () => void;
 }) {
   const dims = entry.width && entry.height ? `${entry.width}×${entry.height}` : '—';
   const isVideo = entry.mediaKind === 'video';
@@ -135,11 +138,14 @@ function Row({
   return (
     <div
       onClick={onSelect}
+      onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button')) onPreview(); }}
       className={`grid ${COLS} items-center gap-3 px-3 h-full border-b border-ruleSoft cursor-default ${
         active ? 'bg-mark' : 'hover:bg-panelHover'
       }`}
     >
-      <Thumb blob={entry.thumbnail} isVideo={isVideo} />
+      <button type="button" aria-label={`Preview ${entry.fileName}`} title="Preview file"
+        className="relative min-h-11 min-w-11 grid place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        onClick={(e) => { e.stopPropagation(); onPreview(); }}><Thumb blob={entry.thumbnail} isVideo={isVideo} /><span aria-hidden className="absolute bottom-0 right-0 bg-panel text-ink border border-rule text-[12px] px-0.5">↗</span></button>
       <span className="min-w-0">
         <span className="block truncate font-mono text-[13px] text-ink" title={entry.relPath}>
           {entry.fileName}
@@ -204,6 +210,15 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
   const showTags = useStore((s) => s.flipId !== null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const preview = allFiles.find((f) => f.id === previewId);
+  useEffect(() => { if (previewId && !preview) setPreviewId(null); }, [previewId, preview]);
+  function openPreview(id: string) {
+    const focused = document.activeElement as HTMLElement;
+    opener.current = parentRef.current?.contains(focused) ? focused : parentRef.current;
+    setPreviewId(id);
+  }
 
   const estimates = useCaptureEstimates();
   const timeZone = useStore((s) => s.uploadTimeZone);
@@ -233,7 +248,9 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
   }, [files.length, active]);
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'j' || e.key === 'ArrowDown') {
+    if (previewId || e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' && files[active]) { e.preventDefault(); openPreview(files[active].id); }
+    else if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault();
       setActive((i) => Math.min(i + 1, files.length - 1));
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
@@ -247,6 +264,8 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
 
   return (
     <div className="border border-rule bg-panel">
+      {preview && <InspectPreview key={preview.id} entry={preview} onClose={() => setPreviewId(null)} opener={opener.current} fallback={parentRef.current} />}
+      <p className="px-3 py-2 text-[12px] text-inkSoft">Select a thumbnail to preview, double-click a file, or press Enter in the file list.</p>
       <div className="overflow-x-auto">
         <div
           className={`grid ${COLS} items-center gap-3 px-3 h-9 border-b border-rule font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft`}
@@ -263,7 +282,7 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
           ref={parentRef}
           tabIndex={0}
           onKeyDown={onKeyDown}
-          aria-label="Scanned files. J and K move, D drops the active file."
+          aria-label="Scanned files. Enter previews, J and K move, D drops the active file."
           className="h-[60dvh] overflow-y-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2"
         >
           {files.length === 0 && severityFilter && (
@@ -289,6 +308,7 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
                     timeZone={timeZone}
                     onSelect={() => setActive(vi.index)}
                     onRemove={() => removeFile(f.id)}
+                    onPreview={() => openPreview(f.id)}
                   />
                 </div>
               );

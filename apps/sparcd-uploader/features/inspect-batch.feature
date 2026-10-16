@@ -117,3 +117,43 @@ Feature: Inspect the scanned batch before assigning it
     Given a batch of several thousand files
     Then the list scrolls smoothly with only the visible rows drawn
     And files can be stepped through and dropped from the keyboard
+
+  @unmapped
+  Scenario: Local image preview owns focus and history without changing the batch
+    When "Show files" is chosen
+    Then the fitted image preview supports keyboard, dismissal and offline viewing
+
+  @unmapped
+  Scenario: Inspect video preview and narrow screen remain read only
+    When "Show files" is chosen
+    Then the video preview is fitted and reports decoding errors without changing the batch
+
+  @unmapped
+  Scenario: Preview releases local media and closes when its file is removed
+    When "Show files" is chosen
+    Then removing the previewed file closes it and releases its local URL
+
+  @unmapped
+  Scenario: Playable original video keeps native controls and stops on close
+    When "Show files" is chosen
+    Then the original local video plays offline and stops on close
+
+  @unmapped
+  Scenario: Preview preserves a filtered virtual list and restores fallback focus
+    When "Show files" is chosen
+    Then preview preserves filter and scroll and restores focus after virtualization
+
+  @unmapped
+  Scenario: Preview loading and image errors are safe in either theme
+    When "Show files" is chosen
+    Then preview loading and image errors leave the batch intact in light and dark themes
+
+  @unmapped
+  Scenario: Resetting a batch closes its preview and releases the media
+    When "Show files" is chosen
+    Then resetting the batch closes the preview and releases the local media
+
+  @unmapped
+  Scenario: Long preview filenames remain readable at phone width
+    When "Show files" is chosen
+    Then a long preview filename wraps at phone width in both themes
