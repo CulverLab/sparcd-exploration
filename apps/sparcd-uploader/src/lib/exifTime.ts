@@ -40,18 +40,14 @@ export function formatNaive(n: NaiveDateTime): string {
   );
 }
 
-/** Naive components as a `<input type="datetime-local" step="1">` value. The
- *  canonical `YYYY-MM-DDTHH:mm:ss` form is exactly what such an input accepts. */
-export function naiveToInputValue(n: NaiveDateTime): string {
-  return formatNaive(n);
-}
+// A space (manually typed, `YYYY-MM-DD HH:mm:ss`) or a literal `T` (pasted
+// from `formatNaive`'s own output) both separate the date and time half.
+const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
 
-const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
-
-/** Parse a `datetime-local` value into raw naive components — NO timezone math
- *  (the chosen upload zone is applied later at bundle build, same as EXIF). Some
- *  browsers omit seconds at step=1, so seconds default to 0. Returns null on an
- *  empty or malformed value so the caller clears the override. */
+/** Parse a manually-typed capture time into raw naive components — NO
+ *  timezone math (the chosen upload zone is applied later at bundle build,
+ *  same as EXIF). Seconds are optional and default to 0. Returns null on an
+ *  empty or malformed value; callers decide what that means for them. */
 export function inputValueToNaive(v: string): NaiveDateTime | null {
   const m = INPUT_RE.exec(v.trim());
   if (!m) return null;

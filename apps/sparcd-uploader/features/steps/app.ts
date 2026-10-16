@@ -607,22 +607,6 @@ export class App {
     await this.page.keyboard.press('d');
   }
 
-  /** Set a React-controlled input's value the way a real keystroke would. */
-  async setControlledValue(selector: string, value: string, nth = 0): Promise<void> {
-    await this.page.evaluate(
-      ({ selector, value, nth }) => {
-        const el = document.querySelectorAll(selector)[nth] as HTMLInputElement;
-        const setter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value',
-        )!.set!;
-        setter.call(el, value);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      },
-      { selector, value, nth },
-    );
-  }
-
   /** The Inspect summary line ("2 of 4 files processed · 1.2 KB · 1 warnings"). */
   async batchSummary(): Promise<string> {
     return this.page.evaluate(() => {
