@@ -685,11 +685,23 @@ export class App {
   }
 
   async continueToAssign(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Continue' }).click();
+    const control = this.page.getByRole('button', { name: 'Continue' });
+    await expect(control).toBeEnabled();
+    // Pointer hover stops the Inspect attention animation before the click.
+    await control.hover({ force: true });
+    await control.click();
     await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
   }
 
+  async fillRequiredUploadComments(): Promise<void> {
+    const mountain = this.page.getByLabel('Mountain range (required)', { exact: true });
+    const collected = this.page.getByLabel('Date collected (required)', { exact: true });
+    if (!(await mountain.inputValue()).trim()) await mountain.fill('Santa Catalina Mountains');
+    if (!(await collected.inputValue())) await collected.fill('2026-10-01');
+  }
+
   async continueToUpload(): Promise<void> {
+    await this.fillRequiredUploadComments();
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Upload', exact: true })).toBeVisible();
   }
@@ -710,8 +722,7 @@ export class App {
     opts: { deployment?: string; uploader?: string; description?: string } = {},
   ): Promise<void> {
     await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
-    await this.page.getByRole('button', { name: 'Continue' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    await this.continueToAssign();
     await this.waitForCollections();
     await this.chooseDeployment(opts.deployment ?? 'Bear Canyon');
     await this.setUploader(opts.uploader ?? 'Ada Lovelace');
@@ -727,8 +738,7 @@ export class App {
     await expect(this.fileListToggle()).toBeVisible();
     await this.rescan(this.lastSpecs);
     await expect(this.fileListToggle()).toBeVisible();
-    await this.page.getByRole('button', { name: 'Continue' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    await this.continueToAssign();
     await this.continueToUpload();
   }
 
@@ -783,7 +793,7 @@ export class App {
   }
 
   async setDescription(text: string): Promise<void> {
-    await this.page.getByPlaceholder('What this batch is — site, date range, notes.').fill(text);
+    await this.page.getByPlaceholder('Additional notes about this batch.').fill(text);
   }
 
   timeZoneSelect(): Locator {

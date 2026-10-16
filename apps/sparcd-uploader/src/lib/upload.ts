@@ -1367,6 +1367,7 @@ export function runStreamingUpload(
       uploaderSlug: build.uploaderSlug,
       collectionUuid: build.collectionUuid,
       description: build.description,
+      requiredComments: build.requiredComments,
       startedAt: new Date().toISOString(),
       totalFiles: build.files.length,
       totalBytes: build.files.reduce((n, f) => n + f.size, 0),

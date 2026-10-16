@@ -981,7 +981,7 @@ Then(
     await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
-      app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
+      app.page.getByPlaceholder('Additional notes about this batch.'),
     ).toHaveValue('');
     await expect(app.timeZoneSelect()).toHaveValue('');
     await app.chooseDeployment('Bear Canyon');

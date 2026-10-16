@@ -13,6 +13,7 @@ Given('a scanned batch has reached the Assign step', async ({ app }) => {
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  await app.fillRequiredUploadComments();
 });
 
 // --- the upload timezone ---------------------------------------------------

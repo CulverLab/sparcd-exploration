@@ -158,3 +158,45 @@ Feature: Assign a batch to a collection and a camera location
     And every image and every observation in each upload points at that location
     # One batch per upload, so "each batch" here is two SD cards uploaded one
     # after the other, each to its own camera location.
+
+  @unmapped
+  Scenario Outline: Required upload comments are generated separately from optional notes
+    When the mountain range and collection date are entered with notes "<notes>"
+    Then the required comment is previewed without changing the optional notes
+    And the generated comment and optional notes are written to upload metadata
+
+    Examples:
+      | notes                     |
+      | Camera moved after rain   |
+      |                           |
+
+  @unmapped
+  Scenario: Both required comment fields must be entered before continuing
+    When the other assignment fields are complete but both comment fields are empty
+    Then Continue explains that a mountain range is required
+    When a whitespace-only mountain range is entered
+    Then Continue explains that a mountain range is required
+    When a mountain range is entered without a collection date
+    Then Continue explains that a collection date is required
+    When the collection date is entered
+    Then Continue allows the Upload step
+    When the mountain range is cleared with the collection date still entered
+    Then Continue explains that a mountain range is required
+
+  @unmapped
+  Scenario: The original preview date is preserved when upload starts after midnight
+    When the mountain range and collection date are entered with notes "Overnight batch"
+    Then the required comment is previewed without changing the optional notes
+    When the next day arrives while Assign stays open
+    Then the comment preview keeps its original upload date
+    When Upload is opened and another day arrives before starting
+    Then the Upload preview keeps the original preview date
+    When the batch is uploaded after midnight
+    Then the saved comment matches the Upload preview and keeps its original preview date
+
+  @unmapped
+  Scenario: The images shorthand counts all valid uploaded files including videos
+    Given the batch contains one JPEG and two MP4 videos
+    When the mountain range and collection date are entered with notes "Mixed batch"
+    Then the required comment is previewed without changing the optional notes
+    And the generated comment and optional notes are written to upload metadata

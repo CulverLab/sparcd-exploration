@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
-import { jpegAt, standardBatch } from './batches';
-import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign } from './helpers';
+import { clipVideo, jpegAt, standardBatch } from './batches';
+import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign, rescanFromAssign } from './helpers';
 import {
   BUCKET_A,
   BUCKET_B,
@@ -64,6 +64,8 @@ Then('the Continue gate never has to ask for a collection', async ({ app }) => {
   await expect(app.continueButton()).toHaveAttribute('title', 'Select a deployment location first');
   await app.setUploader('Ada Lovelace');
   await app.chooseDeployment('Bear Canyon');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
 });
@@ -338,7 +340,7 @@ Then("it is stored as the upload's description in the upload's metadata file", a
   await app.startRun();
   await app.waitForRunPhase('done');
   const uploadMeta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
-  expect(uploadMeta?.body).toContain('"description": "South ridge, July retrieval"');
+  expect(JSON.parse(uploadMeta!.body).description).toMatch(/ - South ridge, July retrieval$/);
 });
 
 Given('a collection, a deployment and an uploader identity have been chosen', async ({ app }) => {
@@ -434,4 +436,119 @@ Then('every image and every observation in each upload points at that location',
     expect(media).toHaveLength(u.files);
     expect(new Set(observations.map((r) => r[3]))).toEqual(new Set(media.map((r) => r[0])));
   }
+});
+
+When('the mountain range and collection date are entered with notes {string}', async ({ app }, notes: string) => {
+  await app.page.clock.setSystemTime(new Date('2026-10-14T12:00:00-04:00'));
+  app.notes.optionalComments = notes;
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+  await app.page.getByLabel('Comments (optional)', { exact: true }).fill(notes);
+});
+
+Then('the required comment is previewed without changing the optional notes', async ({ app }) => {
+  const notes = app.notes.optionalComments as string;
+  const prefix = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01';
+  const expected = notes ? `${prefix} - ${notes}` : prefix;
+  app.notes.expectedComment = expected;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
+  await expect(app.page.getByLabel('Comments (optional)', { exact: true })).toHaveValue(notes);
+});
+
+Then('the generated comment and optional notes are written to upload metadata', async ({ app }) => {
+  const expected = app.notes.expectedComment as string;
+  await app.continueToUpload();
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+  const meta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
+  expect(meta).toBeDefined();
+  expect(JSON.parse(meta!.body).description).toBe(expected);
+});
+
+When('the other assignment fields are complete but both comment fields are empty', async ({ app }) => {
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('');
+  await expect(app.page.getByLabel('Mountain range (required)', { exact: true })).toHaveAttribute('required', '');
+  await expect(app.page.getByLabel('Date collected (required)', { exact: true })).toHaveAttribute('required', '');
+});
+
+When('a whitespace-only mountain range is entered', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('   ');
+});
+
+When('a mountain range is entered without a collection date', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+});
+
+When('the collection date is entered', async ({ app }) => {
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+});
+
+When('the mountain range is cleared with the collection date still entered', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('');
+});
+
+Then('Continue explains that a mountain range is required', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.continueButton()).toHaveAttribute('aria-describedby', 'upload-continue-help');
+  await expect(app.page.locator('#upload-continue-help')).toContainText('Enter a mountain range before continuing');
+});
+
+Then('Continue explains that a collection date is required', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.page.locator('#upload-continue-help')).toContainText('Enter a date collected before continuing');
+});
+
+Then('Continue allows the Upload step', async ({ app }) => {
+  await expect(app.continueButton()).toBeEnabled();
+  await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
+});
+
+When('the next day arrives while Assign stays open', async ({ app }) => {
+  await app.page.clock.setSystemTime(new Date('2026-10-15T00:00:01-04:00'));
+});
+
+Then("the comment preview keeps its original upload date", async ({ app }) => {
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(
+    'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch',
+  );
+});
+
+When('Upload is opened and another day arrives before starting', async ({ app }) => {
+  await app.continueToUpload();
+  await app.page.clock.setSystemTime(new Date('2026-10-16T00:00:01-04:00'));
+  await app.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+});
+
+Then('the Upload preview keeps the original preview date', async ({ app }) => {
+  const expected = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch';
+  app.notes.expectedComment = expected;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
+});
+
+When('the batch is uploaded after midnight', async ({ app }) => {
+  await app.dryRunCheckbox().uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+});
+
+Then('the saved comment matches the Upload preview and keeps its original preview date', async ({ app }) => {
+  const expected = app.notes.expectedComment as string;
+  const meta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
+  expect(JSON.parse(meta!.body).description).toBe(expected);
+  const batch = (await app.readBatchRecords())[0];
+  expect(String(batch.startedAt).slice(0, 10)).toBe('2026-10-16');
+  expect(batch.requiredComments).toMatchObject({ previewUploadDate: '2026-10-14' });
+  await app.page.clock.setSystemTime(new Date('2026-10-17T12:00:00-04:00'));
+  await app.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
+});
+
+Given('the batch contains one JPEG and two MP4 videos', async ({ app }) => {
+  await rescanFromAssign(app, [standardBatch()[0], clipVideo('FIRST.MP4'), clipVideo('SECOND.MP4')]);
 });

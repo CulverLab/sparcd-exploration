@@ -176,7 +176,7 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.rescan(app.notes.sourceSpecs as FileSpec[]);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
+  await app.continueToAssign();
   await app.continueToUpload();
   await app.dryRunCheckbox().uncheck();
   await app.startRun();
@@ -382,7 +382,7 @@ Then(
   async ({ app }) => {
     const meta = JSON.parse(metadataPuts(app).find((p) => p.key.endsWith('UploadMeta.json'))!.body);
     expect(meta.uploadUser).toBe('ada-lovelace');
-    expect(meta.description).toBe('July retrieval');
+    expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - \d+ images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01 - July retrieval$/);
     const deployments = metadataPuts(app).find((p) => p.key.endsWith('deployments.csv'))!;
     expect(deployments.body).toContain(`${UUID_A}:BEAR1`);
     // Nothing on the History screen asked for any of it.

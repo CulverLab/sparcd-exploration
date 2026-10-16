@@ -109,7 +109,7 @@ export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<voi
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
+  await app.continueToAssign();
   await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
   await app.continueToUpload();
 }
