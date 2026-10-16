@@ -22,7 +22,7 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 | `local-drafts-and-recovery.feature` | Local drafts, unsaved counts, History recovery, discard | `@unmapped` |
 | `sync-identifications-to-the-collection.feature` | Preview, dry-run gate, conflict, snapshot, conditional write, resume | `@H2` `@H3` + `@unmapped` |
 | `restore-a-previous-snapshot.feature` | Snapshot listing and restore (supports the M2 constraint) | `@unmapped` |
-| `correct-capture-times.feature` | Whole-upload, selection and per-image time correction | `@unmapped` |
+| `correct-capture-times.feature` | Whole-upload and selection time correction; direct single-image selection in grid/list and narrow touch controls, deselection, timestamp eligibility, and filtered targets (#521) | `@unmapped` |
 | `F4-location-visibility.feature` | What the tool actually reveals about camera locations | `@F4` |
 | `local-batch.feature` | Tagging a batch the Uploader handed over, with no connection | `@A1` `@unmapped` |
 

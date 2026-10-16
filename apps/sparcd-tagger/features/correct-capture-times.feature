@@ -50,8 +50,24 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then time shift selection is disabled with an explanation
 
   @unmapped
-  Scenario: A selection containing exactly one frame can be shifted
-    Given exactly one image is selected
+  Scenario Outline: A selection containing exactly one frame can be shifted
+    Given exactly one image is selected in the "<view>" Overview
+    When that one-frame selection is shifted
+    Then exactly that selected image receives a time override
+    When that one-image selection is toggled off
+    Then time shift selection is disabled with an explanation
+
+    Examples:
+      | view   |
+      | grid   |
+      | list   |
+      | narrow |
+
+  @unmapped
+  Scenario: Selection time shift excludes images hidden by a filter
+    Given several images are selected
+    When the selection is filtered down to IMG001.JPG
+    Then time shift selection is enabled
     When that one-frame selection is shifted
     Then exactly that selected image receives a time override
 

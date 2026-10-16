@@ -33,7 +33,7 @@ import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
-import { rangeSet, toggleIndex, burstIndexSet, visibleRangeSet } from '../lib/selection';
+import { rangeSet, toggleIndex, toggleSelectionWithFocus, burstIndexSet, visibleRangeSet } from '../lib/selection';
 import { effectiveOf } from '../lib/effective';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
@@ -703,8 +703,8 @@ export function Tag() {
       setFocus(i);
     } else if (mods.meta) {
       // Seed from the focused image so the first Cmd-click yields a two-image
-      // selection (Finder-style) instead of restarting from the clicked one.
-      setSelected(toggleIndex(selected.size ? selected : new Set([focus]), i));
+      // selection (Finder-style). Clicking the focused image selects just it.
+      setSelected(toggleSelectionWithFocus(selected, focus, i));
       setFocus(i);
       setAnchor(i);
     } else {

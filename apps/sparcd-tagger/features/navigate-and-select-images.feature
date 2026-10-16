@@ -172,6 +172,13 @@ Feature: Move through an upload and choose which images an action applies to
     And command- or control-clicking adds or removes a single image from the selection
 
   @unmapped
+  Scenario: Starting an additive selection on another image keeps the focused image
+    Given the Overview is shown
+    When an image is clicked
+    Then only that image is selected as the focus
+    And an additive click on another image selects both images
+
+  @unmapped
   Scenario: A selection can be built and cleared without a pointer
     Then a selected count is shown in place of the position when a selection exists
     And pressing Escape clears the selection

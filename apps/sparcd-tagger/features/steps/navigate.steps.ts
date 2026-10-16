@@ -600,6 +600,14 @@ Then('only that image is selected as the focus', async ({ page }) => {
   await expect(positionReadout(page)).toHaveText('2 / 6');
 });
 
+Then('an additive click on another image selects both images', async ({ page }) => {
+  await gridCell(page, 'IMG004.JPG').click({ modifiers: ['ControlOrMeta'] });
+  await expect(positionReadout(page)).toHaveText('2 selected');
+  await expect(selectedTiles(page)).toHaveCount(2);
+  expect(await selectedTiles(page).evaluateAll((els) => els.map((el) => el.getAttribute('title'))))
+    .toEqual(['IMG002.JPG', 'IMG004.JPG']);
+});
+
 Then('shift-clicking another image selects the whole range between them', async ({ page }) => {
   await gridCell(page, 'IMG004.JPG').click({ modifiers: ['Shift'] });
   await expect(positionReadout(page)).toHaveText('3 selected');

@@ -200,10 +200,41 @@ Then('time shift selection is disabled with an explanation', async ({ page }) =>
   await expect(page.locator('#scoped-time-unavailable')).toBeVisible();
 });
 
-Given('exactly one image is selected', async ({ page }) => {
-  await focusFrame(page, 'IMG001.JPG');
-  await gridCell(page, 'IMG002.JPG').click({ modifiers: ['Meta'] });
-  await gridCell(page, 'IMG001.JPG').click({ modifiers: ['Meta'] });
+Given('exactly one image is selected in the {string} Overview', async ({ page }, view: string) => {
+  if (view === 'list') await page.getByRole('button', { name: '☰ List' }).click();
+  if (view === 'narrow') await page.setViewportSize({ width: 390, height: 844 });
+  const image = view === 'list' ? listRow(page, 'IMG001.JPG') : gridCell(page, 'IMG001.JPG');
+  await image.click();
+  const shift = page.getByRole('button', { name: 'Time shift selection', exact: true });
+  await expect(shift).toBeDisabled();
+  if (view === 'narrow') {
+    await page.getByRole('button', { name: '＋ Select', exact: true }).click();
+  } else {
+    await image.click({ modifiers: ['ControlOrMeta'] });
+  }
+  await expect(positionReadout(page)).toHaveText('1 selected');
+  await expect(shift).toBeEnabled();
+});
+
+When('that one-image selection is toggled off', async ({ page }) => {
+  const touchToggle = page.getByRole('button', { name: '✓ In selection', exact: true });
+  if (await touchToggle.isVisible()) {
+    await touchToggle.click();
+  } else {
+    const tile = gridCell(page, 'IMG001.JPG');
+    const image = await tile.count() ? tile : listRow(page, 'IMG001.JPG');
+    await image.click({ modifiers: ['ControlOrMeta'] });
+  }
+  await expect(positionReadout(page)).not.toContainText('selected');
+});
+
+When('the selection is filtered down to IMG001.JPG', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Search in').selectOption('filename');
+  await page.getByLabel('Match text').fill('IMG001.JPG');
+  await page.getByLabel('Match text').press('Escape');
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG003.JPG')).toHaveCount(0);
   await expect(positionReadout(page)).toHaveText('1 selected');
 });
 
@@ -221,8 +252,8 @@ Then('exactly that selected image receives a time override', async ({ page }) =>
     timeOverride: string | null;
   }[];
   expect(drafts).toHaveLength(1);
-  expect(drafts[0].mediaPath).toMatch(/IMG002\.JPG$/);
-  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:30.000-07:00');
+  expect(drafts[0].mediaPath).toMatch(/IMG001\.JPG$/);
+  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:00.000-07:00');
 });
 
 Then('the unselected frames are unchanged', async ({ page }) => {
@@ -343,7 +374,7 @@ Then('the dialog states that they are', async ({ page }) => {
 
 Given('only timestamp-less images are selected', async ({ page }) => {
   await gridCell(page, 'VID001.MP4').click();
-  await gridCell(page, 'VID001.MP4').click({ modifiers: ['Shift'] });
+  await gridCell(page, 'VID001.MP4').click({ modifiers: ['ControlOrMeta'] });
   await expect(positionReadout(page)).toHaveText('1 selected');
 });
 

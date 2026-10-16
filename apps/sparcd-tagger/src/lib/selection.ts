@@ -30,6 +30,16 @@ export function toggleIndex(set: Set<number>, i: number): Set<number> {
   return next;
 }
 
+/** Seed the first additive selection with the focused and clicked images.
+ * Clicking the focused image selects it once; subsequent clicks toggle normally. */
+export function toggleSelectionWithFocus(
+  selected: Set<number>,
+  focus: number,
+  clicked: number,
+): Set<number> {
+  return selected.size ? toggleIndex(selected, clicked) : new Set([focus, clicked]);
+}
+
 /** Every image index in the burst that contains image `i` (whole-burst select). */
 export function burstIndexSet(g: BurstGrouping, i: number): Set<number> {
   const b = g.bursts[g.burstOf[i]];
