@@ -521,7 +521,7 @@ export function History() {
 
               {isPreparing && verifyProgress && (
                 <p className="font-body text-[12px] text-inkSoft">
-                  Verifying <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
+                  Resuming <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
                   <span className="font-mono text-ink">{verifyProgress.total}</span> files against
                   the original folder…
                 </p>
@@ -538,7 +538,7 @@ export function History() {
                         (!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
                       }`}
                     >
-                      {isPreparing ? 'Verifying…' : 'Resume upload'}
+                      {isPreparing ? 'Resuming…' : 'Resume upload'}
                     </button>
                     {!online && !offlineResumeOverride && (
                       <button
