@@ -52,7 +52,7 @@ const cardFor = (app: App, uploader: string) => uploadCards(app).filter({ hasTex
 /** Turn the global dry-run flag off; it only has a control on the Upload step. */
 async function switchDryRunOff(app: App): Promise<void> {
   await app.gotoSection('New upload');
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await selectCollectionInHistory(app);
 }
 
@@ -339,7 +339,7 @@ Then('no snapshot and no change is written', async ({ app }) => {
 Given('dry run is switched on', async ({ app }) => {
   app.notes.dryRun = true;
   await app.gotoSection('New upload');
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await selectCollectionInHistory(app);
 });
 

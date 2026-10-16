@@ -66,7 +66,7 @@ When('a real upload starts', async ({ app }) => {
   app.s3.putDelayMs = 150;
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -100,7 +100,7 @@ Then("each file's state is updated as it lands", async ({ app }) => {
 When('a dry run is started', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace' });
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -176,9 +176,9 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.rescan(app.notes.sourceSpecs as FileSpec[]);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
+  await app.continueToAssign();
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   await app.gotoSection('History');
@@ -208,7 +208,7 @@ Given('a second upload was cut off part-way while nobody was watching', async ({
   let media = 0;
   app.s3.holdPut = (_bucket, key) =>
     !METADATA_NAMES.some((n) => key.endsWith(n)) && ++media > 2;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect
     .poll(async () => (await app.readFileRecords())
@@ -382,7 +382,7 @@ Then(
   async ({ app }) => {
     const meta = JSON.parse(metadataPuts(app).find((p) => p.key.endsWith('UploadMeta.json'))!.body);
     expect(meta.uploadUser).toBe('ada-lovelace');
-    expect(meta.description).toBe('July retrieval');
+    expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - \d+ images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01 - July retrieval$/);
     const deployments = metadataPuts(app).find((p) => p.key.endsWith('deployments.csv'))!;
     expect(deployments.body).toContain(`${UUID_A}:BEAR1`);
     // Nothing on the History screen asked for any of it.
@@ -413,6 +413,10 @@ Given('another batch is set up for a different collection and location', async (
   await app.openCollectionList();
   await app.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: COLLECTION_B_NAME }).click();
   await app.chooseDeployment('Coyote Wash');
+  await app.page.locator('#mountainRange').fill('UNRELATED mountain range');
+  await app.page.locator('#dateCollected').fill('2025-02-03');
+  await app.page.locator('#uploadTimeZone').selectOption('Europe/Paris');
+  await app.setDescription('UNRELATED notes');
   await app.continueToUpload();
   await expect(app.page.locator('dl').filter({ hasText: 'Collection' })).toContainText(COLLECTION_B_NAME);
   // The Resume folder dialog hands back the interrupted upload's source folder.
@@ -594,7 +598,7 @@ Given('an upload was interrupted before every file had been examined', async ({ 
   await app.dropFolder(app.notes.sourceSpecs as FileSpec[]);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -708,7 +712,7 @@ Given('a fresh upload is running in the background', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -782,4 +786,54 @@ When('the folder picker is opened and dismissed without selecting a folder', asy
 
 Then('the Resume button becomes available again', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeEnabled();
+});
+
+Given('the saved summary has {word} fields', async ({ app }, metadata: string) => {
+  app.notes.summaryMetadata = metadata;
+  const [batch] = await app.readBatchRecords();
+  app.notes.savedSummary = batch;
+  if (metadata !== 'legacy') return;
+  await app.page.evaluate(async id => {
+    const request = indexedDB.open('sparcd-uploader');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const transaction = db.transaction('batches', 'readwrite');
+    const store = transaction.objectStore('batches');
+    const read = store.get(id);
+    read.onsuccess = () => {
+      const batch = read.result;
+      delete batch.requiredComments;
+      batch.description = '';
+      store.put(batch);
+    };
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+  }, batch.id);
+});
+
+Then('the resumed summary uses saved metadata without current wizard values', async ({ app }) => {
+  const summary = app.page.locator('dl').filter({ hasText: 'Collection' });
+  await expect(summary).toContainText('America/Phoenix');
+  await expect(summary).not.toContainText('UNRELATED');
+  await expect(summary).not.toContainText('Europe/Paris');
+  await expect(summary).not.toContainText('2025-02-03');
+  const comments = app.page.getByRole('button', { name: 'Comments', exact: true });
+  if (app.notes.summaryMetadata === 'legacy') {
+    await expect(summary).not.toContainText('Mountain range');
+    await expect(summary).not.toContainText('Date collected');
+    await expect(comments).toHaveCount(0);
+  } else {
+    await expect(summary).toContainText('Santa Catalina Mountains');
+    await expect(summary).toContainText('2026-10-01');
+    await expect(comments).toHaveAttribute('aria-expanded', 'false');
+    await comments.focus();
+    await app.page.keyboard.press('Enter');
+    await expect(comments.locator('..')).toContainText('July retrieval');
+    await expect(comments.locator('..')).not.toContainText('UNRELATED notes');
+    await app.page.keyboard.press('Space');
+    await expect(comments).toHaveAttribute('aria-expanded', 'false');
+  }
 });

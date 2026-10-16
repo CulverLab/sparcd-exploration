@@ -199,7 +199,7 @@ Given('two tabs are connected and one has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Cross-tab logout' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -209,7 +209,7 @@ Given('the connected uploader has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Connection replacement' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });

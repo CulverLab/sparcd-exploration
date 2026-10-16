@@ -231,8 +231,10 @@ export function Tag() {
       replacement?.focus();
     });
   }, [view]);
-  useEffect(() => {
-    if (view === 'focus') requestAnimationFrame(() => focusCloseRef.current?.focus());
+  useLayoutEffect(() => {
+    // Establish initial dialog focus before paint. A deferred callback can
+    // otherwise steal focus back after the user has focused the video.
+    if (view === 'focus') focusCloseRef.current?.focus();
   }, [view]);
   useEffect(() => {
     if (view !== 'focus') return;

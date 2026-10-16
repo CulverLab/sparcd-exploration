@@ -13,6 +13,7 @@ Given('a scanned batch has reached the Assign step', async ({ app }) => {
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  await app.fillRequiredUploadComments();
 });
 
 // --- the upload timezone ---------------------------------------------------
@@ -91,7 +92,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
 
 When('the batch is published', async ({ app }) => {
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });

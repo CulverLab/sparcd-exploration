@@ -219,7 +219,7 @@ Given('its upload failed part-way', async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
   expect(app.s3.puts.some((p) => p.key.endsWith('observations.csv'))).toBe(false);
@@ -333,14 +333,14 @@ Then('a "Reopen batch" button is offered instead of the file list', async ({ app
 
 When('it is published', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 When('a dry run of it is started', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await app.startRun();
   await app.waitForRunPhase('done');
 });

@@ -195,7 +195,7 @@ When('a folder is supplied by dragging it onto the page', async ({ app }) => {
 
 Then('no lasting access to that folder is retained', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   const batches = await app.readBatchRecords();

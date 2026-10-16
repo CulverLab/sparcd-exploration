@@ -804,12 +804,20 @@ Given('a video is being played or scrubbed', async ({ page }) => {
   await focusFrame(page, 'VID001.MP4');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.locator('video[controls]')).toBeVisible();
-  await page.locator('video[controls]').focus();
+  const video = page.locator('video[controls]');
+  await video.focus();
+  // Focus must remain owned by the media after deferred rendering settles.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(video).toBeFocused();
 });
 
 Then('its own playback keys work and no tagging keystroke fires', async ({ page }) => {
+  const video = page.locator('video[controls]');
+  await expect(video).toBeFocused();
   await page.keyboard.press('d');
+  await expect(video).toBeFocused();
   await page.keyboard.press(' ');
+  await expect(video).toBeFocused();
   await expect(page.getByText(/unsaved · discard/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
   await expect(gridCell(page, 'VID001.MP4')).toHaveAttribute('title', 'VID001.MP4');

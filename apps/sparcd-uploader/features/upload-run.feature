@@ -31,6 +31,25 @@ Feature: Upload and publish a batch
     And no storage path is shown
 
   @unmapped
+  Scenario: Comments are shown collapsed, expanding to reveal them
+    Given the upload has not been started
+    Then the Comments control is collapsed
+    When "Comments" is chosen
+    Then the comments are shown
+
+  @unmapped
+  Scenario: No Comments control appears when there are no comments
+    Given the upload has no comments
+    Then there is no Comments control
+
+  @unmapped
+  Scenario: Test the upload is tucked under a collapsed Advanced control
+    Given the upload has not been started
+    Then the "Test the upload" option is tucked under a collapsed Advanced control
+    When "Advanced" is chosen
+    Then the "Test the upload" option becomes available
+
+  @unmapped
   Scenario: A real upload is offered by default; a dry run is opt-in
     Given the upload has not been started
     Then dry run is switched off by default
@@ -159,8 +178,9 @@ Feature: Upload and publish a batch
     And a pinned number defaults to 8
     And a pinned number can be changed while a run is in progress
     # Choosing automatic or pinned is a Settings choice, remembered for the
-    # rest of the browser session. Once pinned, the slider also appears on the
-    # Upload step and stays live while a run is going.
+    # rest of the browser session. #494 removed the Upload step's own copy of
+    # this control; Settings' slider stays live and adjustable from any
+    # section while a run is going, since the run survives navigation.
 
   @unmapped
   Scenario: A momentary failure is retried before the file is given up on

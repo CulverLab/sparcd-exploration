@@ -423,6 +423,7 @@ export async function ensureBundle(
     bucket: batch.targetBucket,
     uploaderSlug: batch.uploaderSlug,
     description: batch.description,
+    requiredComments: batch.requiredComments,
     timeZone: batch.uploadTimeZone,
     uploadPath: batch.uploadPrefix,
     startedAt: new Date(batch.startedAt),

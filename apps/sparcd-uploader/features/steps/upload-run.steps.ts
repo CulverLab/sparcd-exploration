@@ -45,15 +45,63 @@ Then('it names the collection, the location with its id, and the chosen folder',
     divs.map((d) => [d.querySelector('dt')?.textContent, (d.querySelector('dd') as HTMLElement | null)?.innerText]),
   );
   expect(rows).toEqual([
-    ['Collection', COLLECTION_A_NAME],
+    ['Collection', `${COLLECTION_A_NAME} (${UUID_A})`],
     // Names repeat across the registry, so the id rides along as in the picker.
     ['Location', 'Bear Canyon\nBEAR1'],
-    ['Folder', FOLDER],
+    ['Source folder', FOLDER],
+    ['Timezone', 'America/Phoenix'],
+    ['Mountain range', 'Santa Catalina Mountains'],
+    ['Date collected', '2026-10-01'],
   ]);
 });
 
 Then('no storage path is shown', async ({ app }) => {
   await expect(app.page.getByText(/Collections\//)).toHaveCount(0);
+});
+
+// --- collapsed disclosures (#494) -------------------------------------------
+
+const commentsControl = (app: App) => app.page.getByRole('button', { name: 'Comments', exact: true });
+const advancedControl = (app: App) => app.page.getByRole('button', { name: 'Advanced', exact: true });
+// Optional notes appear only inside the Comments disclosure on Upload.
+const commentsPanel = (app: App) => commentsControl(app).locator('..');
+
+Then('the Comments control is collapsed', async ({ app }) => {
+  await expect(commentsControl(app)).toHaveAttribute('aria-expanded', 'false');
+  await expect(commentsPanel(app)).not.toContainText('July retrieval');
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).not.toContainText('July retrieval');
+  await expect(app.page.getByText('July retrieval', { exact: true })).toHaveCount(0);
+});
+
+When('"Comments" is chosen', async ({ app }) => {
+  await commentsControl(app).click();
+});
+
+Then('the comments are shown', async ({ app }) => {
+  await expect(commentsPanel(app)).toContainText('July retrieval');
+});
+
+Given('the upload has no comments', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.setDescription('');
+  await app.continueToUpload();
+});
+
+Then('there is no Comments control', async ({ app }) => {
+  await expect(commentsControl(app)).toHaveCount(0);
+});
+
+Then('the "Test the upload" option is tucked under a collapsed Advanced control', async ({ app }) => {
+  await expect(app.page.getByLabel('Test the upload, nothing is written')).toHaveCount(0);
+  await expect(advancedControl(app)).toHaveAttribute('aria-expanded', 'false');
+});
+
+When('"Advanced" is chosen', async ({ app }) => {
+  await advancedControl(app).click();
+});
+
+Then('the "Test the upload" option becomes available', async ({ app }) => {
+  await expect(app.page.getByLabel('Test the upload, nothing is written')).toBeVisible();
 });
 
 // --- dry run ---------------------------------------------------------------
@@ -121,7 +169,7 @@ async function expectDryRunPill(app: App): Promise<void> {
 }
 
 Then('dry run is switched off by default', async ({ app }) => {
-  await expect(app.dryRunCheckbox()).not.toBeChecked();
+  await expect((await app.dryRunCheckbox())).not.toBeChecked();
   await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
 });
 
@@ -154,10 +202,10 @@ Then('the real upload action is available despite the offline signal', async ({ 
 });
 
 Then('dry run remains available while offline', async ({ app }) => {
-  await expect(app.dryRunCheckbox()).toBeEnabled();
-  await app.dryRunCheckbox().check();
+  await expect((await app.dryRunCheckbox())).toBeEnabled();
+  await (await app.dryRunCheckbox()).check();
   await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeEnabled();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
 });
 
 Then('the retry action is disabled while offline', async ({ app }) => {
@@ -190,7 +238,7 @@ Then('the upload status says it is online and real upload is enabled', async ({ 
 });
 
 When('the operator opts into a dry run', async ({ app }) => {
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
 });
 
 When('the dry run is started', async ({ app }) => {
@@ -249,13 +297,13 @@ Then('the admin setup guidance note is shown with the collection ID', async ({ a
 // --- a complete real upload ------------------------------------------------
 
 When('a real upload is started and completes', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 When('a real upload completes without dismissing its confirmation', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('done', { timeout: 60_000 });
 });
@@ -289,7 +337,7 @@ Then("each stored object's path is the one recorded for it in the media table", 
 // --- verification ----------------------------------------------------------
 
 When('a file has been uploaded', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -330,7 +378,7 @@ Then(
     };
     const metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
     await rescanFromUpload(app, standardBatch());
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect(app.page.getByText(/final review: size mismatch/).first()).toBeVisible({ timeout: 60_000 });
     const rows = await app.page.locator('div[data-index]').allTextContents();
@@ -352,7 +400,7 @@ Then(
     };
     const metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
     await rescanFromUpload(app, standardBatch());
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect(app.page.getByText(/final review: digest contract broken/).first()).toBeVisible({ timeout: 60_000 });
     await expect(app.runPhase()).toHaveText('partial');
@@ -371,7 +419,7 @@ Given('some files are still being examined', async ({ app }) => {
 });
 
 When('the upload is started', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   app.notes.putsAtStart = app.s3.puts.length;
   await app.startRun();
 });
@@ -398,7 +446,7 @@ Then('the tool reports how many files are still being examined', async ({ app })
 Given('a streaming run has started with one file still being examined', async ({ app }) => {
   await app.holdInspect('BIG_CLIP.MP4');
   await app.rescanFromUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
 });
 
@@ -428,7 +476,7 @@ Then('the run completes successfully', async ({ app }) => {
 // --- publish ordering ------------------------------------------------------
 
 Given('a real upload is running', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
 });
 
@@ -458,7 +506,7 @@ Given('a real upload in which some files failed after their retries', async ({ a
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0002.JPG') ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 });
@@ -486,7 +534,7 @@ Then(
 
 Given('a real upload that was cancelled or ended in failure', async ({ app }) => {
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -508,7 +556,7 @@ Then('nothing reading the collection sees a new upload there', async ({ app }) =
 // --- untagged batches ------------------------------------------------------
 
 When('a batch is published', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -558,7 +606,7 @@ Then(
 
 Given('a run is in progress', async ({ app }) => {
   app.s3.putDelayMs = 1000;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
 });
@@ -592,22 +640,24 @@ Then(
 // --- concurrency -----------------------------------------------------------
 
 Then('the number of parallel uploads is chosen automatically by default', async ({ app }) => {
-  // The Upload step reports "adaptive" instead of a slider (the row also holds
-  // the 'i' explainer, so the text isn't an exact match).
-  await expect(app.page.getByText(/^adaptive/)).toBeVisible();
-  await expect(app.page.getByRole('button', { name: 'About adaptive concurrency' })).toBeVisible();
-  await expect(app.laneSlider()).toHaveCount(0);
   await app.gotoSection('Settings');
   await expect(app.concurrencyModeRadio('Adaptive (default)')).toBeChecked();
+  await expect(app.laneSlider()).toHaveCount(0);
   await app.gotoSection('New upload');
 });
 
 Then('it can be pinned to a number between 4 and 32', async ({ app }) => {
-  await app.pinConcurrency(12);
+  // #494 removed the Upload step's own copy of this control — check it in
+  // Settings, the only place it lives now, instead of relying on
+  // pinConcurrency's own navigate-back-to-Upload side effect.
+  await app.gotoSection('Settings');
+  await app.concurrencyModeRadio('Manual').check();
   const slider = app.laneSlider();
   await expect(slider).toHaveAttribute('min', '4');
   await expect(slider).toHaveAttribute('max', '32');
+  await slider.fill('12');
   await expect(slider).toHaveValue('12');
+  await app.gotoSection('New upload');
 });
 
 Then('a pinned number defaults to 8', async ({ app }) => {
@@ -620,21 +670,27 @@ Then('a pinned number defaults to 8', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.walkToUploadStep();
-  await app.pinConcurrency();
+  await app.gotoSection('Settings');
+  await app.concurrencyModeRadio('Manual').check();
   await expect(app.laneSlider()).toHaveValue('8');
+  await app.gotoSection('New upload');
 });
 
 Then('a pinned number can be changed while a run is in progress', async ({ app }) => {
   app.s3.putDelayMs = 1000;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
-  await expect(app.dryRunCheckbox()).toBeDisabled();
-  // The lane pool re-reads the setting on every pull, so the slider stays live
-  // — unlike the run options, which are locked once bytes are moving.
+  await expect((await app.dryRunCheckbox())).toBeDisabled();
+  // The lane pool re-reads the setting on every pull, and the run survives
+  // section navigation, so Settings' slider stays live and adjustable from
+  // anywhere while a run is going — unlike the run options, which are locked
+  // once bytes are moving.
+  await app.gotoSection('Settings');
   await expect(app.laneSlider()).toBeEnabled();
   await app.laneSlider().fill('6');
   await expect(app.laneSlider()).toHaveValue('6');
+  await app.gotoSection('New upload');
   await app.waitForRunPhase('done', 120_000);
 });
 
@@ -648,7 +704,7 @@ Given(
         ? { status: 503, code: 'ServiceUnavailable', message: 'try later' }
         : undefined,
     );
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
   },
@@ -679,7 +735,7 @@ Given(
         ? { status: 400, code: 'InvalidRequest', message: 'refused' }
         : undefined,
     );
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
     app.s3.putHooks.length = 0;
@@ -723,7 +779,7 @@ Given('a run pauses because the network is reported offline', async ({ app }) =>
   await app.page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
   });
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.logText(), { timeout: 30_000 }).toContain('waiting for network');
 });
@@ -771,7 +827,7 @@ Given('ordinary focus events do not correct the stuck flag', async ({ app }) => 
 When(
   'the run has waited through several poll intervals with no change to the flag',
   async ({ app }) => {
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect.poll(() => app.logText()).toContain('waiting for network');
     for (let elapsed = 30_000; elapsed <= 90_000; elapsed += 30_000) {
@@ -803,7 +859,7 @@ Given("a file's upload is refused for lack of permission", async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0000.JPG') ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -823,7 +879,7 @@ Given('ten files have failed independently in one run', async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('.JPG') ? { status: 400, code: 'InvalidRequest', message: 'nope' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -867,7 +923,7 @@ Given(
     });
 
     app.notes.systemicAbortStartedAt = Date.now();
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
   },
 );
@@ -898,7 +954,7 @@ Given('an object already exists at a path the run intends to write', async ({ ap
 });
 
 When('a fresh upload attempts that write', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -918,7 +974,7 @@ Then('the run reports the failure', async ({ app }) => {
 
 When('a run is cancelled', async ({ app }) => {
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   app.notes.storedAtCancel = app.s3.writtenKeys();
@@ -952,7 +1008,7 @@ Then('the Back button is disabled', async ({ app }) => {
 });
 
 Given('a real upload has completed', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -981,7 +1037,7 @@ Then(
     await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
-      app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
+      app.page.getByPlaceholder('Additional notes about this batch.'),
     ).toHaveValue('');
     await expect(app.timeZoneSelect()).toHaveValue('');
     await app.chooseDeployment('Bear Canyon');
@@ -1025,7 +1081,7 @@ Given('the first media blob is held at the mock', async ({ app }) => {
 });
 
 When('a real upload is started', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -1125,7 +1181,7 @@ Given('a real upload of many images is under way', async ({ app }) => {
     held.add(name);
     return true;
   };
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   // Count every click from here on, so a Then can show nobody restarted it.
   await app.page.evaluate(() => {
