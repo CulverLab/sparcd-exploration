@@ -116,10 +116,13 @@ function UploadConnectivityStatus({
   );
 }
 
+class MissingUploadRecordError extends Error {}
+
 export function Upload() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const setStep = useStore((s) => s.setStep);
+  const setSection = useStore((s) => s.setSection);
   const files = useStore((s) => s.files);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const description = useStore((s) => s.uploadDescription);
@@ -196,6 +199,13 @@ export function Upload() {
   const running =
     snap?.phase === 'preparing' || snap?.phase === 'blobs' || snap?.phase === 'metadata';
   const anyRunActive = activeRunReserved;
+  // Once a real run reaches done/partial/error, Back must stay blocked too —
+  // not just while it's in flight — or the same files can be resubmitted from
+  // Assign to the same destination (#477), bypassing Next batch/Retry/Resume,
+  // the paths that actually guard against a duplicate upload (AL2). A
+  // completed dry run writes nothing, so it's exempt: going back to adjust
+  // Assign and dry-running again is safe.
+  const backBlocked = anyRunActive || (!!snap && !snap.dryRun);
   // Dismisses the "upload complete" popup — reset whenever a new run (fresh
   // start or resume) begins, so a later run's completion pops it again.
   const [completeDismissed, setCompleteDismissed] = useState(false);
@@ -316,6 +326,7 @@ export function Upload() {
 
   const retryPending = useRef(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryRecordMissing, setRetryRecordMissing] = useState(false);
   const retryFailed = useCallback(async () => {
     // The async gap before resumeUpload's first emit leaves the Retry button
     // mounted — guard so a double-click can't start two concurrent runs.
@@ -334,7 +345,7 @@ export function Upload() {
       // and the guard must unlatch or Retry is dead until a reload.
       const session = await loadSession(snap.sessionId);
       if (!connectionIsCurrent()) return;
-      if (!session) throw new Error('no saved record for this session');
+      if (!session) throw new MissingUploadRecordError('no saved record for this session');
       const attached = attachedRef.current ?? new Map(files.map((f) => [f.relPath, f.file]));
 
       // A run that hit the systemic-failure abort (e.g. many concurrent
@@ -373,7 +384,7 @@ export function Upload() {
 
       const finalSession = session.bundle ? session : await loadSession(snap.sessionId);
       if (!connectionIsCurrent()) return;
-      if (!finalSession) throw new Error('session record disappeared while resolving it');
+      if (!finalSession) throw new MissingUploadRecordError('session record disappeared while resolving it');
 
       const config = useStore.getState().s3Config;
       if (!config || !connectionIsCurrent()) return;
@@ -390,9 +401,12 @@ export function Upload() {
       );
       setActiveRun(run, generation);
     } catch (e) {
-      setRetryError(
-        `Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
-      );
+      const missing = e instanceof MissingUploadRecordError;
+      setRetryRecordMissing(missing);
+      const guidance = missing
+        ? 'The saved upload record is missing. Automatic recovery is unavailable. Do not start a new upload of these files; contact your administrator to check the original destination.'
+        : 'Retry again, or open History and resume this saved upload. This batch remains locked to prevent duplicate uploads.';
+      setRetryError(`Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). ${guidance}`);
     } finally {
       retryPending.current = false;
     }
@@ -569,19 +583,46 @@ export function Upload() {
       {/* Live run */}
       {snap && <RunMonitor snap={snap} />}
 
-      {retryError && <Note tone="warn" message={retryError} />}
+      {retryError && (
+        <div className="space-y-2">
+          <Note tone="warn" message={retryError} />
+          {!retryRecordMissing && (
+            <button onClick={() => setSection('history')} className="border border-ink px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+              Open History
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-ruleSoft pt-5">
-        <button
-          onClick={() => setStep('assign')}
-          disabled={anyRunActive}
-          className={`border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-            anyRunActive ? 'opacity-40 cursor-not-allowed' : ''
-          }`}
+        <div
+          role="group"
+          aria-label="Back navigation"
+          tabIndex={backBlocked ? 0 : undefined}
+          aria-describedby={backBlocked ? 'upload-back-help' : undefined}
+          className="max-w-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          Back
-        </button>
+          <button
+            onClick={() => setStep('assign')}
+            disabled={backBlocked}
+            aria-describedby={backBlocked ? 'upload-back-help' : undefined}
+            className={`border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+              backBlocked ? 'opacity-40 cursor-not-allowed' : ''
+            }`}
+          >
+            Back
+          </button>
+          {backBlocked && (
+            <p id="upload-back-help" className="text-[12px] text-inkSoft mt-2">
+              {(snap?.dryRun ?? effectiveDryRun) ? 'Back is unavailable while this dry run is active.' : 'Back is unavailable once a real upload starts, to prevent duplicate uploads.'}{' '}
+              {(snap?.dryRun ?? effectiveDryRun) ? 'Cancel or wait for the dry run to finish before returning to Assign.'
+                : running ? 'Cancel to pause this upload; you can resume it afterward.'
+                : snap?.phase === 'done' ? 'Use Next batch to prepare different files.'
+                  : 'Use Retry failed files or Resume upload to continue this batch.'}
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {running ? (

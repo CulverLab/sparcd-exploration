@@ -163,29 +163,6 @@ Then('it shows how many of its files are done and how many failed', async ({ app
   await expect(app.page.getByText(/4 files · .* · 3 done · 1 failed/)).toBeVisible();
 });
 
-Then('only uploads whose metadata was published are marked complete', async ({ app }) => {
-  // A second, unobstructed run of the same folder does publish, and it is the
-  // one that shows as complete. Upload paths are stamped to the second, so
-  // give this run a fresh stamp: started inside the same second as the
-  // partial run, both would target one folder and the second run's
-  // immutable writes would be refused as "Object already exists".
-  app.s3.putHooks.length = 0;
-  app.s3.putDelayMs = 0;
-  await app.page.waitForTimeout(1_100);
-  await app.gotoSection('New upload');
-  await app.page.getByRole('button', { name: 'Back' }).click();
-  await app.page.getByRole('button', { name: 'Back' }).click();
-  await app.rescan(app.notes.sourceSpecs as FileSpec[]);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
-  await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
-  await app.startRun();
-  await app.waitForRunPhase('done');
-  await app.gotoSection('History');
-  await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
-  await expect(app.page.getByText('open', { exact: true })).toHaveCount(1);
-});
-
 // --- found in the morning --------------------------------------------------
 
 Given('one upload finished while nobody was watching', async ({ app }) => {
@@ -744,19 +721,19 @@ Given('the local record for a partial run cannot be read', async ({ app }) => {
 });
 
 Then('the tool reports that the saved record could not be loaded', async ({ app }) => {
-  // retryFailed's catch is now a single generic wrapper covering every
-  // failure mode in its try block (not just a missing session record, since
-  // ensureBundle can fail here too) — the underlying reason still comes
-  // through via the error message it wraps.
+  // The underlying missing-record reason remains visible alongside the
+  // specific guidance; read/rebuild failures have a separate recovery path.
   await expect(
     app.page.getByText(/Couldn't resume this upload \(no saved record for this session\)/),
   ).toBeVisible({ timeout: 60_000 });
 });
 
-Then('it suggests retrying, or going back and starting the upload over', async ({ app }) => {
+Then('it explains missing-record recovery without suggesting a duplicate upload', async ({ app }) => {
   await expect(
-    app.page.getByText(/Retry again; if it keeps failing, go Back and start the upload over\./),
+    app.page.getByText(/The saved upload record is missing\. Automatic recovery is unavailable\./),
   ).toBeVisible();
+  await expect(app.page.getByText(/Do not start a new upload of these files/)).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeDisabled();
 });
 
 Then('repeated clicks never start two runs at once', async ({ app }) => {
@@ -782,4 +759,34 @@ When('the folder picker is opened and dismissed without selecting a folder', asy
 
 Then('the Resume button becomes available again', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeEnabled();
+});
+
+Given('a partial upload record has a temporary read failure', async ({ app }) => {
+  await producePartialRun(app);
+  await app.page.evaluate(() => {
+    const original = IDBObjectStore.prototype.get;
+    (window as unknown as { restoreBatchRead: () => void }).restoreBatchRead = () => { IDBObjectStore.prototype.get = original; };
+    IDBObjectStore.prototype.get = function (key) {
+      if (this.name === 'batches') throw new DOMException('Simulated record read failure', 'UnknownError');
+      return original.call(this, key);
+    };
+  });
+});
+Then('History recovery is offered for the saved upload without unlocking Back', async ({ app }) => {
+  await expect(app.page.getByText(/Retry again, or open History and resume this saved upload/)).toBeVisible();
+  await expect(app.page.getByText(/Automatic recovery is unavailable/)).toHaveCount(0);
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeDisabled();
+  await app.page.evaluate(() => (window as unknown as { restoreBatchRead: () => void }).restoreBatchRead());
+  await app.page.getByRole('button', { name: 'Open History', exact: true }).click();
+  const records = await app.readBatchRecords();
+  expect(records).toHaveLength(1);
+  app.s3.putHooks.length = 0;
+  const resume = app.page.getByRole('button', { name: 'Resume upload', exact: true });
+  await expect(resume).toBeEnabled();
+  await resume.click();
+  await app.waitForRunPhase('done');
+  const after = await app.readBatchRecords();
+  expect(after).toHaveLength(1);
+  expect(after[0].id).toBe(records[0].id);
+  expect(after[0].uploadPrefix).toBe(records[0].uploadPrefix);
 });

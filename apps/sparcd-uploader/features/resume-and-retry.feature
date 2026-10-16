@@ -31,7 +31,11 @@ Feature: Resume an interrupted upload and retry a failed one
     When History is opened
     Then that upload is listed as open
     And it shows how many of its files are done and how many failed
-    And only uploads whose metadata was published are marked complete
+    # The complete-vs-open contrast this used to re-prove with a second run
+    # (Back after completion) is now covered by "Uploads left running
+    # unattended are found either complete or ready to resume" below — #477
+    # closed that path, so a second run here goes through Next batch instead,
+    # which that scenario already does.
 
   @AL1 @AL1-3
   Scenario: Uploads left running unattended are found either complete or ready to resume
@@ -46,6 +50,8 @@ Feature: Resume an interrupted upload and retry a failed one
     Given an interrupted upload has a matching UploadMeta publication already stored
     When it is resumed
     Then the resumed publication completes without replacing that metadata
+    And the Back button is disabled
+    And the Back explanation is keyboard discoverable
     And its completion record is written
 
   @AL1
@@ -196,5 +202,11 @@ Feature: Resume an interrupted upload and retry a failed one
     Given the local record for a partial run cannot be read
     When "Retry failed files" is chosen
     Then the tool reports that the saved record could not be loaded
-    And it suggests retrying, or going back and starting the upload over
+    And it explains missing-record recovery without suggesting a duplicate upload
     And repeated clicks never start two runs at once
+
+  @AL2
+  Scenario: A temporary saved-record read failure offers History recovery without unlocking Back
+    Given a partial upload record has a temporary read failure
+    When "Retry failed files" is chosen
+    Then History recovery is offered for the saved upload without unlocking Back
