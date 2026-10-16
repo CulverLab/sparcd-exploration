@@ -17,7 +17,7 @@ Feature: Identify species before the batch is uploaded
 
   @A1
   Scenario: Tagging is offered as soon as the batch is fit to upload
-    Then "Tag species first" sits between "Start over" and "Continue"
+    Then "Tag species first" sits beside the step indicators, not with "Start over" and "Continue"
     And it is available exactly when Continue is
 
   @unmapped

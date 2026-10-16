@@ -124,8 +124,26 @@ export function NewUpload() {
 
   return (
     <div className="px-6 py-6">
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <StepIndicator current={step} />
+        {step === 'inspect' && (
+          <button
+            disabled={!summary.ready}
+            onClick={() => (flipId ? reopenTagger(flipId) : void handOffToTagger())}
+            title={
+              flipId
+                ? 'Go back to the tagger and pick up where you left off'
+                : summary.ready
+                  ? 'Identify species in the Tagger before uploading'
+                  : 'Resolve files that need attention first'
+            }
+            className={`min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+              summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
+            }`}
+          >
+            {flipId ? 'Edit tags' : 'Tag species first'}
+          </button>
+        )}
       </div>
 
       {step === 'drop' &&
@@ -140,7 +158,7 @@ export function NewUpload() {
 
       {step === 'inspect' && (
         <div className="space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-3">
             <p className="font-body text-[14px] text-inkSoft">
               <span className="font-mono text-ink">{summary.processed}</span> of{' '}
               <span className="font-mono text-ink">{files.length}</span> files processed ·{' '}
@@ -200,34 +218,18 @@ export function NewUpload() {
                 </>
               )}
             </p>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex justify-center gap-3">
               <button
                 onClick={resetBatch}
-                className="flex-1 sm:flex-none min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                className="min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
                 Start over
               </button>
               <button
                 disabled={!summary.ready}
-                onClick={() => (flipId ? reopenTagger(flipId) : void handOffToTagger())}
-                title={
-                  flipId
-                    ? 'Go back to the tagger and pick up where you left off'
-                    : summary.ready
-                      ? 'Identify species in the Tagger before uploading'
-                      : 'Resolve files that need attention first'
-                }
-                className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-                  summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
-                }`}
-              >
-                {flipId ? 'Edit tags' : 'Tag species first'}
-              </button>
-              <button
-                disabled={!summary.ready}
                 onClick={() => setStep('assign')}
                 title={summary.ready ? 'Continue to assignment' : 'Resolve files that need attention first'}
-                className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+                className={`min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
                   summary.ready
                     ? `hover:opacity-90 hover:animate-none ${throb ? 'animate-throb' : ''}`
                     : 'opacity-40 cursor-not-allowed'

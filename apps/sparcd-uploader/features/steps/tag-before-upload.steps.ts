@@ -32,11 +32,17 @@ async function handBack(app: App, id: string): Promise<void> {
 
 // --- offering the hand-off --------------------------------------------------
 
-Then('"Tag species first" sits between "Start over" and "Continue"', async ({ app }) => {
-  const row = app.page.locator('button', { hasText: 'Start over' }).locator('..');
-  const labels = await row.getByRole('button').allInnerTexts();
-  expect(labels).toEqual(['Start over', 'Tag species first', 'Continue']);
-});
+Then(
+  '"Tag species first" sits beside the step indicators, not with "Start over" and "Continue"',
+  async ({ app }) => {
+    // #472: the hand-off action lives in the header, to the right of the step
+    // indicators — not grouped with the two batch-navigation buttons below.
+    const header = app.page.getByRole('list', { name: 'Upload steps' }).locator('..');
+    await expect(header.locator('> *').last()).toHaveText('Tag species first');
+    const actionsRow = app.page.locator('button', { hasText: 'Start over' }).locator('..');
+    await expect(actionsRow.getByRole('button', { name: 'Tag species first' })).toHaveCount(0);
+  },
+);
 
 Then('it is available exactly when Continue is', async ({ app }) => {
   await expect(tagButton(app)).toBeEnabled();
