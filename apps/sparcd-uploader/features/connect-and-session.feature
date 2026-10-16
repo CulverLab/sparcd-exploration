@@ -136,10 +136,10 @@ Feature: Connect the uploader to storage and manage the session
     And no result cached under the previous connection is reused
 
   @unmapped
-  Scenario: The uploader identity starts blank
+  Scenario: A blank uploader identity defaults to the connected access key
     Given no uploader identity has been entered
     When a connection is made
-    Then the uploader identity is blank
+    Then the uploader identity defaults to the access key
     And the header shows the access key only in its masked form
 
   @unmapped

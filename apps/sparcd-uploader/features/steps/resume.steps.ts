@@ -686,7 +686,7 @@ Then('no other upload can be resumed while one is running', async ({ app }) => {
 
 When('the user leaves History and returns while the resume is running', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByText('Uploader identity')).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Connection', exact: true })).toBeVisible();
   await app.gotoSection('History');
 });
 

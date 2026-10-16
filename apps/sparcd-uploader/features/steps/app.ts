@@ -813,6 +813,7 @@ export class App {
    *  `lanes` to pin at whatever the current value is. */
   async pinConcurrency(lanes?: number): Promise<void> {
     await this.gotoSection('Settings');
+    await this.page.getByText('Advanced', { exact: true }).click();
     await this.concurrencyModeRadio('Manual').check();
     if (lanes !== undefined) await this.laneSlider().fill(String(lanes));
     await this.gotoSection('New upload');

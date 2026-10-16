@@ -598,6 +598,7 @@ Then('the number of parallel uploads is chosen automatically by default', async 
   await expect(app.page.getByRole('button', { name: 'About adaptive concurrency' })).toBeVisible();
   await expect(app.laneSlider()).toHaveCount(0);
   await app.gotoSection('Settings');
+  await app.page.getByText('Advanced', { exact: true }).click();
   await expect(app.concurrencyModeRadio('Adaptive (default)')).toBeChecked();
   await app.gotoSection('New upload');
 });

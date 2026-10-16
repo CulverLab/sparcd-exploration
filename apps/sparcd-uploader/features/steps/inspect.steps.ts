@@ -318,7 +318,7 @@ Given('a batch is still being examined', async ({ app }) => {
 
 When('the user switches to History or Settings and back', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByText('Uploader identity')).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Connection', exact: true })).toBeVisible();
   await app.gotoSection('New upload');
   await expect(app.fileListToggle()).toBeVisible();
 });

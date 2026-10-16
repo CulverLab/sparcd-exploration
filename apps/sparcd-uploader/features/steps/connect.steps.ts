@@ -296,6 +296,7 @@ Then('the header shows the endpoint host and a masked form of the access key', a
 
 Then('it shows the uploader identity when one has been set', async ({ app }) => {
   await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
   await app.setUploader('Ada Lovelace');
   await expect(app.page.locator('header')).toContainText('Ada Lovelace');
 });
@@ -351,15 +352,17 @@ When('a connection is made', async ({ app }) => {
   await app.connect();
 });
 
-Then('the uploader identity is blank', async ({ app }) => {
+Then('the uploader identity defaults to the access key', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
 });
 
 Then('the header shows the access key only in its masked form', async ({ app }) => {
   const header = app.page.locator('header');
   await expect(header).toContainText(`${ACCESS_KEY.slice(0, 2)}…${ACCESS_KEY.slice(-2)}`);
   await expect(header).not.toContainText(ACCESS_KEY);
+  expect(await header.evaluate((element) => element.outerHTML)).not.toContain(ACCESS_KEY);
 });
 
 Then('the tool offers no list of permitted buckets of its own', async ({ app }) => {

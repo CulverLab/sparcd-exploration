@@ -186,6 +186,7 @@ type UploaderState = {
   ) => void;
   resetBatch: () => void;
   setUploaderUser: (value: string) => void;
+  ensureUploaderIdentity: () => void;
   setSelectedLocationId: (id: string | null) => void;
   setSelectedBucket: (bucket: string | null) => void;
   setUploadDescription: (value: string) => void;
@@ -647,6 +648,10 @@ export const useStore = create<UploaderState>()(
 
       // Stored raw; sanitizeUploaderUser derives the key-safe slug at point of use.
       setUploaderUser: (value) => set({ uploaderUser: value }),
+      ensureUploaderIdentity: () => {
+        const { uploaderUser, s3Config } = get();
+        if (!uploaderUser.trim() && s3Config) set({ uploaderUser: s3Config.accessKey });
+      },
       setSelectedLocationId: (id) => set({ selectedLocationId: id }),
       setSelectedBucket: (bucket) => set({ selectedBucket: bucket, requireCollectionSelection: false }),
       setUploadDescription: (value) => set({ uploadDescription: value }),

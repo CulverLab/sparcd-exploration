@@ -69,6 +69,7 @@ export function Assign() {
   const setStep = useStore((s) => s.setStep);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
+  const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
   const description = useStore((s) => s.uploadDescription);
   const setDescription = useStore((s) => s.setUploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
@@ -341,6 +342,7 @@ export function Assign() {
           autoComplete="name"
           value={uploaderUser}
           onChange={(e) => setUploaderUser(e.target.value)}
+          onBlur={ensureUploaderIdentity}
           placeholder="e.g. John Doe"
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />

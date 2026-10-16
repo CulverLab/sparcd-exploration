@@ -54,3 +54,22 @@ Feature: Settings and the data the uploader keeps on this machine
     When the appearance is switched between light and dark
     Then the choice survives a page reload
     And it is kept where the other SPARC'd tools on this machine read it
+
+  @unmapped
+  Scenario: Defaults and Advanced are collapsed, independent keyboard disclosures
+    When the settings disclosures are exercised
+    And expanded settings controls fit on a narrow screen
+    Then their preferences survive reopening with both disclosures collapsed
+
+  @unmapped
+  Scenario: Blank identity falls back on blur and custom identity survives reload
+    When identity is cleared, typed, and left blank
+    Then the login default returns on blur
+    When an uploader identity is entered in Settings
+    And the custom identity is reloaded
+    Then the custom identity is preserved
+
+  @unmapped
+  Scenario: Restored and shared sessions supply a missing identity
+    When the blank identity session is restored and shared
+    Then both sessions default identity from the connected access key

@@ -1,5 +1,5 @@
 import { Given, When, Then, expect } from './fixtures';
-import type { App } from './app';
+import { ACCESS_KEY, type App } from './app';
 import { jpegAt, standardBatch } from './batches';
 import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign } from './helpers';
 import {
@@ -320,6 +320,7 @@ Then(
   "the tool shows the key-safe form of it that will appear in the upload's storage path and object names",
   async ({ app }) => {
     await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
     await expect(app.page.getByText(/Used in upload prefixes and object keys as/)).toContainText(
       'ada-lovelace',
     );
@@ -434,4 +435,11 @@ Then('every image and every observation in each upload points at that location',
     expect(media).toHaveLength(u.files);
     expect(new Set(observations.map((r) => r[3]))).toEqual(new Set(media.map((r) => r[0])));
   }
+});
+
+When('the blank Assign identity field loses focus', async ({ app }) => {
+  await app.page.locator('#uploaderUser').press('Tab');
+});
+Then('Assign restores the connected default identity', async ({ app }) => {
+  await expect(app.page.locator('#uploaderUser')).toHaveValue(ACCESS_KEY);
 });
