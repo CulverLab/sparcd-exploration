@@ -11,6 +11,7 @@ import {
   type UploadDraftState,
 } from '../lib/queries';
 import { PawPads } from '../components/Paw';
+import { CollectionButton } from '../components/CollectionButton';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
 
@@ -50,6 +51,7 @@ export function Browse() {
   const draftStates = useUploadDraftStates(connectionId, collectionKey);
 
   const [filter, setFilter] = useState('');
+  const [tooltipCollectionKey, setTooltipCollectionKey] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
 
   const collection = collections.data?.find((c) => c.key === collectionKey);
@@ -106,20 +108,13 @@ export function Browse() {
           <ul>
             {shownCollections.map((c) => (
               <li key={c.key}>
-                <button
-                  onClick={() => selectCollection(c.key)}
-                  aria-current={c.key === collectionKey ? 'true' : undefined}
-                  className={`w-full text-left px-4 py-3.5 border-b border-ruleSoft border-l-2 hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                    c.key === collectionKey ? 'bg-mark border-l-accent' : 'border-l-transparent'
-                  }`}
-                >
-                  <div className={`text-[14px] text-ink ${c.key === collectionKey ? 'font-[600]' : ''}`}>
-                    {c.name ?? c.bucket}
-                  </div>
-                  {c.organization && (
-                    <div className="text-[12px] text-inkSoft font-mono mt-1">{c.organization}</div>
-                  )}
-                </button>
+                <CollectionButton
+                  collection={c}
+                  selected={c.key === collectionKey}
+                  onSelect={() => selectCollection(c.key)}
+                  tooltipActive={tooltipCollectionKey === c.key}
+                  onTooltipActivate={() => setTooltipCollectionKey(c.key)}
+                />
               </li>
             ))}
           </ul>

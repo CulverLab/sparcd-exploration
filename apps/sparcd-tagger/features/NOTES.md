@@ -133,3 +133,5 @@ Marked with trailing comments in the feature files:
 - A successful live sync **clears the whole-upload time shift**, because the
   shift has been baked into the stored capture times; leaving it would shift
   them twice on the next sync.
+
+Collection rail ID help (#523): Browse BDD covers per-collection hover and keyboard descriptions, Escape/pointer dismissal, keyboard selection, matching names, single-tooltip ownership across focus/hover, non-obstructing narrow-row help with selection-changing click-through at 320px/375px, separate desktop tooltip clicks that preserve selection at 1280px/1440px, and viewport bounds at 375px/1280px/1440px.

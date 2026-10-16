@@ -20,6 +20,44 @@ Feature: Find the upload that needs tagging
     And when none are readable it says no collections are visible to these credentials
 
   @unmapped
+  Scenario: Collection IDs are available on hover without changing collection selection
+    When Browse is opened
+    Then hovering each collection shows its own collection ID
+    And the collection ID tooltip stays open while hovered and dismisses with Escape
+
+  @unmapped
+  Scenario: Collection IDs are accessible from the keyboard
+    When Browse is opened
+    Then tabbing through collections shows their IDs without changing their names
+    And Escape dismisses the collection tooltip without moving focus
+    And activating the focused collection still selects it
+
+  @unmapped
+  Scenario: Collection ID tooltips fit narrow and desktop Browse layouts
+    When Browse is opened
+    Then collection ID tooltips remain fully inside each viewport
+
+  @unmapped
+  Scenario: Hovering another collection replaces the focused collection tooltip
+    When Browse is opened
+    Then only the hovered collection tooltip appears while another collection has focus
+
+  @unmapped
+  Scenario: Narrow collection tooltips never block neighboring rows
+    When Browse is opened
+    Then collection rows remain directly selectable around narrow-screen tooltips
+
+  @unmapped
+  Scenario: Desktop collection tooltips do not act as collection buttons
+    When Browse is opened
+    Then desktop collection tooltips preserve selection until a collection button is activated
+
+  @unmapped
+  Scenario: Collections with matching names still expose their own IDs
+    Given the collections have matching display names
+    Then hovering each matching collection shows its own collection ID
+
+  @unmapped
   Scenario: The collection rail can be narrowed by name or organization
     Given several collections are listed
     When text is typed into the collection filter

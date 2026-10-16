@@ -76,6 +76,199 @@ Then('a message names the filter text when nothing matches', async ({ page }) =>
   await expect(collectionRail(page).locator('ul > li')).toHaveCount(0);
 });
 
+Then('hovering each collection shows its own collection ID', async ({ page }) => {
+  const cases = [
+    { name: COLLECTION_B_NAME, organization: 'Field Office', id: UUID_B },
+    { name: COLLECTION_NAME, organization: 'Culver Lab', id: UUID },
+  ];
+  for (const { name, organization, id } of cases) {
+    const button = collectionButton(page, name);
+    await expect(button).toHaveAccessibleName(`${name} ${organization}`);
+    await expect(button).toHaveAccessibleDescription(`Collection ID: ${id}`);
+    await button.hover();
+    await expect(page.getByRole('tooltip')).toHaveCount(1);
+    await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${id}`);
+    await expect(button).not.toHaveAttribute('aria-current', 'true');
+  }
+});
+
+Then('the collection ID tooltip stays open while hovered and dismisses with Escape', async ({ page }) => {
+  const tooltip = page.getByRole('tooltip');
+  await tooltip.hover();
+  await expect(tooltip).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await collectionRail(page).getByRole('heading', { name: 'Collections' }).hover();
+  const button = collectionButton(page, COLLECTION_NAME);
+  await button.hover();
+  await expect(page.getByRole('tooltip')).toBeVisible();
+  await collectionRail(page).getByRole('heading', { name: 'Collections' }).hover();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+});
+
+Then('tabbing through collections shows their IDs without changing their names', async ({ page }) => {
+  await page.mouse.move(0, 0);
+  await page.getByLabel('Filter collections').focus();
+  for (const { name, organization, id } of [
+    { name: COLLECTION_B_NAME, organization: 'Field Office', id: UUID_B },
+    { name: COLLECTION_NAME, organization: 'Culver Lab', id: UUID },
+  ]) {
+    await page.keyboard.press('Tab');
+    const button = collectionButton(page, name);
+    await expect(button).toBeFocused();
+    await expect(button).toHaveAccessibleName(`${name} ${organization}`);
+    await expect(button).toHaveAccessibleDescription(`Collection ID: ${id}`);
+    await expect(page.getByRole('tooltip')).toHaveCount(1);
+    await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${id}`);
+  }
+});
+
+Then('Escape dismisses the collection tooltip without moving focus', async ({ page }) => {
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await expect(collectionButton(page, COLLECTION_NAME)).toBeFocused();
+  await expect(collectionButton(page, COLLECTION_NAME)).toHaveAccessibleDescription(`Collection ID: ${UUID}`);
+});
+
+Then('activating the focused collection still selects it', async ({ page }) => {
+  await page.keyboard.press('Enter');
+  await expect(collectionButton(page, COLLECTION_NAME)).toHaveAttribute('aria-current', 'true');
+  await expect(uploadRow(page, 'priortagger')).toBeVisible();
+});
+
+Then('collection ID tooltips remain fully inside each viewport', async ({ page }) => {
+  for (const width of [375, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.mouse.move(0, 0);
+    const button = collectionButton(page, COLLECTION_NAME);
+    await button.hover();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toHaveText(`Collection ID: ${UUID}`);
+    const box = await tooltip.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(950);
+  }
+});
+
+Then('only the hovered collection tooltip appears while another collection has focus', async ({ page }) => {
+  const first = collectionButton(page, COLLECTION_B_NAME);
+  const second = collectionButton(page, COLLECTION_NAME);
+  await first.focus();
+  await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${UUID_B}`);
+  await second.hover();
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAccessibleDescription(`Collection ID: ${UUID_B}`);
+  await expect(second).toHaveAccessibleDescription(`Collection ID: ${UUID}`);
+  await expect(page.getByRole('tooltip')).toHaveCount(1);
+  await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${UUID}`);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await expect(first).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(second).toBeFocused();
+  await expect(page.getByRole('tooltip')).toHaveCount(1);
+  await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${UUID}`);
+});
+
+Then('collection rows remain directly selectable around narrow-screen tooltips', async ({ page }) => {
+  for (const width of [320, 375]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.mouse.move(0, 0);
+    const first = collectionButton(page, COLLECTION_B_NAME);
+    const second = collectionButton(page, COLLECTION_NAME);
+    for (const { button, neighbor, id } of [
+      { button: second, neighbor: first, id: UUID },
+      { button: first, neighbor: second, id: UUID_B },
+    ]) {
+      await page.mouse.move(0, 0);
+      await neighbor.focus();
+      await page.keyboard.press('Enter');
+      await expect(neighbor).toHaveAttribute('aria-current', 'true');
+      await expect(button).not.toHaveAttribute('aria-current', 'true');
+      await button.hover();
+      const tooltip = page.getByRole('tooltip');
+      await expect(tooltip).toHaveCount(1);
+      await expect(tooltip).toHaveText(`Collection ID: ${id}`);
+      const help = (await tooltip.boundingBox())!;
+      const row = (await button.boundingBox())!;
+      expect(help.x).toBeGreaterThanOrEqual(row.x);
+      expect(help.x + help.width).toBeLessThanOrEqual(row.x + row.width);
+      expect(help.y).toBeGreaterThanOrEqual(row.y);
+      expect(help.y + help.height).toBeLessThanOrEqual(row.y + row.height);
+      await page.mouse.move(help.x + help.width / 2, help.y + help.height / 2);
+      await expect(tooltip).toBeVisible();
+      // A swallowed click must fail: this target is explicitly unselected.
+      await expect(button).not.toHaveAttribute('aria-current', 'true');
+      await page.mouse.click(help.x + help.width / 2, help.y + help.height / 2);
+      await expect(button).toHaveAttribute('aria-current', 'true');
+      await expect(neighbor).not.toHaveAttribute('aria-current', 'true');
+      await neighbor.click();
+      await expect(neighbor).toHaveAttribute('aria-current', 'true');
+      await expect(button).not.toHaveAttribute('aria-current', 'true');
+    }
+  }
+});
+
+Then('desktop collection tooltips preserve selection until a collection button is activated', async ({ page }) => {
+  for (const width of [1280, 1440]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.mouse.move(0, 0);
+    const first = collectionButton(page, COLLECTION_B_NAME);
+    const second = collectionButton(page, COLLECTION_NAME);
+    for (const { button, neighbor, id } of [
+      { button: second, neighbor: first, id: UUID },
+      { button: first, neighbor: second, id: UUID_B },
+    ]) {
+      await page.mouse.move(0, 0);
+      await neighbor.focus();
+      await page.keyboard.press('Enter');
+      await expect(neighbor).toHaveAttribute('aria-current', 'true');
+      await expect(button).not.toHaveAttribute('aria-current', 'true');
+      await button.hover();
+      const tooltip = page.getByRole('tooltip');
+      await expect(tooltip).toHaveCount(1);
+      await expect(tooltip).toHaveText(`Collection ID: ${id}`);
+      const help = (await tooltip.boundingBox())!;
+      const row = (await button.boundingBox())!;
+      expect(help.x).toBeGreaterThanOrEqual(row.x + row.width - 1);
+      expect(help.x + help.width / 2).toBeGreaterThan(row.x + row.width);
+      await tooltip.click();
+      await expect(neighbor).toHaveAttribute('aria-current', 'true');
+      await expect(button).not.toHaveAttribute('aria-current', 'true');
+      await button.click();
+      await expect(button).toHaveAttribute('aria-current', 'true');
+      await expect(neighbor).not.toHaveAttribute('aria-current', 'true');
+    }
+  }
+});
+
+Given('the collections have matching display names', async ({ page, s3 }) => {
+  for (const { bucket, id } of [{ bucket: BUCKET, id: UUID }, { bucket: BUCKET_B, id: UUID_B }]) {
+    s3.put(bucket, `Collections/${id}/collection.json`, JSON.stringify({
+      nameProperty: 'Matching collection', organizationProperty: 'Same organization',
+    }), 'application/json');
+  }
+  await page.reload();
+  await connect(page);
+  await expect(collectionRail(page).locator('ul > li')).toHaveCount(2);
+});
+
+Then('hovering each matching collection shows its own collection ID', async ({ page }) => {
+  const buttons = collectionRail(page).getByRole('button', { name: 'Matching collection Same organization', exact: true });
+  await expect(buttons).toHaveCount(2);
+  for (const [index, id] of [UUID_B, UUID].entries()) {
+    const button = buttons.nth(index);
+    await expect(button).toHaveAccessibleDescription(`Collection ID: ${id}`);
+    await button.hover();
+    await expect(page.getByRole('tooltip')).toHaveCount(1);
+    await expect(page.getByRole('tooltip')).toHaveText(`Collection ID: ${id}`);
+  }
+});
+
 // --- Species vocabulary status ----------------------------------------------
 
 Then(
