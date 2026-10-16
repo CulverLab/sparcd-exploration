@@ -2,12 +2,14 @@ import { defineConfig, devices } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 
 const testDir = defineBddConfig({
-  features: 'features/tag-before-upload.feature',
+  features: ['features/tag-before-upload.feature', 'features/shared-session.feature'],
   steps: 'features/steps/**/*.ts',
   outputDir: 'features/.features-gen-cross-tool',
   tags: '@cross-tool',
   missingSteps: 'fail-on-gen',
 });
+
+const origin = `http://localhost:${process.env.CROSS_TOOL_PORT ?? 5310}`;
 
 export default defineConfig({
   testDir,
@@ -18,7 +20,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5310',
+    baseURL: origin,
     headless: true,
     timezoneId: 'America/New_York',
     locale: 'en-US',
@@ -27,22 +29,22 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'pnpm dev --port 5321 --strictPort',
+      command: './node_modules/.bin/vite --port 5321 --strictPort',
       url: 'http://localhost:5321/sparcd-exploration/uploader/',
       reuseExistingServer: false,
       timeout: 120_000,
       env: { VITE_SPARCD_S3_ENDPOINT: '' },
     },
     {
-      command: 'pnpm --dir ../sparcd-tagger dev --port 5322 --strictPort',
+      command: '../sparcd-tagger/node_modules/.bin/vite ../sparcd-tagger --port 5322 --strictPort',
       url: 'http://localhost:5322/sparcd-exploration/tagger/',
       reuseExistingServer: false,
       timeout: 120_000,
       env: { VITE_SPARCD_S3_ENDPOINT: '' },
     },
     {
-      command: 'pnpm --dir ../sparcd-dev-proxy dev',
-      url: 'http://localhost:5310/sparcd-exploration/uploader/',
+      command: `../sparcd-dev-proxy/node_modules/.bin/vite --config ../sparcd-dev-proxy/vite.config.mjs --port ${process.env.CROSS_TOOL_PORT ?? 5310} --strictPort`,
+      url: `${origin}/sparcd-exploration/uploader/`,
       reuseExistingServer: false,
       timeout: 120_000,
       env: {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {
   Given,
   When,
@@ -188,12 +189,10 @@ When('a sibling tool disconnects the shared session', async ({ context }) => {
     route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
   );
   await sibling.goto(`${ENDPOINT}/sibling-disconnect`);
-  await sibling.evaluate(async () => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({ type: 'disconnect' });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  });
+  await sibling.evaluate(async (url) => {
+    const { clearSharedConnection } = await import(/* @vite-ignore */ url);
+    clearSharedConnection();
+  }, `/sparcd-exploration/tagger/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}`);
 });
 
 Then('the tagger returns to the connection screen', async ({ page }) => {
@@ -250,21 +249,13 @@ When('a sibling tool connects the shared session with different credentials', as
     route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
   );
   await sibling.goto(`${ENDPOINT}/sibling-connect`);
-  await sibling.evaluate(async (endpoint) => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint,
-        region: 'us-east-1',
-        accessKey: 'otherkey',
-        secretKey: 'othersecret',
-        forcePathStyle: true,
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  }, ENDPOINT);
+  await sibling.evaluate(async ({ endpoint, url }) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ url);
+    saveSharedConnection({
+      endpoint, region: 'us-east-1', accessKey: 'otherkey',
+      secretKey: 'othersecret', forcePathStyle: true,
+    }, false);
+  }, { endpoint: ENDPOINT, url: `/sparcd-exploration/tagger/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}` });
 });
 
 // --- Session defaults -------------------------------------------------------

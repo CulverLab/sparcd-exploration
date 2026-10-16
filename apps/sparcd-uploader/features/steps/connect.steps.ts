@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { Given, When, Then, expect } from './fixtures';
 import { ACCESS_KEY, SECRET_KEY, S3_ORIGIN, type App } from './app';
@@ -236,21 +237,19 @@ When('one of them disconnects', async ({ app }) => {
 });
 
 When('another tab replaces the shared connection', async ({ app }) => {
-  await app.page.evaluate(() => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint: 'https://replacement.example',
-        region: 'us-west-2',
-        accessKey: 'AKIAREPLACEMENT',
-        secretKey: 'replacement-secret',
-        forcePathStyle: false,
-        secure: true,
-      },
-    });
-    channel.close();
-  });
+  const sibling = await app.page.context().newPage();
+  await sibling.route('**/session-replacement', (route) => route.fulfill({
+    contentType: 'text/html', body: '<title>Session replacement</title>',
+  }));
+  await sibling.goto(`${S3_ORIGIN}/session-replacement`);
+  await sibling.evaluate(async (moduleUrl) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ moduleUrl);
+    saveSharedConnection({
+      endpoint: 'https://replacement.example', region: 'us-west-2',
+      accessKey: 'AKIAREPLACEMENT', secretKey: 'replacement-secret',
+      forcePathStyle: false, secure: true,
+    }, false);
+  }, `/sparcd-exploration/uploader/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}`);
 });
 
 Then('the other returns to the connection screen', async ({ app }) => {

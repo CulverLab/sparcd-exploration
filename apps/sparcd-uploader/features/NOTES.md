@@ -113,3 +113,11 @@ along the way — is written up in `features/CORRECTIONS.md`. Since PR #26 fixed
 publishing after Inspect completes, publish scenarios use small media by
 default; only scenarios about background examination keep the deliberately slow
 MP4, and in-flight upload checks are held by the S3 mock.
+
+Issue #479: `shared-session.feature` runs in the cross-tool suite against the
+real Uploader and Tagger through one origin. It checks refused-then-corrected
+endpoint switching, reload, Remember on/off, stale remembered prefill, delayed
+versioned/legacy sibling replies, and logout without session resurrection.
+Ordered barrier messages make stale delivery deterministic; assertions inspect
+actual signed request destinations and accepted live/tab state. These scenarios
+are `@unmapped` regressions, not new user-story coverage claims.

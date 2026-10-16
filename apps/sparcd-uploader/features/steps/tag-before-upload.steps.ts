@@ -98,7 +98,7 @@ Then("the browser goes to the Tagger carrying the batch's id", async ({ app }) =
 
 When('"Tag species first" is chosen through the unified dev origin', async ({ app }) => {
   await tagButton(app).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/tagger\/\?batch=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
 });
 
@@ -139,7 +139,7 @@ When('the real Tagger identity is set to Anita', async ({ app }) => {
 
 When('the real Tagger hands the batch back', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Done · back to Uploader' }).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/uploader\/\?flip=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/uploader\/\?flip=/);
   // A navigation resets the fake picker. Re-selecting the original dragged
   // folder is the real UI's expected return path and does not seed IndexedDB.
   await app.seedPickedFolder(app.lastSpecs);
