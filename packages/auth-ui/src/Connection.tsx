@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { detectBackendDefaults, type S3Config } from '@sparcd/types';
 import { BrandSwitcher } from './BrandSwitcher';
 import { OfflineBanner } from './OfflineBanner';
@@ -43,6 +43,7 @@ export function Connection({
   onSkip,
   embedded,
 }: ConnectionProps) {
+  const rememberHelpId = useId();
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
   const [accessKey, setAccessKey] = useState(initialConfig?.accessKey ?? '');
   const [secretKey, setSecretKey] = useState(initialConfig?.secretKey ?? '');
@@ -161,10 +162,14 @@ export function Connection({
               type="checkbox"
               className="w-4 h-4 accent-accent"
               checked={remember}
+              aria-describedby={rememberHelpId}
               onChange={(e) => setRemember(e.target.checked)}
             />
             Remember endpoint &amp; access key on this device
           </label>
+          <p id={rememberHelpId} className="font-body text-[13px] text-inkMute italic">
+            (Don't set remember endpoint &amp; access key if on a public computer)
+          </p>
         </div>
 
         <button

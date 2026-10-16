@@ -409,3 +409,13 @@ Then('the deferred inspection finishes after connecting', async ({ app }) => {
     slowPublishableBatch().map((file) => file.path.split('/').pop()).sort(),
   );
 });
+
+Then('the remember checkbox describes its public-computer warning', async ({ app }) => {
+  const checkbox = app.page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = app.page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});

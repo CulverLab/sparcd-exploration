@@ -150,3 +150,7 @@ Feature: Connect the uploader to storage and manage the session
     # As-built the app passes a wildcard bucket scope to its storage wrapper for
     # both reads and writes, so the wrapper's allowlist is not acting as a
     # restriction here. The wrapper still exposes no delete or copy operation.
+
+  @unmapped
+  Scenario: Remembering connection details includes an accessible public-computer warning
+    Then the remember checkbox describes its public-computer warning

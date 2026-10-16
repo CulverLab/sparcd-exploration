@@ -419,3 +419,13 @@ async function openWorkspaceFromBrowse(page: import('@playwright/test').Page): P
   await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
   await expect(page.locator('button[title="IMG001.JPG"]')).toBeVisible();
 }
+
+Then('the remember checkbox describes its public-computer warning', async ({ page }) => {
+  const checkbox = page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});
