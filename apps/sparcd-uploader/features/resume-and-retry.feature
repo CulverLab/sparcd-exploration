@@ -54,6 +54,11 @@ Feature: Resume an interrupted upload and retry a failed one
     When History is opened
     Then History shows the batch start as "2026-09-11 22:15:10"
 
+  @AL1
+  Scenario: History identifies the upload's destination by collection, not bucket
+    Given an open upload is listed in History
+    Then History shows the collection's name and ID, not the bucket
+
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
     Given an open upload is listed in History
@@ -198,3 +203,27 @@ Feature: Resume an interrupted upload and retry a failed one
     Then the tool reports that the saved record could not be loaded
     And it suggests retrying, or going back and starting the upload over
     And repeated clicks never start two runs at once
+
+  @AL1
+  Scenario Outline: History retains collection identity when discovery is unavailable
+    Given an open upload is listed in History
+    When collection discovery becomes "<state>" for History
+    Then the History row retains its saved collection ID with an unavailable-name label
+
+    Examples:
+      | state        |
+      | disconnected |
+      | removed      |
+      | failed       |
+
+  @AL1
+  Scenario: History resolves collection names separately for each saved destination
+    Given an open upload is listed in History
+    When a second History record has the same collection ID in a different bucket
+    Then each History row identifies only its own collection
+
+  @AL1
+  Scenario: Long collection names and IDs remain readable in narrow History cards
+    Given an open upload is listed in History
+    When History has a long collection name on a phone-sized viewport
+    Then the full collection name and ID wrap within the History row

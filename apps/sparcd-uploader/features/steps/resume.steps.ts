@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
 import { FOLDER, jpegAt, manyJpegs, publishableBatch, slowPublishableBatch } from './batches';
-import { BUCKET_A, COLLECTION_A_NAME, COLLECTION_B_NAME, UUID_A } from './fixtures-data';
+import { BUCKET_A, BUCKET_B, COLLECTION_A_NAME, COLLECTION_B_NAME, UUID_A } from './fixtures-data';
 import {
   FAILING_FILE,
   produceCompleteRun,
@@ -157,6 +157,13 @@ Then('that upload is listed as open', async ({ app }) => {
 
 Then('History shows the batch start as {string}', async ({ app }, expected: string) => {
   await expect(app.page.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeVisible();
+});
+
+Then("History shows the collection's name and ID, not the bucket", async ({ app }) => {
+  const batch = (await app.readBatchRecords()).find((b) => b.targetBucket === BUCKET_A)!;
+  const row = historyRow(app, batch.uploadPrefix as string);
+  await expect(row.getByText(`${COLLECTION_A_NAME} · ${UUID_A}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(BUCKET_A, { exact: false })).toHaveCount(0);
 });
 
 Then('it shows how many of its files are done and how many failed', async ({ app }) => {
@@ -782,4 +789,113 @@ When('the folder picker is opened and dismissed without selecting a folder', asy
 
 Then('the Resume button becomes available again', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeEnabled();
+});
+
+// Resolve assertions against the upload stamp so another card or a collection
+// picker elsewhere on History cannot accidentally satisfy them.
+const historyRow = (app: App, prefix: string) => app.page.locator('li').filter({
+  has: app.page.locator('p[title]').filter({ hasText: prefix.split('/').filter(Boolean).pop()! }),
+});
+
+When('collection discovery becomes {string} for History', async ({ app }, state: string) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  await app.page.evaluate(() => localStorage.removeItem('sparcd-uploader-discovery'));
+  if (state === 'disconnected') {
+    await app.reopenInNewTab();
+    await app.page.getByRole('button', { name: 'Login later', exact: true }).click();
+  } else {
+    if (state === 'removed') app.s3.delete(BUCKET_A, `Collections/${UUID_A}/collection.json`);
+    else {
+      expect(state).toBe('failed');
+      app.notes.discoveryFailures = 0;
+      await app.page.route('**/*', async (route) => {
+        const request = route.request();
+        if (request.headers().authorization && new URL(request.url()).pathname === '/' && request.method() === 'GET') {
+          app.notes.discoveryFailures = Number(app.notes.discoveryFailures) + 1;
+          await route.fulfill({ status: 403, contentType: 'application/xml', body: '<Error><Code>AccessDenied</Code><Message>Discovery denied</Message></Error>' });
+        } else await route.fallback();
+      });
+    }
+    await app.reopen();
+  }
+  await app.gotoSection('History');
+  if (state === 'failed') await expect.poll(() => Number(app.notes.discoveryFailures)).toBeGreaterThanOrEqual(2);
+});
+Then('the History row retains its saved collection ID with an unavailable-name label', async ({ app }) => {
+  const row = historyRow(app, app.notes.historyPrefix as string);
+  await expect(row.getByText(`Collection name unavailable · ${UUID_A}`, { exact: false })).toBeVisible();
+  await expect(row.getByText(`Storage bucket: ${BUCKET_A}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(COLLECTION_A_NAME, { exact: false })).toHaveCount(0);
+});
+
+When('a second History record has the same collection ID in a different bucket', async ({ app }) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  const prefix = `Collections/${UUID_A}/Uploads/unknown_collection_upload`;
+  app.notes.unmatchedPrefix = prefix;
+  await app.page.evaluate(async ({ batch, bucket, prefix }) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const tx = db.transaction('batches', 'readwrite');
+    tx.objectStore('batches').put({ ...batch, id: 'unmatched-history-record', targetBucket: bucket, uploadPrefix: prefix });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  }, { batch, bucket: BUCKET_B, prefix });
+  await app.gotoSection('New upload');
+  await app.gotoSection('History');
+});
+Then('each History row identifies only its own collection', async ({ app }) => {
+  const known = historyRow(app, app.notes.historyPrefix as string);
+  const unknown = historyRow(app, app.notes.unmatchedPrefix as string);
+  await expect(known.getByText(`${COLLECTION_A_NAME} · ${UUID_A}`, { exact: true })).toBeVisible();
+  await expect(unknown.getByText(`Collection name unavailable · ${UUID_A}`, { exact: false })).toBeVisible();
+  await expect(unknown.getByText(`Storage bucket: ${BUCKET_B}`, { exact: true })).toBeVisible();
+  await expect(unknown.getByText(/Alpha Collection|Beta Collection/)).toHaveCount(0);
+});
+
+When('History has a long collection name on a phone-sized viewport', async ({ app }) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  const name = 'LongCollectionNameWithoutSpaces'.repeat(6);
+  app.notes.longCollectionName = name;
+  const key = `Collections/${UUID_A}/collection.json`;
+  const doc = JSON.parse(app.s3.text(BUCKET_A, key)!);
+  app.s3.put(BUCKET_A, key, JSON.stringify({ ...doc, nameProperty: name }), { contentType: 'application/json' });
+  await app.page.evaluate(() => localStorage.removeItem('sparcd-uploader-discovery'));
+  await app.page.setViewportSize({ width: 375, height: 812 });
+  await app.reopen();
+  await app.page.getByLabel('Section', { exact: true }).selectOption('history');
+});
+Then('the full collection name and ID wrap within the History row', async ({ app }) => {
+  const row = historyRow(app, app.notes.historyPrefix as string);
+  const label = row.getByText(`${app.notes.longCollectionName} · ${UUID_A}`, { exact: true });
+  await expect(label).toBeVisible();
+  const measurements = await label.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const rects = [...range.getClientRects()];
+    const style = getComputedStyle(element);
+    return {
+      clipped: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
+      inside: rects.every((r) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1),
+      lines: new Set(rects.map((r) => Math.round(r.top))).size,
+      whiteSpace: style.whiteSpace,
+      textOverflow: style.textOverflow,
+    };
+  });
+  expect(measurements.clipped).toBe(false);
+  expect(measurements.inside).toBe(true);
+  expect(measurements.lines).toBeGreaterThan(1);
+  expect(measurements.whiteSpace).not.toBe('nowrap');
+  expect(measurements.textOverflow).not.toBe('ellipsis');
+  expect(await app.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
