@@ -53,12 +53,14 @@ export function Settings() {
               </p>
               <button
                 onClick={() => void logout()}
+                aria-describedby="settings-disconnect-help"
                 className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
                 Disconnect
               </button>
-              <p className="font-body text-[12px] text-inkMute">
-                Clears this browser's local upload sessions so the next person connects to a clean app.
+              <p id="settings-disconnect-help" className="font-body text-[12px] text-inkMute">
+                Clears this browser's local upload sessions and logs you out. Remembered connection
+                details remain. Disconnect before leaving a shared or public computer.
               </p>
             </>
           ) : (

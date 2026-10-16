@@ -1,5 +1,5 @@
 import { Given, When, Then, expect } from './fixtures';
-import { S3_ORIGIN, SECRET_KEY } from './app';
+import { ACCESS_KEY, S3_ORIGIN, SECRET_KEY } from './app';
 import { standardBatch } from './batches';
 import { produceCompleteRun, producePartialRun } from './helpers';
 
@@ -151,4 +151,40 @@ Then("it is kept where the other SPARC'd tools on this machine read it", async (
   // One key for every tool on this origin, so walking to another one from the
   // brand switcher lands in the same appearance.
   expect(await app.page.evaluate(() => localStorage.getItem('sparcd-theme'))).toBe('dark');
+});
+
+When('Disconnect is chosen after reviewing its security explanation', async ({ app }) => {
+  await app.gotoSection('Settings');
+  const button = app.page.getByRole('button', { name: 'Disconnect', exact: true });
+  await button.focus();
+  await expect(button).toBeFocused();
+  const explanation = "Clears this browser's local upload sessions and logs you out. Remembered connection details remain. Disconnect before leaving a shared or public computer.";
+  await expect(app.page.locator('#settings-disconnect-help')).toHaveText(explanation);
+  await expect(button).toHaveAccessibleDescription(explanation);
+  const remembered = await app.page.evaluate(() => JSON.parse(localStorage.getItem('sparcd-connection')!));
+  expect(remembered).toMatchObject({ endpoint: S3_ORIGIN, accessKey: ACCESS_KEY, region: 'us-east-1' });
+  expect(remembered).not.toHaveProperty('secretKey');
+  app.notes.rememberedBeforeDisconnect = remembered;
+  // Settings deliberately reloads after clearing IndexedDB. Wait for that
+  // reload, rather than inspecting the briefly visible gate in the old page.
+  await Promise.all([
+    app.page.waitForEvent('load'),
+    button.press('Enter'),
+  ]);
+});
+
+Then('remembered non-secret connection details remain with no live session', async ({ app }) => {
+  const state = await app.page.evaluate(() => ({
+    remembered: JSON.parse(localStorage.getItem('sparcd-connection')!),
+    session: sessionStorage.getItem('sparcd-connection-tab'),
+  }));
+  expect(state.remembered).toEqual(app.notes.rememberedBeforeDisconnect);
+  expect(state.remembered).not.toHaveProperty('secretKey');
+  expect(state.session).toBeNull();
+  await expect(app.page.locator('#endpoint')).toHaveValue(S3_ORIGIN);
+  await expect(app.page.locator('#accessKey')).toHaveValue(ACCESS_KEY);
+  await app.page.getByRole('button', { name: '+ Advanced', exact: true }).click();
+  await expect(app.page.locator('#region')).toHaveValue('us-east-1');
+  await expect(app.page.locator('#secretKey')).toHaveValue('');
+  await expect(app.page.getByRole('button', { name: 'Logout', exact: true })).toHaveCount(0);
 });

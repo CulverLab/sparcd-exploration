@@ -5,9 +5,9 @@ Feature: Settings and the data the uploader keeps on this machine
 
   """
   As-built flow: the Settings section holds the default uploader identity and
-  the disconnect that clears this machine. A SPARC'd tool is often shared on one
-  laptop, so logging out has to leave nothing of the previous person behind —
-  but it must not silently destroy uploads they have not finished.
+  the disconnect that ends the shared session and clears local upload records.
+  Remembered non-secret connection details remain. Unfinished uploads must not
+  be silently destroyed; discarding them requires explicit confirmation.
   """
 
   Background:
@@ -22,10 +22,11 @@ Feature: Settings and the data the uploader keeps on this machine
   @unmapped
   Scenario: Disconnecting from Settings clears this machine's upload records
     Given there are no unfinished uploads on this machine
-    When "Disconnect" is chosen
+    When Disconnect is chosen after reviewing its security explanation
     Then the connection is ended
     And this browser's recorded upload sessions, file states and metadata are cleared
     And the tool returns to the connection screen ready for the next person
+    And remembered non-secret connection details remain with no live session
 
   @unmapped
   Scenario: Disconnecting is guarded when unfinished uploads exist
