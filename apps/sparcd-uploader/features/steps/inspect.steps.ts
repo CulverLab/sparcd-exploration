@@ -18,8 +18,8 @@ Given('a folder of media has been scanned', async ({ app }) => {
   await app.waitForInspected();
 });
 
-Given('the New upload section is showing the Inspect step', async ({ app }) => {
-  await app.expectStep('Inspect');
+Given('the New upload section is showing the Verify step', async ({ app }) => {
+  await app.expectStep('Verify');
   await expect(app.fileListToggle()).toBeVisible();
 });
 
@@ -104,9 +104,9 @@ Then('the per-file list is shown', async ({ app }) => {
 });
 
 When('another folder is dropped', async ({ app }) => {
-  await app.expectStep('Files');
+  await app.expectStep('Choose');
   await app.dropFolder(standardBatch());
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
 });
 
 When('the count of files needing attention is chosen', async ({ app }) => {
@@ -136,7 +136,7 @@ Then('that file is marked as needing attention', async ({ app }) => {
   expect(bad.status).toBe('Needs attention');
 });
 
-Then('the batch cannot continue to the Assign step until it is resolved', async ({ app }) => {
+Then('the batch cannot continue to the Describe step until it is resolved', async ({ app }) => {
   await expect(app.continueButton()).toBeDisabled();
   const rows = await app.listedFiles();
   await app.dropFileFromList(rows.findIndex((r) => r.name === 'BROKEN.JPG'));
@@ -170,13 +170,13 @@ Given('a file carries no camera capture time', async ({ app }) => {
   await app.waitForInspected();
 });
 
-Then('it is shown as a warning at Inspect', async ({ app }) => {
+Then('it is shown as a warning at Verify', async ({ app }) => {
   const row = (await app.listedFiles()).find((r) => r.name === 'IMG_NOTIME.JPG')!;
   expect(row.status).toBe('Warning');
   expect(row.issues).toContain('No camera time');
 });
 
-Then('the batch can still continue to the Assign step, where the estimate can be overridden', async ({ app }) => {
+Then('the batch can still continue to the Describe step, where the estimate can be overridden', async ({ app }) => {
   await expect(app.continueButton()).toBeEnabled();
   await app.continueToAssign();
   await expect(app.page.getByRole('heading', { name: 'Capture times' })).toBeVisible();
@@ -331,12 +331,12 @@ Then('examination has continued in the background rather than restarting', async
   expect(await app.fileCount()).toBe(1200);
 });
 
-When('"Start over" is chosen', async ({ app }) => {
-  await app.page.getByRole('button', { name: 'Start over' }).click();
+When('"Back" is chosen', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
 });
 
-Then('the batch is cleared and the wizard returns to the Files step', async ({ app }) => {
-  await app.expectStep('Files');
+Then('the batch is cleared and the wizard returns to the Choose step', async ({ app }) => {
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
   await expect(app.fileListToggle()).toHaveCount(0);
 });

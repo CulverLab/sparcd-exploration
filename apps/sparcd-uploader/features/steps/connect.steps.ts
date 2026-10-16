@@ -79,15 +79,15 @@ Then('a batch can be dropped and inspected with no connection', async ({ app }) 
   expect(app.s3.puts).toHaveLength(0);
 });
 
-When('the Assign step is reached with no connection', async ({ app }) => {
+When('the Describe step is reached with no connection', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Continue' }).click();
 });
 
 Then('it shows the connection screen instead of a collection picker', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toHaveCount(0);
 });
 
 Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
@@ -260,7 +260,7 @@ Then('the other returns to the connection screen', async ({ app }) => {
 Then('its in-progress batch, chosen collection and chosen deployment are cleared', async ({ app }) => {
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await app.expectStep('Files');
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
@@ -393,9 +393,9 @@ When('a deferred batch is still being inspected', async ({ app }) => {
 });
 
 Then('Assign loads collections without losing the batch', async ({ app }) => {
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.connectForm()).toHaveCount(0);
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
 });
 

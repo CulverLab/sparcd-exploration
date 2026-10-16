@@ -18,7 +18,7 @@ Then('the tool shows the key-safe form of it that will appear in upload paths', 
   );
 });
 
-Then('each new batch starts with that identity already filled in on the Assign step', async ({ app }) => {
+Then('each new batch starts with that identity already filled in on the Describe step', async ({ app }) => {
   await app.gotoSection('New upload');
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
@@ -104,7 +104,7 @@ Then('the connection is ended and the in-progress batch is cleared', async ({ ap
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
-  await app.expectStep('Files');
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 

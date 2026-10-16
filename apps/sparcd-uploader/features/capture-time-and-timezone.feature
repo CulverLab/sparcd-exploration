@@ -13,7 +13,7 @@ Feature: Establish the true capture time of every file
   """
 
   Background:
-    Given a scanned batch has reached the Assign step
+    Given a scanned batch has reached the Describe step
 
   @unmapped
   Scenario: The upload timezone starts as this machine's timezone

@@ -294,7 +294,7 @@ Feature: Upload and publish a batch
   Scenario: The next batch starts with assignment details cleared
     Given a real upload has completed
     When "Next batch" is chosen
-    Then the wizard returns to the Files step with an empty batch
+    Then the wizard returns to the Choose step with an empty batch
     And the next batch has no collection, deployment, description or timezone selected
     And the uploader identity is still filled in
     And continuing without a timezone is disabled

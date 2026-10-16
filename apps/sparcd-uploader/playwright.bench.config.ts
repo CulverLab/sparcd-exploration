@@ -10,7 +10,7 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   reporter: [['line']],
   use: {
-    baseURL: 'http://localhost:5316/sparcd-exploration/uploader/',
+    baseURL: `http://localhost:${process.env.BENCH_APP_PORT ?? '5316'}/sparcd-exploration/uploader/`,
     headless: true,
     timezoneId: 'America/New_York',
     locale: 'en-US',

@@ -11,8 +11,8 @@ import { join } from 'node:path';
 const tmpDir = (name: string) =>
   join(tmpdir(), 'sparcd-bdd-folders', `${name}-${Math.random().toString(36).slice(2)}`, FOLDER);
 
-Given('the New upload section is showing the Files step', async ({ app }) => {
-  await app.expectStep('Files');
+Given('the New upload section is showing the Choose step', async ({ app }) => {
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
@@ -88,8 +88,8 @@ When('a folder is dragged onto the drop area', async ({ app }) => {
 });
 
 Then('its media is scanned exactly as if it had been picked from the dialog', async ({ app }) => {
-  await app.page.getByRole('button', { name: 'Start over' }).click();
-  await app.expectStep('Files');
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Choose');
   await app.pickFolder(standardBatch(), tmpDir('drag-vs-dialog'));
   await app.waitForInspected();
   const picked = (await app.listedFiles()).map((f) => ({ name: f.name, relPath: f.relPath }));
@@ -111,8 +111,8 @@ Then('the tool reports that the folder was read but held no images or videos', a
   await expect(app.page.getByText(/The folder was read but held no/)).toBeVisible();
 });
 
-Then('it stays on the Files step so another folder can be chosen', async ({ app }) => {
-  await app.expectStep('Files');
+Then('it stays on the Choose step so another folder can be chosen', async ({ app }) => {
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Choose another folder')).toBeVisible();
 });
 
@@ -144,8 +144,8 @@ Given('a batch has already been scanned', async ({ app }) => {
 });
 
 When('another folder is chosen', async ({ app }) => {
-  await app.page.getByRole('button', { name: 'Start over' }).click();
-  await app.expectStep('Files');
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Choose');
   await app.dropFolder([
     { path: 'OTHERCARD/NEW_0001.JPG', mime: 'image/jpeg', bytes: jpegWithExifDate('2026:08:01 08:00:00', 'n1') },
     { path: 'OTHERCARD/NEW_0002.JPG', mime: 'image/jpeg', bytes: jpegWithExifDate('2026:08:01 08:05:00', 'n2') },

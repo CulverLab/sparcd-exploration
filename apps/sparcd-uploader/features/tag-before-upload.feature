@@ -3,7 +3,7 @@
 Feature: Identify species before the batch is uploaded
 
   """
-  As-built flow: a third way out of the Inspect step. The batch is handed to
+  As-built flow: a third way out of the Verify step. The batch is handed to
   the Tagger — same browser tab, nothing uploaded, no connection needed — and
   comes back with species on it. The uploader keeps no tagging UI of its own:
   what it shows on return is read-only, and the way to change it is to go back.
@@ -13,23 +13,23 @@ Feature: Identify species before the batch is uploaded
 
   Background:
     Given a folder of media has been scanned
-    And the New upload section is showing the Inspect step
+    And the New upload section is showing the Verify step
 
   @A1
   Scenario: Tagging is offered as soon as the batch is fit to upload
-    Then "Tag species first" sits between "Start over" and "Continue"
+    Then "Tag species before upload" sits between "Back" and "Continue"
     And it is available exactly when Continue is
 
   @unmapped
   Scenario: A batch that needs attention cannot be tagged yet
     Given one file fails to be examined
-    Then "Tag species first" is unavailable
+    Then "Tag species before upload" is unavailable
     # Same gate as Continue: a file the uploader could not examine has no
     # identity to tag against.
 
   @A1
   Scenario: The batch is handed over whole
-    When "Tag species first" is chosen
+    When "Tag species before upload" is chosen
     Then every examined file is handed over with everything the examination established
     And the browser goes to the Tagger carrying the batch's id
     # The batch is rebuilt from the hand-off on the way back and never examined
@@ -37,7 +37,7 @@ Feature: Identify species before the batch is uploaded
 
   @cross-tool
   Scenario: The real Tagger reads and returns the Uploader hand-off through the unified dev origin
-    When "Tag species first" is chosen through the unified dev origin
+    When "Tag species before upload" is chosen through the unified dev origin
     Then the real Tagger opens the batch written by the Uploader
     When Coyote is applied in the real Tagger
     And the real Tagger identity is set to Anita
@@ -50,13 +50,13 @@ Feature: Identify species before the batch is uploaded
   @cross-tool
   Scenario: The real Tagger warns when a batch has only EXIF ModifyDate
     Given a ModifyDate-only batch has been scanned
-    When "Tag species first" is chosen through the unified dev origin
+    When "Tag species before upload" is chosen through the unified dev origin
     Then the real Tagger labels the timestamp as EXIF Modified
 
   @A1
   Scenario: Tags made in the Tagger come back on the batch
     Given a batch was tagged in the Tagger and handed back
-    Then the wizard is on the Inspect step with the same files
+    Then the wizard is on the Verify step with the same files
     And each file still shows the capture time and pixel size the examination found
     And each tagged file shows the species and count it was given
     And files left untagged are shown as untagged
@@ -65,14 +65,14 @@ Feature: Identify species before the batch is uploaded
   @A1
   Scenario: The tags can be revisited without starting over
     Given a batch was tagged in the Tagger and handed back
-    Then the action row offers "Edit tags" instead of "Tag species first"
+    Then the action row offers "Edit tags" instead of "Tag species before upload"
     And choosing it returns to the Tagger with the same batch id
     # Drafts live in the Tagger, so re-entry picks up where it left off.
 
   @unmapped
   Scenario: A batch with no remembered folder asks for the folder again
     Given a batch tagged in the Tagger is handed back with no remembered folder
-    Then choosing the folder again puts the batch back on the Inspect step
+    Then choosing the folder again puts the batch back on the Verify step
     # A batch dragged in never had a durable folder handle to remember.
 
   @unmapped

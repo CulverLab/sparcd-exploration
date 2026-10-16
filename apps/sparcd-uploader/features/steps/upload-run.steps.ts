@@ -961,8 +961,8 @@ When('"Next batch" is chosen', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Next batch' }).click();
 });
 
-Then('the wizard returns to the Files step with an empty batch', async ({ app }) => {
-  await app.expectStep('Files');
+Then('the wizard returns to the Choose step with an empty batch', async ({ app }) => {
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
   await expect(app.fileListToggle()).toHaveCount(0);
 });
@@ -981,7 +981,7 @@ Then(
     await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
-      app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
+      app.page.getByPlaceholder('Additional notes about this batch.'),
     ).toHaveValue('');
     await expect(app.timeZoneSelect()).toHaveValue('');
     await app.chooseDeployment('Bear Canyon');

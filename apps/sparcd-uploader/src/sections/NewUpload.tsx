@@ -203,9 +203,10 @@ export function NewUpload() {
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <button
                 onClick={resetBatch}
+                title="Discard this batch and return to Choose"
                 className="flex-1 sm:flex-none min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
-                Start over
+                Back
               </button>
               <button
                 disabled={!summary.ready}
@@ -221,7 +222,7 @@ export function NewUpload() {
                   summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
                 }`}
               >
-                {flipId ? 'Edit tags' : 'Tag species first'}
+                {flipId ? 'Edit tags' : 'Tag species before upload'}
               </button>
               <button
                 disabled={!summary.ready}

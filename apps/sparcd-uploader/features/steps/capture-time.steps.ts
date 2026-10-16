@@ -7,12 +7,13 @@ import { LEGACY_ZONE } from './fixtures-data';
 const MACHINE_ZONE = 'America/New_York'; // playwright.config.ts pins this
 const BEAR_CANYON_ZONE = 'America/Phoenix'; // where 32.4, -110.7 falls
 
-Given('a scanned batch has reached the Assign step', async ({ app }) => {
+Given('a scanned batch has reached the Describe step', async ({ app }) => {
   await app.connect();
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  await app.fillRequiredUploadComments();
 });
 
 // --- the upload timezone ---------------------------------------------------
@@ -316,9 +317,9 @@ When('that modified metadata time is overridden by hand', async ({ app }) => {
 
 Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back', exact: true }).click();
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   await app.stubTagger();
-  await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  await app.page.getByRole('button', { name: 'Tag species before upload' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   const [record] = await app.readFlipRecords();
   expect(record.files[0]).toMatchObject({

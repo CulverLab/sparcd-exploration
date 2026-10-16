@@ -17,7 +17,7 @@ Feature: Settings and the data the uploader keeps on this machine
   Scenario: A default uploader identity can be set once
     When an uploader identity is entered in Settings
     Then the tool shows the key-safe form of it that will appear in upload paths
-    And each new batch starts with that identity already filled in on the Assign step
+    And each new batch starts with that identity already filled in on the Describe step
 
   @unmapped
   Scenario: Disconnecting from Settings clears this machine's upload records

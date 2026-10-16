@@ -105,12 +105,12 @@ export function expectStoredAtLocation(
 export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<void> {
   await app.page.waitForTimeout(1_100);
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await app.continueToAssign();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await app.continueToUpload();
 }
 
