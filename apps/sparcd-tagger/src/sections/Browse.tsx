@@ -481,22 +481,21 @@ function CollectionPrompt({
         </div>
 
         <p className={`fn-rise ${kicker} block`} style={{ animationDelay: '0.15s' }}>
-          Field Notebook · Tagger
+          Tagger
         </p>
 
         <h1
           className="fn-rise font-display text-[27px] leading-tight text-ink mt-2 text-balance"
           style={{ animationDelay: '0.25s' }}
         >
-          Pick up a collection to begin
+          Pick a collection to begin
         </h1>
 
         <p
           className="fn-rise font-body text-[14px] leading-relaxed text-inkSoft mt-3 mx-auto max-w-[34ch] text-pretty"
           style={{ animationDelay: '0.35s' }}
         >
-          Choose one from the rail on the left to see its uploads — then open an
-          upload to start tagging what the cameras caught.
+          Pick a collection on the left to show the uploads that can be tagged
         </p>
 
         <div
