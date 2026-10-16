@@ -787,6 +787,52 @@ Then('the stored files are left untouched', async ({ s3 }) => {
   expect(s3.puts.some((p) => p.key.includes('.sparcd-tagger-snapshots/'))).toBe(true);
 });
 
+Then('the header sync explanation is available on hover and keyboard focus', async ({ page, s3 }) => {
+  const explanation = "This upload has edits that haven't been synced to the collection yet";
+  const pill = statePill(page);
+  await pill.hover();
+  await expect(pill).toHaveAttribute('title', explanation);
+  await expect(pill).toHaveAccessibleDescription(explanation);
+  // The existing focusable status follows the last section tab in tab order.
+  await sectionTab(page, 'Settings').focus();
+  await page.keyboard.press('Tab');
+  await expect(pill).toBeFocused();
+  await expect(page.getByRole('tooltip')).toHaveText(explanation);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  await expect(pill).toBeFocused();
+  await expect(pill).toHaveAccessibleDescription(explanation);
+  await page.keyboard.press('Tab');
+  await expect(pill).not.toBeFocused();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
+  expect(s3.puts).toHaveLength(0);
+});
+
+Given('a different image has only a questionable edit', async ({ page }) => {
+  await focusFrame(page, 'IMG005.JPG');
+  await page.keyboard.press('Shift+Space');
+  await expect(gridCell(page, 'IMG005.JPG').locator('[title="questionable"]')).toBeVisible();
+  await waitForDirtyDrafts(page, 2);
+});
+
+Then('the completed-sync explanation leaves questionable-only edits visibly unsaved', async ({ page, s3 }) => {
+  await waitForSyncDialogClosed(page);
+  const pill = statePill(page);
+  await expect(pill).toHaveAttribute('aria-label', 'Sync status: synced');
+  await expect(pill).toHaveAttribute('title', 'The last sync completed');
+  await expect(pill).toHaveAccessibleDescription('The last sync completed');
+  await pill.focus();
+  await expect(page.getByRole('tooltip')).toHaveText('The last sync completed');
+  const pending = async () => (await readStore(page, 'drafts') as {
+    mediaPath: string; dirty: boolean; questionable: boolean;
+  }[]).filter((draft) => draft.dirty).map((draft) => ({ file: draft.mediaPath.split('/').pop(), questionable: draft.questionable }));
+  await expect.poll(pending).toEqual([{ file: 'IMG005.JPG', questionable: true }]);
+  await expect(gridCell(page, 'IMG005.JPG').locator('[title="questionable"]')).toBeVisible();
+  expect(parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).some(
+    (observation) => observation.mediaId.endsWith('IMG002.JPG') && observation.scientificName === 'Canis latrans',
+  )).toBe(true);
+});
+
 // --- State pill -------------------------------------------------------------
 
 Then(
@@ -795,6 +841,9 @@ Then(
     const seen: string[] = [];
     const record = async () => {
       const title = (await statePill(page).getAttribute('aria-label')) ?? '';
+      const explanation = await statePill(page).getAttribute('title');
+      expect(explanation).toBeTruthy();
+      await expect(statePill(page)).toHaveAccessibleDescription(explanation!);
       if (!seen.includes(title)) seen.push(title);
       return title;
     };
@@ -807,12 +856,16 @@ Then(
     s3.delay(`${PREFIX_A}media.csv`, 2000);
     await page.getByRole('button', { name: 'Sync…' }).click();
     await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: syncing…');
+    await expect(statePill(page)).toHaveAttribute('title', 'Sync in progress');
+    expect(s3.puts).toHaveLength(0);
     await record();
     s3.delays.clear();
     await expect(page.getByText('Checking the canonical base…')).toBeHidden({ timeout: 20000 });
 
     // dry-run
     await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: dry-run');
+    await expect(statePill(page)).toHaveAttribute('title', 'Previewed what a sync would write, without writing anything');
+    expect(s3.puts).toHaveLength(0);
     await record();
 
     // error — a store that refuses the conditional replacement.

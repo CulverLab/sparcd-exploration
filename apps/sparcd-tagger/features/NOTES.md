@@ -133,3 +133,5 @@ Marked with trailing comments in the feature files:
 - A successful live sync **clears the whole-upload time shift**, because the
   shift has been baked into the stored capture times; leaving it would shift
   them twice on the next sync.
+
+Sync-state explanations (#525/#528): header and Browse row native hover titles are supplemented by keyboard-visible, Escape-dismissible descriptions. Coverage exercises all seven header states, dry-run progress with no writes, and completed sync with questionable-only drafts still pending; Browse checks local-only/unsynced/synced help at 375px and 1440px. Sync semantics are unchanged.

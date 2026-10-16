@@ -338,15 +338,19 @@ async function expectRowPill(
   await expect
     .poll(
       async () => {
-        const content = (await uploadRow(page, user).textContent()) ?? '';
-        if (content.includes(text)) return text;
+        const content = await uploadRow(page, user).locator('[data-column="sync"]').evaluate((cell) => {
+          const copy = cell.cloneNode(true) as HTMLElement;
+          copy.querySelectorAll('[aria-hidden="true"]').forEach((glyph) => glyph.remove());
+          return copy.textContent?.trim() ?? '';
+        });
+        if (content === text) return text;
         await sectionTab(page, 'Settings').click();
         await sectionTab(page, 'Browse').click();
         return content;
       },
       { timeout: 25000, intervals: [1500] },
     )
-    .toContain(text);
+    .toBe(text);
 }
 
 Then("that upload's row is marked as having unsynced edits", async ({ page }) => {
@@ -364,6 +368,41 @@ Then('an upload whose local edits have all been synced is marked as synced', asy
 
 Then('an upload never edited on this machine is marked local-only', async ({ page }) => {
   await expect(uploadRow(page, 'fielduser')).toContainText('local-only');
+});
+
+async function checkSyncExplanation(page: import('@playwright/test').Page, user: string, explanation: string) {
+  for (const width of [375, 1440]) {
+    await page.setViewportSize({ width, height: 950 });
+    const row = uploadRow(page, user);
+    const pill = row.locator('[data-column="sync"] span[title]');
+    await pill.hover();
+    await expect(pill).toHaveAttribute('title', explanation);
+    await expect(row).toHaveAccessibleDescription(explanation);
+    await row.focus();
+    await expect(row).toBeFocused();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toHaveText(explanation);
+    const box = (await tooltip.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(950);
+    await page.keyboard.press('Escape');
+    await expect(tooltip).toHaveCount(0);
+    await expect(row).toBeFocused();
+    await page.getByLabel('Filter collections').focus();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+  }
+}
+
+Then('its unsynced explanation is available on hover and keyboard focus', async ({ page }) => {
+  await checkSyncExplanation(page, 'priortagger', "This upload has edits that haven't been synced to the collection yet");
+});
+Then('its synced explanation is available on hover and keyboard focus', async ({ page }) => {
+  await checkSyncExplanation(page, 'priortagger', 'The last sync completed');
+});
+Then('its local-only explanation is available on hover and keyboard focus', async ({ page }) => {
+  await checkSyncExplanation(page, 'fielduser', 'Not yet synced — edits stay in this browser until you sync');
 });
 
 // --- Entering the workspace -------------------------------------------------

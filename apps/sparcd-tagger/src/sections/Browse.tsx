@@ -11,6 +11,8 @@ import {
   type UploadDraftState,
 } from '../lib/queries';
 import { PawPads } from '../components/Paw';
+import { useFocusExplanation } from '../components/useFocusExplanation';
+import { SYNC_EXPLANATIONS } from '../lib/syncExplanations';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
 
@@ -145,30 +147,30 @@ export function Browse() {
         )}
         {collectionKey && (
           <>
-            <nav className="flex items-center gap-1.5 text-[13px] mb-3">
-              <span className="text-inkSoft">Browse</span>
-              <span className="text-inkMute">/</span>
-              <span className="text-ink">{collection?.name ?? collection?.bucket ?? '…'}</span>
-            </nav>
+              <nav className="flex items-center gap-1.5 text-[13px] mb-3">
+                <span className="text-inkSoft">Browse</span>
+                <span className="text-inkMute">/</span>
+                <span className="text-ink">{collection?.name ?? collection?.bucket ?? '…'}</span>
+              </nav>
 
-            <div className="flex items-baseline justify-between gap-4 flex-wrap mb-4">
-              <div>
-                <h1 className="font-display text-[28px] leading-tight text-ink">
-                  Uploads in {collection?.name ?? collection?.bucket ?? 'this collection'}
-                </h1>
-                <p className="text-[13px] text-inkSoft mt-1">
-                  {uploads.isLoading ? (
-                    'Loading uploads…'
-                  ) : (
-                    <>
-                      {uploadCount} upload{uploadCount === 1 ? '' : 's'}
-                      <Dot />
-                      {images.toLocaleString()} image{images === 1 ? '' : 's'}
-                      <Dot />
-                      {tagged.toLocaleString()} tagged
-                      <Dot />
-                      {Math.max(0, images - tagged).toLocaleString()} to go
-                      {anyPending && <span className="text-inkMute"> · tallying…</span>}
+              <div className="flex items-baseline justify-between gap-4 flex-wrap mb-4">
+                <div>
+                  <h1 className="font-display text-[28px] leading-tight text-ink">
+                    Uploads in {collection?.name ?? collection?.bucket ?? 'this collection'}
+                  </h1>
+                  <p className="text-[13px] text-inkSoft mt-1">
+                    {uploads.isLoading ? (
+                      'Loading uploads…'
+                    ) : (
+                      <>
+                        {uploadCount} upload{uploadCount === 1 ? '' : 's'}
+                        <Dot />
+                        {images.toLocaleString()} image{images === 1 ? '' : 's'}
+                        <Dot />
+                        {tagged.toLocaleString()} tagged
+                        <Dot />
+                        {Math.max(0, images - tagged).toLocaleString()} to go
+                        {anyPending && <span className="text-inkMute"> · tallying…</span>}
                     </>
                   )}
                 </p>
@@ -270,13 +272,17 @@ function UploadRow({
   onOpen: () => void;
 }) {
   const { date, time, user } = parseStamp(stamp);
+  const help = useFocusExplanation(SYNC_EXPLANATIONS[draftState ?? 'local-only']);
   const s = query?.data;
   const loading = query?.isLoading ?? true;
   const pct = s && s.imageCount > 0 ? Math.round((s.imagesWithSpecies / s.imageCount) * 100) : 0;
 
   return (
+    <>
     <button
       onClick={onOpen}
+      aria-describedby={help.id}
+      {...help.triggerProps}
       className={`w-full text-left grid ${uploadGrid} gap-2 md:gap-4 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group`}
     >
       <span data-column="date" className="font-mono text-[12.5px] text-inkSoft">{date}</span>
@@ -317,6 +323,8 @@ function UploadRow({
         Open →
       </span>
     </button>
+    {help.explanation}
+    </>
   );
 }
 
@@ -326,7 +334,10 @@ function UploadRow({
 function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
   if (state === 'local-only') {
     return (
-      <span className="inline-flex items-center gap-1.5 border border-rule px-3 h-7 text-[12px] font-body font-[600] text-inkSoft lowercase">
+      <span
+        className="inline-flex items-center gap-1.5 border border-rule px-3 h-7 text-[12px] font-body font-[600] text-inkSoft lowercase"
+        title={SYNC_EXPLANATIONS['local-only']}
+      >
         <span className="font-mono" aria-hidden>
           ○
         </span>
@@ -336,12 +347,25 @@ function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
   }
   const spec =
     state === 'unsynced'
-      ? { bg: 'bg-accent', glyph: '●', label: 'unsynced edits', clip: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)' }
-      : { bg: 'bg-ok', glyph: '✓', label: 'synced', clip: 'polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%)' };
+      ? {
+          bg: 'bg-accent',
+          glyph: '●',
+          label: 'unsynced edits',
+          clip: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)',
+          explain: SYNC_EXPLANATIONS.unsynced,
+        }
+      : {
+          bg: 'bg-ok',
+          glyph: '✓',
+          label: 'synced',
+          clip: 'polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%)',
+          explain: SYNC_EXPLANATIONS.synced,
+        };
   return (
     <span
       className={`inline-flex items-center gap-1.5 px-3.5 h-7 text-[12px] font-body font-[600] text-paper lowercase ${spec.bg}`}
       style={{ clipPath: spec.clip }}
+      title={spec.explain}
     >
       <span className="font-mono" aria-hidden>
         {spec.glyph}

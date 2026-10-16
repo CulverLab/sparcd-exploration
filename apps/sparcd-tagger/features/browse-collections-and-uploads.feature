@@ -77,8 +77,11 @@ Feature: Find the upload that needs tagging
   Scenario: Each upload shows whether this browser holds unsynced edits for it
     Given local edits were made to an upload in this browser
     Then that upload's row is marked as having unsynced edits
+    And its unsynced explanation is available on hover and keyboard focus
     And an upload whose local edits have all been synced is marked as synced
+    And its synced explanation is available on hover and keyboard focus
     And an upload never edited on this machine is marked local-only
+    And its local-only explanation is available on hover and keyboard focus
 
   @unmapped
   Scenario: Opening an upload moves into the tagging workspace
