@@ -895,15 +895,6 @@ export function Tag() {
           )}
         </span>
 
-        {speciesCountPrefix && selected.size <= 1 && (
-          <span
-            className="border border-accent px-2 py-0.5 text-[12px] font-mono text-accent"
-            role="status"
-          >
-            Count: {speciesCountPrefix}
-          </span>
-        )}
-
         {/* Touch path for building a multi-select set (desktop uses Shift/Cmd
             click). Toggles the focused image in/out of the selection. */}
         <button
@@ -1415,6 +1406,14 @@ export function Tag() {
       // same panel renders in both) with one site.
       headerSlot: (
         <div className="flex flex-wrap items-center gap-1.5">
+          {speciesCountPrefix && selected.size <= 1 && (
+            <span
+              className="border border-accent px-2 py-0.5 text-[12px] font-mono text-accent"
+              role="status"
+            >
+              Count: {speciesCountPrefix}
+            </span>
+          )}
           <AppliedSpecies
             observations={observations}
             disabled={!current}

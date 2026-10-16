@@ -32,6 +32,7 @@ import {
   UUID,
   UUID_B,
   PREFIX_A,
+  PREFIX_B,
   PREFIX_C,
   SETTINGS_BUCKET,
   SPECIES_JSON,
@@ -660,6 +661,7 @@ When('count {int} is typed before the bound species key', async ({ page }, count
 });
 
 Then('the new species count is {int}', async ({ page }, count: number) => {
+  await expandApplied(page);
   await expect(appliedChip(page, 'Mule Deer').locator('input[type="number"]')).toHaveValue(
     String(count),
   );
@@ -1121,4 +1123,79 @@ Then('the stored observations record no species for the image left behind', asyn
   }
   const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_C}UploadMeta.json`)) as { imagesWithSpecies: number };
   expect(meta.imagesWithSpecies).toBe(1);
+});
+
+When('the count preview layout is {string} at width {int}', async ({ page }, layout: string, width: number) => {
+  await speciesApply(page, 'Canis latrans').click();
+  await expect(appliedChip(page, 'Coyote').getByRole('spinbutton')).toHaveValue('1');
+  await page.setViewportSize({ width, height: 950 });
+  if (layout === 'Focus') await enterFocusView(page);
+  else if (layout === 'list') await page.getByRole('button', { name: '☰ List' }).click();
+  // Start on a stable non-editable control; Focus must retain modal focus.
+  if (layout === 'Focus') {
+    await page.getByRole('button', { name: 'Close Focus', exact: true }).focus();
+  } else {
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  }
+});
+
+When('the pending count is corrected from two to four', async ({ page }) => {
+  const focusedBefore = await page.evaluateHandle(() => document.activeElement);
+  await page.keyboard.press('2');
+  await expect(page.getByRole('status').filter({ hasText: /^Count: 2$/ })).toBeVisible();
+  await page.keyboard.press('Backspace');
+  await expect(page.getByText(/^Count: \d+$/)).toHaveCount(0);
+  await page.keyboard.press('4');
+  expect(await focusedBefore.evaluate((element) => element === document.activeElement)).toBe(true);
+  await focusedBefore.dispose();
+});
+
+Then('the species header alone announces pending count four', async ({ page }) => {
+  const preview = page.getByText('Count: 4', { exact: true });
+  await expect(preview).toHaveCount(1);
+  await expect(preview).toHaveAttribute('role', 'status');
+  const panel = page.getByTestId('species-panel');
+  const header = panel.getByRole('textbox', { name: 'Filter species' }).locator('..');
+  const existingCount = header.getByRole('spinbutton', { name: 'Count for Coyote', exact: true });
+  const remove = header.getByRole('button', { name: 'Remove Coyote', exact: true });
+  await expect(header.getByRole('status').filter({ hasText: 'Count: 4' })).toBeVisible();
+  await expect(preview.locator('..').getByRole('spinbutton', { name: 'Count for Coyote', exact: true })).toHaveValue('1');
+  await preview.scrollIntoViewIfNeeded();
+  const bounds = await preview.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await expect(panel.getByRole('textbox', { name: 'Filter species' })).toBeVisible();
+  await expect(preview).not.toBeFocused();
+  for (const control of [existingCount, remove, header.getByRole('button', { name: 'Clear Species', exact: true })]) {
+    await expect(control).toBeVisible();
+    await expect(control).toBeEnabled();
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  }
+  await existingCount.fill('2');
+  await expect(existingCount).toHaveValue('2');
+  await expect(preview).toBeVisible();
+  // Return species-key input to a non-editable control.
+  if (await page.getByRole('button', { name: 'Close Focus', exact: true }).count()) {
+    await page.getByRole('button', { name: 'Close Focus', exact: true }).focus();
+  } else await existingCount.blur();
+});
+
+When('the count-preview image changes', async ({ page }) => {
+  await focusFrame(page, 'IMG003.JPG');
+});
+
+When('the count-preview upload changes', async ({ page }) => {
+  const selectedPrefix = () => page.evaluate(async () => {
+    const path = '/sparcd-exploration/tagger/src/store.ts';
+    const { useStore } = await import(/* @vite-ignore */ path);
+    return useStore.getState().selectedUploadPrefix;
+  });
+  await expect.poll(selectedPrefix).toBe(PREFIX_A);
+  await sectionTab(page, 'Browse').click();
+  await openUpload(page, 'fielduser');
+  await expect.poll(selectedPrefix).toBe(PREFIX_B);
 });
