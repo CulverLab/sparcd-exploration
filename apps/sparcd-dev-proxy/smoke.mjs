@@ -67,14 +67,16 @@ function wsUpgradeStatus(origin, path) {
 
 let uploader;
 let tagger;
+let explorerNext;
 let proxy;
 
 try {
   uploader = await startApp('../sparcd-uploader/');
   tagger = await startApp('../sparcd-tagger/');
+  explorerNext = await startApp('../sparcd-explorer-next/');
   const proxyPort = await freePort();
   const proxyConfig = createProxyConfig({
-    targets: { uploader: uploader.origin, tagger: tagger.origin },
+    targets: { uploader: uploader.origin, tagger: tagger.origin, explorerNext: explorerNext.origin },
     port: proxyPort,
   });
   proxy = await createServer({
@@ -92,32 +94,42 @@ try {
   const origin = `http://${host}:${address.port}`;
   const uploaderUrl = new URL('/sparcd-exploration/uploader/', origin);
   const taggerUrl = new URL('/sparcd-exploration/tagger/', origin);
+  const explorerNextUrl = new URL('/sparcd-exploration/explorer-next/', origin);
 
   assert.equal(uploaderUrl.origin, taggerUrl.origin);
-  const [uploaderResponse, taggerResponse, uploaderClient, taggerClient] = await Promise.all([
+  assert.equal(uploaderUrl.origin, explorerNextUrl.origin);
+  const [uploaderResponse, taggerResponse, explorerNextResponse, uploaderClient, taggerClient, explorerNextClient] = await Promise.all([
     fetch(uploaderUrl),
     fetch(taggerUrl),
+    fetch(explorerNextUrl),
     fetch(new URL('/sparcd-exploration/uploader/@vite/client', origin)),
     fetch(new URL('/sparcd-exploration/tagger/@vite/client', origin)),
+    fetch(new URL('/sparcd-exploration/explorer-next/@vite/client', origin)),
   ]);
   assert.equal(uploaderResponse.status, 200);
   assert.equal(taggerResponse.status, 200);
+  assert.equal(explorerNextResponse.status, 200);
   assert.equal(uploaderClient.status, 200);
   assert.equal(taggerClient.status, 200);
+  assert.equal(explorerNextClient.status, 200);
 
-  const [uploaderHtml, taggerHtml] = await Promise.all([
+  const [uploaderHtml, taggerHtml, explorerNextHtml] = await Promise.all([
     uploaderResponse.text(),
     taggerResponse.text(),
+    explorerNextResponse.text(),
   ]);
   assert.match(uploaderHtml, /\/sparcd-exploration\/uploader\/@vite\/client/);
   assert.match(taggerHtml, /\/sparcd-exploration\/tagger\/@vite\/client/);
+  assert.match(explorerNextHtml, /\/sparcd-exploration\/explorer-next\/@vite\/client/);
 
-  const [uploaderWs, taggerWs] = await Promise.all([
+  const [uploaderWs, taggerWs, explorerNextWs] = await Promise.all([
     wsUpgradeStatus(origin, '/sparcd-exploration/uploader/'),
     wsUpgradeStatus(origin, '/sparcd-exploration/tagger/'),
+    wsUpgradeStatus(origin, '/sparcd-exploration/explorer-next/'),
   ]);
   assert.equal(uploaderWs, 101, `uploader WS upgrade: expected 101, got ${uploaderWs}`);
   assert.equal(taggerWs, 101, `tagger WS upgrade: expected 101, got ${taggerWs}`);
+  assert.equal(explorerNextWs, 101, `explorer-next WS upgrade: expected 101, got ${explorerNextWs}`);
 
   console.log(`same-origin proxy smoke passed at ${origin} (HTTP + WS)`);
 } catch (err) {
