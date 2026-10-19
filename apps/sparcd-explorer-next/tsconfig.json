@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@sparcd/types": ["../../packages/types/src/index.ts"],
+      "@sparcd/s3-safe": ["../../packages/s3-safe/src/index.ts"],
+      "@sparcd/auth-ui": ["../../packages/auth-ui/src/index.ts"],
+      "@sparcd/camtrap": ["../../packages/camtrap/src/index.ts"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "test", "vite.config.ts", "../../packages/*/src"]
+}

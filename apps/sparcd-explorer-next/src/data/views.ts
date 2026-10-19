@@ -1,0 +1,300 @@
+// What the views show, each derived from one `FilterResult`, so every count
+// on the page agrees for the same filters.
+
+import type { FilterResult } from './filters';
+import { hexCenter } from './hex';
+import { locationKeyOf, type Model } from './model';
+import type { Position } from './coords';
+import { formatTimestamp24 } from './time';
+
+type Grouping = { separate: boolean };
+
+/** Distinct (location, camera-local date) pairs with at least one photo. */
+function activeDays(model: Model, photos: number[], { separate }: Grouping): number {
+  const pairs = new Set<string>();
+  for (const i of photos) {
+    const p = model.photos[i];
+    if (p.date !== null) pairs.add(`${locationKeyOf(model.sites[p.site], separate)}|${p.day}`);
+  }
+  return pairs.size;
+}
+
+export type Summary = {
+  locations: number;
+  photos: number;
+  tagged: number;
+  detections: number;
+  species: number;
+  animals: number;
+  /** Camera effort: counts every photo the filters keep before species. */
+  activeDays: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  topSpecies: { species: number; detections: number }[];
+  byCollection: { collection: number; photos: number; tagged: number; detections: number }[];
+};
+
+export function summarize(model: Model, result: FilterResult, grouping: Grouping): Summary {
+  const locations = new Set<string>();
+  const byCollection = model.collections.map((_, collection) => ({ collection, photos: 0, tagged: 0, detections: 0 }));
+  let tagged = 0;
+  let firstDate: string | null = null;
+  let lastDate: string | null = null;
+  for (const i of result.photos) {
+    const p = model.photos[i];
+    locations.add(locationKeyOf(model.sites[p.site], grouping.separate));
+    byCollection[p.collection].photos++;
+    if (p.tagged) {
+      tagged++;
+      byCollection[p.collection].tagged++;
+    }
+    if (p.date !== null) {
+      if (firstDate === null || p.date < firstDate) firstDate = p.date;
+      if (lastDate === null || p.date > lastDate) lastDate = p.date;
+    }
+  }
+  const perSpecies = new Map<number, number>();
+  let animals = 0;
+  for (const d of result.detections) {
+    const det = model.detections[d];
+    perSpecies.set(det.species, (perSpecies.get(det.species) ?? 0) + 1);
+    animals += det.count;
+    byCollection[det.collection].detections++;
+  }
+  return {
+    locations: locations.size,
+    photos: result.photos.length,
+    tagged,
+    detections: result.detections.length,
+    species: perSpecies.size,
+    animals,
+    activeDays: activeDays(model, result.effort, grouping),
+    firstDate,
+    lastDate,
+    topSpecies: [...perSpecies]
+      .map(([species, detections]) => ({ species, detections }))
+      .sort(
+        (a, b) =>
+          b.detections - a.detections || model.species[a.species].name.localeCompare(model.species[b.species].name),
+      ),
+    byCollection,
+  };
+}
+
+export type LocationRow = {
+  key: string;
+  ids: string[];
+  name: string;
+  noLocation: boolean;
+  collections: number[];
+  sites: number[];
+  /** The position of the site photographed most recently; null for no location. */
+  position: Position | null;
+  elevation: number | null;
+  range: string;
+  photos: number;
+  tagged: number;
+  detections: number;
+  species: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  activeDays: number;
+};
+
+/** One row per location with at least one photo in view. */
+export function locationRows(model: Model, result: FilterResult, grouping: Grouping): LocationRow[] {
+  type Tally = {
+    sites: Set<number>;
+    photos: number;
+    tagged: number;
+    detections: number;
+    species: Set<number>;
+    days: Set<number>;
+    first: string | null;
+    last: string | null;
+  };
+  const tallies = new Map<string, Tally>();
+  const tallyOf = (site: number) => {
+    const key = locationKeyOf(model.sites[site], grouping.separate);
+    let t = tallies.get(key);
+    if (!t) {
+      t = {
+        sites: new Set(),
+        photos: 0,
+        tagged: 0,
+        detections: 0,
+        species: new Set(),
+        days: new Set(),
+        first: null,
+        last: null,
+      };
+      tallies.set(key, t);
+    }
+    t.sites.add(site);
+    return t;
+  };
+  for (const i of result.photos) {
+    const p = model.photos[i];
+    const t = tallyOf(p.site);
+    t.photos++;
+    if (p.tagged) t.tagged++;
+    if (p.date !== null) {
+      t.days.add(p.day!);
+      if (t.first === null || p.date < t.first) t.first = p.date;
+      if (t.last === null || p.date > t.last) t.last = p.date;
+    }
+  }
+  for (const d of result.detections) {
+    const det = model.detections[d];
+    const t = tallyOf(model.photos[det.photo].site);
+    t.detections++;
+    t.species.add(det.species);
+  }
+  const lastDay = (site: number) => model.sites[site].lastDay ?? -Infinity;
+  return [...tallies].map(([key, t]) => {
+    const sites = [...t.sites];
+    // A moved camera shows at the position it was photographed from last.
+    const shown = model.sites[sites.reduce((best, s) => (lastDay(s) > lastDay(best) ? s : best))];
+    return {
+      key,
+      ids: [...new Set(sites.map((s) => model.sites[s].locationId))].sort(),
+      name: shown.name,
+      noLocation: shown.noLocation,
+      collections: [...new Set(sites.map((s) => model.sites[s].collection))],
+      sites,
+      position: shown.position,
+      elevation: shown.elevation,
+      range: shown.range,
+      photos: t.photos,
+      tagged: t.tagged,
+      detections: t.detections,
+      species: t.species.size,
+      firstDate: t.first,
+      lastDate: t.last,
+      activeDays: t.days.size,
+    };
+  });
+}
+
+export type SpeciesRow = { species: number; detections: number; photos: number; animals: number; locations: number };
+
+export function speciesRows(model: Model, result: FilterResult, grouping: Grouping): SpeciesRow[] {
+  const rows = new Map<number, SpeciesRow & { photoSet: Set<number>; locationSet: Set<string> }>();
+  for (const d of result.detections) {
+    const det = model.detections[d];
+    let row = rows.get(det.species);
+    if (!row) {
+      row = {
+        species: det.species,
+        detections: 0,
+        photos: 0,
+        animals: 0,
+        locations: 0,
+        photoSet: new Set(),
+        locationSet: new Set(),
+      };
+      rows.set(det.species, row);
+    }
+    row.detections++;
+    row.animals += det.count;
+    row.photoSet.add(det.photo);
+    row.locationSet.add(locationKeyOf(model.sites[model.photos[det.photo].site], grouping.separate));
+  }
+  return [...rows.values()]
+    .map(({ photoSet, locationSet, ...row }) => ({ ...row, photos: photoSet.size, locations: locationSet.size }))
+    .sort((a, b) => b.detections - a.detections);
+}
+
+export type PhotoRow = {
+  photo: number;
+  fileName: string;
+  /** 24-hour camera-local time as stored. */
+  time: string;
+  date: string | null;
+  /** Common names of the species shown on this photo, without removed or corrected-away ones. */
+  species: string;
+  locationId: string;
+  locationName: string;
+  collection: string;
+  tagged: boolean;
+  video: boolean;
+};
+
+/** One row per photo, its species joined. `detections` limits the species to those in view. */
+export function photoRows(model: Model, photos: number[], detections?: number[]): PhotoRow[] {
+  const shown = detections && new Set(detections);
+  return photos.map((i) => {
+    const p = model.photos[i];
+    const site = model.sites[p.site];
+    const names = new Set<string>();
+    for (const d of p.detections) {
+      if (!shown || shown.has(d)) names.add(model.species[model.detections[d].species].name);
+    }
+    return {
+      photo: i,
+      fileName: p.fileName,
+      time: formatTimestamp24(p.timestamp),
+      date: p.date,
+      species: [...names].join(', '),
+      locationId: site.locationId,
+      locationName: site.name,
+      collection: model.collections[p.collection].name,
+      tagged: p.tagged,
+      video: p.video,
+    };
+  });
+}
+
+export type HexBin = {
+  hex: string;
+  center: Position;
+  sites: number[];
+  locationIds: string[];
+  locationNames: string[];
+  photos: number;
+  tagged: number;
+  /** Distinct species among the detections in view. */
+  richness: number;
+};
+
+/** Photos in view per hex cell. Sites without a position (and no-location photos) have no cell. */
+export function hexBins(model: Model, result: FilterResult): HexBin[] {
+  const bins = new Map<string, HexBin & { speciesSet: Set<number> }>();
+  const binOf = (site: number) => {
+    const s = model.sites[site];
+    if (!s.hex) return null;
+    let bin = bins.get(s.hex);
+    if (!bin) {
+      bin = {
+        hex: s.hex,
+        center: hexCenter(model.grid, s.hex),
+        sites: [],
+        locationIds: [],
+        locationNames: [],
+        photos: 0,
+        tagged: 0,
+        richness: 0,
+        speciesSet: new Set(),
+      };
+      bins.set(s.hex, bin);
+    }
+    if (!bin.sites.includes(site)) {
+      bin.sites.push(site);
+      bin.locationIds.push(s.locationId);
+      bin.locationNames.push(s.name);
+    }
+    return bin;
+  };
+  for (const i of result.photos) {
+    const p = model.photos[i];
+    const bin = binOf(p.site);
+    if (!bin) continue;
+    bin.photos++;
+    if (p.tagged) bin.tagged++;
+  }
+  for (const d of result.detections) {
+    const det = model.detections[d];
+    binOf(model.photos[det.photo].site)?.speciesSet.add(det.species);
+  }
+  return [...bins.values()].map(({ speciesSet, ...bin }) => ({ ...bin, richness: speciesSet.size }));
+}
