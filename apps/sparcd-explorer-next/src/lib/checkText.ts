@@ -40,11 +40,12 @@ export function describeCheck(model: Model, check: DataCheck): CheckLine {
     }
     case 'unreadable': {
       const where = `upload ${stamp(check.folder)} of ${model.collections[check.collection].name}`;
+      const why = check.message.replace(/\.$/, '');
       return {
         text:
           check.file === 'listing'
-            ? `The files of ${where} couldn't be listed. ${check.message}`
-            : `${check.file} in ${where} couldn't be read, so its rows are missing. ${check.message}`,
+            ? `The files of ${where} couldn't be listed (${why}).`
+            : `${check.file} in ${where} couldn't be read, so its rows are missing (${why}).`,
         action: { label: 'Try again', kind: 'retry' },
       };
     }
@@ -61,7 +62,7 @@ export function describeCheck(model: Model, check: DataCheck): CheckLine {
       const n = check.spans.length;
       const spans = check.spans.map((s) => `${model.collections[s.collection].name} has ${span(s.first, s.last)}`);
       return {
-        text: `${id} appears in ${n} collections. ${spans.join(', ')}.`,
+        text: `${id} appears in ${n} collections: ${spans.join(', ')}.`,
         action: {
           label: n === 2 ? 'Show both' : `Show all ${n}`,
           kind: 'show',

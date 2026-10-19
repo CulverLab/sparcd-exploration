@@ -1,10 +1,11 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
-import { activityByLocation, monthAxis, type MonthAxis } from '@/lib/activity';
+import { activityByLocation } from '@/lib/activity';
+import { monthAxis, monthLabel, monthShade, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
-import { plural } from '@/lib/format';
+import { fmtN, plural } from '@/lib/format';
 import { locationColumns, locationFlagger, photoColumns, speciesColumns, type Col, type TableContext } from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore, type View } from '@/store';
@@ -12,6 +13,7 @@ import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { DataTable } from './DataTable';
 import { Seg, usePopover } from './Popover';
+import { Tip, type TipAt } from './Tip';
 
 type TableView = Exclude<View, 'charts'>;
 
@@ -30,21 +32,15 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const YEAR = 12;
-
 function ActivityHead({ axis }: { axis: MonthAxis }) {
-  const ticks: { pct: number; year: number }[] = [];
-  for (let m = axis.first; m < axis.first + axis.count; m++) {
-    if (m % YEAR === 0 || m === axis.first) ticks.push({ pct: ((m - axis.first) / axis.count) * 100, year: Math.floor(m / YEAR) });
-  }
   return (
     <span className="axhead">
       <span>Activity</span>
       <span className="yaxis" aria-hidden="true">
-        {ticks.map((t) => (
+        {yearTicks(axis).map((t) => (
           <Fragment key={t.year}>
-            <i style={{ left: `${t.pct}%` }} />
-            <span style={t.pct > 84 ? { right: 0, paddingLeft: 0 } : { left: `${t.pct}%` }}>{t.year}</span>
+            <i style={{ left: `${t.at * 100}%` }} />
+            <span style={t.at > 0.84 ? { right: 0, paddingLeft: 0 } : { left: `${t.at * 100}%` }}>{t.year}</span>
           </Fragment>
         ))}
       </span>
@@ -52,23 +48,74 @@ function ActivityHead({ axis }: { axis: MonthAxis }) {
   );
 }
 
-function ActivityCell({ axis, months, max }: { axis: MonthAxis; months?: Map<number, [number, number]>; max: number }) {
+/** "AB01 · 2023-04 to 2025-03 · 157 active days" */
+function activityLine(r: LocationRow): string {
+  const id = r.noLocation ? 'No location set' : r.ids.join(', ');
+  const span = r.firstDate && r.lastDate ? `${r.firstDate.slice(0, 7)} to ${r.lastDate.slice(0, 7)}` : 'no photos in view';
+  return `${id} · ${span} · ${plural(r.activeDays, 'active day')}`;
+}
+
+function ActivityCell({
+  axis,
+  row,
+  months,
+  max,
+  onTip,
+}: {
+  axis: MonthAxis;
+  row: LocationRow;
+  months?: MonthCounts;
+  max: number;
+  onTip: (tip: TipAt | null) => void;
+}) {
   const H = 14;
+  const line = activityLine(row);
   return (
-    <svg className="spark" viewBox={`0 0 ${axis.count} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-      <rect width={axis.count} height={H} fill="var(--ruleSoft)" opacity={0.6} />
-      {[...(months ?? [])].map(([m, [n, untagged]]) => (
-        <g key={m}>
-          <rect
-            x={m - axis.first}
-            width={1}
-            height={H}
-            fill={`color-mix(in srgb, var(--accent) ${Math.round((0.25 + 0.75 * Math.sqrt(n / max)) * 100)}%, var(--accentSoft))`}
-          />
-          {untagged > 0 && <rect x={m - axis.first} y={H - Math.max(2, (H * untagged) / n)} width={1} height={Math.max(2, (H * untagged) / n)} fill="var(--warn)" />}
-        </g>
-      ))}
-    </svg>
+    <span
+      className="spark"
+      onPointerMove={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const m = axis.first + Math.min(axis.count - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * axis.count)));
+        const [photos, untagged] = months?.get(m) ?? [0, 0];
+        onTip({
+          x: e.clientX,
+          y: e.clientY,
+          content: (
+            <>
+              <b>{line}</b>
+              <div className="m">
+                {monthLabel(m)}: {plural(photos, 'photo')}
+                {untagged ? `, ${fmtN(untagged)} untagged` : ''}
+              </div>
+            </>
+          ),
+        });
+      }}
+      onPointerLeave={() => onTip(null)}
+    >
+      <svg viewBox={`0 0 ${axis.count} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        <rect className="trk" width={axis.count} height={H} />
+        {[...(months ?? [])].map(([m, [n, untagged]]) => (
+          <g key={m}>
+            <rect
+              x={m - axis.first}
+              width={1}
+              height={H}
+              style={{ fill: `color-mix(in srgb, var(--accent) ${Math.round(monthShade(n, max) * 100)}%, var(--accentSoft))` }}
+            />
+            {untagged > 0 && (
+              <rect className="untag" x={m - axis.first} y={H - Math.max(2, (H * untagged) / n)} width={1} height={Math.max(2, (H * untagged) / n)} />
+            )}
+          </g>
+        ))}
+        {yearTicks(axis)
+          .filter((t) => t.month !== axis.first)
+          .map((t) => (
+            <line key={t.month} className="yr" x1={t.month - axis.first} x2={t.month - axis.first} y2={H} />
+          ))}
+      </svg>
+      <span className="sr">{line}</span>
+    </span>
   );
 }
 
@@ -96,6 +143,10 @@ export function TablePanel() {
   const withUndo = useStore((s) => s.withUndo);
   const checks = usePopover();
   const [sorting, setSorting] = useState(DEFAULT_SORT);
+  const [tip, setTip] = useState<TipAt | null>(null);
+  const setHighlight = useStore((s) => s.setHighlight);
+  // A view or model change leaves no row lit on the map.
+  useEffect(() => () => setHighlight(null), [view, model, setHighlight]);
 
   const ctx: TableContext = { model, display, totalDetections: result.detections.length };
   const tableView: TableView | null = view === 'charts' || (view === 'photos' && layout === 'grid') ? null : view;
@@ -156,9 +207,12 @@ export function TablePanel() {
         onSorting={(s) => setSorting((all) => ({ ...all, locations: s }))}
         rowKey={(r) => r.key}
         rowClass={(r) => (flags(r).length ? 'flag' : undefined)}
+        onRowHover={(r) => setHighlight(r && !r.noLocation ? r.sites : null)}
         head={(c) => (c.id === 'activity' && axis ? <ActivityHead axis={axis} /> : undefined)}
         cell={(c, r) => {
-          if (c.id === 'activity') return axis ? <ActivityCell axis={axis} months={activity.byKey.get(r.key)} max={activity.max} /> : '—';
+          if (c.id === 'activity') {
+            return axis ? <ActivityCell axis={axis} row={r} months={activity.byKey.get(r.key)} max={activity.max} onTip={setTip} /> : '—';
+          }
           if (c.id !== 'name') return undefined;
           const f = flags(r);
           return (
@@ -293,6 +347,7 @@ export function TablePanel() {
         </div>
       )}
       <div className="tbl-wrap">{body}</div>
+      <Tip at={tip} />
     </section>
   );
 }

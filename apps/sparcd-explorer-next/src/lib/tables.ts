@@ -43,8 +43,7 @@ export type Col<R> = {
 
 export type TableContext = { model: Model; display: Display; totalDetections: number };
 
-export const ACTIVE_DAYS_HELP =
-  'Days with at least one photo, added up across locations. The data has no deployment start or end dates, so this stands in for camera-days.';
+export const ACTIVE_DAYS_HELP = 'Days with at least one photo, summed over locations';
 
 export const cellText = <R>(c: Col<R>, r: R): string => {
   if (c.text) return c.text(r);

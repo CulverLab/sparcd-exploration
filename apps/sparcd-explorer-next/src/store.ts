@@ -21,6 +21,7 @@ import type { Display } from '@/lib/format';
 import { readStored, writeStored } from '@/lib/storage';
 
 export type View = 'locations' | 'species' | 'photos' | 'charts';
+export type MapMode = 'hexes' | 'sites';
 export type PhotoLayout = 'grid' | 'list';
 export type { Registries };
 
@@ -54,6 +55,9 @@ type State = {
   toast: Toast | null;
   /** Bumped by every open, cancel and account change. */
   openGeneration: number;
+  mapMode: MapMode;
+  /** Sites of the Locations row under the pointer or focus, lit on the map. */
+  highlight: number[] | null;
 
   signIn: (config: S3Config, remember: boolean) => void;
   adoptSession: (config: S3Config | null) => void;
@@ -77,6 +81,8 @@ type State = {
   setView: (view: View) => void;
   setPhotoLayout: (layout: PhotoLayout) => void;
   setDisplay: (display: Partial<Display>) => void;
+  setMapMode: (mode: MapMode) => void;
+  setHighlight: (sites: number[] | null) => void;
   showToast: (message: string, undo?: () => void) => void;
   hideToast: () => void;
 };
@@ -130,6 +136,8 @@ export const useStore = create<State>((set, get) => ({
   display: readStored(DISPLAY_KEY, DEFAULT_DISPLAY, isDisplay),
   toast: null,
   openGeneration: 0,
+  mapMode: 'hexes',
+  highlight: null,
 
   signIn: (config, remember) => {
     saveSharedConnection(config, remember);
@@ -193,6 +201,7 @@ export const useStore = create<State>((set, get) => ({
       loaded,
       registries,
       model: next,
+      highlight: null,
       checkedAt: Math.min(...loaded.map((c) => c.checkedAt)),
       checkError: null,
       filters: carried.state,
@@ -211,7 +220,7 @@ export const useStore = create<State>((set, get) => ({
   // Every finished check rebuilds: a new read problem or a corrected species
   // or location name changes what the model says even when no upload did.
   applyRefresh: (loaded, registries) =>
-    set({ loaded, registries, checkedAt: Date.now(), checkError: null, model: model(loaded, registries) }),
+    set({ loaded, registries, checkedAt: Date.now(), checkError: null, model: model(loaded, registries), highlight: null }),
 
   setChecking: (checking, error = null) => set({ checking, ...(error !== null ? { checkError: error } : {}) }),
 
@@ -248,6 +257,8 @@ export const useStore = create<State>((set, get) => ({
     set({ display });
   },
 
+  setMapMode: (mapMode) => set({ mapMode }),
+  setHighlight: (highlight) => set({ highlight }),
   showToast: (message, undo) => set({ toast: { id: ++toastId, message, undo } }),
   hideToast: () => set({ toast: null }),
 }));

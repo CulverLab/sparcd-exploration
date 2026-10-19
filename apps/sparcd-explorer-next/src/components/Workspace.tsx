@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
-import { EffortStrip, MapBand } from './Bands';
+import { EffortStrip } from './EffortStrip';
+import { MapBand } from './MapBand';
 import { FilterBar } from './FilterBar';
 import { Header } from './Header';
 import { TablePanel } from './TablePanel';

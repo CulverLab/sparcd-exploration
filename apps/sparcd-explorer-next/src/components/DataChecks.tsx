@@ -42,6 +42,7 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
                 <button
                   type="button"
                   className="btn sm"
+                  aria-expanded={c.action.kind === 'list' ? listed === i : undefined}
                   onClick={() => {
                     if (c.action.kind === 'list') return setListed(listed === i ? null : i);
                     onClose(false);

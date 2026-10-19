@@ -679,6 +679,250 @@ select {
   overflow: hidden;
   background: var(--paper);
   border-right: 1px solid var(--ruleSoft);
+  /* Leaflet's pane and control z-indexes stay inside the map, under the sticky header. */
+  isolation: isolate;
+}
+.leafmap {
+  position: absolute;
+  inset: 0;
+}
+.leaflet-container {
+  font: inherit;
+  background: var(--paper);
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: var(--panel);
+  color: var(--ink);
+  border-bottom-color: var(--ruleSoft);
+}
+.leaflet-bar {
+  border-radius: 2px;
+}
+.leaflet-container path.hx {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-opacity: 0.75;
+  fill-opacity: 0.84;
+  cursor: pointer;
+  outline: none;
+}
+path.hx.s0 {
+  fill: var(--accentSoft);
+  fill-opacity: 0.4;
+}
+path.hx.s1 {
+  fill: color-mix(in srgb, var(--accent) 20%, var(--accentSoft));
+}
+path.hx.s2 {
+  fill: color-mix(in srgb, var(--accent) 40%, var(--accentSoft));
+}
+path.hx.s3 {
+  fill: color-mix(in srgb, var(--accent) 60%, var(--accentSoft));
+}
+path.hx.s4 {
+  fill: color-mix(in srgb, var(--accent) 80%, var(--accentSoft));
+}
+path.hx.s5 {
+  fill: var(--accent);
+}
+path.hx.out {
+  fill: var(--paper);
+  fill-opacity: 0.15;
+  stroke-dasharray: 3 3;
+  stroke-opacity: 0.55;
+}
+path.hx:hover,
+path.hx:focus-visible {
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-opacity: 1;
+}
+path.hx.sel {
+  stroke: var(--warn);
+  stroke-width: 3;
+  stroke-opacity: 1;
+  stroke-dasharray: none;
+}
+path.hx.hl,
+path.st.hl {
+  stroke: var(--ink);
+  stroke-width: 3.5;
+  stroke-opacity: 1;
+}
+.hexlabel {
+  display: grid;
+  place-items: center;
+}
+.hexlabel span {
+  font: 600 11.5px/1 'JetBrains Mono', monospace;
+  color: var(--ink);
+  text-shadow:
+    0 0 3px var(--paper),
+    0 0 2px var(--paper);
+}
+.hexlabel.s3 span,
+.hexlabel.s4 span,
+.hexlabel.s5 span {
+  color: var(--onAccent);
+  text-shadow: none;
+}
+.hexlabel.out,
+.tiny-hexes .hexlabel {
+  display: none;
+}
+.leaflet-container path.st {
+  cursor: pointer;
+}
+path.st.in {
+  fill: var(--accent);
+  fill-opacity: 0.62;
+  stroke: var(--panel);
+  stroke-width: 1.2;
+}
+path.st.out {
+  fill: var(--panel);
+  fill-opacity: 0.4;
+  stroke: var(--inkMute);
+  stroke-opacity: 0.7;
+}
+path.st.sel {
+  stroke: var(--warn);
+  stroke-width: 3;
+}
+.leaflet-tooltip.maptip {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  box-shadow: 0 4px 14px var(--shadow);
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  width: max-content;
+  max-width: 290px;
+}
+.leaflet-tooltip-top.maptip::before {
+  border-top-color: var(--rule);
+}
+.leaflet-tooltip-bottom.maptip::before {
+  border-bottom-color: var(--rule);
+}
+.map-legend {
+  position: absolute;
+  z-index: 1001;
+  left: 6px;
+  top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 64px);
+  padding: 2px 7px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--inkSoft);
+  background: var(--panel);
+  border: 1px solid var(--ruleSoft);
+  pointer-events: none;
+}
+.map-legend .ramp {
+  display: inline-flex;
+  border: 1px solid var(--ruleSoft);
+}
+.map-legend .ramp i {
+  display: block;
+  width: 10px;
+  height: 9px;
+}
+.map-legend .ramp .s1 {
+  background: color-mix(in srgb, var(--accent) 20%, var(--accentSoft));
+}
+.map-legend .ramp .s2 {
+  background: color-mix(in srgb, var(--accent) 40%, var(--accentSoft));
+}
+.map-legend .ramp .s3 {
+  background: color-mix(in srgb, var(--accent) 60%, var(--accentSoft));
+}
+.map-legend .ramp .s4 {
+  background: color-mix(in srgb, var(--accent) 80%, var(--accentSoft));
+}
+.map-legend .ramp .s5 {
+  background: var(--accent);
+}
+.map-note {
+  position: absolute;
+  z-index: 1001;
+  left: 6px;
+  bottom: 22px;
+  min-height: 26px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--panel);
+  border: 1px solid var(--warn);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.map-note:hover {
+  background: var(--warnSoft);
+}
+.map-credit {
+  position: absolute;
+  z-index: 1001;
+  right: 0;
+  bottom: 0;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: var(--inkSoft);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  pointer-events: none;
+}
+.selclear.onmap,
+.selclear.onstrip {
+  position: absolute;
+  min-height: 28px;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.selclear.onmap {
+  z-index: 1002;
+}
+.selclear.onstrip {
+  z-index: 3;
+}
+.boxlayer {
+  position: absolute;
+  z-index: 1100;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.boxrect {
+  position: absolute;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.btn.tool svg {
+  width: 13px;
+  height: 13px;
+}
+.btn.tool[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--onAccent);
+}
+.field.basemap {
+  width: auto;
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: 12px;
 }
 .summary {
   height: var(--mapH);
@@ -822,12 +1066,126 @@ select {
 .bc tr.on td {
   background: var(--accentSoft);
 }
-.placeholder {
-  background: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--ruleSoft) 35%, transparent) 10px 11px);
-}
 .strip {
+  position: relative;
   height: 112px;
   padding: 4px 10px 6px;
+}
+.tl-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  color: var(--inkSoft);
+}
+.sw {
+  display: inline-block;
+  width: 18px;
+  height: 9px;
+  vertical-align: -1px;
+  margin-right: 4px;
+  border: 1px solid var(--ruleSoft);
+}
+.sw.ramp {
+  background: linear-gradient(90deg, var(--accentSoft), var(--accent));
+}
+.sw.untag {
+  background: var(--warn);
+}
+svg.effort {
+  display: block;
+  cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+}
+.effort .grid {
+  stroke: var(--ruleSoft);
+}
+.effort .axis {
+  stroke: var(--rule);
+}
+.effort .scale {
+  font: 400 10px 'JetBrains Mono', monospace;
+  fill: var(--inkMute);
+  text-anchor: end;
+  dominant-baseline: middle;
+}
+.effort .year {
+  font: 500 11px 'JetBrains Mono', monospace;
+  fill: var(--ink);
+}
+.effort .untag {
+  fill: var(--warn);
+}
+.effort .dim {
+  fill: var(--panel);
+  opacity: 0.72;
+}
+.effort .bracket rect {
+  fill: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.effort .bracket.live rect {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.effort .bracket .edge {
+  fill: var(--accent);
+}
+.effort .cursor {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+.tip {
+  position: fixed;
+  z-index: 70;
+  max-width: 290px;
+  padding: 7px 9px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: 0 4px 14px var(--shadow);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+.tip .m,
+.maptip .m {
+  font: 11.5px 'JetBrains Mono', monospace;
+}
+.tip table,
+.maptip table {
+  border-collapse: collapse;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.tip td,
+.maptip td {
+  padding: 1px 8px 1px 0;
+  white-space: nowrap;
+}
+.tip td.n,
+.maptip td.n {
+  text-align: right;
+  font: 11.5px 'JetBrains Mono', monospace;
+}
+.maptip .muted {
+  color: var(--inkMute);
+}
+.maptip th {
+  padding: 1px 8px 1px 0;
+  font-weight: 500;
+  font-size: 11px;
+  text-align: left;
+}
+.maptip th.n {
+  text-align: right;
+}
+.tip .foot,
+.maptip .foot {
+  margin-top: 4px;
+  color: var(--inkMute);
+  font-size: 11px;
 }
 
 /* Table */
@@ -1018,8 +1376,24 @@ table.data {
 .spark {
   display: block;
   width: var(--sparkW);
+}
+.spark svg {
+  display: block;
+  width: var(--sparkW);
   height: 14px;
   shape-rendering: crispEdges;
+}
+.spark .trk {
+  fill: var(--ruleSoft);
+  opacity: 0.6;
+}
+.spark .untag {
+  fill: var(--warn);
+}
+.spark .yr {
+  stroke: var(--panel);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
 }
 .tbl-foot {
   padding: 12px 10px 18px;

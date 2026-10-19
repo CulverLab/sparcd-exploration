@@ -47,7 +47,7 @@ describe('data check sentences', () => {
 
   it('one location in two collections, with each one’s months', () => {
     expect(lineFor('shared-location').text).toBe(
-      'AA01 appears in 2 collections. Alpha has Jan 2024 to Jan 2024, Bravo has Jun 2025 to Jun 2025.',
+      'AA01 appears in 2 collections: Alpha has Jan 2024 to Jan 2024, Bravo has Jun 2025 to Jun 2025.',
     );
   });
 
@@ -73,7 +73,7 @@ describe('data check sentences', () => {
       file: 'media.csv',
       message: 'Access denied reading media.csv.',
     });
-    expect(line.text).toBe("media.csv in upload u1 of Alpha couldn't be read, so its rows are missing. Access denied reading media.csv.");
+    expect(line.text).toBe("media.csv in upload u1 of Alpha couldn't be read, so its rows are missing (Access denied reading media.csv).");
     expect(line.action).toEqual({ label: 'Try again', kind: 'retry' });
   });
 });
