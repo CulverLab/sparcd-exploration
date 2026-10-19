@@ -17,7 +17,7 @@ export default defineConfig({
   plugins: [react()],
   // Deps first imported after the initial page load (thumbnail workers, the
   // map) make a cold Vite cache re-optimize and reload the page mid-run.
-  optimizeDeps: { include: ['exifr', 'leaflet'] },
+  optimizeDeps: { include: ['exifr', 'exifr/dist/mini.esm.mjs', 'leaflet'] },
   resolve: {
     alias: {
       '@sparcd/types': pkg('types', 'index.ts'),

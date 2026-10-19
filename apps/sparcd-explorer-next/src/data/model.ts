@@ -60,6 +60,8 @@ export type Photo = {
   /** At least one observation names a species. Placeholders and removal-only rows don't. */
   tagged: boolean;
   detections: number[];
+  /** What people wrote on the photo and its tags, without the tools' `[PREFIX:value]` markers. */
+  comments: string;
 };
 
 /** One species tag on one photo. */
@@ -83,6 +85,17 @@ export function locationKeyOf(site: Site, separate: boolean): string {
 }
 
 const NO_DETECTIONS: number[] = [];
+const MARKER = /\[[A-Z0-9_]+:[^\]]*\]/g;
+
+/** Free text from a comments field, without the tools' `[PREFIX:value]` markers. */
+export function commentText(raw: string | undefined): string {
+  return raw ? raw.replace(MARKER, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+const addComment = (photo: Photo, raw: string | undefined) => {
+  const text = commentText(raw);
+  if (text && !photo.comments.split(' · ').includes(text)) photo.comments = photo.comments ? `${photo.comments} · ${text}` : text;
+};
 const VIDEO = /^video\/|\.(mp4|mov|avi)$/i;
 
 function stampOf(folder: string): string {
@@ -199,6 +212,7 @@ export function buildModel(
             hour: t?.hour ?? null,
             tagged: false,
             detections: NO_DETECTIONS,
+            comments: commentText(media.comments),
           }) - 1,
         );
       }
@@ -206,6 +220,7 @@ export function buildModel(
       for (const o of u.observations) {
         const pi = photoOfKey.get(o.mediaId);
         if (pi === undefined) continue;
+        addComment(m.photos[pi], o.tags);
         // Removal and correction markers never name a present species; only
         // the row's own species does (#467).
         const named = nameSpecies(o.scientificName, commonNameFromComments(o.tags));

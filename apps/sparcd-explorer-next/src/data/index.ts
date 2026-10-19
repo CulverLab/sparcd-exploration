@@ -43,6 +43,7 @@ export {
   NO_LOCATION_KEY,
   NO_LOCATION_NAME,
   buildModel,
+  commentText,
   locationKeyOf,
   type CollectionInfo,
   type Detection,
@@ -111,3 +112,17 @@ export {
 export { HEX_SIZE_DEG, hexCenter, hexGrid, hexOf, hexRing, hexSizeFor, siteHexes, type HexGrid, type SiteHexes } from './hex';
 export { isNoLocation, mountainRange, normalizeLocationId } from './locationIds';
 export { dayNumber, formatTimestamp24, parseLocalTimestamp, type LocalTime } from './time';
+export {
+  HEAD_BYTES,
+  IMAGES_IN_FLIGHT,
+  ORIGINAL_REUSE_MS,
+  THUMBS_KEPT,
+  ThumbCache,
+  ThumbQueue,
+  extractThumbnail,
+  loadThumb,
+  type Thumb,
+  type ThumbIo,
+  type ThumbListener,
+  type ThumbRequest,
+} from './thumbs';
