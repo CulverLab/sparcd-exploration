@@ -418,9 +418,48 @@ export class SafeS3Client {
     return prefixes;
   }
 
-  async getObject(bucket: string, key: string): Promise<Uint8Array> {
+  /**
+   * One delimited listing of `prefix`: its immediate subfolders and the
+   * objects directly inside it, each with its ETag. Lets a caller check
+   * whether a folder's files changed without walking anything beneath it.
+   */
+  async listFolder(
+    bucket: string,
+    prefix: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ prefixes: string[]; objects: ObjectInfo[] }> {
     this.assertAllowed(bucket);
-    const res = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const prefixes: string[] = [];
+    const objects: ObjectInfo[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          Delimiter: '/',
+          ContinuationToken: token,
+        }),
+        { abortSignal: opts.signal },
+      );
+      for (const cp of res.CommonPrefixes ?? []) if (cp.Prefix) prefixes.push(cp.Prefix);
+      for (const o of res.Contents ?? []) {
+        objects.push({ key: o.Key!, size: o.Size ?? 0, lastModified: o.LastModified, etag: o.ETag });
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return { prefixes, objects };
+  }
+
+  async getObject(
+    bucket: string,
+    key: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<Uint8Array> {
+    this.assertAllowed(bucket);
+    const res = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), {
+      abortSignal: opts.signal,
+    });
     return res.Body!.transformToByteArray();
   }
 
@@ -666,7 +705,9 @@ function cleanStr(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
-export async function listCollections(client: SafeS3Client): Promise<CollectionRef[]> {
+export async function listCollections(
+  client: Pick<SafeS3Client, 'listBuckets' | 'getObject'>,
+): Promise<CollectionRef[]> {
   const buckets = await client.listBuckets();
   const candidates = buckets.filter(
     (b) => b.startsWith(COLLECTION_BUCKET_PREFIX) && b.length > COLLECTION_BUCKET_PREFIX.length,
