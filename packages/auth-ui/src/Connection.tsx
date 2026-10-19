@@ -22,8 +22,25 @@ export type ConnectionProps = {
    *  into a caller's own layout (e.g. mid-wizard, asking to connect only once
    *  a step needs it) instead of taking over the whole viewport. */
   embedded?: boolean;
-  /** Field labels for the two credentials. Default "Access key" / "Secret key". */
-  labels?: { accessKey?: string; secretKey?: string };
+  /** Wording a caller can change. Each defaults to the text every tool shows today. */
+  labels?: ConnectionLabels;
+};
+
+export type ConnectionLabels = {
+  /** Default "Endpoint". */
+  endpoint?: string;
+  /** Default "host[:port] or https://host". */
+  endpointPlaceholder?: string;
+  /** Default "Access key". */
+  accessKey?: string;
+  /** Default "Secret key". */
+  secretKey?: string;
+  /** The line under the brand. Default "Connect to an S3-compatible endpoint to begin." */
+  intro?: string;
+  /** Default "Remember endpoint & access key on this device". */
+  remember?: string;
+  /** Default "Connect". */
+  submit?: string;
 };
 
 const fieldLabel = 'block font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
@@ -36,7 +53,7 @@ const textInput =
  * The shared credentials/connection screen for every SPARC'd JS tool. Three
  * fields — endpoint, access key, secret key — with region / path-style /
  * secure inferred from the endpoint and exposed only behind "Advanced".
- * Parameterized by `toolName`, with optional credential `labels`.
+ * Parameterized by `toolName`, with optional `labels` for its wording.
  */
 export function Connection({
   toolName,
@@ -108,7 +125,7 @@ export function Connection({
           <BrandSwitcher toolName={toolName} />
         </div>
         <p className="font-body text-[14px] text-inkSoft mb-6">
-          Connect to an S3-compatible endpoint to begin.
+          {labels?.intro ?? 'Connect to an S3-compatible endpoint to begin.'}
         </p>
 
         <div className="mb-4">
@@ -118,13 +135,13 @@ export function Connection({
         <div className="space-y-4">
           <div>
             <label htmlFor="endpoint" className={fieldLabel}>
-              Endpoint
+              {labels?.endpoint ?? 'Endpoint'}
             </label>
             <input
               id="endpoint"
               name="endpoint"
               className={textInput}
-              placeholder="host[:port] or https://host"
+              placeholder={labels?.endpointPlaceholder ?? 'host[:port] or https://host'}
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               autoComplete="url"
@@ -166,7 +183,7 @@ export function Connection({
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
             />
-            Remember endpoint &amp; access key on this device
+            {labels?.remember ?? 'Remember endpoint & access key on this device'}
           </label>
         </div>
 
@@ -223,7 +240,7 @@ export function Connection({
           title={!online ? "You're offline" : undefined}
           className="mt-7 w-full bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          Connect
+          {labels?.submit ?? 'Connect'}
         </button>
 
         {onSkip && (
