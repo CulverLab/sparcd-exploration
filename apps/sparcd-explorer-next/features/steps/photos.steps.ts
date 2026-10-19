@@ -31,7 +31,7 @@ Given(/^a collection "(.*)" with (\d+) photos( and a video at the end)?$/, async
     })),
   }));
   // The oldest, so last in the grid's newest-first order.
-  if (video) uploads[0].photos.push({ file: 'CLIP9999.MP4', time: '2023-12-31T23:00:00', mime: 'video/mp4' });
+  if (video) uploads[0].photos.push({ file: 'CLIP9999.WEBM', time: '2023-12-31T23:00:00', mime: 'video/webm' });
   putCollection(s3, { name, uuid: 'eeeeeeee-0000-4000-8000-000000000005' }, uploads);
 });
 
@@ -166,11 +166,11 @@ Then('the tile taken at {string} is a plain video tile with a play badge', async
 });
 
 Then('the video file was never read', async ({ s3 }) => {
-  expect(s3.gets.filter((g) => g.key.endsWith('.MP4'))).toEqual([]);
+  expect(s3.gets.filter((g) => g.key.endsWith('.WEBM'))).toEqual([]);
 });
 
 Then('the video file has been read', async ({ s3 }) => {
-  expect(s3.gets.filter((g) => g.key.endsWith('.MP4')).length).toBeGreaterThan(0);
+  expect(s3.gets.filter((g) => g.key.endsWith('.WEBM')).length).toBeGreaterThan(0);
 });
 
 // --- The photo panel ------------------------------------------------------------------

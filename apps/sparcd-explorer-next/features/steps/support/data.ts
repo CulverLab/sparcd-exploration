@@ -6,9 +6,10 @@ import { readFileSync } from 'node:fs';
 import { cameraJpeg, thumbColor } from './images';
 import { MockS3 } from './s3mock';
 
-// Two seconds of a synthetic test pattern, 96×64 H.264, made with
-// `ffmpeg -f lavfi -i testsrc=size=96x64:rate=10 -t 2 -c:v libx264 -pix_fmt yuv420p -profile:v baseline -movflags +faststart -an`.
-const CLIP = readFileSync(new URL('./clip.mp4', import.meta.url));
+// Two seconds of a synthetic test pattern, 96×64 VP8 (which every Chromium
+// build plays, unlike H.264), made with
+// `ffmpeg -f lavfi -i testsrc=size=96x64:rate=10 -t 2 -c:v libvpx -b:v 60k -an clip.webm`.
+const CLIP = readFileSync(new URL('./clip.webm', import.meta.url));
 
 export const ALPHA = { name: 'Alpha Basin', uuid: 'aaaaaaaa-0000-4000-8000-000000000001' };
 export const BRAVO = { name: 'Bravo Flats', uuid: 'bbbbbbbb-0000-4000-8000-000000000002' };
@@ -194,7 +195,7 @@ export const CHARLIE_UPLOADS: Upload[] = [
     photos: [
       { file: 'IMG2001.JPG', time: '2025-01-20T09:00:00', species: [COYOTE] },
       { file: 'IMG2002.JPG', time: '2025-01-21T10:00:00', species: [DEER], thumbnail: false },
-      { file: 'CLIP2003.MP4', time: '2025-01-22T11:00:00', species: [FOX], mime: 'video/mp4' },
+      { file: 'CLIP2003.WEBM', time: '2025-01-22T11:00:00', species: [FOX], mime: 'video/webm' },
     ],
   },
 ];

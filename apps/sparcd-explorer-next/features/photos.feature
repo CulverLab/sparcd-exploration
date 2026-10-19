@@ -71,7 +71,7 @@ Feature: Photos grid and detail
     When I show the Photos grid
     Then the tile taken at "2025-01-22 11:00:00" shows the video's first frame with a play badge
     When I open the photo taken at "2025-01-22 11:00:00"
-    Then the panel plays the video "CLIP2003.MP4"
+    Then the panel plays the video "CLIP2003.WEBM"
 
   @US-033 @US-001
   Scenario: A photo opens over the page with all its details, and the arrow keys step through
