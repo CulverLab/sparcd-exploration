@@ -100,6 +100,7 @@ export {
   elevationIn,
   formatDegrees,
   formatUtm,
+  precisionWords,
   reduceDegrees,
   reduceMetres,
   sitePosition,
@@ -133,3 +134,25 @@ export {
   type ThumbListener,
   type ThumbRequest,
 } from './thumbs';
+export {
+  collectionsTable,
+  csvFiles,
+  detectionsTable,
+  exportFileName,
+  isoDate,
+  locationsTable,
+  photosTable,
+  sortedLocations,
+  speciesTable,
+  spreadsheetTables,
+  summaryTable,
+  tableCsv,
+  type ExportCell,
+  type ExportKind,
+  type ExportOptions,
+  type ReportFacts,
+  type Table,
+} from './export';
+export { slug } from './slug';
+export { CAMTRAP_PROFILE, CAMTRAP_RESOURCES, camtrapPackage, type CamtrapFacts } from './exportCamtrap';
+export { xlsxBlob, zipBlob } from './exportFiles';

@@ -64,8 +64,8 @@ export type Photo = {
   comments: string;
 };
 
-/** One species tag on one photo. */
-export type Detection = { collection: number; photo: number; species: number; count: number };
+/** One species tag on one photo. `row` is its line in the upload's observations. */
+export type Detection = { collection: number; photo: number; species: number; count: number; row: number };
 
 export type Model = {
   collections: CollectionInfo[];
@@ -217,26 +217,26 @@ export function buildModel(
         );
       }
 
-      for (const o of u.observations) {
+      u.observations.forEach((o, row) => {
         const pi = photoOfKey.get(o.mediaId);
-        if (pi === undefined) continue;
+        if (pi === undefined) return;
         addComment(m.photos[pi], o.tags);
         // Removal and correction markers never name a present species; only
         // the row's own species does (#467).
         const named = nameSpecies(o.scientificName, commonNameFromComments(o.tags));
-        if (!named) continue;
+        if (!named) return;
         let si = speciesIndex.get(named.key);
         if (si === undefined) {
           si = m.species.push(named) - 1;
           speciesIndex.set(named.key, si);
         }
         const count = Number.isFinite(o.count) ? o.count! : 0;
-        const di = m.detections.push({ collection: ci, photo: pi, species: si, count }) - 1;
+        const di = m.detections.push({ collection: ci, photo: pi, species: si, count, row }) - 1;
         const photo = m.photos[pi];
         if (photo.detections === NO_DETECTIONS) photo.detections = [];
         photo.detections.push(di);
         photo.tagged = true;
-      }
+      });
     }
   });
 

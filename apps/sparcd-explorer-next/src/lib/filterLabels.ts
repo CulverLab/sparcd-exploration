@@ -86,6 +86,34 @@ export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit,
     });
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * Every filter in force, in full and in plain words, for a report:
+ * "Species: Bobcat, Mountain lion · Dates: Sep 2023 – Sep 2025", or
+ * "No filters: all photos".
+ */
+export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, separate = false): string {
+  const parts: string[] = [];
+  if (model.collections.length > 1 && f.collections.length) {
+    parts.push(`Collections: ${model.collections.filter((c) => f.collections.includes(c.key)).map((c) => c.name).join(', ')}`);
+  }
+  if (f.species.length) {
+    const byKey = new Map(model.species.map((s) => [s.key, s.name]));
+    parts.push(`${f.speciesMode === 'hide' ? 'Hiding species' : 'Species'}: ${f.species.map((k) => byKey.get(k) ?? k).join(', ')}`);
+  }
+  if (f.locations.length) parts.push(`Locations: ${f.locations.map((k) => locationLabel(model, k)).join(', ')}`);
+  if (f.area.length) parts.push(`Map area: ${plural(areaLocations(model, f.area, separate), 'location')}`);
+  const range = dateRange(f.dateFrom, f.dateTo);
+  if (range) parts.push(`Dates: ${range}`);
+  if (f.years.length) parts.push(`Years: ${[...f.years].sort().join(', ')}`);
+  if (f.months.length) parts.push(`Months: ${[...f.months].sort((a, b) => a - b).map((m) => MONTHS[m - 1]).join(', ')}`);
+  if (f.hours) parts.push(`Hours: ${pad(f.hours[0])}:00–${pad(f.hours[1])}:59`);
+  if (f.elevation) parts.push(`Elevation: ${value(model, f, 'elevation', unit, separate)}`);
+  if (f.ranges.length) parts.push(`Mountain range: ${[...f.ranges].sort().join(', ')}`);
+  return parts.length ? parts.join(' · ') : 'No filters: all photos';
+}
+
 /**
  * What the effort strip and the Activity column draw inside their bars: the
  * photos a species filter keeps, or the Photos view's tag switch while it

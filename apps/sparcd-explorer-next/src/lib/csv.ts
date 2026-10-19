@@ -3,6 +3,7 @@
 // always carry them, at the display precision, so an export is usable on its
 // own.
 
+import { slug } from '@/data';
 import type { Display } from './format';
 import { cellText, type Cell, type Col } from './tables';
 
@@ -30,14 +31,6 @@ export function toCsv<R>(cols: Col<R>[], rows: R[]): string {
 }
 
 const csvText = <R>(c: Col<R>, r: R): Cell => (c.value(r) === null ? null : cellText(c, r));
-
-const slug = (name: string) =>
-  name
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
 
 /** `alpha-basin-2026-10-19-locations.csv`, or `alpha-and-bravo-…` for several collections. */
 export function csvFileName(collections: string[], view: string, today: Date): string {

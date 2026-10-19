@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NO_FILTERS, type FilterState } from '../../src/data';
-import { filterButtons, locationLabel, matchLegend, photoCountLabel } from '../../src/lib/filterLabels';
+import { filterButtons, filterWords, locationLabel, matchLegend, photoCountLabel } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
 const alpha = collection('Alpha', 'aaa').upload('u1', {
@@ -88,5 +88,42 @@ describe('the inner bars’ legend', () => {
     expect(legend({ photoTag: 'tagged' })).toBe('Tagged');
     expect(legend({ photoTag: 'untagged', species: ['Lynx rufus'] })).toBe('Bobcat, Untagged');
     expect(legend({ photoTag: 'tagged' }, false)).toBeNull();
+  });
+});
+
+describe('the filters in words, for a report', () => {
+  const words = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') => filterWords(model, { ...NO_FILTERS, ...f }, unit);
+
+  it('say so when nothing is filtered', () => {
+    expect(words({})).toBe('No filters: all photos');
+    expect(words({ photoTag: 'tagged' })).toBe('No filters: all photos');
+  });
+
+  it('list every value in full, in the order of the filter bar', () => {
+    expect(words({ species: ['Lynx rufus', 'Canis latrans'], dateFrom: '2023-09-01', dateTo: '2025-09-30' })).toBe(
+      'Species: Bobcat, Coyote · Dates: Sep 2023 – Sep 2025',
+    );
+    expect(words({ species: ['Lynx rufus'], speciesMode: 'hide' })).toBe('Hiding species: Bobcat');
+    expect(words({ collections: ['sparcd-bbb::bbb'], locations: ['id:AA01', 'none'] }, both)).toBe(
+      'Collections: Bravo · Locations: AA01, No location set',
+    );
+  });
+
+  it('spell out the map area, years, months, hours, elevation and mountain ranges', () => {
+    expect(
+      words(
+        {
+          area: [single.sites[0].key],
+          years: [2024, 2023],
+          months: [12, 1],
+          hours: [22, 4],
+          elevation: [1000, 1500],
+          ranges: ['BBB', 'AAA'],
+        },
+        single,
+        'ft',
+      ),
+    ).toBe('Map area: 1 location · Years: 2023, 2024 · Months: Jan, Dec · Hours: 22:00–04:59 · Elevation: 3,281–4,921 ft · Mountain range: AAA, BBB');
+    expect(words({ dateFrom: '2023-09-14' })).toBe('Dates: from 2023-09-14');
   });
 });

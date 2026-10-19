@@ -96,6 +96,20 @@ export function formatUtm(pos: Position, p: Precision): { zone: string; easting:
   };
 }
 
+/**
+ * The precision in words, for a report or an export: "Coordinates rounded to
+ * 2 decimal places", "UTM, rounded to 1,000 m".
+ */
+export function precisionWords(coords: 'latlon' | 'utm', p: Precision): string {
+  const how = p.method === 'round' ? 'rounded' : 'truncated';
+  if (coords === 'utm') {
+    return p.digits === null ? 'UTM, exact to the metre' : `UTM, ${how} to ${(10 ** (5 - p.digits)).toLocaleString('en-US')} m`;
+  }
+  if (p.digits === null) return 'Exact coordinates';
+  if (p.digits === 0) return `Coordinates ${how} to whole degrees`;
+  return `Coordinates ${how} to ${p.digits} decimal place${p.digits === 1 ? '' : 's'}`;
+}
+
 /** Where a site may be drawn: never more exact than the display precision. */
 export function displayPosition(pos: Position, p: Precision): Position {
   return { lat: reduceDegrees(pos.lat, p), lon: reduceDegrees(pos.lon, p) };
