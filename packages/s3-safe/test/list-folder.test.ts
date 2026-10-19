@@ -65,6 +65,19 @@ describe('listFolder', () => {
     expect(sent.map((s) => s.abortSignal)).toEqual([controller.signal, controller.signal]);
   });
 
+  it('reads part of an object when asked for a byte range, and the whole object otherwise', async () => {
+    const body = { transformToByteArray: async () => new Uint8Array([1, 2, 3]) };
+    const { client, sent } = stubClient(() => ({ Body: body }));
+
+    expect(await client.getObject('sparcd-x', 'Up/a.jpg', { range: 'bytes=0-65999' })).toEqual(new Uint8Array([1, 2, 3]));
+    await client.getObject('sparcd-x', 'Up/a.jpg');
+
+    expect(sent.map((s) => s.input)).toEqual([
+      { Bucket: 'sparcd-x', Key: 'Up/a.jpg', Range: 'bytes=0-65999' },
+      { Bucket: 'sparcd-x', Key: 'Up/a.jpg', Range: undefined },
+    ]);
+  });
+
   it('refuses a bucket outside the read allowlist', async () => {
     const { client, sent } = stubClient(() => ({}), ['sparcd-ok']);
     await expect(client.listFolder('sparcd-other', 'Up/')).rejects.toBeInstanceOf(BucketNotAllowedError);

@@ -451,13 +451,17 @@ export class SafeS3Client {
     return { prefixes, objects };
   }
 
+  /**
+   * Read an object, or only part of it: `range` is an HTTP byte range such as
+   * `bytes=0-65999`. A server that ignores ranges answers with the whole object.
+   */
   async getObject(
     bucket: string,
     key: string,
-    opts: { signal?: AbortSignal } = {},
+    opts: { signal?: AbortSignal; range?: string } = {},
   ): Promise<Uint8Array> {
     this.assertAllowed(bucket);
-    const res = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: opts.range }), {
       abortSignal: opts.signal,
     });
     return res.Body!.transformToByteArray();
