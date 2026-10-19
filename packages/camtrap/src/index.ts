@@ -426,6 +426,36 @@ export function parseDeployments(csv: string): Deployment[] {
   }));
 }
 
+/** A `deployments.csv` row whose position and elevation stay `null` when blank. */
+export type NullableDeployment = Omit<Deployment, 'latitude' | 'longitude' | 'elevation'> & {
+  latitude: number | null;
+  longitude: number | null;
+  elevation: number | null;
+};
+
+const numberOrNull = (cell: string | undefined): number | null => {
+  if (!cell?.trim()) return null;
+  const n = Number(cell);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Like `parseDeployments`, but a blank or non-numeric latitude, longitude or
+ * elevation reads as `null` instead of `0` / `NaN`, so a reader can tell a
+ * deployment without coordinates from one at 0.
+ */
+export function parseDeploymentsNullable(csv: string): NullableDeployment[] {
+  return parseCsvRows(csv).map((r) => ({
+    deploymentId: r[DEPLOY_COL.deploymentId] ?? '',
+    locationId: r[DEPLOY_COL.locationId] ?? '',
+    locationName: r[DEPLOY_COL.locationName] ?? '',
+    longitude: numberOrNull(r[DEPLOY_COL.longitude]),
+    latitude: numberOrNull(r[DEPLOY_COL.latitude]),
+    elevation: numberOrNull(r[DEPLOY_COL.cameraHeight]),
+    timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
+  }));
+}
+
 /** Parse `media.csv` into typed rows. `mediaPath` is the full object key (col 0). */
 export function parseMedia(csv: string): Media[] {
   return parseCsvRows(csv).map((r) => ({

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDeployments, parseMedia, parseObservations } from '../src/index';
+import { parseDeployments, parseDeploymentsNullable, parseMedia, parseObservations } from '../src/index';
 import { fixture } from './fixtures';
 
 describe('typed readers map fixed v016 columns', () => {
@@ -61,5 +61,31 @@ describe('a producer that never populates observation_type (col 5)', () => {
     const [obs] = parseObservations(row('human', 'Homo sapiens', '1'));
     expect(obs.observationType).toBe('blank');
     expect(obs.scientificName).toBe('Homo sapiens');
+  });
+});
+
+describe('parseDeploymentsNullable keeps blank positions apart from zero', () => {
+  const row = (lon: string, lat: string, elevation: string) =>
+    ['c:SITE1', 'SITE1', 'Site one', lon, lat, '0', '', '', '', '', '', '0', elevation, '0', '0', 'false', '', '', '', '', '', '', '']
+      .map((f) => `"${f}"`)
+      .join(',');
+
+  it('reads filled cells as numbers, like parseDeployments', () => {
+    const csv = row('-100.250000', '12.750000', '1200.000000');
+    const [d] = parseDeploymentsNullable(csv);
+    const [plain] = parseDeployments(csv);
+    expect(d).toEqual({ ...plain, latitude: 12.75, longitude: -100.25, elevation: 1200 });
+  });
+
+  it('reads blank or non-numeric cells as null where parseDeployments gives 0 or NaN', () => {
+    const [d] = parseDeploymentsNullable(row('', ' ', 'n/a'));
+    expect([d.latitude, d.longitude, d.elevation]).toEqual([null, null, null]);
+    const [plain] = parseDeployments(row('', ' ', 'n/a'));
+    expect([plain.latitude, plain.longitude]).toEqual([0, 0]);
+  });
+
+  it('keeps a real zero', () => {
+    const [d] = parseDeploymentsNullable(row('0', '0.000000', '0'));
+    expect([d.latitude, d.longitude, d.elevation]).toEqual([0, 0, 0]);
   });
 });
