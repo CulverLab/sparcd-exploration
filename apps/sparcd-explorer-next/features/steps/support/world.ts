@@ -11,11 +11,36 @@ export const USERNAME = 'fieldlead';
 
 export type Scratch = Record<string, unknown>;
 
-export const test = base.extend<{ s3: MockS3; scratch: Scratch }>({
+// Basemap tiles never leave the machine: every tile host answers with one
+// blank pixel.
+const TILE_HOSTS = ['nationalmap.gov', 'arcgisonline.com', 'openstreetmap.org', 'cartocdn.com'];
+const BLANK_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=',
+  'base64',
+);
+const isTile = (url: URL) => url.pathname.includes('/tile/') || TILE_HOSTS.some((h) => url.hostname.endsWith(h));
+
+/** Tile requests the page made, and the ones answered here. */
+export type Tiles = { requested: string[]; answered: string[] };
+
+export const test = base.extend<{ s3: MockS3; scratch: Scratch; tiles: Tiles }>({
   s3: async ({}, use) => {
     const s3 = new MockS3();
     seedFixtures(s3);
     await use(s3);
+  },
+  tiles: async ({}, use) => {
+    await use({ requested: [], answered: [] });
+  },
+  context: async ({ context, tiles }, use) => {
+    context.on('request', (r) => {
+      if (isTile(new URL(r.url()))) tiles.requested.push(r.url());
+    });
+    await context.route(isTile, (route) => {
+      tiles.answered.push(route.request().url());
+      return route.fulfill({ status: 200, contentType: 'image/png', body: BLANK_PNG });
+    });
+    await use(context);
   },
   page: async ({ page, s3 }, use) => {
     await installS3Mock(page, s3);

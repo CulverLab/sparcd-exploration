@@ -60,13 +60,25 @@ When('I hide the species {string}', async ({ page }, species: string) => {
   await page.keyboard.press('Escape');
 });
 
-Then(/^the (species|dates|locations) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
-  const name = { species: '(Species|Hiding)', dates: 'Dates', locations: 'Locations' }[which]!;
+Then(/^the (species|dates|locations|area) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
+  const name = { species: '(Species|Hiding)', dates: 'Dates', locations: 'Locations', area: 'Area' }[which]!;
   await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${name}`) })).toHaveText(label);
 });
 
-When('I clear the Species filter with its ×', async ({ page }) => {
-  await page.getByRole('button', { name: 'Clear Species filter' }).click();
+When(/^I clear the (Species|Area) filter with its ×$/, async ({ page }, name: string) => {
+  await page.getByRole('button', { name: `Clear ${name} filter` }).click();
+});
+
+When('I press Escape', async ({ page }) => {
+  await page.keyboard.press('Escape');
+});
+
+Then('each check has exactly one button', async ({ page }) => {
+  const counts = await popover(page, 'Data checks')
+    .locator('.dqlist li')
+    .evaluateAll((items) => items.map((li) => li.querySelectorAll('button').length));
+  expect(counts.length).toBeGreaterThan(0);
+  expect(counts.every((n) => n === 1)).toBe(true);
 });
 
 When('I pick the year {int} in the dates filter', async ({ page }, year: number) => {
