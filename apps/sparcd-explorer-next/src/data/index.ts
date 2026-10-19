@@ -5,6 +5,7 @@ export { createLimiter, type Limiter } from './limit';
 export {
   ExplorerDb,
   UPLOAD_FILES,
+  type CachedRegistries,
   type LoadedUpload,
   type ReadProblem,
   type UploadFile,
@@ -29,6 +30,13 @@ export {
   type Species,
   type SpeciesName,
 } from './species';
+export {
+  cachedRegistries,
+  combineRegistries,
+  fetchRegistries,
+  type CollectionRegistries,
+  type Registries,
+} from './registries';
 export { LocationsShapeError, fetchLocations, parseLocations, registryKey, type RegistryLocation } from './locations';
 export { NoSettingsBucketError } from './settings';
 export {
@@ -47,6 +55,7 @@ export {
   NO_FILTERS,
   activeFilters,
   applyFilters,
+  carryFilters,
   clearFilter,
   isFiltered,
   photosForTag,

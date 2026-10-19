@@ -108,7 +108,12 @@ export type LocationRow = {
   activeDays: number;
 };
 
-/** One row per location with at least one photo in view. */
+/**
+ * One row per location with at least one photo in the camera-effort
+ * population (every filter but species), so a location's active days count
+ * whatever species is picked and the rows add up to the summary. Its
+ * species-dependent columns can then read 0.
+ */
 export function locationRows(model: Model, result: FilterResult, grouping: Grouping): LocationRow[] {
   type Tally = {
     sites: Set<number>;
@@ -138,6 +143,7 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
     t.sites.add(site);
     return t;
   };
+  for (const i of result.effort) tallyOf(model.photos[i].site);
   for (const i of result.photos) {
     const p = model.photos[i];
     const t = tallyOf(p.site);

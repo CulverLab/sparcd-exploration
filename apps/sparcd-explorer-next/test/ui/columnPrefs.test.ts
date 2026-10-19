@@ -34,6 +34,20 @@ describe('column preferences', () => {
     expect(moveColumn(defaultPrefs(DEFS), 'lat', 1, () => true).order).toEqual(['name', 'coll', 'photos', 'lat']);
   });
 
+  it('keep each column once when the stored order repeats or names unknown columns', () => {
+    const merged = mergePrefs({ order: ['photos', 'photos', 'gone', 'name', 'photos'], visible: ['photos', 'gone', 'photos'] }, DEFS);
+    expect(merged.order).toEqual(['photos', 'coll', 'name', 'lat']);
+    expect(merged.visible).toEqual(['photos', 'coll']);
+    expect(shownColumns(merged, DEFS, true)).toEqual(['photos', 'coll']);
+  });
+
+  it('read a stored order of one repeated ID as that column once', () => {
+    const merged = mergePrefs({ order: ['name', 'name'], visible: ['name', 'name'] }, DEFS);
+    expect(merged.order).toEqual(['name', 'coll', 'photos', 'lat']);
+    expect(new Set(merged.order).size).toBe(merged.order.length);
+    expect(merged.visible).toEqual(['name', 'coll', 'photos']);
+  });
+
   it('show the Collection column only with several collections open', () => {
     expect(shownColumns(defaultPrefs(DEFS), DEFS, false)).toEqual(['name', 'photos']);
     expect(shownColumns(defaultPrefs(DEFS), DEFS, true)).toEqual(['name', 'coll', 'photos']);

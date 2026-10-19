@@ -13,6 +13,16 @@ import { Stepper } from './Stepper';
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
 
+const LABELS = {
+  endpoint: 'Server address',
+  endpointPlaceholder: 'server.example.org',
+  intro: 'Use the account your project lead set up for you.',
+  accessKey: 'Username',
+  secretKey: 'Password',
+  remember: 'Remember me on this device',
+  submit: 'Sign in',
+};
+
 const REJECTED = new Set(['InvalidAccessKeyId', 'SignatureDoesNotMatch', 'AccessDenied', 'InvalidToken']);
 
 function signInError(err: unknown): string {
@@ -57,7 +67,7 @@ export function SignIn() {
           embedded
           initialConfig={prefill}
           onConnect={connect}
-          labels={{ accessKey: 'Username', secretKey: 'Password' }}
+          labels={LABELS}
         />
         {busy && (
           <p role="status" className="fine">

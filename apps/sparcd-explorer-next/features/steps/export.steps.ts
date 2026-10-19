@@ -77,3 +77,17 @@ Then('every CSV easting and northing is a plain whole number', async ({ scratch 
   expect(values.length).toBeGreaterThan(0);
   for (const v of values) expect(v).toMatch(/^\d+$/);
 });
+
+Then(
+  'the CSV row for {string} has UTM {string}, easting {string} and northing {string}',
+  async ({ scratch }, id: string, zone: string, easting: string, northing: string) => {
+    const { header, rows } = csvOf(scratch);
+    const row = rows.find((r) => r[header.indexOf('Location ID')] === id)!;
+    expect(row, `row ${id}`).toBeTruthy();
+    expect([row[header.indexOf('UTM zone')], row[header.indexOf('Easting')], row[header.indexOf('Northing')]]).toEqual([
+      zone,
+      easting,
+      northing,
+    ]);
+  },
+);

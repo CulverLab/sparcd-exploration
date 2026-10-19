@@ -70,7 +70,7 @@ export async function signIn(page: Page, username = USERNAME): Promise<void> {
   await page.locator('#endpoint').fill(ENDPOINT);
   await page.locator('#accessKey').fill(username);
   await page.locator('#secretKey').fill('a-password');
-  await page.getByRole('button', { name: 'Connect' }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 }
 
 export async function signedIn(page: Page): Promise<void> {

@@ -24,7 +24,8 @@ export type DataTableProps<R> = {
   onSorting: (s: SortingState) => void;
   rowKey: (r: R) => string;
   rowClass?: (r: R) => string | undefined;
-  onRowClick?: (r: R) => void;
+  /** The row under the pointer or holding focus, or null when none is. */
+  onRowHover?: (r: R | null) => void;
   /** A cell drawn by the caller instead of its text. */
   cell?: (c: Col<R>, r: R) => ReactNode | undefined;
   /** A header drawn by the caller instead of its label. */
@@ -38,7 +39,7 @@ export type DataTableProps<R> = {
  * Every table: sortable headers that stay under the sticky filter bar while
  * the page scrolls, and rows drawn only near the viewport (no paging).
  */
-export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass, onRowClick, cell, head, action, empty }: DataTableProps<R>) {
+export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass, onRowHover, cell, head, action, empty }: DataTableProps<R>) {
   const columns = useMemo<ColumnDef<R, Cell>[]>(
     () =>
       cols.map((c) => ({
@@ -128,7 +129,7 @@ export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass,
               );
             })}
             {action && (
-              <th>
+              <th className="act">
                 <span className="th">
                   <span className="sr">{action.label}</span>
                 </span>
@@ -151,15 +152,18 @@ export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass,
                 key={row.id}
                 data-index={item.index}
                 ref={virtualizer.measureElement}
-                className={[onRowClick && 'click', extra].filter(Boolean).join(' ') || undefined}
-                onClick={onRowClick && (() => onRowClick(r))}
+                className={extra}
+                onPointerEnter={onRowHover && (() => onRowHover(r))}
+                onPointerLeave={onRowHover && (() => onRowHover(null))}
+                onFocus={onRowHover && (() => onRowHover(r))}
+                onBlur={onRowHover && ((e) => !e.currentTarget.contains(e.relatedTarget) && onRowHover(null))}
               >
                 {cols.map((c) => (
                   <td key={c.id} className={[c.numeric && 'n', c.mono && 'm', c.italic && 'sci'].filter(Boolean).join(' ') || undefined}>
                     {cell?.(c, r) ?? cellText(c, r)}
                   </td>
                 ))}
-                {action && <td>{action.cell(r)}</td>}
+                {action && <td className="act">{action.cell(r)}</td>}
               </tr>
             );
           })}

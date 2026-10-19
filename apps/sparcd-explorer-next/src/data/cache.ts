@@ -6,6 +6,8 @@
 
 import Dexie, { type Table } from 'dexie';
 import type { Media, NullableDeployment, Observation, UploadMetaJson } from '@sparcd/camtrap';
+import type { RegistryLocation } from './locations';
+import type { Species } from './species';
 
 export const UPLOAD_FILES = ['UploadMeta.json', 'deployments.csv', 'media.csv', 'observations.csv'] as const;
 export type UploadFile = (typeof UPLOAD_FILES)[number];
@@ -36,9 +38,23 @@ export type CachedCollection = {
   checkedAt: number;
 };
 
+/**
+ * The species list and location registry a collection was last named with,
+ * whichever file they came from (its own, or the settings bucket's), so a
+ * cached collection opens with its common names at once.
+ */
+export type CachedRegistries = {
+  account: string;
+  /** The collection's key, `<bucket>::<uuid>`. */
+  collection: string;
+  species: Species[];
+  registry: RegistryLocation[];
+};
+
 export class ExplorerDb extends Dexie {
   uploads!: Table<CachedUpload, [string, string, string]>;
   collections!: Table<CachedCollection, [string, string, string]>;
+  registries!: Table<CachedRegistries, [string, string]>;
 
   constructor(name = 'sparcd-explorer') {
     super(name);
@@ -46,6 +62,7 @@ export class ExplorerDb extends Dexie {
       uploads: '[account+bucket+folder], [account+bucket]',
       collections: '[account+bucket+uuid]',
     });
+    this.version(2).stores({ registries: '[account+collection]' });
   }
 }
 

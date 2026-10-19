@@ -199,6 +199,23 @@ describe('cancel during a refresh', () => {
     expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
   });
 
+  it('rolls back a write that a cancel interrupts, and rejects the read', async () => {
+    const { source, before } = await cachedThenChanged();
+    const controller = new AbortController();
+    const table = source.db.collections;
+    const put = table.put.bind(table);
+    // The uploads are written by now; the cancel lands between two writes.
+    table.put = ((...args: Parameters<typeof put>) => {
+      controller.abort();
+      return put(...args);
+    }) as typeof put;
+    const refreshing = syncCollection(source, REF, { signal: controller.signal });
+    await expect(refreshing).rejects.toMatchObject({ name: 'AbortError' });
+    table.put = put;
+    expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
+    expect(await source.db.uploads.count()).toBe(12);
+  });
+
   it('leaves a first open unread when the final progress report cancels', async () => {
     const s3 = new FakeS3();
     oneUpload(s3);

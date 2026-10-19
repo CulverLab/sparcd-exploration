@@ -221,19 +221,33 @@ export async function syncCollection(
   signal?.throwIfAborted();
 
   const checkedAt = Date.now();
-  await db.transaction('rw', db.uploads, db.collections, async () => {
-    await db.uploads.bulkPut(changedUploads.map((u) => ({ ...u, account, bucket: ref.bucket })));
-    await db.uploads.bulkDelete(gone.map((folder) => [account, ref.bucket, folder]));
-    await db.collections.put({
-      account,
-      bucket: ref.bucket,
-      uuid: ref.uuid,
-      folders: uploads.map((u) => u.folder),
-      hiddenUploads,
-      problems,
-      checkedAt,
-    });
+  await db.transaction('rw', db.uploads, db.collections, async (tx) => {
+    // A cancel during the write rolls the whole write back.
+    const abort = () => tx.abort();
+    signal?.addEventListener('abort', abort);
+    try {
+      await db.uploads.bulkPut(changedUploads.map((u) => ({ ...u, account, bucket: ref.bucket })));
+      signal?.throwIfAborted();
+      await db.uploads.bulkDelete(gone.map((folder) => [account, ref.bucket, folder]));
+      signal?.throwIfAborted();
+      await db.collections.put({
+        account,
+        bucket: ref.bucket,
+        uuid: ref.uuid,
+        folders: uploads.map((u) => u.folder),
+        hiddenUploads,
+        problems,
+        checkedAt,
+      });
+      signal?.throwIfAborted();
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
+  }).catch((err) => {
+    signal?.throwIfAborted();
+    throw err;
   });
+  signal?.throwIfAborted();
   return { ref, uploads, hiddenUploads, problems, changed, checkedAt };
 }
 

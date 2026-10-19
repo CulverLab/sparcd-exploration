@@ -103,6 +103,30 @@ describe('locationRows', () => {
     expect(summarize(owls, onlyOwls, grouped)).toMatchObject({ photos: 1, activeDays: 2 });
     expect(locationRows(owls, onlyOwls, grouped)).toMatchObject([{ photos: 1, activeDays: 2 }]);
   });
+
+  it('lists every location with camera effort in view, at 0 when the species filter finds nothing there', () => {
+    const two = modelOf(
+      collection()
+        .upload('u1', {
+          deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+          media: [media('u1', 'owl.jpg', 'AA01', '2024-01-01T22:00:00')],
+          observations: [observation('u1', 'owl.jpg', 'AA01', '', { common: 'Owl', scientific: 'Bubo virginianus' })],
+        })
+        .upload('u2', {
+          deployments: [deployment('BB01', 'Bravo', 12.9, -100.9)],
+          media: [media('u2', 'x.jpg', 'BB01', '2024-02-01T10:00:00'), media('u2', 'y.jpg', 'BB01', '2024-02-03T10:00:00')],
+        }),
+    );
+    const onlyOwls = filter(two, { species: ['Bubo virginianus'] });
+    const rows = locationRows(two, onlyOwls, grouped);
+    expect(rows.map((r) => [r.ids[0], r.photos, r.detections, r.species, r.firstDate, r.activeDays])).toEqual([
+      ['AA01', 1, 1, 1, '2024-01-01', 1],
+      ['BB01', 0, 0, 0, null, 2],
+    ]);
+    expect(rows.reduce((n, r) => n + r.activeDays, 0)).toBe(summarize(two, onlyOwls, grouped).activeDays);
+    // A location filter still leaves other locations out.
+    expect(locationRows(two, filter(two, { locations: ['id:AA01'] }), grouped).map((r) => r.ids[0])).toEqual(['AA01']);
+  });
 });
 
 describe('speciesRows', () => {

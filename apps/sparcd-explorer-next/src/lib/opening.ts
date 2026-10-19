@@ -9,19 +9,18 @@ import {
   ExplorerDb,
   REQUESTS_IN_FLIGHT,
   accountKey,
+  cachedRegistries,
   createLimiter,
-  fetchLocations,
-  fetchSpecies,
+  fetchRegistries,
   readCachedCollection,
   readClient,
   syncCollection,
   type LoadedCollection,
   type OpenStep,
-  type RegistryLocation,
+  type Registries,
   type Source,
-  type Species,
 } from '@/data';
-import { useStore, type Registries } from '@/store';
+import { useStore } from '@/store';
 
 const db = new ExplorerDb();
 let current: { config: S3Config; source: Source } | null = null;
@@ -30,37 +29,6 @@ export function sourceFor(config: S3Config): Source {
   if (current?.config !== config) current = { config, source: { client: readClient(config), db, account: accountKey(config) } };
   return current.source;
 }
-
-type CollectionRegistries = { species: Species[]; registry: RegistryLocation[] };
-const remembered = new Map<string, CollectionRegistries>();
-
-const combine = (parts: CollectionRegistries[]): Registries => ({
-  species: parts.map((p) => p.species),
-  registry: parts.flatMap((p) => p.registry),
-});
-
-/**
- * Species lists and the location registry for the open collections. They only
- * improve names and fill blanks, so one that can't be read is left out.
- */
-export async function loadRegistries(source: Source, refs: CollectionRef[]): Promise<Registries> {
-  const parts = await Promise.all(
-    refs.map(async (ref) => {
-      const [species, locations] = await Promise.allSettled([fetchSpecies(source.client, ref), fetchLocations(source.client, ref)]);
-      const part = {
-        species: species.status === 'fulfilled' ? species.value.species : [],
-        registry: locations.status === 'fulfilled' ? locations.value.locations : [],
-      };
-      remembered.set(`${source.account}|${ref.key}`, part);
-      return part;
-    }),
-  );
-  return combine(parts);
-}
-
-/** What this session already read, so a cached collection opens with its names at once. */
-export const rememberedRegistries = (source: Source, refs: CollectionRef[]): Registries =>
-  combine(refs.map((ref) => remembered.get(`${source.account}|${ref.key}`) ?? { species: [], registry: [] }));
 
 export type Progress = {
   ref: CollectionRef;
@@ -86,7 +54,7 @@ export async function openSelection(
 ): Promise<{ loaded: LoadedCollection[]; registries: Registries }> {
   const source = sourceFor(config);
   const cached = await Promise.all(refs.map((ref) => readCachedCollection(source.db, source.account, ref)));
-  if (cached.every(Boolean)) return { loaded: cached as LoadedCollection[], registries: rememberedRegistries(source, refs) };
+  if (cached.every(Boolean)) return { loaded: cached as LoadedCollection[], registries: await cachedRegistries(source, refs) };
 
   const progress: Progress[] = refs.map((ref, i) => ({
     ref,
@@ -123,7 +91,7 @@ export async function openSelection(
         }
       }),
     ),
-    loadRegistries(source, refs),
+    fetchRegistries(source, refs),
   ]);
   opts.signal.throwIfAborted();
   return { loaded, registries };
@@ -149,7 +117,7 @@ export async function checkForUploads(): Promise<void> {
     const run = createLimiter(REQUESTS_IN_FLIGHT);
     const [loaded, registries] = await Promise.all([
       Promise.all(refs.map((ref) => syncCollection(source, ref, { signal: controller.signal, run }))),
-      loadRegistries(source, refs),
+      fetchRegistries(source, refs),
     ]);
     if (useStore.getState().refs !== refs) return;
     applyRefresh(loaded, registries);

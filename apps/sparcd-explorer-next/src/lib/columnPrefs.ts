@@ -14,9 +14,11 @@ export const defaultPrefs = (defs: ColumnInfo[]): ColumnPrefs => ({
 
 export function mergePrefs(saved: ColumnPrefs | null, defs: ColumnInfo[]): ColumnPrefs {
   if (!saved) return defaultPrefs(defs);
+  // Stored text can repeat or name columns that no longer exist; each column
+  // appears once, or the table would draw it twice.
   const known = new Set(defs.map((d) => d.id));
-  const order = saved.order.filter((id) => known.has(id));
-  const visible = new Set(saved.visible.filter((id) => known.has(id)));
+  const order = [...new Set(saved.order)].filter((id) => known.has(id));
+  const visible = new Set(saved.visible.filter((id) => order.includes(id)));
   defs.forEach((d, i) => {
     if (order.includes(d.id)) return;
     order.splice(Math.min(i, order.length), 0, d.id);

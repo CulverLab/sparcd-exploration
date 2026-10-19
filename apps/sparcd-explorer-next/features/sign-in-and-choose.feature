@@ -7,6 +7,10 @@ Feature: Sign in and choose collections
     When I open the explorer
     Then I see step 1 "Sign in" of the three steps
     And the sign-in form asks for "Username" and "Password"
+    And the server field reads "Server address" with the example "server.example.org"
+    And I see "Use the account your project lead set up for you."
+    And I see "Remember me on this device"
+    And the form's button reads "Sign in"
     And the HTTPS setting is only under "Advanced"
 
   Scenario: A wrong username or password is explained under the form

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_FILTERS,
   activeFilters,
+  carryFilters,
   clearFilter,
   isFiltered,
   photosForTag,
@@ -206,5 +207,39 @@ describe('each filter button', () => {
     }
     expect(clearFilter(everything, 'dates')).toMatchObject({ dateFrom: null, dateTo: null, years: [], months: [], hours: null });
     expect(clearFilter(everything, 'species')).toMatchObject({ species: [], speciesMode: 'only' });
+  });
+});
+
+describe('carrying filters to another set of collections', () => {
+  const both = modelOf([a, b]);
+  const onlyB = modelOf(b);
+  const state: FilterState = {
+    ...NO_FILTERS,
+    collections: [both.collections[0].key],
+    species: ['Lynx rufus', 'Strigiformes'],
+    locations: ['id:AA01'],
+    area: { hexes: ['3:4'], boxes: [] },
+    dateFrom: '2024-01-01',
+    elevation: [0, 3000],
+    ranges: ['AA0'],
+    photoTag: 'untagged',
+  };
+
+  it('keeps what the new collections have and drops the rest', () => {
+    const { state: next, dropped } = carryFilters(onlyB, state);
+    expect(dropped).toBe(true);
+    expect(next).toEqual({
+      ...state,
+      collections: [],
+      species: [],
+      locations: [],
+      area: NO_FILTERS.area,
+      ranges: [],
+    });
+  });
+
+  it('drops nothing when every value is still there', () => {
+    const kept = { ...state, area: NO_FILTERS.area, species: ['Lynx rufus'] };
+    expect(carryFilters(both, kept)).toEqual({ state: kept, dropped: false });
   });
 });

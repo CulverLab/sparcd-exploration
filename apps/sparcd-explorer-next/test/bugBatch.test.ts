@@ -93,7 +93,8 @@ describe('#401 species counts agree for one selection', () => {
       return { n, hexes: hexBins(model, result).map((b) => b.richness), rows: locationRows(model, result, grouped).map((r) => r.species) };
     };
     expect(counts({}).n).toBe(3);
-    expect(counts({ species: ['Pecari tajacu'] })).toEqual({ n: 1, hexes: [1], rows: [1] });
+    // Bravo still lists, with 0 species: its camera ran while the filter shows none.
+    expect(counts({ species: ['Pecari tajacu'] })).toEqual({ n: 1, hexes: [1], rows: [1, 0] });
     expect(counts({ area: { hexes: [model.sites[0].hex!], boxes: [] } })).toEqual({ n: 2, hexes: [2], rows: [2] });
   });
 });

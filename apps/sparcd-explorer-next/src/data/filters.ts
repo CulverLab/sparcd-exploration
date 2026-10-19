@@ -94,6 +94,45 @@ export function resetFilters(state: FilterState): { state: FilterState; undo: Fi
   return { state: { ...NO_FILTERS, photoTag: state.photoTag }, undo: state };
 }
 
+/**
+ * The filters that still apply once the open collections change. Species,
+ * dates, elevation, mountain ranges and the tagged switch carry over while
+ * the new model has their values; locations and collections no longer open
+ * drop, and so does a map area, whose cells belong to the old grid.
+ * `dropped` says whether anything was let go.
+ */
+export function carryFilters(model: Model, state: FilterState): { state: FilterState; dropped: boolean } {
+  const has = <T,>(values: Iterable<T>) => {
+    const set = new Set(values);
+    return (v: T) => set.has(v);
+  };
+  const openCollection = has(model.collections.map((c) => c.key));
+  const location = has(model.sites.flatMap((s) => [s.key, s.groupKey]));
+  const species = state.species.filter(has(model.species.map((s) => s.key)));
+  const ranges = state.ranges.filter(has(model.sites.map((s) => s.range)));
+  const collections = state.collections.filter(openCollection);
+  const locations = state.locations.filter(location);
+  const dropped =
+    collections.length < state.collections.length ||
+    locations.length < state.locations.length ||
+    species.length < state.species.length ||
+    ranges.length < state.ranges.length ||
+    activeFilters(state).includes('area');
+  return {
+    state: {
+      ...state,
+      // A single open collection has no Collections filter.
+      collections: model.collections.length > 1 ? collections : [],
+      locations,
+      species,
+      speciesMode: species.length ? state.speciesMode : 'only',
+      ranges,
+      area: NO_FILTERS.area,
+    },
+    dropped,
+  };
+}
+
 export type FilterResult = {
   /** Photos passing every filter. */
   photos: number[];

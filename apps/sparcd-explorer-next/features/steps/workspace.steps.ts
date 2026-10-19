@@ -85,6 +85,16 @@ Then('I see the note {string} with Undo', async ({ page }, note: string) => {
   await expect(toast.getByRole('button', { name: 'Undo' })).toBeVisible();
 });
 
+Then('there is no note', async ({ page }) => {
+  await expect(page.locator('.toast')).toHaveCount(0);
+});
+
+When('I filter locations to {string}', async ({ page }, id: string) => {
+  await openFilter(page, 'Locations');
+  await popover(page, 'Locations').getByRole('checkbox', { name: new RegExp(`^${id} `) }).check();
+  await page.keyboard.press('Escape');
+});
+
 When('I press Undo', async ({ page }) => {
   await page.getByRole('button', { name: 'Undo' }).click();
 });
@@ -243,10 +253,24 @@ Then('every easting and northing is a plain whole number', async ({ page }) => {
   for (const v of values) expect(v).toMatch(/^\d+$/);
 });
 
-Then('the Coordinates of {string} are a UTM zone and two plain whole numbers', async ({ page }, id: string) => {
+When('I set the precision method to {string}', async ({ page }, method: string) => {
+  await page.getByRole('button', { name: 'Display' }).click();
+  await popover(page, 'Display').getByRole('group', { name: 'Precision method' }).getByRole('button', { name: method }).click();
+  await page.keyboard.press('Escape');
+});
+
+async function cellOf(page: Page, id: string, column: string): Promise<string> {
   const ids = await columnValues(page, 'Location ID');
-  const coords = await columnValues(page, 'Coordinates');
-  expect(coords[ids.indexOf(id)]).toMatch(/^\d{1,2}[NS] \d+ \d+$/);
+  expect(ids).toContain(id);
+  return (await columnValues(page, column))[ids.indexOf(id)];
+}
+
+Then('the Coordinates of {string} read {string}', async ({ page }, id: string, text: string) => {
+  await expect.poll(() => cellOf(page, id, 'Coordinates')).toBe(text);
+});
+
+Then('the Easting and Northing of {string} read {string} and {string}', async ({ page }, id: string, e: string, n: string) => {
+  await expect.poll(async () => [await cellOf(page, id, 'Easting'), await cellOf(page, id, 'Northing')]).toEqual([e, n]);
 });
 
 When(/^I sort by "(.*)"(?: again)?$/, async ({ page }, label: string) => {
@@ -288,11 +312,18 @@ When('I scroll down to the table', async ({ page }) => {
 });
 
 Then('the filter bar is still at the top of the screen', async ({ page }) => {
-  await expect.poll(async () => (await page.locator('.filterbar').boundingBox())!.y).toBeLessThan(80);
+  expect(await page.evaluate(() => scrollY)).toBeGreaterThan(300);
+  // The header block's top edge sits exactly at the viewport's top, and the bar right under the header.
+  await expect.poll(async () => Math.round((await page.locator('#sticky-top').boundingBox())!.y)).toBe(0);
+  const header = (await page.locator('header.top').boundingBox())!;
+  const bar = (await page.locator('.filterbar').boundingBox())!;
+  expect(Math.abs(bar.y - (header.y + header.height))).toBeLessThan(2);
   await expect(page.locator('.filterbar')).toBeInViewport();
 });
 
 Then("the table's column headers sit just under it", async ({ page }) => {
   const bar = (await page.locator('#sticky-top').boundingBox())!;
-  await expect.poll(async () => Math.round((await headerCells(page).first().boundingBox())!.y - (bar.y + bar.height))).toBeLessThan(4);
+  await expect
+    .poll(async () => Math.abs(Math.round((await headerCells(page).first().boundingBox())!.y - (bar.y + bar.height))))
+    .toBeLessThan(4);
 });

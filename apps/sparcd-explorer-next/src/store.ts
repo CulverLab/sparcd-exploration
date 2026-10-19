@@ -7,6 +7,7 @@ import {
   NO_FILTERS,
   accountKey,
   buildModel,
+  carryFilters,
   clearFilter,
   isFiltered,
   resetFilters,
@@ -14,15 +15,17 @@ import {
   type FilterState,
   type LoadedCollection,
   type Model,
-  type RegistryLocation,
-  type Species,
+  type Registries,
 } from '@/data';
 import type { Display } from '@/lib/format';
 import { readStored, writeStored } from '@/lib/storage';
 
 export type View = 'locations' | 'species' | 'photos' | 'charts';
 export type PhotoLayout = 'grid' | 'list';
-export type Registries = { species: Species[][]; registry: RegistryLocation[] };
+export type { Registries };
+
+/** Who started an open, and which open it was. Only the latest open for the signed-in account may land. */
+export type OpenStamp = { account: string; generation: number };
 
 type Toast = { id: number; message: string; undo?: () => void };
 
@@ -49,13 +52,20 @@ type State = {
   photoLayout: PhotoLayout;
   display: Display;
   toast: Toast | null;
+  /** Bumped by every open, cancel and account change. */
+  openGeneration: number;
 
   signIn: (config: S3Config, remember: boolean) => void;
   adoptSession: (config: S3Config | null) => void;
   signOut: () => void;
   showChooser: () => void;
   setPicks: (picks: string[]) => void;
-  enterWorkspace: (refs: CollectionRef[], loaded: LoadedCollection[], registries: Registries) => void;
+  beginOpen: () => OpenStamp;
+  cancelOpen: () => void;
+  /** Back to the open workspace when `refs` is what it already shows. */
+  resumeWorkspace: (refs: CollectionRef[]) => boolean;
+  /** Show what an open read. Returns false, changing nothing, when a newer open or another account replaced it. */
+  enterWorkspace: (stamp: OpenStamp, refs: CollectionRef[], loaded: LoadedCollection[], registries: Registries) => boolean;
   applyRefresh: (loaded: LoadedCollection[], registries: Registries) => void;
   setChecking: (checking: boolean, error?: string | null) => void;
   setFilters: (change: (f: FilterState) => FilterState) => void;
@@ -119,6 +129,7 @@ export const useStore = create<State>((set, get) => ({
   photoLayout: 'list',
   display: readStored(DISPLAY_KEY, DEFAULT_DISPLAY, isDisplay),
   toast: null,
+  openGeneration: 0,
 
   signIn: (config, remember) => {
     saveSharedConnection(config, remember);
@@ -140,7 +151,9 @@ export const useStore = create<State>((set, get) => ({
       loaded: [],
       model: null,
       filters: NO_FILTERS,
+      separate: false,
       toast: null,
+      openGeneration: get().openGeneration + 1,
     });
   },
 
@@ -152,35 +165,53 @@ export const useStore = create<State>((set, get) => ({
   showChooser: () => set({ screen: 'chooser', picks: get().refs.map((r) => r.key), toast: null }),
   setPicks: (picks) => set({ picks }),
 
-  enterWorkspace: (refs, loaded, registries) => {
-    writeStored(lastKey(get().account), refs.map((r) => r.key));
+  beginOpen: () => {
+    const generation = get().openGeneration + 1;
+    set({ openGeneration: generation });
+    return { account: get().account, generation };
+  },
+  cancelOpen: () => set({ openGeneration: get().openGeneration + 1 }),
+
+  resumeWorkspace: (refs) => {
+    const { model, refs: open } = get();
+    const keys = (list: CollectionRef[]) => list.map((r) => r.key).sort().join('\n');
+    if (!model || keys(refs) !== keys(open)) return false;
+    set({ screen: 'workspace', openGeneration: get().openGeneration + 1 });
+    return true;
+  },
+
+  enterWorkspace: (stamp, refs, loaded, registries) => {
+    const { account, openGeneration, model: before, filters: previous, separate } = get();
+    if (stamp.account !== account || stamp.generation !== openGeneration) return false;
+    writeStored(lastKey(account), refs.map((r) => r.key));
+    const next = model(loaded, registries);
+    // Another set of collections keeps the filters that still apply.
+    const carried = before ? carryFilters(next, previous) : { state: NO_FILTERS, dropped: false };
     set({
       screen: 'workspace',
       refs,
       loaded,
       registries,
-      model: model(loaded, registries),
+      model: next,
       checkedAt: Math.min(...loaded.map((c) => c.checkedAt)),
       checkError: null,
-      filters: NO_FILTERS,
-      separate: false,
+      filters: carried.state,
+      separate: before ? separate : false,
       toast: null,
     });
+    if (carried.dropped) {
+      get().showToast('Some filters no longer apply', () => {
+        set({ filters: previous });
+        get().showToast('Filters restored');
+      });
+    }
+    return true;
   },
 
-  applyRefresh: (loaded, registries) => {
-    const changed =
-      loaded.some((c) => c.changed) ||
-      registries.species.flat().length !== get().registries.species.flat().length ||
-      registries.registry.length !== get().registries.registry.length;
-    set({
-      loaded,
-      registries,
-      checkedAt: Date.now(),
-      checkError: null,
-      ...(changed ? { model: model(loaded, registries) } : {}),
-    });
-  },
+  // Every finished check rebuilds: a new read problem or a corrected species
+  // or location name changes what the model says even when no upload did.
+  applyRefresh: (loaded, registries) =>
+    set({ loaded, registries, checkedAt: Date.now(), checkError: null, model: model(loaded, registries) }),
 
   setChecking: (checking, error = null) => set({ checking, ...(error !== null ? { checkError: error } : {}) }),
 

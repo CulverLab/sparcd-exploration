@@ -49,3 +49,40 @@ Feature: Open collections
     And I check for new uploads
     Then the photo count reads "12 photos"
     And the header says "Updated just now"
+
+  Scenario: Signing in as someone else while a collection opens never shows the first account's data
+    Given I am signed in
+    And the explorer is open in a second tab
+    And reading "Alpha Basin" is slow
+    When I tick "Alpha Basin"
+    And I press the open button
+    And I sign out and sign in as "otherlead" in the second tab
+    Then this tab shows "Choose collections" for "otherlead"
+    And once the slow read has had time to finish, this tab still shows "Choose collections" for "otherlead"
+    And nothing was remembered for "otherlead"
+
+  Scenario: Going back and reopening the same collections keeps everything as it was
+    Given I have opened "Alpha Basin"
+    When I filter species to "Bobcat"
+    And I show the Photos table
+    And I show only untagged photos
+    And I go back to choose collections
+    And I press the open button
+    Then the species filter reads "Species: Bobcat"
+    And the photo count reads "4 of 11 photos"
+    And the Photos table has 0 rows
+    And there is no note
+
+  Scenario: Opening other collections keeps the filters that still apply, with Undo
+    Given I have opened "Alpha Basin"
+    When I filter species to "Deer (Mule)"
+    And I filter locations to "AB02"
+    And I go back to choose collections
+    And I click the row of "Alpha Basin"
+    And I tick "Bravo Flats"
+    And I press the open button
+    Then I see the note "Some filters no longer apply" with Undo
+    And the species filter reads "Species: Deer (Mule)"
+    And the locations filter reads "Locations"
+    When I press Undo
+    Then the locations filter reads "Locations: AB02"

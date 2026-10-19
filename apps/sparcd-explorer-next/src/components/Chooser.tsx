@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { CollectionRef } from '@sparcd/s3-safe';
 import { discoverCollections } from '@/data';
@@ -23,9 +23,23 @@ export function Chooser() {
   const setPicks = useStore((s) => s.setPicks);
   const signOut = useStore((s) => s.signOut);
   const enterWorkspace = useStore((s) => s.enterWorkspace);
+  const beginOpen = useStore((s) => s.beginOpen);
+  const cancelOpen = useStore((s) => s.cancelOpen);
+  const resumeWorkspace = useStore((s) => s.resumeWorkspace);
   const [search, setSearch] = useState('');
   const [opening, setOpening] = useState<Opening | null>(null);
   const firstBox = useRef<HTMLInputElement>(null);
+  const pending = useRef<AbortController | null>(null);
+
+  // An open started for one account never lands under another, nor after
+  // this screen has gone.
+  useEffect(
+    () => () => {
+      pending.current?.abort();
+      cancelOpen();
+    },
+    [account, cancelOpen],
+  );
 
   const collections = useQuery({
     queryKey: ['collections', account],
@@ -41,19 +55,26 @@ export function Chooser() {
   const shown = all.filter((c) => !q || nameOf(c).toLowerCase().includes(q));
 
   async function open(refs: CollectionRef[]) {
-    const controller = new AbortController();
+    if (resumeWorkspace(refs)) return;
+    pending.current?.abort();
+    const controller = (pending.current = new AbortController());
+    const stamp = beginOpen();
+    // Only this open's own state changes; a newer open may have replaced it.
+    const mine =
+      (next: Opening | null | ((o: Opening) => Opening | null)) =>
+      (o: Opening | null): Opening | null =>
+        o?.controller !== controller ? o : typeof next === 'function' ? next(o) : next;
     setOpening({ refs, progress: [], failed: false, controller });
     try {
       const { loaded, registries } = await openSelection(config, refs, {
         signal: controller.signal,
-        onProgress: (progress) => setOpening((o) => o && { ...o, progress }),
+        onProgress: (progress) => setOpening(mine((o) => ({ ...o, progress }))),
       });
-      enterWorkspace(refs, loaded, registries);
+      if (!enterWorkspace(stamp, refs, loaded, registries)) return setOpening(mine(null));
       // Anything that came from this device is checked for new uploads now.
       if (refs.some((r) => all.find((c) => c.key === r.key)?.cached)) void checkForUploads();
     } catch {
-      if (controller.signal.aborted) setOpening(null);
-      else setOpening((o) => o && { ...o, failed: true });
+      setOpening(mine((o) => (controller.signal.aborted ? null : { ...o, failed: true })));
     }
   }
 
@@ -88,6 +109,7 @@ export function Chooser() {
             failed={opening.failed}
             onCancel={() => {
               opening.controller.abort();
+              cancelOpen();
               setOpening(null);
             }}
           />

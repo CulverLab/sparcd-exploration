@@ -37,7 +37,14 @@ Feature: Tables of locations, species and photos
     When I switch the display to UTM
     And I show the "Easting" and "Northing" columns
     Then every easting and northing is a plain whole number
-    And the Coordinates of "AB02" are a UTM zone and two plain whole numbers
+    And the Coordinates of "AB02" read "5N 817300 58700"
+    And the Easting and Northing of "AB02" read "817300" and "58700"
+    When I set the precision to 2 decimals
+    Then the Coordinates of "AB02" read "5N 817000 59000"
+    And the Easting and Northing of "AB02" read "817000" and "59000"
+    When I set the precision method to "Truncate"
+    Then the Coordinates of "AB02" read "5N 817000 58000"
+    And the Easting and Northing of "AB02" read "817000" and "58000"
 
   Scenario: Sorting by a column header
     When I sort by "Photos"

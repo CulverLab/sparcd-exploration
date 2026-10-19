@@ -38,6 +38,15 @@ Then('the sign-in form asks for {string} and {string}', async ({ page }, user: s
   await expect(page.getByText('Access key', { exact: true })).toHaveCount(0);
 });
 
+Then('the server field reads {string} with the example {string}', async ({ page }, label: string, example: string) => {
+  await expect(page.getByLabel(label, { exact: true })).toHaveAttribute('placeholder', example);
+  await expect(page.getByText('Endpoint', { exact: true })).toHaveCount(0);
+});
+
+Then("the form's button reads {string}", async ({ page }, label: string) => {
+  await expect(page.locator('form button[type="submit"]')).toHaveText(label);
+});
+
 Then('the HTTPS setting is only under {string}', async ({ page }, advanced: string) => {
   await expect(page.getByText('Secure (HTTPS)')).toHaveCount(0);
   await page.getByRole('button', { name: new RegExp(advanced) }).click();
@@ -57,7 +66,7 @@ Then('I see {string}', async ({ page }, text: string) => {
 });
 
 Then('I am still on the sign-in step', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Choose collections' })).toHaveCount(0);
 });
 
@@ -222,6 +231,39 @@ Given('the explorer is open in a second tab', async ({ context, s3, scratch }) =
   scratch.second = second;
 });
 
+When('I sign out and sign in as {string} in the second tab', async ({ scratch }, name: string) => {
+  const second = scratch.second as Page;
+  await second.getByRole('button', { name: 'Sign out' }).click();
+  await signIn(second, name);
+  await expect(second.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
+});
+
+async function showsChooserFor(page: Page, name: string) {
+  await expect(page.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
+  await expect(page.getByText(`Signed in as ${name}`)).toBeVisible();
+  await expect(page.locator('#sticky-top')).toHaveCount(0);
+}
+
+Then('this tab shows {string} for {string}', async ({ page }, _heading: string, name: string) => {
+  await showsChooserFor(page, name);
+});
+
+Then(
+  'once the slow read has had time to finish, this tab still shows {string} for {string}',
+  async ({ page }, _heading: string, name: string) => {
+    await page.waitForTimeout(4500);
+    await showsChooserFor(page, name);
+  },
+);
+
+Then('nothing was remembered for {string}', async ({ page }, name: string) => {
+  const remembered = await page.evaluate(
+    (who) => Object.keys(localStorage).filter((k) => k.startsWith('sparcd-explorer-last:') && k.endsWith(`|${who}`)),
+    name,
+  );
+  expect(remembered).toEqual([]);
+});
+
 Then('the new tab shows {string} without asking for a password', async ({ scratch }, heading: string) => {
   const second = scratch.second as Page;
   await expect(second.getByRole('heading', { name: heading })).toBeVisible();
@@ -230,5 +272,5 @@ Then('the new tab shows {string} without asking for a password', async ({ scratc
 
 Then('the second tab shows the sign-in step', async ({ scratch }) => {
   const second = scratch.second as Page;
-  await expect(second.getByRole('button', { name: 'Connect' })).toBeVisible();
+  await expect(second.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
 });

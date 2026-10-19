@@ -197,12 +197,19 @@ export function TablePanel() {
         sorting={sorting.species}
         onSorting={(s) => setSorting((all) => ({ ...all, species: s }))}
         rowKey={(r) => model.species[r.species].key}
-        onRowClick={(r) => {
+        cell={(c, r) => {
+          if (c.id !== 'common') return undefined;
           const key = model.species[r.species].key;
-          setFilters((f) =>
-            f.speciesMode === 'only' && f.species.length === 1 && f.species[0] === key
-              ? { ...f, species: [] }
-              : { ...f, species: [key], speciesMode: 'only' },
+          const on = filters.speciesMode === 'only' && filters.species.length === 1 && filters.species[0] === key;
+          return (
+            <button
+              type="button"
+              className="cellbtn nm"
+              aria-pressed={on}
+              onClick={() => setFilters((f) => (on ? { ...f, species: [] } : { ...f, species: [key], speciesMode: 'only' }))}
+            >
+              {model.species[r.species].name}
+            </button>
           );
         }}
         empty="No tagged species in these photos."

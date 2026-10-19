@@ -937,8 +937,35 @@ table.data {
   font-style: italic;
   color: var(--inkSoft);
 }
-.data tbody tr.click {
+/* The row actions stay at the right edge of the scroll box, however wide the table. */
+.data .act {
+  position: sticky;
+  right: 0;
+  background: var(--panel);
+  box-shadow: inset 1px 0 0 var(--ruleSoft);
+}
+.data th.act {
+  z-index: 3;
+}
+.data td.act {
+  z-index: 1;
+}
+.data .cellbtn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
   cursor: pointer;
+}
+.data .cellbtn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.data .cellbtn[aria-pressed='true'] {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 .data tbody tr:hover td {
   background: var(--panelHover);
