@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
+      - "apps/sparcd-explorer-next/**"
       - "packages/**"
       - "package.json"
       - "pnpm-workspace.yaml"
@@ -16,6 +17,7 @@ on:
     paths:
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
+      - "apps/sparcd-explorer-next/**"
       - "packages/**"
       - "package.json"
       - "pnpm-workspace.yaml"
@@ -30,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [sparcd-uploader, sparcd-tagger]
+        app: [sparcd-uploader, sparcd-tagger, sparcd-explorer-next]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

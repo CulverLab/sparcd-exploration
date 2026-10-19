@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/sparcd-home/**"
       - "apps/sparcd-explorer/**"
+      - "apps/sparcd-explorer-next/**"
       - "apps/sparcd-uploader/**"
       - "apps/sparcd-tagger/**"
       - "packages/**"
@@ -75,6 +76,10 @@ jobs:
       - name: Build tagger
         run: pnpm --filter sparcd-tagger build
 
+      # --- Explorer (next, Vite) -> /explorer-next, beside today's explorer ---
+      - name: Build explorer-next
+        run: pnpm --filter sparcd-explorer-next build
+
       # --- Assemble combined site ---
       - name: Assemble site
         run: |
@@ -89,6 +94,9 @@ jobs:
           cp -r apps/sparcd-explorer/dist/. _site/explorer/
           cp -r apps/sparcd-uploader/dist/. _site/uploader/
           cp -r apps/sparcd-tagger/dist/. _site/tagger/
+          # The next explorer runs beside today's until it covers everything.
+          mkdir -p _site/explorer-next
+          cp -r apps/sparcd-explorer-next/dist/. _site/explorer-next/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
