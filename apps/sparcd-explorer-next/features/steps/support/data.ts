@@ -2,8 +2,13 @@
 // is made up; the positions sit in open ocean. Files follow the fixed-column
 // Camtrap-DP-flavoured layout `@sparcd/camtrap` reads (no header rows).
 
-import { cameraJpeg } from './images';
+import { readFileSync } from 'node:fs';
+import { cameraJpeg, thumbColor } from './images';
 import { MockS3 } from './s3mock';
+
+// Two seconds of a synthetic test pattern, 96×64 H.264, made with
+// `ffmpeg -f lavfi -i testsrc=size=96x64:rate=10 -t 2 -c:v libx264 -pix_fmt yuv420p -profile:v baseline -movflags +faststart -an`.
+const CLIP = readFileSync(new URL('./clip.mp4', import.meta.url));
 
 export const ALPHA = { name: 'Alpha Basin', uuid: 'aaaaaaaa-0000-4000-8000-000000000001' };
 export const BRAVO = { name: 'Bravo Flats', uuid: 'bbbbbbbb-0000-4000-8000-000000000002' };
@@ -81,12 +86,17 @@ function putMediaFiles(s3: MockS3, c: { uuid: string }, u: Upload): void {
   for (const p of u.photos) {
     const key = `${uploadPrefix(c, u.stamp)}${p.file}`;
     if (p.mime?.startsWith('video/')) {
-      s3.put(bucketOf(c), key, Buffer.from('not really a video'), p.mime);
+      s3.put(bucketOf(c), key, CLIP, p.mime);
       continue;
     }
     const hour = Number(p.time.slice(11, 13));
     const night = hour >= 19 || hour < 6;
-    s3.put(bucketOf(c), key, cameraJpeg(seedOf(p.file), { animal: Boolean(p.species?.length), night, thumbnail: p.thumbnail }), 'image/jpeg');
+    let thumbnail: ReturnType<typeof thumbColor> | false = false;
+    if (p.thumbnail !== false) {
+      thumbnail = thumbColor(s3.thumbColors.size);
+      s3.thumbColors.set(p.time.replace('T', ' '), thumbnail);
+    }
+    s3.put(bucketOf(c), key, cameraJpeg(seedOf(p.file), { animal: Boolean(p.species?.length), night, thumbnail }), 'image/jpeg');
   }
 }
 

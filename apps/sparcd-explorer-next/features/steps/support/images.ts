@@ -1,8 +1,11 @@
 // Synthetic camera frames for the photo grid: a sky, a ground line and, when
 // something was tagged, a dark shape. Night frames are grey, as infrared
-// shots are. Each JPEG carries a 160×120 EXIF thumbnail unless asked not to.
+// shots are. Each JPEG carries a 160×120 EXIF thumbnail unless asked not to:
+// one solid colour of its own, so a test can tell every tile's thumbnail apart.
 
 import { encodeJpeg, withExifThumbnail, type Painter, type Rgb } from '../../../test/support/jpeg';
+
+export type { Rgb };
 
 const mix = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t) as Rgb;
 const grey = ([r, g, b]: Rgb): Rgb => {
@@ -25,13 +28,17 @@ function painter(seed: number, cols: number, rows: number, animal: boolean, nigh
 
 const cache = new Map<string, Buffer>();
 
+/** The `n`th photo's thumbnail colour: 512 colours, each channel at least 28 apart. */
+export const thumbColor = (n: number): Rgb => [30 + (n % 8) * 28, 30 + (Math.floor(n / 8) % 8) * 28, 30 + (Math.floor(n / 64) % 8) * 28];
+
 /** A frame for one photo; the same arguments give the same bytes. */
-export function cameraJpeg(seed: number, opts: { animal: boolean; night: boolean; thumbnail?: boolean }): Buffer {
-  const id = `${seed}|${opts.animal}|${opts.night}|${opts.thumbnail !== false}`;
+export function cameraJpeg(seed: number, opts: { animal: boolean; night: boolean; thumbnail?: Rgb | false }): Buffer {
+  const thumb = opts.thumbnail;
+  const id = `${seed}|${opts.animal}|${opts.night}|${thumb ? thumb.join(',') : 'none'}`;
   let out = cache.get(id);
   if (!out) {
     const main = encodeJpeg(640, 480, painter(seed, 80, 60, opts.animal, opts.night));
-    const bytes = opts.thumbnail === false ? main : withExifThumbnail(main, encodeJpeg(160, 120, painter(seed, 20, 15, opts.animal, opts.night)));
+    const bytes = thumb ? withExifThumbnail(main, encodeJpeg(160, 120, () => thumb)) : main;
     cache.set(id, (out = Buffer.from(bytes)));
   }
   return out;

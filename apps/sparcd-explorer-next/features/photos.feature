@@ -8,7 +8,7 @@ Feature: Photos grid and detail
     Given I have opened "Alpha Basin"
     When I show the Photos grid
     Then the grid shows 11 photos
-    And every tile shows its embedded thumbnail
+    And every tile shows its own embedded thumbnail
     And each thumbnail came from a ranged read of the first 66,000 bytes
     And the tile taken at "2023-04-02 22:40:00" reads "Bobcat, Deer (Mule)" at "AB01"
 
@@ -33,11 +33,30 @@ Feature: Photos grid and detail
     Then the last tile shows its embedded thumbnail
     And fewer than 200 of the 400 photos have been read
 
+  Scenario: Each tile keeps its own thumbnail when answers arrive out of order
+    Given a collection "Echo Wash" with 400 photos
+    And some thumbnails are slow to arrive
+    And I have opened "Echo Wash"
+    When I show the Photos grid
+    And I scroll quickly down the grid and partway back
+    Then every tile on screen shows its own thumbnail
+
+  Scenario: A video's first frame loads only once its tile is on screen
+    Given a collection "Echo Wash" with 400 photos and a video at the end
+    And I have opened "Echo Wash"
+    When I show the Photos grid
+    Then the first tile shows its embedded thumbnail
+    And the video file was never read
+    When I scroll to the end of the grid
+    Then the last tile shows the video's first frame
+
   Scenario: A photo without an embedded thumbnail shows the original
     Given I have opened "Charlie Pond"
     When I show the Photos grid
     Then the tile taken at "2025-01-20 09:00:00" shows its embedded thumbnail
     And the tile taken at "2025-01-21 10:00:00" shows the original photo
+    When I open the photo taken at "2025-01-21 10:00:00"
+    Then the panel shows the original, read once in full
 
   Scenario: A server that refuses ranged reads still shows every photo
     Given the server refuses ranged reads
@@ -45,12 +64,12 @@ Feature: Photos grid and detail
     When I show the Photos grid
     Then the tile taken at "2025-01-20 09:00:00" shows the original photo
     And the tile taken at "2025-01-21 10:00:00" shows the original photo
+    And the tile taken at "2025-01-22 11:00:00" is a plain video tile with a play badge
 
-  Scenario: A video shows a poster with a play badge and plays in the panel
+  Scenario: A video shows its first frame with a play badge and plays in the panel
     Given I have opened "Charlie Pond"
     When I show the Photos grid
-    Then the tile taken at "2025-01-22 11:00:00" is a video poster with a play badge
-    And the video file was never read
+    Then the tile taken at "2025-01-22 11:00:00" shows the video's first frame with a play badge
     When I open the photo taken at "2025-01-22 11:00:00"
     Then the panel plays the video "CLIP2003.MP4"
 

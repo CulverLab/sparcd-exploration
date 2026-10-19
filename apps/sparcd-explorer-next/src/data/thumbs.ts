@@ -1,8 +1,9 @@
 // Thumbnails for the photo grid. Cameras embed a small JPEG in the EXIF block
 // at the start of every photo, so one ranged read of the first bytes is
 // usually enough; without one (or when the server refuses ranges) the tile
-// shows the original. Everything here runs over injected I/O, so tests drive
-// it without a browser or a server.
+// shows the original. Video tiles show their first frame, and the detail view
+// its original, through the same line of requests. Everything here runs over
+// injected I/O, so tests drive it without a browser or a server.
 
 /** Bytes read from a photo's start: the EXIF block (64 KB at most) and its thumbnail. */
 export const HEAD_BYTES = 66_000;
@@ -15,10 +16,17 @@ export const ORIGINAL_REUSE_MS = 50 * 60_000;
 
 export type Thumb = {
   url: string;
-  /** `embedded`: an object URL of the EXIF thumbnail. `original`: a presigned URL of the photo itself. */
-  kind: 'embedded' | 'original';
+  /**
+   * `embedded`: an object URL of the EXIF thumbnail. `original`: a presigned
+   * URL of the photo itself. `frame`: a video element showing a video's first frame.
+   */
+  kind: 'embedded' | 'original' | 'frame';
   /** When a presigned URL stops being reused. */
   expires?: number;
+  /** The loaded video element of a `frame`, moved into the tile as is so it never loads twice. */
+  video?: HTMLVideoElement;
+  /** Frees what the thumbnail holds, once it leaves the cache. */
+  release?: () => void;
 };
 
 export type ThumbIo = {
@@ -30,6 +38,10 @@ export type ThumbIo = {
   presign(key: string): Promise<string>;
   /** Fetch an image URL, resolving once it has arrived, so its slot frees only then. */
   preload(url: string, signal: AbortSignal): Promise<void>;
+  /** A muted video element of `url`, resolving once its first frame shows. */
+  preloadVideo(url: string, signal: AbortSignal): Promise<HTMLVideoElement>;
+  /** Stop a video element from holding its media. */
+  releaseVideo(video: HTMLVideoElement): void;
   objectUrl(bytes: Uint8Array): string;
   now(): number;
 };
@@ -53,9 +65,34 @@ export async function loadThumb(io: ThumbIo, key: string, signal: AbortSignal): 
   const embedded = head ? await io.extract(head).catch(() => undefined) : undefined;
   signal.throwIfAborted();
   if (embedded) return { url: io.objectUrl(embedded), kind: 'embedded' };
+  return loadOriginal(io, key, signal);
+}
+
+/** The whole photo, fetched so it shows at once. Nothing is fetched once cancelled, even mid-signing. */
+export async function loadOriginal(io: ThumbIo, key: string, signal: AbortSignal): Promise<Thumb> {
   const url = await io.presign(key);
+  signal.throwIfAborted();
   await io.preload(url, signal);
   return { url, kind: 'original', expires: io.now() + ORIGINAL_REUSE_MS };
+}
+
+/** A video's first frame. `#t=0.1` makes every browser, Safari too, paint a frame. */
+export async function loadFrame(io: ThumbIo, key: string, signal: AbortSignal): Promise<Thumb> {
+  const url = await io.presign(key);
+  signal.throwIfAborted();
+  const video = await io.preloadVideo(`${url}#t=0.1`, signal);
+  return { url, kind: 'frame', video, release: () => io.releaseVideo(video) };
+}
+
+/** Queue keys for what else a photo key can load: its original, or a video's first frame. */
+export const ORIGINAL_JOB = 'original:';
+export const FRAME_JOB = 'frame:';
+
+/** One queue job: a thumbnail by default, or the original or a first frame by its prefix. */
+export function loadJob(io: ThumbIo, job: string, signal: AbortSignal): Promise<Thumb> {
+  if (job.startsWith(ORIGINAL_JOB)) return loadOriginal(io, job.slice(ORIGINAL_JOB.length), signal);
+  if (job.startsWith(FRAME_JOB)) return loadFrame(io, job.slice(FRAME_JOB.length), signal);
+  return loadThumb(io, job, signal);
 }
 
 /** Thumbnails by key, least recently used first out. Object URLs are revoked as they leave. */
@@ -105,6 +142,7 @@ export class ThumbCache {
   /** Let go of a thumbnail that never made it into the cache. */
   discard(thumb: Thumb): void {
     if (thumb.kind === 'embedded') this.revoke(thumb.url);
+    thumb.release?.();
   }
 
   private delete(key: string): void {
@@ -221,4 +259,71 @@ export class ThumbQueue {
         this.pump();
       });
   }
+}
+
+/**
+ * The thumbnails of one signed-in account and set of open collections. Another
+ * account or set, or leaving the workspace, lets the whole session go: loads
+ * abort and every object URL is revoked.
+ */
+export class ThumbSessions<S extends { queue: ThumbQueue }> {
+  private current: { id: string; session: S } | null = null;
+
+  /** The session for `id`, made fresh when another one was open. */
+  get(id: string, create: () => S): S {
+    if (this.current?.id !== id) {
+      this.dispose();
+      this.current = { id, session: create() };
+    }
+    return this.current.session;
+  }
+
+  /** The open session when it is `id`'s, without making one. */
+  peek(id: string): S | undefined {
+    return this.current?.id === id ? this.current.session : undefined;
+  }
+
+  dispose(): void {
+    this.current?.session.queue.dispose();
+    this.current = null;
+  }
+}
+
+/**
+ * Keeps a presigned URL of `key` usable for as long as it is wanted: signed
+ * now, again shortly before it expires, and at once when `wake` fires (the
+ * page shown or focused again, as timers sleep in a hidden tab) after it has
+ * expired. Returns the stop function.
+ */
+export function keepSigned(
+  io: Pick<ThumbIo, 'presign' | 'now'>,
+  key: string,
+  onUrl: (url: string) => void,
+  wake: (check: () => void) => () => void,
+): () => void {
+  let stopped = false;
+  let due = Infinity;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const sign = () => {
+    clearTimeout(timer);
+    due = Infinity;
+    io.presign(key).then(
+      (url) => {
+        if (stopped) return;
+        due = io.now() + ORIGINAL_REUSE_MS;
+        onUrl(url);
+        timer = setTimeout(sign, ORIGINAL_REUSE_MS);
+      },
+      () => {},
+    );
+  };
+  sign();
+  const unwake = wake(() => {
+    if (!stopped && io.now() >= due) sign();
+  });
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    unwake();
+  };
 }

@@ -19,7 +19,8 @@ Given('the server refuses ranged reads', async ({ s3 }) => {
   s3.refuseRanges = true;
 });
 
-Given('a collection {string} with {int} photos', async ({ s3 }, name: string, n: number) => {
+Given(/^a collection "(.*)" with (\d+) photos( and a video at the end)?$/, async ({ s3 }, name: string, count: string, video?: string) => {
+  const n = Number(count);
   const uploads: Upload[] = Array.from({ length: 4 }, (_, u) => ({
     stamp: `2024.0${u + 1}.01.10.00.00_fielduser`,
     deployment: { id: `EW0${u + 1}`, name: `Wash ${u + 1}`, lat: 0.8 + u * 0.05, lon: -150.6, elevation: 700 },
@@ -29,8 +30,35 @@ Given('a collection {string} with {int} photos', async ({ s3 }, name: string, n:
       species: i % 3 ? [{ sci: 'Lynx rufus', common: 'Bobcat' }] : undefined,
     })),
   }));
+  // The oldest, so last in the grid's newest-first order.
+  if (video) uploads[0].photos.push({ file: 'CLIP9999.MP4', time: '2023-12-31T23:00:00', mime: 'video/mp4' });
   putCollection(s3, { name, uuid: 'eeeeeeee-0000-4000-8000-000000000005' }, uploads);
 });
+
+/** Every tile's thumbnail colour at its centre, with the time its caption shows. */
+const tileColors = (page: Page) =>
+  tiles(page).evaluateAll((all) =>
+    all.map((tile) => {
+      const img = tile.querySelector('img')!;
+      const canvas = Object.assign(document.createElement('canvas'), { width: 160, height: 120 });
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, 160, 120);
+      const [r, g, b] = ctx.getImageData(80, 60, 1, 1).data;
+      return { time: tile.querySelector('.cap span')!.textContent!, rgb: [r, g, b] };
+    }),
+  );
+
+async function expectOwnThumbnails(page: Page, s3: { thumbColors: Map<string, number[]> }) {
+  await expect.poll(async () => tiles(page).evaluateAll((all) => all.every((t) => t.getAttribute('data-thumb') === 'embedded'))).toBe(true);
+  const shown = await tileColors(page);
+  expect(shown.length).toBeGreaterThan(0);
+  for (const { time, rgb } of shown) {
+    const want = s3.thumbColors.get(time);
+    expect(want, `thumbnail for ${time}`).toBeDefined();
+    const off = Math.max(...rgb.map((v, i) => Math.abs(v - want![i])));
+    expect(off, `tile ${time} shows ${rgb}, its own thumbnail is ${want}`).toBeLessThan(10);
+  }
+}
 
 Then(/^the (first|last) tile shows its embedded thumbnail$/, async ({ page }, which: string) => {
   const tile = which === 'first' ? tiles(page).first() : tiles(page).last();
@@ -53,15 +81,34 @@ Then('the grid shows {int} photos', async ({ page }, n: number) => {
   await expect(page.locator('#table .tbl-foot')).toHaveText(`All ${n} shown`);
 });
 
-Then('every tile shows its embedded thumbnail', async ({ page }) => {
-  await expect.poll(async () => tiles(page).evaluateAll((all) => all.map((t) => t.getAttribute('data-thumb')))).toEqual(
-    new Array(await tiles(page).count()).fill('embedded'),
-  );
-  // Each one drawn from its own bytes, not a broken image.
+Then('every tile shows its own embedded thumbnail', async ({ page, s3 }) => {
+  await expectOwnThumbnails(page, s3);
   const drawn = await tiles(page)
     .locator('img')
     .evaluateAll((imgs) => imgs.map((img) => (img as HTMLImageElement).src.startsWith('blob:') && (img as HTMLImageElement).naturalWidth));
   expect(drawn.every((w) => w === 160)).toBe(true);
+});
+
+Given('some thumbnails are slow to arrive', async ({ s3 }) => {
+  // Every third photo answers late and every fifth later still, so answers come back out of order.
+  s3.bucketKeys()
+    .filter((key) => key.endsWith('.JPG'))
+    .forEach((key, i) => {
+      if (i % 5 === 0) s3.delays.set(key, 900);
+      else if (i % 3 === 0) s3.delays.set(key, 400);
+    });
+});
+
+When('I scroll quickly down the grid and partway back', async ({ page }) => {
+  const height = await page.evaluate(() => document.documentElement.scrollHeight);
+  for (const at of [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.45, 0.35, 0.25]) {
+    await page.evaluate((y) => scrollTo(0, y), Math.round(height * at));
+    await page.waitForTimeout(70);
+  }
+});
+
+Then('every tile on screen shows its own thumbnail', async ({ page, s3 }) => {
+  await expectOwnThumbnails(page, s3);
 });
 
 Then('each thumbnail came from a ranged read of the first 66,000 bytes', async ({ s3 }) => {
@@ -94,15 +141,36 @@ Then('the tile taken at {string} shows the original photo', async ({ page }, tim
   await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBe(640);
 });
 
-Then('the tile taken at {string} is a video poster with a play badge', async ({ page }, time: string) => {
-  const tile = tileAt(page, time);
-  await expect(tile).toHaveAttribute('data-thumb', 'video');
+const showsFrame = async (tile: Locator) => {
+  await expect(tile).toHaveAttribute('data-thumb', 'frame');
+  const video = tile.locator('.frame video');
+  await expect(video).toHaveAttribute('src', /X-Amz-Signature=.*#t=0\.1$/);
+  expect(await video.evaluate((v) => [(v as HTMLVideoElement).muted, (v as HTMLVideoElement).readyState >= 2])).toEqual([true, true]);
   await expect(tile.locator('.play')).toHaveText('Video');
   await expect(tile).toHaveAccessibleName(/, video$/);
+};
+
+Then("the tile taken at {string} shows the video's first frame with a play badge", async ({ page }, time: string) => {
+  await showsFrame(tileAt(page, time));
+});
+
+Then("the last tile shows the video's first frame", async ({ page }) => {
+  await showsFrame(tiles(page).last());
+});
+
+Then('the tile taken at {string} is a plain video tile with a play badge', async ({ page }, time: string) => {
+  const tile = tileAt(page, time);
+  await expect(tile).toHaveAttribute('data-thumb', 'video');
+  await expect(tile.locator('video')).toHaveCount(0);
+  await expect(tile.locator('.play')).toHaveText('Video');
 });
 
 Then('the video file was never read', async ({ s3 }) => {
   expect(s3.gets.filter((g) => g.key.endsWith('.MP4'))).toEqual([]);
+});
+
+Then('the video file has been read', async ({ s3 }) => {
+  expect(s3.gets.filter((g) => g.key.endsWith('.MP4')).length).toBeGreaterThan(0);
 });
 
 // --- The photo panel ------------------------------------------------------------------
@@ -167,7 +235,17 @@ Then('"Open full size" opens the original in a new tab', async ({ page }) => {
   await expect(link).toHaveAttribute('href', /X-Amz-Signature=/);
   await expect(link).toHaveAttribute('target', '_blank');
   await expect(link).toHaveAttribute('rel', 'noopener');
-  expect(await link.getAttribute('href')).toBe(await panel(page).locator('img.full').getAttribute('src'));
+  const path = (url: string | null) => new URL(url!, page.url()).pathname;
+  expect(path(await link.getAttribute('href'))).toBe(path(await panel(page).locator('img.full').getAttribute('src')));
+});
+
+Then('the panel shows the original, read once in full', async ({ page, s3 }) => {
+  const full = panel(page).locator('img.full');
+  await expect(full).toHaveClass(/\bon\b/);
+  expect(await full.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBe(640);
+  await expect(panel(page).locator('img.under')).toHaveCount(0);
+  const key = decodeURIComponent(new URL((await full.getAttribute('src'))!).pathname).split('/').slice(2).join('/');
+  expect(s3.gets.filter((g) => g.key === key && g.range === null)).toHaveLength(1);
 });
 
 Then('the panel plays the video {string}', async ({ page }, file: string) => {
@@ -176,6 +254,15 @@ Then('the panel plays the video {string}', async ({ page }, file: string) => {
   await expect(video).toHaveAttribute('controls', '');
   await expect(video).toHaveAttribute('preload', 'metadata');
   await expect(panel(page).locator('.play')).toHaveText('Video');
+  // A real clip: its metadata loads and, once started, time moves on.
+  await expect.poll(() => video.evaluate((v) => (v as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(1);
+  expect(await video.evaluate((v) => Math.round((v as HTMLVideoElement).duration))).toBe(2);
+  await video.evaluate((v) => {
+    const el = v as HTMLVideoElement;
+    el.muted = true;
+    return el.play();
+  });
+  await expect.poll(() => video.evaluate((v) => (v as HTMLVideoElement).currentTime), { timeout: 5000 }).toBeGreaterThan(0.3);
 });
 
 When('I press the {string} key', async ({ page }, key: string) => {

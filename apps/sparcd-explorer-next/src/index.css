@@ -1451,12 +1451,16 @@ table.data {
 }
 .tile .ph.video::after {
   content: '';
+  position: relative;
+  z-index: 1;
   border-left: 18px solid var(--photoText);
   border-top: 11px solid transparent;
   border-bottom: 11px solid transparent;
   opacity: 0.8;
 }
-.tile img {
+.tile img,
+.tile .frame,
+.tile .frame video {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1560,6 +1564,14 @@ table.data {
 .detail-img .play {
   top: 10px;
   left: 10px;
+}
+.detail-img .noprev {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--photoText);
 }
 .detail-side {
   display: grid;

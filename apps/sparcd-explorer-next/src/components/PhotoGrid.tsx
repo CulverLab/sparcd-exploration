@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import type { Model, PhotoRow } from '@/data';
-import { photoKey, useThumb } from '@/lib/thumbs';
+import { frameJob, photoKey, useThumb } from '@/lib/thumbs';
 
 // Tiles at least 150px wide (130px on phones), 3:2 pictures over a fixed caption.
 const GAP = 8;
@@ -13,12 +13,23 @@ const panel = () => document.querySelector<HTMLElement>('#table .tbl-wrap');
 const distance = (index: number, range: { startIndex: number; endIndex: number } | null) =>
   !range ? 0 : index < range.startIndex ? range.startIndex - index : index > range.endIndex ? index - range.endIndex : 0;
 
+/** A loaded video element, moved into the tile as is so its first frame never loads twice. */
+function Frame({ video }: { video: HTMLVideoElement }) {
+  const box = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    box.current!.append(video);
+    return () => video.remove();
+  }, [video]);
+  return <span ref={box} className="frame" />;
+}
+
 function Tile({ model, row, priority, onOpen }: { model: Model; row: PhotoRow; priority: number; onOpen: (row: PhotoRow, from: HTMLElement) => void }) {
   const photo = model.photos[row.photo];
   const site = model.sites[photo.site];
-  // Videos get a poster, never a ranged read.
-  const { thumb, failed } = useThumb(photo.video ? null : photoKey(model, row.photo), priority);
-  const state = photo.video ? 'video' : thumb ? thumb.kind : failed ? 'failed' : 'loading';
+  const key = photoKey(model, row.photo);
+  // A video shows its first frame, loaded only while its tile is on screen.
+  const { thumb, failed } = useThumb(photo.video ? (priority === 0 ? frameJob(key) : null) : key, priority);
+  const state = photo.video ? (thumb ? 'frame' : 'video') : thumb ? thumb.kind : failed ? 'failed' : 'loading';
   const names = row.species || 'Untagged';
   return (
     <button
@@ -30,8 +41,8 @@ function Tile({ model, row, priority, onOpen }: { model: Model; row: PhotoRow; p
       onClick={(e) => onOpen(row, e.currentTarget)}
     >
       <span className={photo.video ? 'ph video' : 'ph'}>
-        {thumb && <img src={thumb.url} alt="" draggable={false} />}
-        {failed && <span className="noprev">No preview</span>}
+        {thumb?.video ? <Frame video={thumb.video} /> : thumb && <img src={thumb.url} alt="" draggable={false} />}
+        {failed && !photo.video && <span className="noprev">No preview</span>}
         {photo.video && <span className="play">Video</span>}
       </span>
       <span className="cap">

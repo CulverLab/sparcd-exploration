@@ -2,10 +2,31 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { createPortal } from 'react-dom';
 import { formatTimestamp24, type Model } from '@/data';
 import { fmtN, formatElevation, formatPosition } from '@/lib/format';
-import { photoKey, usePresigned, useThumb } from '@/lib/thumbs';
+import { originalJob, photoKey, useFreshUrl, useThumb } from '@/lib/thumbs';
 import { useStore } from '@/store';
 
 const FOCUSABLE = 'button:not([disabled]), a[href], video, [tabindex]:not([tabindex="-1"])';
+
+/** A video whose link is signed again while it plays keeps its place and keeps playing. */
+function Clip({ url, name }: { url: string; name: string }) {
+  const resume = useRef({ time: 0, playing: false });
+  const note = (v: HTMLVideoElement) => (resume.current = { time: v.currentTime, playing: !v.paused });
+  return (
+    <video
+      src={url}
+      controls
+      preload="metadata"
+      aria-label={`Video ${name}`}
+      onTimeUpdate={(e) => note(e.currentTarget)}
+      onPause={(e) => note(e.currentTarget)}
+      onLoadedMetadata={(e) => {
+        const { time, playing } = resume.current;
+        if (time > 0) e.currentTarget.currentTime = time;
+        if (playing) void e.currentTarget.play().catch(() => {});
+      }}
+    />
+  );
+}
 
 /**
  * One photo over the page, which stays where it was underneath. Prev and next
@@ -33,9 +54,14 @@ export function PhotoDetail({
   const site = model.sites[photo.site];
   const upload = model.uploads[photo.upload];
   const key = photoKey(model, i);
-  // The thumbnail shows at once, ahead of every grid tile; the original replaces it once it arrives.
-  const { thumb } = useThumb(photo.video ? null : key, -1);
-  const full = usePresigned(key);
+  // The thumbnail shows at once, ahead of every grid tile; the original
+  // replaces it once it arrives, loaded in the same line as the thumbnails,
+  // first of all, and only when the thumbnail wasn't the original already.
+  const { thumb, failed } = useThumb(photo.video ? null : key, -2);
+  const { thumb: original } = useThumb(thumb?.kind === 'embedded' ? originalJob(key) : null, -1);
+  const full = thumb?.kind === 'original' ? thumb.url : (original?.url ?? null);
+  // Links that outlive the panel's first minutes: Open full size and the video.
+  const link = useFreshUrl(key);
   const [loaded, setLoaded] = useState<string | null>(null);
 
   const step = (d: number) => onIndex((index + d + order.length) % order.length);
@@ -111,10 +137,11 @@ export function PhotoDetail({
       <div ref={card} className="detail-card" onKeyDown={trap}>
         <div className="detail-img" data-photo={i}>
           {photo.video ? (
-            full && <video key={full} src={full} controls preload="metadata" aria-label={`Video ${photo.fileName}`} />
+            link && <Clip key={key} url={link} name={photo.fileName} />
           ) : (
             <>
-              {thumb && <img className="under" src={thumb.url} alt="" />}
+              {thumb?.kind === 'embedded' && <img className="under" src={thumb.url} alt="" />}
+              {failed && <span className="noprev">This photo could not be shown</span>}
               {full && (
                 <img
                   key={full}
@@ -156,8 +183,8 @@ export function PhotoDetail({
               </div>
             ))}
           </dl>
-          {full ? (
-            <a className="btn sm fullsize" href={full} target="_blank" rel="noopener">
+          {link ? (
+            <a className="btn sm fullsize" href={link} target="_blank" rel="noopener">
               Open full size
             </a>
           ) : (

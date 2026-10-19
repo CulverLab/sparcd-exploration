@@ -1,17 +1,21 @@
-// The thumbnail queue in the browser: ranged reads and presigned URLs through
-// the read-only client, one queue per signed-in account and set of open
-// collections. Opening other collections lets every thumbnail go.
+// The thumbnail queue in the browser: ranged reads, presigned originals and
+// video frames through the read-only client, at most six at once. One session
+// per signed-in account and set of open collections; leaving the workspace,
+// signing out or opening other collections lets the whole session go.
 
 import { useEffect, useRef, useState } from 'react';
 import type { S3Config } from '@sparcd/types';
 import {
+  FRAME_JOB,
   HEAD_BYTES,
+  ORIGINAL_JOB,
   THUMBS_KEPT,
   ThumbCache,
   ThumbQueue,
-  accountKey,
+  ThumbSessions,
   extractThumbnail,
-  loadThumb,
+  keepSigned,
+  loadJob,
   readClient,
   type Model,
   type Thumb,
@@ -26,9 +30,17 @@ const PRESIGN_SECONDS = 3600;
 export const photoKey = (model: Model, photo: number): string =>
   `${model.collections[model.photos[photo].collection].bucket}/${model.photos[photo].key}`;
 
+export const originalJob = (key: string) => `${ORIGINAL_JOB}${key}`;
+export const frameJob = (key: string) => `${FRAME_JOB}${key}`;
+
 const split = (key: string): [string, string] => {
   const i = key.indexOf('/');
   return [key.slice(0, i), key.slice(i + 1)];
+};
+
+const releaseVideo = (video: HTMLVideoElement) => {
+  video.removeAttribute('src');
+  video.load();
 };
 
 function browserIo(config: S3Config): ThumbIo {
@@ -42,6 +54,7 @@ function browserIo(config: S3Config): ThumbIo {
     presign: (key) => client.presignedGet(...split(key), PRESIGN_SECONDS),
     preload: (url, signal) =>
       new Promise((resolve, reject) => {
+        if (signal.aborted) return reject(signal.reason);
         const img = new Image();
         const stop = () => {
           img.src = '';
@@ -58,72 +71,119 @@ function browserIo(config: S3Config): ThumbIo {
         };
         img.src = url;
       }),
+    preloadVideo: (url, signal) =>
+      new Promise((resolve, reject) => {
+        if (signal.aborted) return reject(signal.reason);
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.disablePictureInPicture = true;
+        video.setAttribute('aria-hidden', 'true');
+        const stop = () => {
+          releaseVideo(video);
+          reject(signal.reason);
+        };
+        signal.addEventListener('abort', stop, { once: true });
+        video.onloadeddata = () => {
+          signal.removeEventListener('abort', stop);
+          resolve(video);
+        };
+        video.onerror = () => {
+          signal.removeEventListener('abort', stop);
+          releaseVideo(video);
+          reject(new Error('The video could not be shown'));
+        };
+        video.src = url;
+      }),
+    releaseVideo,
     objectUrl: (bytes) => URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' })),
     now: Date.now,
   };
 }
 
-let current: { id: string; queue: ThumbQueue; io: ThumbIo } | null = null;
+type Session = { queue: ThumbQueue; io: ThumbIo };
+type StoreState = ReturnType<typeof useStore.getState>;
 
-function queueFor(config: S3Config, collections: string[]): { queue: ThumbQueue; io: ThumbIo } {
-  const id = `${accountKey(config)}\n${collections.join('\n')}`;
-  if (current?.id !== id) {
-    current?.queue.dispose();
-    const io = browserIo(config);
+const sessions = new ThumbSessions<Session>();
+
+/** Which session the workspace needs now, or null outside it. */
+export const sessionId = (s: StoreState): string | null =>
+  s.config && s.screen === 'workspace' ? `${s.account}\n${s.refs.map((r) => r.key).join('\n')}` : null;
+
+// Leaving the workspace, signing out, another account or other collections:
+// let every thumbnail, object URL and load of the last session go.
+useStore.subscribe((s, prev) => {
+  if (sessionId(s) !== sessionId(prev)) sessions.dispose();
+});
+
+/** The session for what is open now, made when first needed. */
+export function thumbSession(): Session {
+  const state = useStore.getState();
+  const id = sessionId(state);
+  if (!id) throw new Error('Thumbnails load only in the workspace');
+  return sessions.get(id, () => {
+    const io = browserIo(state.config!);
     const cache = new ThumbCache(THUMBS_KEPT, (url) => URL.revokeObjectURL(url));
-    current = { id, io, queue: new ThumbQueue((key, signal) => loadThumb(io, key, signal), cache) };
-  }
-  return current;
+    return { io, queue: new ThumbQueue((job, signal) => loadJob(io, job, signal), cache) };
+  });
 }
 
-/** The queue for what is open now. */
-export function useThumbs(): { queue: ThumbQueue; io: ThumbIo } {
-  const config = useStore((s) => s.config)!;
-  const refs = useStore((s) => s.refs);
-  return queueFor(config, refs.map((r) => r.key));
-}
+/** The open session, without making one. */
+export const openThumbSession = (): Session | undefined => {
+  const id = sessionId(useStore.getState());
+  return id ? sessions.peek(id) : undefined;
+};
 
 export type ThumbState = { thumb: Thumb | null; failed: boolean };
 
 /**
- * A tile's picture, loaded while the tile is mounted. `priority` is 0 in view
- * and grows with distance; unmounting a tile cancels its load.
+ * A queue job's picture, loaded while the caller is mounted: a thumbnail by
+ * photo key, or an original or first frame by `originalJob` / `frameJob`.
+ * `priority` is 0 in view and grows with distance; unmounting cancels the load.
  */
-export function useThumb(key: string | null, priority: number): ThumbState {
-  const { queue } = useThumbs();
-  const [state, setState] = useState<ThumbState & { key: string | null }>({ key: null, thumb: null, failed: false });
+export function useThumb(job: string | null, priority: number): ThumbState {
+  const id = useStore(sessionId);
+  const [state, setState] = useState<ThumbState & { job: string | null }>({ job: null, thumb: null, failed: false });
   const request = useRef<ThumbRequest | null>(null);
   const priorityRef = useRef(priority);
   priorityRef.current = priority;
 
   useEffect(() => {
-    if (!key) return;
-    const r = queue.want(key, priorityRef.current, (thumb) => setState({ key, thumb, failed: !thumb }));
-    if (r.thumb) setState({ key, thumb: r.thumb, failed: false });
+    if (!job || !id) return;
+    const r = thumbSession().queue.want(job, priorityRef.current, (thumb) => setState({ job, thumb, failed: !thumb }));
+    if (r.thumb) setState({ job, thumb: r.thumb, failed: false });
     request.current = r;
     return () => {
       request.current = null;
       r.release();
     };
-  }, [queue, key]);
+  }, [id, job]);
 
   useEffect(() => request.current?.setPriority(priority), [priority]);
 
-  if (state.key === key) return state;
-  return { thumb: (key && queue.cache.peek(key)) || null, failed: false };
+  if (state.job === job) return state;
+  return { thumb: (job && openThumbSession()?.queue.cache.peek(job)) || null, failed: false };
 }
 
-/** A presigned URL for a photo's original, for the detail view. */
-export function usePresigned(key: string | null): string | null {
-  const { io } = useThumbs();
-  const [url, setUrl] = useState<{ key: string; url: string } | null>(null);
+/**
+ * A presigned URL of a photo's original that stays usable while it is shown:
+ * signed again before it expires, and when the page comes back after it has.
+ */
+export function useFreshUrl(key: string | null): string | null {
+  const id = useStore(sessionId);
+  const [state, setState] = useState<{ key: string; url: string } | null>(null);
   useEffect(() => {
-    if (!key) return;
-    let live = true;
-    io.presign(key).then((u) => live && setUrl({ key, url: u }), () => {});
-    return () => {
-      live = false;
-    };
-  }, [io, key]);
-  return url?.key === key ? url.url : null;
+    if (!key || !id) return;
+    return keepSigned(thumbSession().io, key, (url) => setState({ key, url }), (check) => {
+      const onVisible = () => document.visibilityState === 'visible' && check();
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('focus', check);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisible);
+        window.removeEventListener('focus', check);
+      };
+    });
+  }, [id, key]);
+  return state?.key === key ? state.url : null;
 }

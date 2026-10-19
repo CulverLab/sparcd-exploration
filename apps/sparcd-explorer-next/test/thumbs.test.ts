@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  FRAME_JOB,
   HEAD_BYTES,
   IMAGES_IN_FLIGHT,
+  ORIGINAL_JOB,
   ORIGINAL_REUSE_MS,
   ThumbCache,
   ThumbQueue,
+  ThumbSessions,
   extractThumbnail,
+  keepSigned,
+  loadJob,
   loadThumb,
   type Thumb,
   type ThumbIo,
@@ -44,6 +49,13 @@ function fakeIo(head: () => Promise<Uint8Array>): ThumbIo & { calls: string[] } 
     preload: async (url) => {
       calls.push(`preload ${url}`);
     },
+    preloadVideo: async (url) => {
+      calls.push(`video ${url}`);
+      return { url } as unknown as HTMLVideoElement;
+    },
+    releaseVideo: (video) => {
+      calls.push(`release ${(video as unknown as { url: string }).url}`);
+    },
     objectUrl: (bytes) => {
       calls.push(`object ${bytes.length}`);
       return 'blob:thumb';
@@ -81,6 +93,19 @@ describe('which picture a tile shows', () => {
     expect((await loadThumb(io, 'd.jpg', signal())).kind).toBe('original');
   });
 
+  it('nothing fetched when cancelled while the URL was being signed', async () => {
+    const controller = new AbortController();
+    const io = fakeIo(async () => main);
+    const presign = io.presign;
+    io.presign = async (key) => {
+      const url = await presign(key);
+      controller.abort();
+      return url;
+    };
+    await expect(loadThumb(io, 'f.jpg', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(io.calls).toEqual(['head f.jpg', 'presign f.jpg']);
+  });
+
   it('nothing at all once cancelled', async () => {
     const controller = new AbortController();
     const io = fakeIo(async () => {
@@ -89,6 +114,36 @@ describe('which picture a tile shows', () => {
     });
     await expect(loadThumb(io, 'e.jpg', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
     expect(io.calls).toEqual(['head e.jpg']);
+  });
+});
+
+describe('the other pictures a photo key loads', () => {
+  const signal = () => new AbortController().signal;
+
+  it('the original for the detail view, signed then fetched', async () => {
+    const io = fakeIo(async () => withThumb);
+    expect(await loadJob(io, `${ORIGINAL_JOB}g.jpg`, signal())).toEqual({
+      url: 'https://server.example.org/g.jpg?signed',
+      kind: 'original',
+      expires: 1000 + ORIGINAL_REUSE_MS,
+    });
+    expect(io.calls).toEqual(['presign g.jpg', 'preload https://server.example.org/g.jpg?signed']);
+  });
+
+  it("a video's first frame, from 0.1 s so Safari paints one, let go of when it leaves the cache", async () => {
+    const io = fakeIo(async () => main);
+    const frame = await loadJob(io, `${FRAME_JOB}clip.mp4`, signal());
+    expect(frame).toMatchObject({ kind: 'frame', url: 'https://server.example.org/clip.mp4?signed' });
+    expect(io.calls).toEqual(['presign clip.mp4', 'video https://server.example.org/clip.mp4?signed#t=0.1']);
+    const cache = new ThumbCache(1, () => {});
+    cache.set('frame', frame);
+    cache.set('other', { url: 'blob:other', kind: 'embedded' });
+    expect(io.calls.at(-1)).toBe('release https://server.example.org/clip.mp4?signed#t=0.1');
+  });
+
+  it('a plain key is still a thumbnail', async () => {
+    const io = fakeIo(async () => withThumb.slice(0, HEAD_BYTES));
+    expect((await loadJob(io, 'h.jpg', signal())).kind).toBe('embedded');
   });
 });
 
@@ -225,5 +280,99 @@ describe('loading thumbnails', () => {
     q.want('after', 0, () => {});
     expect(pending).toHaveLength(2);
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('a slot taken by a load cancelled mid-signing', () => {
+  it('frees as soon as the tile scrolls away, and the original is never fetched', async () => {
+    let signed!: (url: string) => void;
+    const io = fakeIo(async () => main);
+    io.presign = (key) => {
+      io.calls.push(`presign ${key}`);
+      return new Promise((resolve) => (signed = resolve));
+    };
+    const q = new ThumbQueue((job, s) => loadJob(io, job, s), new ThumbCache(10, () => {}), 1);
+    const tile = q.want('slow.jpg', 0, () => {});
+    await settle();
+    expect(io.calls).toEqual(['head slow.jpg', 'presign slow.jpg']);
+    tile.release();
+    signed('https://server.example.org/slow.jpg?signed');
+    await settle();
+    expect(io.calls.some((c) => c.startsWith('preload'))).toBe(false);
+    expect(q.running).toBe(0);
+    q.want('next.jpg', 0, () => {});
+    expect(io.calls.at(-1)).toBe('head next.jpg');
+  });
+});
+
+describe('thumbnail sessions', () => {
+  function session() {
+    const revoked: string[] = [];
+    const signals: AbortSignal[] = [];
+    const queue = new ThumbQueue(
+      (_key, signal) => {
+        signals.push(signal);
+        return new Promise<Thumb>(() => {});
+      },
+      new ThumbCache(10, (url) => revoked.push(url)),
+    );
+    return { queue, revoked, signals };
+  }
+
+  it('let the last session go, URLs and loads, when another account or set of collections opens', () => {
+    const sessions = new ThumbSessions<ReturnType<typeof session>>();
+    const a = sessions.get('alice\nalpha', session);
+    a.queue.cache.set('k', embedded('blob:k'));
+    a.queue.want('loading', 0, () => {});
+    expect(sessions.get('alice\nalpha', session)).toBe(a);
+    const b = sessions.get('alice\nbravo', session);
+    expect(b).not.toBe(a);
+    expect(a.revoked).toEqual(['blob:k']);
+    expect(a.signals[0].aborted).toBe(true);
+    expect(sessions.peek('alice\nalpha')).toBeUndefined();
+    expect(sessions.peek('alice\nbravo')).toBe(b);
+  });
+
+  it('let everything go when the workspace closes, and start fresh after', () => {
+    const sessions = new ThumbSessions<ReturnType<typeof session>>();
+    const a = sessions.get('alice\nalpha', session);
+    a.queue.cache.set('k', embedded('blob:k'));
+    sessions.dispose();
+    expect(a.revoked).toEqual(['blob:k']);
+    expect(sessions.peek('alice\nalpha')).toBeUndefined();
+    expect(sessions.get('alice\nalpha', session)).not.toBe(a);
+  });
+});
+
+describe('a link kept signed while it is shown', () => {
+  it('is signed again before it expires, and at once when the page comes back after it has', async () => {
+    vi.useFakeTimers();
+    try {
+      let n = 0;
+      let wake = () => {};
+      const urls: string[] = [];
+      const io = { presign: async () => `https://server.example.org/a?sig=${++n}`, now: () => Date.now() };
+      const stop = keepSigned(io, 'a', (u) => urls.push(u), (check) => {
+        wake = check;
+        return () => (wake = () => {});
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(urls).toEqual(['https://server.example.org/a?sig=1']);
+      wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(urls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(ORIGINAL_REUSE_MS);
+      expect(urls).toEqual(['https://server.example.org/a?sig=1', 'https://server.example.org/a?sig=2']);
+      // A hidden tab's timers sleep: coming back past the due time signs at once.
+      vi.setSystemTime(Date.now() + ORIGINAL_REUSE_MS + 1);
+      wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(urls.at(-1)).toBe('https://server.example.org/a?sig=3');
+      stop();
+      await vi.advanceTimersByTimeAsync(2 * ORIGINAL_REUSE_MS);
+      expect(urls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -27,6 +27,8 @@ export class MockS3 {
   readonly gets: { key: string; range: string | null }[] = [];
   /** Fail ranged GETs at the network level, as a CORS policy without `Range` does. */
   refuseRanges = false;
+  /** Each photo's thumbnail colour, by the date and time its tile shows. */
+  readonly thumbColors = new Map<string, [number, number, number]>();
 
   addBucket(name: string): void {
     if (!this.buckets.includes(name)) this.buckets.push(name);
@@ -53,6 +55,11 @@ export class MockS3 {
       if (b === bucket && key.startsWith(prefix)) out.push(key);
     }
     return out.sort();
+  }
+
+  /** Every object key in every bucket. */
+  bucketKeys(): string[] {
+    return this.buckets.flatMap((b) => this.keys(b));
   }
 
   readCount(key: string): number {
