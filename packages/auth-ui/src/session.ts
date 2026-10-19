@@ -38,7 +38,11 @@ export function loadPersistedConnection(): PersistedConnection | null {
   }
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as PersistedConnection;
+    const { secretKey, ...persisted } = JSON.parse(raw) as S3Config;
+    // Builds before 14d65907 saved the secret here. Never hand it to a form,
+    // and take it off disk the first time it's seen.
+    if (secretKey !== undefined) savePersistedConnection(persisted);
+    return persisted;
   } catch {
     return null;
   }
