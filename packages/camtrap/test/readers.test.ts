@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDeployments, parseDeploymentsNullable, parseMedia, parseObservations } from '../src/index';
+import { parseDeployments, parseDeploymentsNullable, parseMedia, parseObservations, serializeDeployments } from '../src/index';
 import { fixture } from './fixtures';
 
 describe('typed readers map fixed v016 columns', () => {
@@ -87,5 +87,18 @@ describe('parseDeploymentsNullable keeps blank positions apart from zero', () =>
   it('keeps a real zero', () => {
     const [d] = parseDeploymentsNullable(row('0', '0.000000', '0'));
     expect([d.latitude, d.longitude, d.elevation]).toEqual([0, 0, 0]);
+  });
+});
+
+describe('serializeDeployments writes an unknown position or elevation blank', () => {
+  it('round-trips through parseDeploymentsNullable', () => {
+    const csv = serializeDeployments([
+      { deploymentId: 'c:AB01', locationId: 'AB01', locationName: 'Ridge', latitude: null, longitude: null, elevation: null, timestampIssues: false },
+      { deploymentId: 'c:AB02', locationId: 'AB02', locationName: 'Wash', latitude: 12.5, longitude: -100.25, elevation: 1200, timestampIssues: false },
+    ]);
+    const [blank, known] = parseDeploymentsNullable(csv);
+    expect([blank.latitude, blank.longitude, blank.elevation]).toEqual([null, null, null]);
+    expect([known.latitude, known.longitude, known.elevation]).toEqual([12.5, -100.25, 1200]);
+    expect(csv.split('\n')[0]).toContain('"AB01","Ridge","","","0"');
   });
 });

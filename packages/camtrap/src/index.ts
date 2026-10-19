@@ -77,10 +77,12 @@ function csvRow(fields: string[]): string {
 
 // SPARC'd writes coordinates / camera geometry with six decimals; integer-ish
 // fields (uncertainty, interval, heading) stay bare. Matches the live bytes.
-const f6 = (n: number): string => n.toFixed(6);
+// A position or elevation that is not known stays blank, as a reader of
+// `parseDeploymentsNullable` saw it.
+const f6 = (n: number | null): string => (n === null ? '' : n.toFixed(6));
 
 /** Serialize `deployments.csv` (one row per deployment), v016 23-column shape. */
-export function serializeDeployments(deployments: Deployment[]): string {
+export function serializeDeployments(deployments: (Deployment | NullableDeployment)[]): string {
   return deployments
     .map((d) =>
       csvRow([
