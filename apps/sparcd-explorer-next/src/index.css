@@ -21,6 +21,9 @@
   --onAccent: #fbf7eb;
   --warnSoft: #f3e2d3;
   --shadow: rgba(28, 26, 20, 0.16);
+  --scrim: rgba(28, 26, 20, 0.34);
+  --photoBar: #0f0f0d;
+  --photoText: #ecebe3;
   --gutter-l: max(16px, env(safe-area-inset-left, 0px));
   --gutter-r: max(16px, env(safe-area-inset-right, 0px));
   --mapH: 360px;
@@ -47,11 +50,14 @@
   --onAccent: #1a160f;
   --warnSoft: #3b2619;
   --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
 
 html {
   scroll-padding-top: calc(var(--stickyH) + env(safe-area-inset-top, 0px));
+  /* The detail view stops page scrolling without the page shifting sideways. */
+  scrollbar-gutter: stable;
 }
 
 /* Clip, not hidden: a hidden overflow makes body a scroll container, and the
@@ -1408,6 +1414,279 @@ table.data {
   color: var(--inkMute);
   font-size: 12px;
 }
+/* Photos grid */
+.gallery {
+  position: relative;
+  min-height: 120px;
+}
+.gal-row {
+  position: absolute;
+  top: 0;
+  display: grid;
+  gap: 8px;
+}
+.tile {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--ruleSoft);
+  background: var(--paper);
+  text-align: left;
+  cursor: pointer;
+}
+.tile:hover {
+  border-color: var(--rule);
+}
+.tile .ph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--ruleSoft);
+}
+.tile .ph.video {
+  background: var(--photoBar);
+}
+.tile .ph.video::after {
+  content: '';
+  border-left: 18px solid var(--photoText);
+  border-top: 11px solid transparent;
+  border-bottom: 11px solid transparent;
+  opacity: 0.8;
+}
+.tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.tile .noprev {
+  font-size: 11.5px;
+  color: var(--inkMute);
+}
+.play {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 4px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  font: 600 10px/1.4 'Inter Tight', system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.play::before {
+  content: '';
+  border-left: 7px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.tile .cap {
+  display: grid;
+  height: 58px;
+  align-content: start;
+  padding: 5px 7px 6px;
+  min-width: 0;
+}
+.tile .cap b {
+  font-weight: 500;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile .cap span {
+  font: 400 11px/1.35 'JetBrains Mono', monospace;
+  color: var(--inkMute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data tbody tr.click {
+  cursor: pointer;
+}
+
+/* Photo detail */
+.detail {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  overscroll-behavior: contain;
+  background: var(--scrim);
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px))
+    max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+}
+.detail-card {
+  width: min(1080px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(250px, 2fr);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: 0 12px 32px var(--shadow);
+}
+.detail-img {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  align-self: start;
+  background: var(--photoBar);
+}
+.detail-img img,
+.detail-img video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.detail-img img.full {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.detail-img img.full.on {
+  opacity: 1;
+}
+.detail-img .play {
+  top: 10px;
+  left: 10px;
+}
+.detail-side {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+  padding: 12px 14px 16px;
+}
+.detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.detail-side h2 {
+  font: 500 24px/1.15 Newsreader, Georgia, serif;
+}
+.detail-side .sci {
+  font-style: italic;
+  color: var(--inkSoft);
+}
+dl.fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0;
+  border-top: 1px solid var(--ruleSoft);
+}
+dl.fields dt,
+dl.fields dd {
+  margin: 0;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--ruleSoft);
+  font-size: 12.5px;
+}
+dl.fields dt {
+  padding-right: 14px;
+  color: var(--inkMute);
+}
+dl.fields dd {
+  font: 12px 'JetBrains Mono', monospace;
+  overflow-wrap: anywhere;
+}
+.fullsize {
+  justify-self: start;
+  text-decoration: none;
+}
+.fullsize[aria-disabled='true'] {
+  opacity: 0.5;
+}
+
+/* Charts */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+  padding: 14px 12px 20px;
+}
+.chart {
+  margin: 0;
+  min-width: 0;
+}
+.chart h3 {
+  font: 500 16px/1.2 Newsreader, Georgia, serif;
+}
+.chart p {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--inkMute);
+}
+.chart.wide {
+  grid-column: 1 / -1;
+}
+.chart svg {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+.chart text {
+  font: 400 11px 'Inter Tight', system-ui, sans-serif;
+  fill: var(--inkSoft);
+}
+.chart text.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  fill: var(--inkMute);
+}
+.chart .grid {
+  stroke: var(--ruleSoft);
+  stroke-width: 1;
+}
+.chart .axis {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.chart .night {
+  fill: var(--ruleSoft);
+  opacity: 0.55;
+}
+.chart .bar {
+  fill: var(--accent);
+}
+.chart .bar.dim {
+  fill: var(--rule);
+  opacity: 0.45;
+}
+.chart .bar.on {
+  fill: var(--warn);
+}
+.chart .hit {
+  fill: transparent;
+}
+.chart g.row {
+  cursor: pointer;
+  outline: none;
+}
+.chart g.row:hover .bar {
+  filter: brightness(1.2);
+}
+.chart g.row:focus-visible .hit {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.chart .yearlab {
+  font: 500 11px 'JetBrains Mono', monospace;
+  fill: var(--ink);
+}
+
 .empty {
   display: grid;
   justify-items: center;
@@ -1690,6 +1969,15 @@ table.data {
   }
 }
 
+/* Beside the details, the photo's dark backdrop runs the card's full height. */
+@media (min-width: 861px) {
+  .detail-img {
+    aspect-ratio: auto;
+    align-self: stretch;
+    min-height: 420px;
+  }
+}
+
 /* A fade at the foot of the side summary says it scrolls. */
 @media (min-width: 861px) {
   .summary::after {
@@ -1706,6 +1994,12 @@ table.data {
 /* Narrow layouts */
 @media (max-width: 860px) {
   .mapband {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .detail-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .charts {
     grid-template-columns: minmax(0, 1fr);
   }
   .mapwrap {

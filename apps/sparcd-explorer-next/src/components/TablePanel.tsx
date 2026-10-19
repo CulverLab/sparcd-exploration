@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
 import { activityByLocation } from '@/lib/activity';
@@ -7,12 +7,15 @@ import { barFill, monthAxis, monthLabel, yearTicks, type MonthAxis, type MonthCo
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
 import { fmtN, plural } from '@/lib/format';
-import { locationColumns, locationFlagger, photoColumns, speciesColumns, type Col, type TableContext } from '@/lib/tables';
+import { locationColumns, locationFlagger, photoColumns, sortRows, speciesColumns, type Col, type TableContext } from '@/lib/tables';
 import { useView } from '@/lib/useView';
-import { useStore, type View } from '@/store';
+import { useStore, type PhotoLayout, type View } from '@/store';
+import { Charts } from './Charts';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { DataTable } from './DataTable';
+import { PhotoDetail } from './PhotoDetail';
+import { PhotoGrid } from './PhotoGrid';
 import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
 
@@ -160,7 +163,8 @@ export function TablePanel() {
   );
   const { prefs, change } = useColumnPrefs(view === 'charts' ? 'locations' : view, defs);
   const shown = shownColumns(prefs, defs, multi);
-  const cols = shown.map((id) => defs.find((d) => d.id === id)!);
+  const shownKey = shown.join('\n');
+  const cols = useMemo(() => shown.map((id) => defs.find((d) => d.id === id)!), [shownKey, defs]);
 
   const rows = useMemo(() => {
     if (view === 'species') return speciesRows(model, result, grouping);
@@ -175,6 +179,45 @@ export function TablePanel() {
     () => activityByLocation(model, result.effort, grouping.separate, activityLegend ? result.photos : []),
     [model, result, grouping, activityLegend],
   );
+
+  // Grid, List and the detail view walk one order: the List's sort.
+  const photoOrder = useMemo(
+    () => (view === 'photos' ? sortRows(rows as PhotoRow[], cols as Col<PhotoRow>[], sorting.photos) : []),
+    [view, rows, cols, sorting.photos],
+  );
+  // The panel keeps the model it opened with, so a background refresh never swaps the photo under it.
+  const [detail, setDetail] = useState<{ model: typeof model; order: number[]; index: number; from: HTMLElement | null } | null>(null);
+  const openDetail = (row: PhotoRow, from: HTMLElement | null) =>
+    setDetail({ model, order: photoOrder.map((r) => r.photo), index: photoOrder.indexOf(row), from });
+  const closeDetail = () => {
+    detail?.from?.focus({ preventScroll: true });
+    setDetail(null);
+  };
+
+  // Grid and List each keep their own place in the page: back to where a
+  // layout was, and one not scrolled yet starts at the table's top (the page
+  // stays put when that is already in view). The new layout's virtualizer
+  // starts at that place too, so it never scrolls back to the old one.
+  const offsets = useRef<Record<PhotoLayout, number>>({ grid: 0, list: 0 });
+  const restore = useRef<number | null>(null);
+  const switchLayout = (next: PhotoLayout) => {
+    if (next === layout) return;
+    const panel = document.getElementById('table')!;
+    const top = panel.getBoundingClientRect().top + scrollY - (document.getElementById('sticky-top')?.offsetHeight ?? 0) - 8;
+    offsets.current[layout] = Math.max(0, scrollY - top);
+    const back = offsets.current[next];
+    restore.current = Math.round(back > 0 ? top + back : Math.min(scrollY, Math.max(0, top)));
+    setLayout(next);
+  };
+  useLayoutEffect(() => {
+    const to = restore.current;
+    if (to === null) return;
+    restore.current = null;
+    scrollTo(0, to);
+    // Once more after the new rows have measured themselves and settled.
+    const frame = requestAnimationFrame(() => scrollTo(0, to));
+    return () => cancelAnimationFrame(frame);
+  }, [layout]);
 
   const count =
     view === 'species'
@@ -201,11 +244,18 @@ export function TablePanel() {
         </button>
       </div>
     );
+  } else if (view === 'charts') {
+    body = <Charts />;
   } else if (!tableView) {
     body = (
-      <div className="empty">
-        <p className="fine">{view === 'charts' ? 'Charts' : 'The photo grid'} arrive in a later build.</p>
-      </div>
+      <>
+        <PhotoGrid model={model} rows={photoOrder} onOpen={openDetail} initialScroll={restore.current} />
+        <div className="tbl-foot">
+          {photoOrder.length
+            ? `All ${photoOrder.length.toLocaleString('en-US')} shown`
+            : `No ${filters.photoTag === 'tagged' ? 'tagged' : 'untagged'} photos here.`}
+        </div>
+      </>
     );
   } else if (tableView === 'locations') {
     body = (
@@ -290,7 +340,17 @@ export function TablePanel() {
         sorting={sorting.photos}
         onSorting={(s) => setSorting((all) => ({ ...all, photos: s }))}
         rowKey={(r) => String(r.photo)}
+        initialScroll={restore.current}
         cell={(c, r) => (c.id === 'species' && !r.species ? <span className="untag">Untagged</span> : undefined)}
+        onRowClick={(r, tr) => openDetail(r, tr.querySelector<HTMLElement>('td.act button'))}
+        action={{
+          label: 'Open',
+          cell: (r) => (
+            <button type="button" className="linkbtn text-[12px]" onClick={(e) => openDetail(r, e.currentTarget)}>
+              View
+            </button>
+          ),
+        }}
         empty={`No ${filters.photoTag === 'tagged' ? 'tagged' : 'untagged'} photos here.`}
       />
     );
@@ -336,7 +396,7 @@ export function TablePanel() {
               ['grid', 'Grid'],
               ['list', 'List'],
             ]}
-            onChange={setLayout}
+            onChange={switchLayout}
           />
           <Seg
             label="Tagged"
@@ -348,6 +408,17 @@ export function TablePanel() {
             ]}
             onChange={(photoTag) => setFilters((f) => ({ ...f, photoTag }))}
           />
+          {layout === 'grid' && (
+            <Seg<'new' | 'old' | ''>
+              label="Order"
+              value={sorting.photos[0]?.id === 'time' ? (sorting.photos[0].desc ? 'new' : 'old') : ''}
+              options={[
+                ['new', 'Newest first'],
+                ['old', 'Oldest first'],
+              ]}
+              onChange={(order) => setSorting((all) => ({ ...all, photos: [{ id: 'time', desc: order === 'new' }] }))}
+            />
+          )}
         </div>
       )}
       {view === 'locations' && grouping.separate && (
@@ -361,6 +432,15 @@ export function TablePanel() {
       )}
       <div className="tbl-wrap">{body}</div>
       <Tip at={tip} />
+      {detail && view === 'photos' && (
+        <PhotoDetail
+          model={detail.model}
+          order={detail.order}
+          index={detail.index}
+          onIndex={(index) => setDetail({ ...detail, index })}
+          onClose={closeDetail}
+        />
+      )}
     </section>
   );
 }

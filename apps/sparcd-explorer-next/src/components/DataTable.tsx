@@ -1,21 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
-  type ColumnDef,
-  type Row,
-  type SortingState,
-} from '@tanstack/react-table';
+import { getCoreRowModel, useReactTable, type ColumnDef, type SortingState } from '@tanstack/react-table';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
-import { cellText, type Cell, type Col } from '@/lib/tables';
-
-function compare<R>(a: Row<R>, b: Row<R>, id: string): number {
-  const x = a.getValue<Cell>(id);
-  const y = b.getValue<Cell>(id);
-  if (x === null || y === null) return x === y ? 0 : x === null ? -1 : 1;
-  return typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
-}
+import { cellText, sortRows, type Cell, type Col } from '@/lib/tables';
 
 export type DataTableProps<R> = {
   cols: Col<R>[];
@@ -26,12 +12,16 @@ export type DataTableProps<R> = {
   rowClass?: (r: R) => string | undefined;
   /** The row under the pointer or holding focus, or null when none is. */
   onRowHover?: (r: R | null) => void;
+  /** A click anywhere on a row but its buttons. */
+  onRowClick?: (r: R, row: HTMLTableRowElement) => void;
   /** A cell drawn by the caller instead of its text. */
   cell?: (c: Col<R>, r: R) => ReactNode | undefined;
   /** A header drawn by the caller instead of its label. */
   head?: (c: Col<R>) => ReactNode | undefined;
   /** A last column of per-row actions. */
   action?: { label: string; cell: (r: R) => ReactNode };
+  /** Where the page is about to scroll to as the table opens. */
+  initialScroll?: number | null;
   empty: string;
 };
 
@@ -39,7 +29,21 @@ export type DataTableProps<R> = {
  * Every table: sortable headers that stay under the sticky filter bar while
  * the page scrolls, and rows drawn only near the viewport (no paging).
  */
-export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass, onRowHover, cell, head, action, empty }: DataTableProps<R>) {
+export function DataTable<R>({
+  cols,
+  rows,
+  sorting,
+  onSorting,
+  rowKey,
+  rowClass,
+  onRowHover,
+  onRowClick,
+  cell,
+  head,
+  action,
+  empty,
+  initialScroll,
+}: DataTableProps<R>) {
   const columns = useMemo<ColumnDef<R, Cell>[]>(
     () =>
       cols.map((c) => ({
@@ -47,18 +51,18 @@ export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass,
         accessorFn: (r: R) => c.value(r),
         enableSorting: c.sortable !== false,
         sortDescFirst: Boolean(c.numeric),
-        sortingFn: compare,
       })),
     [cols],
   );
+  const data = useMemo(() => sortRows(rows, cols, sorting), [rows, cols, sorting]);
   const table = useReactTable({
-    data: rows,
+    data,
     columns,
     state: { sorting },
     onSortingChange: (u) => onSorting(typeof u === 'function' ? u(sorting) : u),
     enableSortingRemoval: false,
+    manualSorting: true,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     getRowId: rowKey,
   });
   const sorted = table.getRowModel().rows;
@@ -71,7 +75,13 @@ export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass,
     const top = (bodyRef.current?.getBoundingClientRect().top ?? 0) + scrollY;
     if (Math.abs(top - margin) > 1) setMargin(top);
   });
-  const virtualizer = useWindowVirtualizer({ count: sorted.length, estimateSize: () => 34, overscan: 12, scrollMargin: margin });
+  const virtualizer = useWindowVirtualizer({
+    count: sorted.length,
+    estimateSize: () => 34,
+    overscan: 12,
+    scrollMargin: margin,
+    initialOffset: initialScroll ?? (() => scrollY),
+  });
   const items = virtualizer.getVirtualItems();
   const before = items.length ? items[0].start - margin : 0;
   const after = items.length ? virtualizer.getTotalSize() - (items[items.length - 1].end - margin) : 0;
@@ -152,7 +162,13 @@ export function DataTable<R>({ cols, rows, sorting, onSorting, rowKey, rowClass,
                 key={row.id}
                 data-index={item.index}
                 ref={virtualizer.measureElement}
-                className={extra}
+                className={onRowClick ? [extra, 'click'].filter(Boolean).join(' ') : extra}
+                onClick={
+                  onRowClick &&
+                  ((e) => {
+                    if (!(e.target as HTMLElement).closest('button, a, input')) onRowClick(r, e.currentTarget);
+                  })
+                }
                 onPointerEnter={onRowHover && (() => onRowHover(r))}
                 onPointerLeave={onRowHover && (() => onRowHover(null))}
                 onFocus={onRowHover && (() => onRowHover(r))}

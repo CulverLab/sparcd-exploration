@@ -1,8 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { applyFilters, clearFilter, photosForTag, type FilterState } from '@/data';
+import { applyFilters, clearFilter, photosForTag } from '@/data';
 import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
-import { barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthsToDates, yearOf, yearTicks } from '@/lib/months';
+import { barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates, yearTicks } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { Tip, type TipAt } from './Tip';
@@ -13,13 +13,6 @@ const H = 102;
 const X0 = 44;
 const TOP = 32;
 const BASE = 82;
-
-/** Whether a month survives the Dates filter's years, months and range. */
-function monthPasses(f: FilterState, m: number, range: [number, number] | null): boolean {
-  if (f.years.length && !f.years.includes(yearOf(m))) return false;
-  if (f.months.length && !f.months.includes((m % 12) + 1)) return false;
-  return !range || (m >= range[0] && m <= range[1]);
-}
 
 /**
  * Camera effort per month across the opened data: every filter but Dates,

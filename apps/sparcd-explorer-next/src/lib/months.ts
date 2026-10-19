@@ -2,7 +2,7 @@
 // months count as `year * 12 + month - 1`, from the first month of the opened
 // data to the last, so every strip lines up with every other.
 
-import type { Model } from '@/data';
+import type { FilterState, Model } from '@/data';
 
 export type MonthAxis = { first: number; count: number };
 /** Per month: [photos, untagged photos, matching photos]. */
@@ -66,6 +66,13 @@ export function datesToMonths(from: string | null, to: string | null, axis: Mont
   const lo = Math.max(axis.first, from ? monthIndex(from) : axis.first);
   const hi = Math.min(end, to ? monthIndex(to) : end);
   return lo <= hi ? [lo, hi] : null;
+}
+
+/** Whether a month survives the Dates filter's years, months and range (from `datesToMonths`). */
+export function monthPasses(f: FilterState, m: number, range: [number, number] | null): boolean {
+  if (f.years.length && !f.years.includes(yearOf(m))) return false;
+  if (f.months.length && !f.months.includes((m % 12) + 1)) return false;
+  return !range || (m >= range[0] && m <= range[1]);
 }
 
 /** Where the year labels go: the axis's first month and every January after it. */

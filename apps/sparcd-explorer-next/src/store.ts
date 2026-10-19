@@ -89,6 +89,7 @@ type State = {
 
 const DISPLAY_KEY = 'sparcd-explorer-display';
 const VIEW_KEY = 'sparcd-explorer-view';
+const LAYOUT_KEY = 'sparcd-explorer-photo-layout';
 const VIEWS: View[] = ['locations', 'species', 'photos', 'charts'];
 
 const DEFAULT_DISPLAY: Display = { coords: 'latlon', precision: DEFAULT_PRECISION, elevation: 'm' };
@@ -131,8 +132,7 @@ export const useStore = create<State>((set, get) => ({
   filters: NO_FILTERS,
   separate: false,
   view: readStored<View>(VIEW_KEY, 'locations', (v): v is View => VIEWS.includes(v as View)),
-  // Grid arrives in a later phase; List is the working layout until then.
-  photoLayout: 'list',
+  photoLayout: readStored<PhotoLayout>(LAYOUT_KEY, 'grid', (v): v is PhotoLayout => v === 'grid' || v === 'list'),
   display: readStored(DISPLAY_KEY, DEFAULT_DISPLAY, isDisplay),
   toast: null,
   openGeneration: 0,
@@ -250,7 +250,10 @@ export const useStore = create<State>((set, get) => ({
     writeStored(VIEW_KEY, view);
     set({ view });
   },
-  setPhotoLayout: (photoLayout) => set({ photoLayout }),
+  setPhotoLayout: (photoLayout) => {
+    writeStored(LAYOUT_KEY, photoLayout);
+    set({ photoLayout });
+  },
   setDisplay: (patch) => {
     const display = { ...get().display, ...patch };
     writeStored(DISPLAY_KEY, display);

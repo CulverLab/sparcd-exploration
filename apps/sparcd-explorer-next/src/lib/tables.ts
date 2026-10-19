@@ -45,6 +45,26 @@ export type TableContext = { model: Model; display: Display; totalDetections: nu
 
 export const ACTIVE_DAYS_HELP = 'Days with at least one photo, summed over locations';
 
+/** Two cells in sort order: empty first, numbers by value, text naturally ("AB2" before "AB10"). */
+export function compareCells(x: Cell, y: Cell): number {
+  if (x === null || y === null) return x === y ? 0 : x === null ? -1 : 1;
+  return typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+}
+
+/**
+ * Rows in a table's order: by the sorted column, ties kept in their own
+ * order. The Photos grid, list and detail view all walk this one order.
+ */
+export function sortRows<R>(rows: R[], cols: Col<R>[], sorting: { id: string; desc: boolean }[]): R[] {
+  const col = sorting[0] && cols.find((c) => c.id === sorting[0].id);
+  if (!col || col.sortable === false) return rows;
+  const dir = sorting[0].desc ? -1 : 1;
+  return rows
+    .map((r, i) => ({ r, i, v: col.value(r) }))
+    .sort((a, b) => dir * compareCells(a.v, b.v) || a.i - b.i)
+    .map((x) => x.r);
+}
+
 export const cellText = <R>(c: Col<R>, r: R): string => {
   if (c.text) return c.text(r);
   const v = c.value(r);
