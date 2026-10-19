@@ -139,6 +139,21 @@ describe('the cache', () => {
 
   it('treats the same server written with or without a scheme as one account', () => {
     expect(accountKey({ endpoint: 'server.example.org/', accessKey: 'reader' })).toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'server.example.org', accessKey: 'reader', secure: true })).toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'https://server.example.org:443', accessKey: 'reader' })).toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'server.example.org', accessKey: 'reader', secure: false })).toBe(
+      accountKey({ endpoint: 'http://server.example.org', accessKey: 'reader' }),
+    );
+  });
+
+  it('keeps http and https, and different ports, of one host apart', () => {
+    const http = accountKey({ endpoint: 'http://server.example.org', accessKey: 'reader' });
+    expect(http).not.toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'server.example.org', accessKey: 'reader', secure: false })).not.toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'server.example.org:9000', accessKey: 'reader' })).not.toBe(ACCOUNT);
+    expect(accountKey({ endpoint: 'http://server.example.org:9000', accessKey: 'reader' })).not.toBe(
+      accountKey({ endpoint: 'http://server.example.org:9001', accessKey: 'reader' }),
+    );
   });
 
   it('keeps the cache across sessions: signing out clears nothing', async () => {

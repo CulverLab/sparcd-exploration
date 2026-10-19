@@ -5,6 +5,7 @@ import {
   REQUESTS_IN_FLIGHT,
   discoverCollections,
   openCollections,
+  readCachedCollection,
   syncCollection,
   type OpenProgress,
   type Source,
@@ -158,6 +159,58 @@ describe('cancel', () => {
     controller.abort();
     await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
     expect((await discoverCollections({ ...source, client: withCollectionMarker(s3) }))[0].cached).toBe(false);
+  });
+});
+
+describe('cancel during a refresh', () => {
+  // Read once, then change every observations.csv and add an upload, so a
+  // refresh has many files to write.
+  async function cachedThenChanged() {
+    const s3 = new FakeS3();
+    const folders = Array.from({ length: 12 }, (_, i) => oneUpload(s3, `u${String(i).padStart(2, '0')}`));
+    const source = newSource(s3);
+    await syncCollection(source, REF);
+    const before = await readCachedCollection(source.db, source.account, REF);
+    for (const folder of folders) s3.put(REF.bucket, `${folder}observations.csv`, '');
+    oneUpload(s3, 'u99');
+    s3.resetCounts();
+    return { s3, source, before };
+  }
+
+  it('leaves the cache exactly as it was when cancelled mid-read', async () => {
+    const { s3, source, before } = await cachedThenChanged();
+    s3.latency = 10;
+    const controller = new AbortController();
+    const refreshing = syncCollection(source, REF, { signal: controller.signal });
+    await vi.waitFor(() => expect(s3.gets.length).toBeGreaterThan(3));
+    controller.abort();
+    await expect(refreshing).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
+  });
+
+  it('writes nothing when the final progress report cancels', async () => {
+    const { source, before } = await cachedThenChanged();
+    const controller = new AbortController();
+    const refreshing = syncCollection(source, REF, {
+      signal: controller.signal,
+      onProgress: (p) => p.step === 'drawing' && controller.abort(),
+    });
+    await expect(refreshing).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
+  });
+
+  it('leaves a first open unread when the final progress report cancels', async () => {
+    const s3 = new FakeS3();
+    oneUpload(s3);
+    const source = newSource(s3);
+    const controller = new AbortController();
+    const opening = syncCollection(source, REF, {
+      signal: controller.signal,
+      onProgress: (p) => p.step === 'drawing' && controller.abort(),
+    });
+    await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await readCachedCollection(source.db, source.account, REF)).toBeNull();
+    expect(await source.db.uploads.count()).toBe(0);
   });
 });
 

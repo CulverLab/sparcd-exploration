@@ -4,16 +4,17 @@
 //
 // A site is one camera position as the files describe it: (collection,
 // location ID, name, coordinates). A location is what the tables show: by
-// default every site sharing a location ID (case and punctuation aside, across
-// collections) is one location; with "Show each location ID separately" on,
-// each site is its own location.
+// default every site sharing the exact location ID (across collections) is one
+// location; with "Show each location ID separately" on, each site is its own
+// location. IDs that differ only in case or punctuation stay apart; the
+// near-duplicate data check names them.
 
 import { commonNameFromComments } from '@sparcd/camtrap';
 import type { NullableDeployment } from '@sparcd/camtrap';
 import type { ReadProblem } from './cache';
 import { sitePosition, type Position } from './coords';
 import { hexGrid, hexOf, type HexGrid } from './hex';
-import { isNoLocation, mountainRange, normalizeLocationId } from './locationIds';
+import { isNoLocation, mountainRange } from './locationIds';
 import { registryKey, type RegistryLocation } from './locations';
 import type { LoadedCollection } from './open';
 import { speciesNamer, type Species, type SpeciesName } from './species';
@@ -146,7 +147,7 @@ export function buildModel(
       name,
       position,
       range: mountainRange(id),
-      groupKey: `id:${normalizeLocationId(id)}`,
+      groupKey: `id:${id}`,
     });
     const elevation = d.elevation ?? listed?.elevation;
     if (elevation != null) elevations[i].push(elevation);

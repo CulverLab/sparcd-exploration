@@ -187,15 +187,15 @@ export async function syncCollection(
     folders.map(async (folder) => {
       const row = cached.get(folder);
       const result = await readFolder(source, ref.bucket, folder, row && stripAccount(row), guarded, signal);
-      if (result.kind === 'visible' && result.changed) {
-        await source.db.uploads.put({ ...result.upload, account: source.account, bucket: ref.bucket });
-      }
       report('reading', ++done, folders.length);
       return { folder, result };
     }),
   );
 
+  // Nothing is written until every folder is read, so a cancel at any point
+  // leaves the cache exactly as it was.
   const uploads: LoadedUpload[] = [];
+  const changedUploads: LoadedUpload[] = [];
   const hiddenUploads: string[] = [];
   const problems: ReadProblem[] = [];
   let changed = false;
@@ -208,28 +208,32 @@ export async function syncCollection(
     } else {
       uploads.push(result.upload);
       problems.push(...result.problems);
+      if (result.changed) changedUploads.push(result.upload);
       changed ||= result.changed;
     }
   }
   const kept = new Set(uploads.map((u) => u.folder));
   const gone = [...cached.keys()].filter((folder) => !kept.has(folder));
-  if (gone.length) {
-    changed = true;
-    await source.db.uploads.bulkDelete(gone.map((folder) => [source.account, ref.bucket, folder]));
-  }
-  const previous = await source.db.collections.get([source.account, ref.bucket, ref.uuid]);
-  if (!previous || previous.hiddenUploads.join() !== hiddenUploads.join()) changed = true;
-  const checkedAt = Date.now();
-  await source.db.collections.put({
-    account: source.account,
-    bucket: ref.bucket,
-    uuid: ref.uuid,
-    folders: uploads.map((u) => u.folder),
-    hiddenUploads,
-    problems,
-    checkedAt,
-  });
+  const { db, account } = source;
+  const previous = await db.collections.get([account, ref.bucket, ref.uuid]);
+  if (gone.length || !previous || previous.hiddenUploads.join() !== hiddenUploads.join()) changed = true;
   report('drawing', folders.length, folders.length);
+  signal?.throwIfAborted();
+
+  const checkedAt = Date.now();
+  await db.transaction('rw', db.uploads, db.collections, async () => {
+    await db.uploads.bulkPut(changedUploads.map((u) => ({ ...u, account, bucket: ref.bucket })));
+    await db.uploads.bulkDelete(gone.map((folder) => [account, ref.bucket, folder]));
+    await db.collections.put({
+      account,
+      bucket: ref.bucket,
+      uuid: ref.uuid,
+      folders: uploads.map((u) => u.folder),
+      hiddenUploads,
+      problems,
+      checkedAt,
+    });
+  });
   return { ref, uploads, hiddenUploads, problems, changed, checkedAt };
 }
 

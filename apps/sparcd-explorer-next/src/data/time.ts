@@ -10,7 +10,9 @@ export type LocalTime = {
   hour: number | null; // null when the text carries a date only
 };
 
-const LOCAL_TS = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/;
+// The whole text must match: a date, optionally a time (seconds and a fraction
+// optional) with an optional Z or ±hh:mm offset. The offset is never applied.
+const LOCAL_TS = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))?)?$/;
 const DAY_MS = 86_400_000;
 
 export function dayNumber(date: string): number {
@@ -27,7 +29,8 @@ export function parseLocalTimestamp(timestamp: string): LocalTime | null {
     return null;
   }
   const hour = m[4] === undefined ? null : Number(m[4]);
-  if (hour !== null && (hour > 23 || Number(m[5]) > 59)) return null;
+  const over = (field: string | undefined, max: number) => field !== undefined && Number(field) > max;
+  if (over(m[4], 23) || over(m[5], 59) || over(m[6], 59) || over(m[7], 23) || over(m[8], 59)) return null;
   const date = `${m[1]}-${m[2]}-${m[3]}`;
   return { date, day: dayNumber(date), year, month, hour };
 }

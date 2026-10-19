@@ -15,12 +15,17 @@ export function readClient(cfg: S3Config): SafeS3Client {
 }
 
 /**
- * Cache identity for one account on one server. Another endpoint or access
- * key gets a different identity, so it never sees this one's cached data.
+ * Cache identity for one account on one server: scheme, host, port and access
+ * key. Another server, scheme, port or key gets a different identity, so it
+ * never sees this one's cached data. An endpoint without a scheme uses
+ * `secure` (HTTPS unless it is false), as the client does.
  */
-export function accountKey(cfg: Pick<S3Config, 'endpoint' | 'accessKey'>): string {
-  const endpoint = cfg.endpoint.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  return `${endpoint}|${cfg.accessKey.trim()}`;
+export function accountKey(cfg: Pick<S3Config, 'endpoint' | 'accessKey' | 'secure'>): string {
+  const text = cfg.endpoint.trim().toLowerCase();
+  const scheme = /^(https?):\/\//.exec(text)?.[1] ?? (cfg.secure === false ? 'http' : 'https');
+  const authority = text.replace(/^https?:\/\//, '').split('/')[0];
+  const [, host, port] = /^(.*?)(?::(\d+))?$/.exec(authority)!;
+  return `${scheme}://${host}:${port ?? (scheme === 'https' ? '443' : '80')}|${cfg.accessKey.trim()}`;
 }
 
 export function isMissingObjectError(err: unknown): boolean {

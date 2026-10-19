@@ -9,14 +9,21 @@ import { formatTimestamp24 } from './time';
 
 type Grouping = { separate: boolean };
 
-/** Distinct (location, camera-local date) pairs with at least one photo. */
-function activeDays(model: Model, photos: number[], { separate }: Grouping): number {
-  const pairs = new Set<string>();
-  for (const i of photos) {
+/**
+ * Camera-local dates with at least one photo, per location, over the camera
+ * effort population: every photo the filters keep before species.
+ */
+function effortDays(model: Model, result: FilterResult, { separate }: Grouping): Map<string, Set<number>> {
+  const days = new Map<string, Set<number>>();
+  for (const i of result.effort) {
     const p = model.photos[i];
-    if (p.date !== null) pairs.add(`${locationKeyOf(model.sites[p.site], separate)}|${p.day}`);
+    if (p.day === null) continue;
+    const key = locationKeyOf(model.sites[p.site], separate);
+    let set = days.get(key);
+    if (!set) days.set(key, (set = new Set()));
+    set.add(p.day);
   }
-  return pairs.size;
+  return days;
 }
 
 export type Summary = {
@@ -68,7 +75,7 @@ export function summarize(model: Model, result: FilterResult, grouping: Grouping
     detections: result.detections.length,
     species: perSpecies.size,
     animals,
-    activeDays: activeDays(model, result.effort, grouping),
+    activeDays: [...effortDays(model, result, grouping).values()].reduce((n, d) => n + d.size, 0),
     firstDate,
     lastDate,
     topSpecies: [...perSpecies]
@@ -109,7 +116,6 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
     tagged: number;
     detections: number;
     species: Set<number>;
-    days: Set<number>;
     first: string | null;
     last: string | null;
   };
@@ -124,7 +130,6 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
         tagged: 0,
         detections: 0,
         species: new Set(),
-        days: new Set(),
         first: null,
         last: null,
       };
@@ -139,7 +144,6 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
     t.photos++;
     if (p.tagged) t.tagged++;
     if (p.date !== null) {
-      t.days.add(p.day!);
       if (t.first === null || p.date < t.first) t.first = p.date;
       if (t.last === null || p.date > t.last) t.last = p.date;
     }
@@ -150,6 +154,7 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
     t.detections++;
     t.species.add(det.species);
   }
+  const days = effortDays(model, result, grouping);
   const lastDay = (site: number) => model.sites[site].lastDay ?? -Infinity;
   return [...tallies].map(([key, t]) => {
     const sites = [...t.sites];
@@ -171,7 +176,7 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
       species: t.species.size,
       firstDate: t.first,
       lastDate: t.last,
-      activeDays: t.days.size,
+      activeDays: days.get(key)?.size ?? 0,
     };
   });
 }
@@ -241,6 +246,44 @@ export function photoRows(model: Model, photos: number[], detections?: number[])
       collection: model.collections[p.collection].name,
       tagged: p.tagged,
       video: p.video,
+    };
+  });
+}
+
+export type DetectionRow = {
+  detection: number;
+  photo: number;
+  fileName: string;
+  /** The photo's 24-hour camera-local time as stored. */
+  time: string;
+  date: string | null;
+  species: string;
+  scientificName: string;
+  count: number;
+  locationId: string;
+  locationName: string;
+  collection: string;
+};
+
+/** One row per species tag. */
+export function detectionRows(model: Model, detections: number[]): DetectionRow[] {
+  return detections.map((d) => {
+    const det = model.detections[d];
+    const p = model.photos[det.photo];
+    const site = model.sites[p.site];
+    const species = model.species[det.species];
+    return {
+      detection: d,
+      photo: det.photo,
+      fileName: p.fileName,
+      time: formatTimestamp24(p.timestamp),
+      date: p.date,
+      species: species.name,
+      scientificName: species.scientificName,
+      count: det.count,
+      locationId: site.locationId,
+      locationName: site.name,
+      collection: model.collections[p.collection].name,
     };
   });
 }

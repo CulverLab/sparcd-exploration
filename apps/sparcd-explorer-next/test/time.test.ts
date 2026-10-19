@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { dayNumber, formatTimestamp24, parseLocalTimestamp } from '../src/data';
+import { checkBadTimestamps, dayNumber, formatTimestamp24, parseLocalTimestamp } from '../src/data';
+import { collection, deployment, media, modelOf } from './support/fixtures';
 
 describe('parseLocalTimestamp', () => {
   it('reads the camera wall clock with no UTC conversion', () => {
@@ -24,6 +25,41 @@ describe('parseLocalTimestamp', () => {
     for (const bad of ['', 'unknown', '0000-00-00T00:00:00', '2023-02-30T10:00:00', '2024-13-01T00:00:00', '2024-01-01T25:00:00']) {
       expect(parseLocalTimestamp(bad), bad).toBeNull();
     }
+  });
+
+  it('accepts seconds, a fraction and a Z or ±hh:mm offset, without applying the offset', () => {
+    expect(parseLocalTimestamp('2024-01-01T10:20:30')).toMatchObject({ date: '2024-01-01', hour: 10 });
+    expect(parseLocalTimestamp('2024-01-01T10:20:30.123456')?.hour).toBe(10);
+    expect(parseLocalTimestamp('2024-01-01T23:59:59+14:00')).toMatchObject({ date: '2024-01-01', hour: 23 });
+    expect(parseLocalTimestamp('2024-01-01T00:00:00-12:00')).toMatchObject({ date: '2024-01-01', hour: 0 });
+    expect(parseLocalTimestamp('2024-01-01 10:20Z')?.hour).toBe(10);
+  });
+
+  it('rejects text that only starts like a timestamp, or has out-of-range fields', () => {
+    for (const bad of [
+      '2024-01-01Tgarbage',
+      '2024-01-01blah',
+      '2024-01-01T10:20:99',
+      '2024-01-01T10:60:00',
+      '2024-01-01T10',
+      '2024-01-01T10:20:30.',
+      '2024-01-01T10:20:30+25:00',
+      '2024-01-01T10:20:30+05:61',
+      '2024-01-01T10:20:30 PDT',
+      '2024-01-01Z',
+    ]) {
+      expect(parseLocalTimestamp(bad), bad).toBeNull();
+    }
+  });
+
+  it('sends unparseable timestamps to the bad-timestamp data check', () => {
+    const model = modelOf(
+      collection().upload('u1', {
+        deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+        media: [media('u1', 'ok.jpg', 'AA01', '2024-01-01T10:20:30'), media('u1', 'bad.jpg', 'AA01', '2024-01-01T10:20:99')],
+      }),
+    );
+    expect(checkBadTimestamps(model)).toEqual([{ kind: 'bad-timestamps', upload: 0, photos: [1] }]);
   });
 
   it('numbers days so ranges compare as integers', () => {

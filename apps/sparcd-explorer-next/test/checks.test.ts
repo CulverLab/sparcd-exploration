@@ -81,8 +81,8 @@ describe('data checks', () => {
 
   it('find the same location ID in more than one open collection, with each collection’s dates', () => {
     const a = collection('A', 'aaa').upload('u1', {
-      deployments: [deployment('SR-07', 'Spring', 12.5, -100.25)],
-      media: [media('u1', 'a.jpg', 'SR-07', '2023-01-05T10:00:00'), media('u1', 'b.jpg', 'SR-07', '2023-06-05T10:00:00')],
+      deployments: [deployment('SR07', 'Spring', 12.5, -100.25)],
+      media: [media('u1', 'a.jpg', 'SR07', '2023-01-05T10:00:00'), media('u1', 'b.jpg', 'SR07', '2023-06-05T10:00:00')],
     });
     const b = collection('B', 'bbb').upload('u1', {
       deployments: [deployment('SR07', 'Spring', 12.5, -100.25)],
@@ -91,7 +91,7 @@ describe('data checks', () => {
     expect(checkSharedLocations(modelOf([a, b]))).toEqual([
       {
         kind: 'shared-location',
-        ids: ['SR-07', 'SR07'],
+        ids: ['SR07'],
         spans: [
           { collection: 0, first: '2023-01-05', last: '2023-06-05' },
           { collection: 1, first: '2024-02-01', last: '2024-02-01' },

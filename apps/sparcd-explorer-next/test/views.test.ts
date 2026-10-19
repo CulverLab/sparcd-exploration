@@ -5,15 +5,15 @@ import { collection, deployment, filter, media, modelOf, observation } from './s
 const grouped = { separate: false };
 const separate = { separate: true };
 
-// SR-07 and SR07 are one location written two ways; SR07 also moved.
+// SR07 is one location whose camera moved and was renamed.
 const model = modelOf(
   collection()
     .upload('u1', {
-      deployments: [deployment('SR-07', 'Spring', 12.5, -100.25, 1000)],
-      media: [media('u1', 'a.jpg', 'SR-07', '2023-01-01T10:00:00'), media('u1', 'b.jpg', 'SR-07', '2023-01-02T10:00:00')],
+      deployments: [deployment('SR07', 'Spring', 12.5, -100.25, 1000)],
+      media: [media('u1', 'a.jpg', 'SR07', '2023-01-01T10:00:00'), media('u1', 'b.jpg', 'SR07', '2023-01-02T10:00:00')],
       observations: [
-        observation('u1', 'a.jpg', 'SR-07', '', { common: 'Bobcat', scientific: 'Lynx rufus', count: 2 }),
-        observation('u1', 'a.jpg', 'SR-07', '', { common: 'Deer', scientific: 'Odocoileus hemionus' }),
+        observation('u1', 'a.jpg', 'SR07', '', { common: 'Bobcat', scientific: 'Lynx rufus', count: 2 }),
+        observation('u1', 'a.jpg', 'SR07', '', { common: 'Deer', scientific: 'Odocoileus hemionus' }),
       ],
     })
     .upload('u2', {
@@ -54,7 +54,7 @@ describe('locationRows', () => {
     const [row] = locationRows(model, result, grouped);
     expect(row).toMatchObject({
       key: 'id:SR07',
-      ids: ['SR-07', 'SR07'],
+      ids: ['SR07'],
       name: 'Spring new',
       position: { lat: 12.75, lon: -100.25 },
       elevation: 1100,
@@ -72,10 +72,36 @@ describe('locationRows', () => {
   it('shows each location ID and position separately when asked', () => {
     const rows = locationRows(model, result, separate);
     expect(rows.map((r) => [r.ids, r.name, r.photos])).toEqual([
-      [['SR-07'], 'Spring', 2],
+      [['SR07'], 'Spring', 2],
       [['SR07'], 'Spring new', 1],
     ]);
     expect(rows[0].key).toBe(model.sites[0].key);
+  });
+
+  it('keeps IDs that differ only in case or punctuation apart', () => {
+    const nearDuplicates = modelOf(
+      collection()
+        .upload('u1', { deployments: [deployment('AA-01', 'Alpha', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'AA-01', '2023-01-01T10:00:00')] })
+        .upload('u2', { deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)], media: [media('u2', 'b.jpg', 'AA01', '2023-01-01T10:00:00')] }),
+    );
+    const rows = locationRows(nearDuplicates, filter(nearDuplicates), grouped);
+    expect(rows.map((r) => [r.key, r.ids, r.photos])).toEqual([
+      ['id:AA-01', ['AA-01'], 1],
+      ['id:AA01', ['AA01'], 1],
+    ]);
+  });
+
+  it('counts active days from camera effort, so a species filter leaves them alone', () => {
+    const owls = modelOf(
+      collection().upload('u1', {
+        deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+        media: [media('u1', 'owl.jpg', 'AA01', '2024-01-01T22:00:00'), media('u1', 'empty.jpg', 'AA01', '2024-01-02T03:00:00')],
+        observations: [observation('u1', 'owl.jpg', 'AA01', '2024-01-01T22:00:00', { common: 'Owl', scientific: 'Bubo virginianus' })],
+      }),
+    );
+    const onlyOwls = filter(owls, { species: ['Bubo virginianus'] });
+    expect(summarize(owls, onlyOwls, grouped)).toMatchObject({ photos: 1, activeDays: 2 });
+    expect(locationRows(owls, onlyOwls, grouped)).toMatchObject([{ photos: 1, activeDays: 2 }]);
   });
 });
 
@@ -96,7 +122,7 @@ describe('photoRows', () => {
       time: '2023-01-01 10:00:00',
       date: '2023-01-01',
       species: 'Bobcat, Deer',
-      locationId: 'SR-07',
+      locationId: 'SR07',
       locationName: 'Spring',
       collection: 'Test',
       tagged: true,

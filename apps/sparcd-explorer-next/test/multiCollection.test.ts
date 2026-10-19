@@ -19,8 +19,8 @@ const A = collection('Alpha set', 'aaa').upload('u1', {
 });
 const B = collection('Bravo set', 'bbb')
   .upload('u1', {
-    deployments: [deployment('SR-07', 'Spring', 12.5, -100.25)],
-    media: [media('u1', 'b1.jpg', 'SR-07', '2024-01-01T10:00:00')],
+    deployments: [deployment('SR07', 'Spring', 12.5, -100.25)],
+    media: [media('u1', 'b1.jpg', 'SR07', '2024-01-01T10:00:00')],
   })
   .upload('u2', {
     deployments: [deployment('XY01', 'Elsewhere', 12.9, -100.9)],
@@ -45,7 +45,7 @@ describe('several collections open together', () => {
   it('group one location ID across collections', () => {
     const rows = locationRows(model, result, { separate: false });
     const spring = rows.find((r) => r.key === 'id:SR07')!;
-    expect(spring).toMatchObject({ ids: ['SR-07', 'SR07'], collections: [0, 1], photos: 3 });
+    expect(spring).toMatchObject({ ids: ['SR07'], collections: [0, 1], photos: 3 });
   });
 
   it('split by collection too when each location ID shows separately', () => {

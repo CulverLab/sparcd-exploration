@@ -58,11 +58,13 @@ export {
   type PhotoTag,
 } from './filters';
 export {
+  detectionRows,
   hexBins,
   locationRows,
   photoRows,
   speciesRows,
   summarize,
+  type DetectionRow,
   type HexBin,
   type LocationRow,
   type PhotoRow,
