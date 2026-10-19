@@ -7,6 +7,12 @@ import type { ExportCell, Table } from './export';
 const width = (t: Table, i: number): number =>
   Math.min(48, Math.max(8, t.columns[i].length + 2, ...t.rows.slice(0, 500).map((r) => String(r[i] ?? '').length + 1)));
 
+/**
+ * A cell as its type: text is always written as a string cell, never a
+ * formula, so `=1+1` in a name opens as those characters.
+ */
+const cell = (v: ExportCell) => (typeof v === 'string' ? { value: v, type: String } : v);
+
 /** An .xlsx workbook, one sheet per table, its header row bold and frozen. */
 export async function xlsxBlob(tables: Table[]): Promise<Blob> {
   // write-excel-file: maintained, multi-sheet, and its one dependency is fflate, which the zips use too.
@@ -14,7 +20,7 @@ export async function xlsxBlob(tables: Table[]): Promise<Blob> {
   return writeXlsxFile(
     tables.map((t) => ({
       sheet: t.name,
-      data: [t.columns.map((c) => ({ value: c, fontWeight: 'bold' as const })), ...t.rows.map((r) => r.map((v: ExportCell) => v))],
+      data: [t.columns.map((c) => ({ value: c, type: String, fontWeight: 'bold' as const })), ...t.rows.map((r) => r.map(cell))],
       stickyRowsCount: 1,
       columns: t.columns.map((_, i) => ({ width: width(t, i) })),
     })),

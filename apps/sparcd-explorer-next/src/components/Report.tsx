@@ -9,10 +9,10 @@ import {
   csvFiles,
   exportFileName,
   isoDate,
-  locationRows,
+  orderedLocations,
   precisionWords,
+  resultForTag,
   slug,
-  sortedLocations,
   speciesTable,
   spreadsheetTables,
   summarize,
@@ -28,7 +28,7 @@ import { saveBlob } from '@/lib/download';
 import { filterWords, matchLegend } from '@/lib/filterLabels';
 import { fmtN, formatElevation, formatPosition } from '@/lib/format';
 import { countByMonth, monthLabel, yearOf } from '@/lib/months';
-import { ACTIVE_DAYS_HELP } from '@/lib/tables';
+import { ACTIVE_DAYS_HELP, tableOrder } from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { HourChart, useWidth } from './Charts';
@@ -155,10 +155,15 @@ const dash = (v: string | number | null) => (v === null || v === '' ? '—' : v)
 /**
  * A printable report of what is in view, over the page, which stays where it
  * was. Print or save as PDF prints only the report; the downloads hold the
- * same rows, never with coordinates more exact than the page shows.
+ * same rows in the tables' order, never with coordinates more exact than the
+ * page shows. While the Photos view shows, its tag switch applies too.
  */
 export function ReportSheet({ onClose }: { onClose: () => void }) {
-  const { model, filters, result, grouping, multi } = useView();
+  const { model, filters, result: filtered, grouping, multi } = useView();
+  const tagShown = useStore((s) => s.view === 'photos');
+  const tag = tagShown ? filters.photoTag : 'all';
+  const result = useMemo(() => resultForTag(model, filtered, tag), [model, filtered, tag]);
+  const sorting = useStore((s) => s.sorting);
   const display = useStore((s) => s.display);
   const config = useStore((s) => s.config)!;
   const loaded = useStore((s) => s.loaded);
@@ -174,9 +179,13 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
   const prepared = useMemo(() => new Date(), []);
 
   const names = model.collections.map((c) => c.name);
-  const words = filterWords(model, filters, display.elevation, grouping.separate);
+  const words = filterWords(model, filters, display.elevation, grouping.separate, tagShown);
   const coordinates = precisionWords(display.coords, display.precision);
-  const opts: ExportOptions = { ...display, separate: grouping.separate };
+  const order = useMemo(
+    () => tableOrder({ model, display, totalDetections: result.detections.length }, sorting, multi),
+    [model, display, result, sorting, multi],
+  );
+  const opts: ExportOptions = { ...display, separate: grouping.separate, order };
   const facts: ReportFacts = {
     collections: names.join(', '),
     filters: words,
@@ -186,13 +195,13 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
   };
   const sum = useMemo(() => summarize(model, result, grouping), [model, result, grouping]);
   const allLocations = useMemo(() => summarize(model, applyFilters(model, NO_FILTERS), grouping).locations, [model, grouping]);
-  const species = useMemo(() => speciesTable(model, result, opts), [model, result, grouping]);
-  const locations = useMemo(() => sortedLocations(model, locationRows(model, result, grouping)), [model, result, grouping]);
+  const species = useMemo(() => speciesTable(model, result, opts), [model, result, grouping, order]);
+  const locations = useMemo(() => orderedLocations(model, result, opts), [model, result, grouping, order]);
   const byCollection = useMemo(() => collectionsTable(model, result, opts, filters.collections), [model, result, grouping, filters.collections]);
   const hours = useMemo(() => hourCounts(model, result.detections), [model, result]);
   const unplaced = useMemo(() => locations.filter((l) => l.noLocation).reduce((n, l) => n + l.photos, 0), [locations]);
-  // A species filter's photos are drawn inside the effort bars, as on the page.
-  const speciesMatch = matchLegend(model, filters, false);
+  // A species filter's photos, or the tag switch's, are drawn inside the effort bars, as on the page.
+  const speciesMatch = matchLegend(model, filters, tagShown);
   const sitesShown = mapMode === 'sites' && canShowExactSites(config.endpoint);
 
   // The page underneath keeps its place and doesn't scroll; closing hands focus back.
@@ -270,7 +279,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
         saveBlob(exportFileName(names, 'csv.zip', prepared), await zipBlob(csvFiles(model, result, opts)));
       } else {
         const name = exportFileName(names, 'camtrap-dp.zip', prepared);
-        const files = camtrapPackage(model, loaded, result, display.precision, {
+        const files = camtrapPackage(model, loaded, result, display, {
           name: slug(name.replace(/\.zip$/, '')),
           title: names.join(' + '),
           created: prepared.toISOString(),
@@ -416,7 +425,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
                 model={model}
                 result={result}
                 separate={grouping.separate}
-                precision={display.precision}
+                display={display}
                 sites={sitesShown}
                 area={filters.area}
               />

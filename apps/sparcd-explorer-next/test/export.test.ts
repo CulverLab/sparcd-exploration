@@ -8,18 +8,25 @@ import {
   csvFiles,
   detectionsTable,
   exportFileName,
+  formulaSafe,
   locationsTable,
   photosTable,
   precisionWords,
+  resultForTag,
   speciesTable,
   spreadsheetTables,
   summaryTable,
   tableCsv,
   xlsxBlob,
   zipBlob,
+  type Display,
   type ExportOptions,
+  type FilterResult,
+  type LoadedCollection,
+  type Model,
   type ReportFacts,
 } from '../src/data';
+import { tableOrder } from '../src/lib/tables';
 import { collection, deployment, filter, media, observation } from './support/fixtures';
 
 const alpha = collection('Alpha Basin', 'aaa')
@@ -215,7 +222,7 @@ describe('the spreadsheet', () => {
 
 describe('the Camtrap DP package', () => {
   const pack = (result = filter(model), digits: number | null = 2) =>
-    camtrapPackage(model, one, result, { method: 'round', digits }, {
+    camtrapPackage(model, one, result, { coords: 'latlon', precision: { method: 'round', digits }, elevation: 'm' }, {
       name: 'alpha-basin-2026-10-19',
       title: 'Alpha Basin',
       created: '2026-10-19T12:00:00.000Z',
@@ -298,5 +305,245 @@ describe('the coordinate precision in words', () => {
     expect(precisionWords('utm', { method: 'round', digits: 2 })).toBe('UTM, rounded to 1,000 m');
     expect(precisionWords('utm', { method: 'truncate', digits: 5 })).toBe('UTM, truncated to 1 m');
     expect(precisionWords('utm', { method: 'round', digits: null })).toBe('UTM, exact to the metre');
+  });
+});
+
+// --- Positions, elevations, text, the tag switch, order and moved cameras --------
+
+const latlon2: Display = { coords: 'latlon', precision: { method: 'round', digits: 2 }, elevation: 'm' };
+const utm2: Display = { ...latlon2, coords: 'utm' };
+const packageOf = (m: Model, loaded: LoadedCollection[], display: Display, result: FilterResult = filter(m)) =>
+  camtrapPackage(m, loaded, result, display, { name: 'test', title: 'Test', created: '2026-10-19T12:00:00.000Z', contributor: 'fieldlead', filters: '' });
+
+describe('elevation in every export is the elevation shown', () => {
+  const loaded = [
+    collection('Elevated', 'eee')
+      .upload('u1', {
+        deployments: [deployment('EL01', 'Ridge', 12.5, -100.25, 1000.123456)],
+        media: [media('u1', 'a.jpg', 'EL01', '2023-01-01T10:00:00')],
+      })
+      .build(),
+  ];
+  const m = buildModel(loaded);
+
+  it('writes whole metres to deployments.csv, never the source decimals', () => {
+    const files = packageOf(m, loaded, latlon2);
+    expect(parseDeploymentsNullable(files['deployments.csv'])[0].elevation).toBe(1000);
+    expect(files['deployments.csv']).not.toContain('1000.123456');
+  });
+
+  it('converts the feet shown back to whole metres', () => {
+    expect(parseDeploymentsNullable(packageOf(m, loaded, { ...latlon2, elevation: 'ft' })['deployments.csv'])[0].elevation).toBe(1000);
+  });
+
+  it('matches the tables in the spreadsheet and CSV files', () => {
+    expect(column(locationsTable(m, filter(m), opts()), 'Elevation (m)')).toEqual([1000]);
+    expect(column(locationsTable(m, filter(m), opts({ elevation: 'ft' })), 'Elevation (ft)')).toEqual([3281]);
+  });
+});
+
+describe('with UTM shown, two cameras the table shows alike export alike', () => {
+  // Both read 14N 366000 1389000 at 2 digits; in degrees they round apart (12.56 and 12.57).
+  const loaded = [
+    collection('Twins', 'ttt')
+      .upload('u1', {
+        deployments: [deployment('TW01', 'North', 12.5651, -100.23456, 1000)],
+        media: [media('u1', 'a.jpg', 'TW01', '2023-01-01T10:00:00')],
+      })
+      .upload('u2', {
+        deployments: [deployment('TW02', 'South', 12.5649, -100.23456, 1000)],
+        media: [media('u2', 'b.jpg', 'TW02', '2023-01-02T10:00:00')],
+      })
+      .build(),
+  ];
+  const m = buildModel(loaded);
+  const o = opts({ coords: 'utm' });
+
+  it('in the Locations and Photos sheets', () => {
+    const t = locationsTable(m, filter(m), o);
+    expect(t.rows.map((r) => r.slice(3, 6))).toEqual([
+      ['14N', 366000, 1389000],
+      ['14N', 366000, 1389000],
+    ]);
+    const p = photosTable(m, filter(m), o);
+    const at = ['UTM zone', 'Easting', 'Northing'].map((c) => p.columns.indexOf(c));
+    expect(p.rows.map((r) => at.map((i) => r[i]).join(' '))).toEqual(['14N 366000 1389000', '14N 366000 1389000']);
+  });
+
+  it('in deployments.csv and the package coverage, as the shown UTM position converted back', () => {
+    const files = packageOf(m, loaded, utm2);
+    const [north, south] = parseDeploymentsNullable(files['deployments.csv']);
+    expect([north.latitude, north.longitude]).toEqual([south.latitude, south.longitude]);
+    expect(north.latitude).not.toBe(12.57);
+    expect(files['deployments.csv']).not.toMatch(/12\.5651|12\.5649|100\.23456/);
+    const dp = JSON.parse(files['datapackage.json']);
+    expect(dp.spatial).toEqual({ type: 'Point', coordinates: [north.longitude, north.latitude] });
+    expect(dp.description).toContain('UTM positions shown (UTM, rounded to 1,000 m), converted back to latitude and longitude');
+  });
+
+  it('while lat/long shown keeps them apart, as the table does', () => {
+    const [north, south] = parseDeploymentsNullable(packageOf(m, loaded, latlon2)['deployments.csv']);
+    expect([north.latitude, south.latitude]).toEqual([12.57, 12.56]);
+  });
+});
+
+describe('text a spreadsheet would run as a formula exports as text', () => {
+  const loaded = [
+    collection('Risky', 'rrr')
+      .upload('u1', {
+        deployments: [deployment('-12', '=1+1', 12.5, -100.25, 1000)],
+        media: [{ ...media('u1', '@a.jpg', '-12', '2023-01-01T10:00:00'), comments: '+cmd' }],
+        observations: [observation('u1', '@a.jpg', '-12', '', { common: '-Bobcat', scientific: 'Lynx rufus' })],
+      })
+      .build(),
+  ];
+  const m = buildModel(loaded);
+
+  it('prefixes =, +, -, @, tab and carriage return, and leaves plain numbers and other text alone', () => {
+    expect(['=1+1', '+cmd', '-Bobcat', '@SUM(A1)', '\tx', '\rx'].map(formulaSafe)).toEqual([
+      "'=1+1",
+      "'+cmd",
+      "'-Bobcat",
+      "'@SUM(A1)",
+      "'\tx",
+      "'\rx",
+    ]);
+    expect(['-12', '-100.25', '+3', 'Willow', '', '2023-01-01'].map(formulaSafe)).toEqual(['-12', '-100.25', '+3', 'Willow', '', '2023-01-01']);
+  });
+
+  it('in the CSV files, with negative coordinates still plain numbers', () => {
+    const lines = tableCsv(locationsTable(m, filter(m), opts())).split('\r\n');
+    const cells = lines[1].split(',');
+    expect(cells.slice(0, 2)).toEqual(['-12', "'=1+1"]);
+    expect(cells.slice(3, 5)).toEqual(['12.5', '-100.25']);
+    const species = tableCsv(speciesTable(m, filter(m), opts())).split('\r\n')[1];
+    expect(species.startsWith("'-Bobcat,")).toBe(true);
+    expect(tableCsv(photosTable(m, filter(m), opts()))).toContain(",'@a.jpg,");
+  });
+
+  it('in the spreadsheet, as string cells, never formulas, keeping the text as written', async () => {
+    const files = await unzip(await xlsxBlob(spreadsheetTables(m, filter(m), opts(), facts)));
+    const sheets = Object.keys(files).filter((f) => f.startsWith('xl/worksheets/sheet')).map((f) => strFromU8(files[f]));
+    expect(sheets.join('')).not.toContain('<f>');
+    const shared = [...strFromU8(files['xl/sharedStrings.xml']).matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map((x) => x[1]);
+    expect(shared).toContain('=1+1');
+    expect(shared).toContain('-Bobcat');
+    const locations = sheets[1];
+    const nameCell = /<c r="B2"([^>]*)>/.exec(locations)![1];
+    expect(nameCell).toContain('t="s"');
+    expect(locations).toMatch(/<c r="E2"[^>]*><v>-100.25<\/v><\/c>/);
+  });
+
+  it('in the Camtrap DP files too, keeping every reference between them', () => {
+    const files = packageOf(m, loaded, latlon2);
+    const [dep] = parseDeploymentsNullable(files['deployments.csv']);
+    expect([dep.locationId, dep.locationName, dep.longitude]).toEqual(['-12', "'=1+1", -100.25]);
+    const [photo] = parseMedia(files['media.csv']);
+    expect([photo.fileName, photo.comments, photo.deploymentId]).toEqual(["'@a.jpg", "'+cmd", dep.deploymentId]);
+    const [obs] = parseObservations(files['observations.csv']);
+    expect([obs.mediaId, obs.deploymentId]).toEqual([photo.mediaId, dep.deploymentId]);
+  });
+});
+
+describe("the Photos view's tag switch", () => {
+  it('keeps its photos and their detections, and leaves camera effort as it is', () => {
+    const all = filter(model);
+    const tagged = resultForTag(model, all, 'tagged');
+    expect(column(photosTable(model, tagged, opts()), 'File name')).toEqual(['a.jpg', 'd.jpg']);
+    expect(detectionsTable(model, tagged, opts()).rows).toHaveLength(3);
+    expect(tagged.effort).toBe(all.effort);
+    const untagged = resultForTag(model, all, 'untagged');
+    expect(column(photosTable(model, untagged, opts()), 'File name')).toEqual(['b.jpg', 'c.jpg']);
+    expect(detectionsTable(model, untagged, opts()).rows).toEqual([]);
+    expect(resultForTag(model, all, 'all')).toBe(all);
+  });
+
+  it('counts only those photos in the summary', () => {
+    const t = Object.fromEntries(summaryTable(model, resultForTag(model, filter(model), 'tagged'), opts(), facts).rows);
+    expect([t.Photos, t['Tagged photos'], t['Untagged photos'], t.Detections]).toEqual([2, 2, 0, 3]);
+  });
+
+  it('limits the Camtrap DP package to their media, observations and deployments', () => {
+    const tagged = packageOf(model, one, latlon2, resultForTag(model, filter(model), 'tagged'));
+    expect(parseMedia(tagged['media.csv']).map((x) => x.fileName)).toEqual(['a.jpg', 'd.jpg']);
+    expect(parseObservations(tagged['observations.csv'])).toHaveLength(3);
+    expect(parseDeploymentsNullable(tagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', 'AA10']);
+    const untagged = packageOf(model, one, latlon2, resultForTag(model, filter(model), 'untagged'));
+    expect(parseMedia(untagged['media.csv']).map((x) => x.fileName)).toEqual(['b.jpg', 'c.jpg']);
+    expect(parseObservations(untagged['observations.csv']).map((o) => o.observationType)).toEqual(['blank']);
+    expect(parseDeploymentsNullable(untagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', '0000']);
+  });
+});
+
+describe("downloads follow each table's sort", () => {
+  const sorted = (sorting: Parameters<typeof tableOrder>[1]) =>
+    opts({ order: tableOrder({ model, display: opts(), totalDetections: 3 }, sorting, false) });
+  const byDefault = { locations: [{ id: 'id', desc: false }], species: [{ id: 'dets', desc: true }], photos: [{ id: 'time', desc: true }] };
+
+  it('lists locations, species and photos as the tables do', () => {
+    const o = sorted({ ...byDefault, locations: [{ id: 'photos', desc: true }], species: [{ id: 'common', desc: true }] });
+    expect(column(locationsTable(model, filter(model), o), 'Location ID')).toEqual(['AA01', '0000', 'AA10']);
+    expect(column(speciesTable(model, filter(model), o), 'Common name')).toEqual(['Coyote', 'Bobcat']);
+    // Newest first, as the Photos list opens.
+    expect(column(photosTable(model, filter(model), o), 'File name')).toEqual(['d.jpg', 'c.jpg', 'b.jpg', 'a.jpg']);
+    const csv = csvFiles(model, filter(model), o);
+    expect(csv['photos.csv'].split('\r\n').slice(1, 5).map((l) => l.split(',')[1])).toEqual(['d.jpg', 'c.jpg', 'b.jpg', 'a.jpg']);
+  });
+
+  it("keeps each photo's detections together, in the Photos order", () => {
+    const o = sorted(byDefault);
+    expect(column(detectionsTable(model, filter(model), o), 'File name')).toEqual(['d.jpg', 'a.jpg', 'a.jpg']);
+    expect(column(detectionsTable(model, filter(model), opts()), 'File name')).toEqual(['a.jpg', 'a.jpg', 'd.jpg']);
+  });
+
+  it('carries the order into the workbook', () => {
+    const tables = spreadsheetTables(model, filter(model), sorted({ ...byDefault, photos: [{ id: 'time', desc: false }] }), facts);
+    expect(column(tables[3], 'File name')).toEqual(['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg']);
+  });
+});
+
+describe('a camera that moved under one deployment ID', () => {
+  const loaded = [
+    collection('Moved', 'mmm')
+      .upload('u1', {
+        deployments: [deployment('MV01', 'Moved', 12.5, -100.5, 1000)],
+        media: [media('u1', 'm1.jpg', 'MV01', '2023-01-01T10:00:00')],
+        observations: [observation('u1', 'm1.jpg', 'MV01', '', { common: 'Bobcat', scientific: 'Lynx rufus' })],
+      })
+      .upload('u2', {
+        deployments: [deployment('MV01', 'Moved', 12.7, -100.7, 1000)],
+        media: [media('u2', 'm2.jpg', 'MV01', '2023-06-01T10:00:00')],
+        observations: [observation('u2', 'm2.jpg', 'MV01', '', { common: 'Coyote', scientific: 'Canis latrans' })],
+      })
+      .upload('u3', {
+        deployments: [deployment('MV01', 'Moved', 12.5, -100.5, 1000)],
+        media: [media('u3', 'm3.jpg', 'MV01', '2024-01-01T10:00:00')],
+      })
+      .build(),
+  ];
+  const m = buildModel(loaded);
+
+  it('keeps each position as its own deployment, and each photo at its own', () => {
+    const files = packageOf(m, loaded, latlon2);
+    expect(parseDeploymentsNullable(files['deployments.csv']).map((d) => [d.deploymentId, d.latitude, d.longitude])).toEqual([
+      ['test:MV01', 12.5, -100.5],
+      ['test:MV01#2', 12.7, -100.7],
+    ]);
+    expect(parseMedia(files['media.csv']).map((x) => [x.fileName, x.deploymentId])).toEqual([
+      ['m1.jpg', 'test:MV01'],
+      ['m2.jpg', 'test:MV01#2'],
+      ['m3.jpg', 'test:MV01'],
+    ]);
+    expect(parseObservations(files['observations.csv']).map((o) => [o.scientificName, o.deploymentId])).toEqual([
+      ['Lynx rufus', 'test:MV01'],
+      ['Canis latrans', 'test:MV01#2'],
+    ]);
+  });
+
+  it('stays one deployment when the move is finer than the precision shown', () => {
+    const coarse: Display = { ...latlon2, precision: { method: 'round', digits: 0 } };
+    const files = packageOf(m, loaded, coarse);
+    expect(parseDeploymentsNullable(files['deployments.csv']).map((d) => d.deploymentId)).toEqual(['test:MV01']);
+    expect(new Set(parseMedia(files['media.csv']).map((x) => x.deploymentId))).toEqual(new Set(['test:MV01']));
   });
 });

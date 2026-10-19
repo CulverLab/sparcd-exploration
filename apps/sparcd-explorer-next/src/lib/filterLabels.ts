@@ -91,9 +91,10 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 /**
  * Every filter in force, in full and in plain words, for a report:
  * "Species: Bobcat, Mountain lion · Dates: Sep 2023 – Sep 2025", or
- * "No filters: all photos".
+ * "No filters: all photos". The Photos view's tag switch counts while that
+ * view shows (`tagShown`).
  */
-export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, separate = false): string {
+export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, separate = false, tagShown = false): string {
   const parts: string[] = [];
   if (model.collections.length > 1 && f.collections.length) {
     parts.push(`Collections: ${model.collections.filter((c) => f.collections.includes(c.key)).map((c) => c.name).join(', ')}`);
@@ -111,6 +112,7 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
   if (f.hours) parts.push(`Hours: ${pad(f.hours[0])}:00–${pad(f.hours[1])}:59`);
   if (f.elevation) parts.push(`Elevation: ${value(model, f, 'elevation', unit, separate)}`);
   if (f.ranges.length) parts.push(`Mountain range: ${[...f.ranges].sort().join(', ')}`);
+  if (tagShown && f.photoTag !== 'all') parts.push(f.photoTag === 'tagged' ? 'Tagged photos only' : 'Untagged photos only');
   return parts.length ? parts.join(' · ') : 'No filters: all photos';
 }
 

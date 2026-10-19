@@ -94,6 +94,47 @@ Feature: Report and downloads
     And the package's deployment "AB02" sits at latitude "0.530000" and longitude "-150.150000"
     And the package's datapackage.json follows the Camtrap DP profile and says "Coordinates rounded to 2 decimal places"
 
+  @US-034
+  Scenario: With "Tagged" picked in Photos, the report and every download hold only tagged photos, newest first as listed
+    Given I have opened "Alpha Basin"
+    When I show the Photos table
+    And I choose "Tagged" in the Photos switch
+    And I note the order of the Photos table
+    And I open the report
+    Then the report's filters read "Tagged photos only"
+    When I download the spreadsheet
+    Then the "Photos" sheet has 7 rows
+    And every row of the "Photos" sheet reads "Yes" under "Tagged"
+    And the "Photos" sheet lists the photos in the noted order
+    When I download "CSV files (.zip)" from More formats
+    Then "photos.csv" in the zip has 7 rows
+    And "photos.csv" in the zip lists the photos in the noted order
+    When I download "Camtrap DP package (.zip)" from More formats
+    Then the package's media.csv lists "IMG0001.JPG, IMG0002.JPG, IMG0101.JPG, IMG0102.JPG, IMG0201.JPG, IMG0401.JPG, IMG0501.JPG"
+
+  @US-034
+  Scenario: The report and its spreadsheet list locations in the table's order
+    Given I have opened "Alpha Basin"
+    When I sort by "Photos"
+    And I note the order of the Locations table
+    And I open the report
+    Then the report's Locations table lists the locations in the noted order
+    When I download the spreadsheet
+    Then the "Locations" sheet lists the locations in the noted order
+
+  @US-034
+  Scenario: A name that a spreadsheet would run as a formula downloads as text
+    Given "Alpha Basin" has a camera named "=1+1"
+    And I have opened "Alpha Basin"
+    When I open the report
+    And I download the spreadsheet
+    Then the "Locations" sheet row for "AB07" holds "=1+1" as text, not a formula
+    And the "Locations" sheet row for "AB02" has latitude "0.53" and longitude "-150.15"
+    When I download "CSV files (.zip)" from More formats
+    Then "locations.csv" in the zip names "AB07" "'=1+1"
+    When I download "Camtrap DP package (.zip)" from More formats
+    Then the package's deployment "AB07" is named "'=1+1"
+
   Scenario: Closing the report puts the page back where it was, and Esc closes it too
     Given I have opened "Alpha Basin"
     When I note where the page is

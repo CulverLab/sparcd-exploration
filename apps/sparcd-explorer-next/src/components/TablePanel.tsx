@@ -1,5 +1,4 @@
 import { Fragment, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { SortingState } from '@tanstack/react-table';
 import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
 import { activityByLocation } from '@/lib/activity';
 import { matchLegend } from '@/lib/filterLabels';
@@ -10,7 +9,7 @@ import { saveBlob } from '@/lib/download';
 import { fmtN, plural } from '@/lib/format';
 import { locationColumns, locationFlagger, photoColumns, sortRows, speciesColumns, type Col, type TableContext } from '@/lib/tables';
 import { useView } from '@/lib/useView';
-import { useStore, type PhotoLayout, type View } from '@/store';
+import { useStore, type PhotoLayout, type TableView } from '@/store';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { DataTable } from './DataTable';
@@ -18,14 +17,6 @@ import { PhotoGrid } from './PhotoGrid';
 import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
-
-type TableView = Exclude<View, 'charts'>;
-
-const DEFAULT_SORT: Record<TableView, SortingState> = {
-  locations: [{ id: 'id', desc: false }],
-  species: [{ id: 'dets', desc: true }],
-  photos: [{ id: 'time', desc: true }],
-};
 
 function ActivityHead({ axis }: { axis: MonthAxis }) {
   return (
@@ -140,7 +131,8 @@ export function TablePanel() {
   const reset = useStore((s) => s.resetFilters);
   const withUndo = useStore((s) => s.withUndo);
   const checks = usePopover();
-  const [sorting, setSorting] = useState(DEFAULT_SORT);
+  const sorting = useStore((s) => s.sorting);
+  const setSorting = useStore((s) => s.setSorting);
   const [tip, setTip] = useState<TipAt | null>(null);
   const setHighlight = useStore((s) => s.setHighlight);
   // A view or model change leaves no row lit on the map.
@@ -221,11 +213,13 @@ export function TablePanel() {
           ? plural(result.detections.length, 'detection')
           : plural(rows.length, 'location');
 
+  // The file lists the rows in the table's order.
   const exportCsv = () => {
     const csvCols = csvColumns(defs, shown, display);
+    const sorted = view === 'photos' ? photoOrder : sortRows(rows as never[], cols, sorting[view as TableView]);
     saveBlob(
       csvFileName(model.collections.map((c) => c.name), view, new Date()),
-      new Blob([toCsv(csvCols, rows as never[])], { type: 'text/csv;charset=utf-8' }),
+      new Blob([toCsv(csvCols, sorted as never[])], { type: 'text/csv;charset=utf-8' }),
     );
   };
 
@@ -263,7 +257,7 @@ export function TablePanel() {
         cols={cols as Col<LocationRow>[]}
         rows={rows as LocationRow[]}
         sorting={sorting.locations}
-        onSorting={(s) => setSorting((all) => ({ ...all, locations: s }))}
+        onSorting={(s) => setSorting('locations', s)}
         rowKey={(r) => r.key}
         rowClass={(r) => (flags(r).length ? 'flag' : undefined)}
         onRowHover={(r) => setHighlight(r && !r.noLocation ? r.sites : null)}
@@ -312,7 +306,7 @@ export function TablePanel() {
         cols={cols as Col<SpeciesRow>[]}
         rows={rows as SpeciesRow[]}
         sorting={sorting.species}
-        onSorting={(s) => setSorting((all) => ({ ...all, species: s }))}
+        onSorting={(s) => setSorting('species', s)}
         rowKey={(r) => model.species[r.species].key}
         cell={(c, r) => {
           if (c.id !== 'common') return undefined;
@@ -338,7 +332,7 @@ export function TablePanel() {
         cols={cols as Col<PhotoRow>[]}
         rows={rows as PhotoRow[]}
         sorting={sorting.photos}
-        onSorting={(s) => setSorting((all) => ({ ...all, photos: s }))}
+        onSorting={(s) => setSorting('photos', s)}
         rowKey={(r) => String(r.photo)}
         initialScroll={restore.current}
         cell={(c, r) => (c.id === 'species' && !r.species ? <span className="untag">Untagged</span> : undefined)}
@@ -402,7 +396,7 @@ export function TablePanel() {
                     ['new', 'Newest first'],
                     ['old', 'Oldest first'],
                   ]}
-                  onChange={(order) => setSorting((all) => ({ ...all, photos: [{ id: 'time', desc: order === 'new' }] }))}
+                  onChange={(order) => setSorting('photos', [{ id: 'time', desc: order === 'new' }])}
                 />
               )}
             </>

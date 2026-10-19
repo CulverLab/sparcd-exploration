@@ -1,9 +1,10 @@
-// CSV export of the rows in view. The columns are the ones shown, with the
-// combined Coordinates column split into its parts. Tables with positions
-// always carry them, at the display precision, so an export is usable on its
-// own.
+// CSV export of the rows in view, in the table's order. The columns are the
+// ones shown, with the combined Coordinates column split into its parts.
+// Tables with positions always carry them, as numbers at the display
+// precision, so an export is usable on its own. Text a spreadsheet would run
+// as a formula opens as text.
 
-import { slug } from '@/data';
+import { formulaSafe, slug } from '@/data';
 import type { Display } from './format';
 import { cellText, type Cell, type Col } from './tables';
 
@@ -19,7 +20,7 @@ export function csvColumns<R>(defs: Col<R>[], shown: string[], display: Display)
 }
 
 const quote = (v: Cell): string => {
-  const s = v === null ? '' : String(v);
+  const s = v === null ? '' : typeof v === 'string' ? formulaSafe(v) : String(v);
   return /[",\r\n]|^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 

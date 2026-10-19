@@ -1,8 +1,10 @@
 // The photos in view as a Camtrap DP package: SPARC'd's own deployments,
 // media and observations files (the v016 layout `@sparcd/camtrap` writes,
 // matching Camtrap DP 0.1.6 column for column, without a header row), plus a
-// datapackage.json that describes them. Coordinates are cut to the display
-// precision before anything is written, and the description says so.
+// datapackage.json that describes them. Positions and elevations are the ones
+// the page shows before anything is written, and the description says so.
+// Text that a spreadsheet would run as a formula is guarded here, on the
+// explorer's rows, so the shared writers stay as the other tools use them.
 
 import {
   serializeDeployments,
@@ -12,7 +14,8 @@ import {
   type NullableDeployment,
   type Observation,
 } from '@sparcd/camtrap';
-import { reduceDegrees, precisionWords, type Precision } from './coords';
+import { precisionWords, shownElevationMetres, shownPosition, sitePosition, type CoordDisplay, type Display } from './coords';
+import { formulaSafe } from './export';
 import type { FilterResult } from './filters';
 import type { Model } from './model';
 import type { LoadedCollection } from './open';
@@ -48,17 +51,43 @@ function spatial(deployments: NullableDeployment[]): Geometry {
   return { type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] };
 }
 
+/** Every text field formula-safe; numbers and flags as they are. */
+const safe = <T extends object>(row: T): T =>
+  Object.fromEntries(Object.entries(row).map(([k, v]) => [k, typeof v === 'string' ? formulaSafe(v) : v])) as T;
+
+/** A deployment row as the package writes it: the position and elevation the page shows, in degrees and metres. */
+function shownDeployment(d: NullableDeployment, display: Display): NullableDeployment {
+  const pos = sitePosition(d.latitude, d.longitude);
+  const at = pos && shownPosition(pos, display);
+  return safe({
+    ...d,
+    latitude: at ? at.lat : null,
+    longitude: at ? at.lon : null,
+    elevation: d.elevation === null ? null : shownElevationMetres(d.elevation, display.elevation),
+  });
+}
+
+function coordinateNote(d: CoordDisplay): string {
+  if (d.coords === 'utm') {
+    return `Coordinates in deployments.csv are the UTM positions shown (${precisionWords('utm', d.precision)}), converted back to latitude and longitude, so they are less exact than the camera positions.`;
+  }
+  return d.precision.digits === null
+    ? 'Coordinates in deployments.csv are exact.'
+    : `${precisionWords('latlon', d.precision)} in deployments.csv, so they are less exact than the camera positions.`;
+}
+
 /**
  * The package's files. Every deployment of an upload with a photo in view is
- * kept (one per deployment ID, the latest upload's), every media row in view,
- * and every observation row of those photos except a species the filters
- * leave out.
+ * kept, every media row in view, and every observation row of those photos
+ * except a species the filters leave out. Uploads that reuse a deployment ID
+ * for a different row (a camera that moved) keep apart as `<id>#2`, `#3`, …,
+ * so each photo keeps its own upload's position.
  */
 export function camtrapPackage(
   model: Model,
   collections: LoadedCollection[],
   result: FilterResult,
-  precision: Precision,
+  display: Display,
   facts: CamtrapFacts,
 ): Record<string, string> {
   const inView = new Set<string>();
@@ -67,28 +96,52 @@ export function camtrapPackage(
   const detectionAt = new Map(model.detections.map((d, i) => [`${model.photos[d.photo].upload}\n${d.row}`, i]));
   const shown = new Set(result.detections);
 
-  const deployments = new Map<string, NullableDeployment>();
+  const deployments: NullableDeployment[] = [];
+  const packageIds = new Map<string, string>();
+  const variants = new Map<string, number>();
+  /** One package deployment per distinct row as written; a later different row under the same ID gets `#2`, `#3`, … */
+  const packageId = (d: NullableDeployment): string => {
+    const row = shownDeployment(d, display);
+    const key = JSON.stringify(row);
+    let id = packageIds.get(key);
+    if (id === undefined) {
+      const n = (variants.get(row.deploymentId) ?? 0) + 1;
+      variants.set(row.deploymentId, n);
+      id = n === 1 ? row.deploymentId : `${row.deploymentId}#${n}`;
+      packageIds.set(key, id);
+      deployments.push({ ...row, deploymentId: id });
+    }
+    return id;
+  };
+
   const media: Media[] = [];
   const observations: Observation[] = [];
   collections.forEach((c, ci) => {
     for (const u of c.uploads) {
       const mine = u.media.filter((m) => inView.has(`${ci}\n${m.mediaPath}`));
       if (!mine.length) continue;
-      media.push(...mine);
+      const ids = new Map<string, string>();
       for (const d of u.deployments) {
-        deployments.set(d.deploymentId, {
-          ...d,
-          latitude: d.latitude === null ? null : reduceDegrees(d.latitude, precision),
-          longitude: d.longitude === null ? null : reduceDegrees(d.longitude, precision),
-        });
+        const id = packageId(d);
+        if (!ids.has(d.deploymentId)) ids.set(d.deploymentId, id);
+      }
+      // A photo belongs to its deployment ID's row, else the upload's first, as the explorer places it.
+      const first = u.deployments.length ? ids.get(u.deployments[0].deploymentId) : undefined;
+      const deploymentOf = new Map<string, string>();
+      for (const m of mine) {
+        const id = ids.get(m.deploymentId) ?? first ?? m.deploymentId;
+        deploymentOf.set(m.mediaPath, id);
+        media.push(safe({ ...m, deploymentId: id }));
       }
       const ui = uploadOf.get(`${ci}\n${u.folder}`);
       u.observations.forEach((o, row) => {
-        if (!inView.has(`${ci}\n${o.mediaId}`)) return;
+        const deploymentId = deploymentOf.get(o.mediaId);
+        if (deploymentId === undefined) return;
         const d = detectionAt.get(`${ui}\n${row}`);
         if (d !== undefined && !shown.has(d)) return;
         // A blank placeholder row carries no count, as the uploader wrote it.
-        observations.push(o.observationType === 'blank' && !o.scientificName ? { ...o, count: undefined } : o);
+        const kept = o.observationType === 'blank' && !o.scientificName ? { ...o, count: undefined } : o;
+        observations.push(safe({ ...kept, deploymentId }));
       });
     }
   });
@@ -100,10 +153,7 @@ export function camtrapPackage(
     .filter((s) => s.scientificName)
     .sort((a, b) => a.scientificName.localeCompare(b.scientificName));
 
-  const coordinates =
-    precision.digits === null
-      ? 'Coordinates in deployments.csv are exact.'
-      : `${precisionWords('latlon', precision)} in deployments.csv, so they are less exact than the camera positions.`;
+  const coordinates = coordinateNote(display);
   const names = model.collections.map((c) => c.name).join(', ');
   const resource = (name: (typeof CAMTRAP_RESOURCES)[number]) => ({
     name,
@@ -132,7 +182,7 @@ export function camtrapPackage(
       classificationLevel: 'media',
       sequenceInterval: 0,
     },
-    spatial: spatial([...deployments.values()]),
+    spatial: spatial(deployments),
     temporal: { start: dates[0] ?? day, end: dates[dates.length - 1] ?? day },
     // SPARC'd species lists carry no taxon IDs.
     taxonomic: taxa.map((s) => ({
@@ -145,7 +195,7 @@ export function camtrapPackage(
   };
 
   return {
-    'deployments.csv': serializeDeployments([...deployments.values()]),
+    'deployments.csv': serializeDeployments(deployments),
     'media.csv': serializeMedia(media),
     'observations.csv': serializeObservations(observations),
     'datapackage.json': `${JSON.stringify(datapackage, null, 2)}\n`,

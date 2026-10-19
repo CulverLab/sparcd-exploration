@@ -89,6 +89,31 @@ describe('CSV content', () => {
   });
 });
 
+describe('CSV text a spreadsheet would run as a formula', () => {
+  const risky = modelOf(
+    collection('Risky', 'rrr').upload('u1', {
+      deployments: [deployment('-12', '=1+1', 12.5, -100.25, 1000)],
+      media: [media('u1', '@a.jpg', '-12', '2023-01-01T10:00:00')],
+      observations: [observation('u1', '@a.jpg', '-12', '', { common: '-Bobcat', scientific: 'Lynx rufus' })],
+    }),
+  );
+  const r = filter(risky);
+
+  it('opens as text, while negative coordinates and number-like IDs stay plain numbers', () => {
+    const d = display({ precision: { method: 'round', digits: 2 } });
+    const defs = locationColumns({ model: risky, display: d, totalDetections: 1 });
+    const [, row] = csvOf(defs, ['name', 'id', 'coords'], locationRows(risky, r, grouping), d);
+    expect(row).toBe("'=1+1,-12,12.5,-100.25");
+  });
+
+  it('guards photo file names and species too', () => {
+    const d = display();
+    const defs = photoColumns({ model: risky, display: d, totalDetections: 1 });
+    const [, row] = csvOf(defs, ['file', 'species', 'coords'], photoRows(risky, r.photos, r.detections), d);
+    expect(row).toBe("'@a.jpg,'-Bobcat,12.5,-100.25");
+  });
+});
+
 describe('CSV file name', () => {
   const day = new Date(2026, 9, 19);
   it('names the collections, the date and the view', () => {

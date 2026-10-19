@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { hexCenter, siteHexes, type FilterResult, type Model, type Position, type Precision } from '@/data';
+import { hexCenter, siteHexes, type CoordDisplay, type FilterResult, type Model, type Position } from '@/data';
 import { fmtN } from '@/lib/format';
 import { hexStep, hexViews, selectedHexes, siteRadius, siteViews } from '@/lib/mapData';
 
@@ -28,21 +28,23 @@ export function ReportMap({
   model,
   result,
   separate,
-  precision,
+  display,
   sites,
   area,
 }: {
   model: Model;
   result: FilterResult;
   separate: boolean;
-  precision: Precision;
+  /** Where the tables put each camera: the map draws no place more exactly. */
+  display: CoordDisplay;
   /** Draw site dots instead of hexes. */
   sites: boolean;
   area: string[];
 }) {
-  const cells = useMemo(() => siteHexes(model.sites, precision), [model, precision]);
+  const { coords, precision } = display;
+  const cells = useMemo(() => siteHexes(model.sites, { coords, precision }), [model, coords, precision]);
   const hexes = useMemo(() => hexViews(model, result, separate, cells), [model, result, separate, cells]);
-  const dots = useMemo(() => (sites ? siteViews(model, result, precision) : []), [sites, model, result, precision]);
+  const dots = useMemo(() => (sites ? siteViews(model, result, { coords, precision }) : []), [sites, model, result, coords, precision]);
   const picked = useMemo(() => selectedHexes(model, cells, area), [model, cells, area]);
 
   const focus: Position[] = sites

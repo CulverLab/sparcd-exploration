@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { canShowExactSites, checkNoLocation, displayPosition, hexCenter, hexRing, siteHexes, type Model, type SiteHexes } from '@/data';
+import { canShowExactSites, checkNoLocation, hexCenter, hexRing, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
@@ -100,12 +100,14 @@ export function MapBand() {
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [clearAt, setClearAt] = useState<{ left: number; top: number } | null>(null);
 
-  // The grid follows the display precision: never more exact than the tables.
-  const cells = useMemo(() => siteHexes(model.sites, display.precision), [model, display.precision]);
+  // The grid follows the display settings: never more exact than the tables.
+  const coords = display.coords;
+  const precision = display.precision;
+  const cells = useMemo(() => siteHexes(model.sites, { coords, precision }), [model, coords, precision]);
   const hexes = useMemo(() => hexViews(model, result, grouping.separate, cells), [model, result, grouping.separate, cells]);
   const sites = useMemo(
-    () => (mode === 'sites' ? siteViews(model, result, display.precision) : []),
-    [mode, model, result, display.precision],
+    () => (mode === 'sites' ? siteViews(model, result, { coords, precision }) : []),
+    [mode, model, result, coords, precision],
   );
   const unplaced = useMemo(() => unplacedPhotos(model, result), [model, result]);
   const noLocationAction = useMemo(() => {
@@ -265,8 +267,8 @@ export function MapBand() {
     const group = L.layerGroup().addTo(map);
     model.sites.forEach((site, i) => {
       if (!site.position) return;
-      // Never drawn more exact than the display precision.
-      const dot = L.circleMarker(latLng(displayPosition(site.position, display.precision)), { radius: 4, weight: 1.2 }).addTo(group);
+      // Drawn where the tables put it, never more exact.
+      const dot = L.circleMarker(latLng(shownPosition(site.position, { coords, precision })), { radius: 4, weight: 1.2 }).addTo(group);
       dot.on('click', () => setFilters((f) => ({ ...f, locations: toggled(f.locations, site.key) })));
       dot.bindTooltip('', { direction: 'top', className: 'maptip', opacity: 1 });
       (dot.getElement() as SVGPathElement).dataset.site = site.locationId;
@@ -276,7 +278,7 @@ export function MapBand() {
       group.remove();
       layers.clear();
     };
-  }, [map, model, mode, display.precision, setFilters]);
+  }, [map, model, mode, coords, precision, setFilters]);
 
   useEffect(() => {
     if (!map || mode !== 'sites') return;
@@ -307,7 +309,8 @@ export function MapBand() {
       const points: L.Point[] = [];
       for (const id of selected) for (const p of hexRing(cells.grid, id)) points.push(map.latLngToContainerPoint(latLng(p)));
       for (const i of siteSelection) {
-        const c = map.latLngToContainerPoint(siteLayers.current.get(i)?.getLatLng() ?? latLng(model.sites[i].position!));
+        const at = siteLayers.current.get(i)?.getLatLng() ?? latLng(shownPosition(model.sites[i].position!, { coords, precision }));
+        const c = map.latLngToContainerPoint(at);
         points.push(c.subtract([14, 14]), c.add([14, 14]));
       }
       const size = map.getSize();

@@ -6,15 +6,15 @@
 // passing every filter but species, as the Locations table lists it.
 
 import {
-  displayPosition,
   hexCenter,
+  shownPosition,
   hexRing,
   locationKeyOf,
   type FilterResult,
   type HexGrid,
   type Model,
+  type CoordDisplay,
   type Position,
-  type Precision,
   type SiteHexes,
 } from '@/data';
 
@@ -95,18 +95,20 @@ export function hexViews(model: Model, result: FilterResult, separate: boolean, 
 
 export type SiteView = {
   site: number;
-  /** At the display precision, never more exact. */
+  /** As the tables show it, never more exact. */
   position: Position;
   photos: number;
   detections: number;
   inView: boolean;
 };
 
-export function siteViews(model: Model, result: FilterResult, precision: Precision): SiteView[] {
+export function siteViews(model: Model, result: FilterResult, display: CoordDisplay): SiteView[] {
   const tallies = tallySites(model, result);
-  return model.sites.flatMap((site, i) =>
-    site.position ? [{ site: i, position: displayPosition(site.position, precision), ...pick(tallies[i]) }] : [],
-  );
+  return model.sites.flatMap((site, i) => {
+    if (!site.position) return [];
+    const { lat, lon } = shownPosition(site.position, display);
+    return [{ site: i, position: { lat, lon }, ...pick(tallies[i]) }];
+  });
 }
 
 const pick = (t: SiteTally) => ({ photos: t.photos, detections: t.detections, inView: t.effort });

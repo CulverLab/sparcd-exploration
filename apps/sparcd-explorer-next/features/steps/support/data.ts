@@ -187,6 +187,13 @@ export const NEW_UPLOAD: Upload = {
   photos: [{ file: 'IMG0901.JPG', time: '2025-07-30T06:00:00', species: [COYOTE] }],
 };
 
+/** One more Alpha camera, AB07, under a name of the caller's choosing. */
+export const cameraNamed = (name: string): Upload => ({
+  stamp: '2025.09.01.10.00.00_fielduser',
+  deployment: { id: 'AB07', name, lat: 0.58, lon: -150.22, elevation: 1000 },
+  photos: [{ file: 'IMG0701.JPG', time: '2025-08-30T06:00:00' }],
+});
+
 /** A pond camera with a video and a photo whose JPEG has no thumbnail. */
 export const CHARLIE_UPLOADS: Upload[] = [
   {

@@ -1,24 +1,39 @@
 // Reports and exports as plain tables, each built from the one filter result
-// every view reads, so a download holds what the page shows. Coordinates pass
-// through the display precision first: no export is more exact than the page.
+// every view reads, so a download holds what the page shows, in the order the
+// page lists it. Positions are the ones the page shows: no export is more
+// exact than the page.
 
-import { elevationIn, formatUtm, reduceDegrees, type ElevationUnit, type Position, type Precision } from './coords';
+import { elevationIn, shownPosition, type Display, type Position } from './coords';
 import type { FilterResult } from './filters';
 import { locationKeyOf, type Model } from './model';
 import { slug } from './slug';
-import { detectionRows, locationRows, photoRows, speciesRows, summarize, type LocationRow } from './views';
+import {
+  detectionRows,
+  locationRows,
+  photoRows,
+  speciesRows,
+  summarize,
+  type LocationRow,
+  type PhotoRow,
+  type SpeciesRow,
+} from './views';
 
 export type ExportCell = string | number | null;
 
 /** One sheet of a workbook, or one CSV file: a header and rows of cells. */
 export type Table = { name: string; columns: string[]; rows: ExportCell[][] };
 
-export type ExportOptions = {
-  coords: 'latlon' | 'utm';
-  precision: Precision;
-  elevation: ElevationUnit;
+/** Rows put in the order a table on the page lists them. */
+export type Reorder<R> = (rows: R[]) => R[];
+
+/** The order of each table on the page, so a download lists rows as the page does. */
+export type TableOrder = { locations: Reorder<LocationRow>; species: Reorder<SpeciesRow>; photos: Reorder<PhotoRow> };
+
+export type ExportOptions = Display & {
   /** "Show each location ID separately". */
   separate: boolean;
+  /** The page's order; each table's own order when left out. */
+  order?: TableOrder;
 };
 
 /** What a report says about itself, in the caller's words. */
@@ -35,14 +50,11 @@ export type ReportFacts = {
 const positionColumns = (o: ExportOptions): string[] =>
   o.coords === 'utm' ? ['UTM zone', 'Easting', 'Northing'] : ['Latitude', 'Longitude'];
 
-/** A position at the display precision: degrees, or UTM as whole metres. */
+/** A position as the page shows it, as numbers: degrees, or UTM as whole metres. */
 function positionCells(pos: Position | null, o: ExportOptions): ExportCell[] {
-  if (o.coords === 'utm') {
-    if (!pos) return [null, null, null];
-    const u = formatUtm(pos, o.precision);
-    return [u.zone, Number(u.easting), Number(u.northing)];
-  }
-  return pos ? [reduceDegrees(pos.lat, o.precision), reduceDegrees(pos.lon, o.precision)] : [null, null];
+  if (!pos) return o.coords === 'utm' ? [null, null, null] : [null, null];
+  const s = shownPosition(pos, o);
+  return o.coords === 'utm' ? [s.zone, s.easting, s.northing] : [s.lat, s.lon];
 }
 
 const elevationColumn = (o: ExportOptions) => `Elevation (${o.elevation})`;
@@ -64,9 +76,15 @@ export function sortedLocations(model: Model, rows: LocationRow[]): LocationRow[
   );
 }
 
+/** The Locations rows in the page's order, or by ID. */
+export function orderedLocations(model: Model, result: FilterResult, o: ExportOptions): LocationRow[] {
+  const rows = locationRows(model, result, o);
+  return o.order ? o.order.locations(rows) : sortedLocations(model, rows);
+}
+
 export function locationsTable(model: Model, result: FilterResult, o: ExportOptions): Table {
   const many = multi(model);
-  const rows = sortedLocations(model, locationRows(model, result, o));
+  const rows = orderedLocations(model, result, o);
   return {
     name: 'Locations',
     columns: [
@@ -103,9 +121,11 @@ export function locationsTable(model: Model, result: FilterResult, o: ExportOpti
 }
 
 export function speciesTable(model: Model, result: FilterResult, o: ExportOptions): Table {
-  const rows = speciesRows(model, result, o).sort(
-    (a, b) => b.detections - a.detections || model.species[a.species].name.localeCompare(model.species[b.species].name),
-  );
+  const rows = o.order
+    ? o.order.species(speciesRows(model, result, o))
+    : speciesRows(model, result, o).sort(
+        (a, b) => b.detections - a.detections || model.species[a.species].name.localeCompare(model.species[b.species].name),
+      );
   return {
     name: 'Species',
     columns: ['Common name', 'Scientific name', 'Detections', 'Animals counted', 'Photos', 'Locations', 'First seen', 'Last seen'],
@@ -125,9 +145,15 @@ export function speciesTable(model: Model, result: FilterResult, o: ExportOption
 const byTime = (a: { time: string; fileName: string }, b: { time: string; fileName: string }) =>
   a.time.localeCompare(b.time) || natural(a.fileName, b.fileName);
 
+/** The Photos rows in the page's order, or oldest first. */
+function orderedPhotos(model: Model, result: FilterResult, o: ExportOptions): PhotoRow[] {
+  const rows = photoRows(model, result.photos, result.detections);
+  return o.order ? o.order.photos(rows) : rows.sort(byTime);
+}
+
 export function photosTable(model: Model, result: FilterResult, o: ExportOptions): Table {
   const many = multi(model);
-  const rows = photoRows(model, result.photos, result.detections).sort(byTime);
+  const rows = orderedPhotos(model, result, o);
   return {
     name: 'Photos',
     columns: [
@@ -169,7 +195,9 @@ export function photosTable(model: Model, result: FilterResult, o: ExportOptions
 
 export function detectionsTable(model: Model, result: FilterResult, o: ExportOptions): Table {
   const many = multi(model);
-  const rows = detectionRows(model, result.detections).sort(byTime);
+  // Each photo's species together, in the Photos table's order.
+  const rank = new Map(orderedPhotos(model, result, o).map((r, i) => [r.photo, i]));
+  const rows = detectionRows(model, result.detections).sort((a, b) => rank.get(a.photo)! - rank.get(b.photo)! || a.detection - b.detection);
   return {
     name: 'Detections',
     columns: [
@@ -294,8 +322,18 @@ export function spreadsheetTables(
 
 // --- CSV -------------------------------------------------------------------------
 
+/**
+ * Text a spreadsheet would run as a formula (`=`, `+`, `-`, `@`, a tab or a
+ * carriage return first) gets a leading `'`, so it opens as the text it is.
+ * Numbers are never text here, and text that is a plain number (`-12.5`)
+ * opens as that number, so neither changes.
+ */
+export function formulaSafe(text: string): string {
+  return /^[=+\-@\t\r]/.test(text) && !/^[+-]?\d+(\.\d+)?$/.test(text) ? `'${text}` : text;
+}
+
 const quote = (v: ExportCell): string => {
-  const s = v === null ? '' : String(v);
+  const s = v === null ? '' : typeof v === 'string' ? formulaSafe(v) : String(v);
   return /[",\r\n]|^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 

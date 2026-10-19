@@ -1,7 +1,8 @@
 // Export CSV: the downloaded file is read back and checked.
 
 import { readFile } from 'node:fs/promises';
-import { Then, When, expect } from './support/world';
+import { ALPHA, addUpload, cameraNamed } from './support/data';
+import { Given, Then, When, columnValues, expect } from './support/world';
 
 type Csv = { name: string; header: string[]; rows: string[][] };
 
@@ -92,3 +93,23 @@ Then(
     ]);
   },
 );
+
+Given('{string} has a camera named {string}', async ({ s3 }, collection: string, name: string) => {
+  expect(collection).toBe('Alpha Basin');
+  addUpload(s3, ALPHA, cameraNamed(name));
+});
+
+Then('the CSV row for {string} reads {string} under {string}', async ({ scratch }, id: string, value: string, column: string) => {
+  const { header, rows } = csvOf(scratch);
+  const row = rows.find((r) => r[header.indexOf('Location ID')] === id);
+  expect(row, `row ${id}`).toBeTruthy();
+  expect(row![header.indexOf(column)]).toBe(value);
+});
+
+Then(/^the CSV lists the (locations|photos) in the table's order$/, async ({ page, scratch }, what: string) => {
+  const column = what === 'locations' ? 'Location ID' : 'Date and time';
+  const { header, rows } = csvOf(scratch);
+  const listed = rows.map((r) => r[header.indexOf(column)]);
+  expect(listed.length).toBeGreaterThan(1);
+  expect(listed).toEqual(await columnValues(page, column));
+});

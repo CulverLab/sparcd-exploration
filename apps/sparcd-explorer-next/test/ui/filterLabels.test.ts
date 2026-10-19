@@ -99,6 +99,13 @@ describe('the filters in words, for a report', () => {
     expect(words({ photoTag: 'tagged' })).toBe('No filters: all photos');
   });
 
+  it("name the Photos view's tag switch while that view shows", () => {
+    const shown = (f: Partial<FilterState>) => filterWords(single, { ...NO_FILTERS, ...f }, 'm', false, true);
+    expect(shown({ photoTag: 'tagged' })).toBe('Tagged photos only');
+    expect(shown({ photoTag: 'untagged', species: ['Lynx rufus'] })).toBe('Species: Bobcat · Untagged photos only');
+    expect(shown({ photoTag: 'all' })).toBe('No filters: all photos');
+  });
+
   it('list every value in full, in the order of the filter bar', () => {
     expect(words({ species: ['Lynx rufus', 'Canis latrans'], dateFrom: '2023-09-01', dateTo: '2025-09-30' })).toBe(
       'Species: Bobcat, Coyote · Dates: Sep 2023 – Sep 2025',

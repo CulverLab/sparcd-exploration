@@ -3,12 +3,13 @@ import {
   DEFAULT_PRECISION,
   EXACT_SITES_HOST,
   canShowExactSites,
-  displayPosition,
   elevationIn,
   formatDegrees,
-  formatUtm,
+  fromUtm,
   reduceDegrees,
   reduceMetres,
+  shownElevationMetres,
+  shownPosition,
   sitePosition,
   toUtm,
   type Precision,
@@ -57,6 +58,17 @@ describe('toUtm (WGS84)', () => {
     expect(u.easting).toBeCloseTo(easting, 2);
     expect(u.northing).toBeCloseTo(northing, 2);
   });
+
+  it.each([
+    [10.5, -105.25],
+    [-20.25, 47.5],
+    [60.125, 10.75],
+    [12.5649, -100.23456],
+  ])('converts (%f, %f) back from UTM to within a centimetre', (lat, lon) => {
+    const back = fromUtm(toUtm(lat, lon));
+    expect(back.lat).toBeCloseTo(lat, 7);
+    expect(back.lon).toBeCloseTo(lon, 7);
+  });
 });
 
 describe('display precision', () => {
@@ -93,17 +105,50 @@ describe('display precision', () => {
     expect(reduceMetres(3468629.12, round(null))).toBe(3468629);
   });
 
-  it('formats UTM as plain integers with no separators or decimals', () => {
-    const u = formatUtm({ lat: 10.5, lon: -105.25 }, round(null));
-    expect(u).toEqual({ zone: '13N', easting: '472644', northing: '1160706' });
-    const coarse = formatUtm({ lat: 10.5, lon: -105.25 }, round(2));
-    expect(coarse).toEqual({ zone: '13N', easting: '473000', northing: '1161000' });
-    for (const v of [u.easting, u.northing, coarse.easting]) expect(v).toMatch(/^\d+$/);
+  it('shows UTM as whole metres', () => {
+    const u = shownPosition({ lat: 10.5, lon: -105.25 }, { coords: 'utm', precision: round(null) });
+    expect([u.zone, u.easting, u.northing]).toEqual(['13N', 472644, 1160706]);
+    const coarse = shownPosition({ lat: 10.5, lon: -105.25 }, { coords: 'utm', precision: round(2) });
+    expect([coarse.zone, coarse.easting, coarse.northing]).toEqual(['13N', 473000, 1161000]);
+  });
+});
+
+describe('shownPosition: the one position every view and export uses', () => {
+  const latlon = (p: Precision) => ({ coords: 'latlon' as const, precision: p });
+  const utm = (p: Precision) => ({ coords: 'utm' as const, precision: p });
+
+  it('in lat/long, reduces the degrees and works UTM out from them', () => {
+    const s = shownPosition({ lat: 12.34567, lon: -100.98765 }, latlon(round(2)));
+    expect([s.lat, s.lon]).toEqual([12.35, -100.99]);
+    const u = toUtm(12.35, -100.99);
+    expect([s.zone, s.easting, s.northing]).toEqual([`${u.zone}${u.hemisphere}`, reduceMetres(u.easting, round(2)), reduceMetres(u.northing, round(2))]);
+    const t = shownPosition({ lat: 12.34567, lon: -100.98765 }, latlon(truncate(1)));
+    expect([t.lat, t.lon]).toEqual([12.3, -100.9]);
   });
 
-  it('never places a site more exactly than the display precision', () => {
-    expect(displayPosition({ lat: 12.34567, lon: -100.98765 }, round(2))).toEqual({ lat: 12.35, lon: -100.99 });
-    expect(displayPosition({ lat: 12.34567, lon: -100.98765 }, truncate(1))).toEqual({ lat: 12.3, lon: -100.9 });
+  it('in UTM, gives two cameras the table shows alike one position, in degrees too', () => {
+    const a = shownPosition({ lat: 12.5649, lon: -100.23456 }, utm(round(2)));
+    const b = shownPosition({ lat: 12.5651, lon: -100.23456 }, utm(round(2)));
+    expect([a.zone, a.easting, a.northing]).toEqual(['14N', 366000, 1389000]);
+    expect(b).toEqual(a);
+    // The degrees are the shown UTM position converted back.
+    const back = fromUtm({ zone: 14, hemisphere: 'N', easting: 366000, northing: 1389000 });
+    expect(a.lat).toBeCloseTo(back.lat, 6);
+    expect(a.lon).toBeCloseTo(back.lon, 6);
+    // Neither camera's own latitude survives.
+    expect([a.lat, b.lat]).not.toContain(12.5649);
+  });
+
+  it('in UTM, truncates the metres when the display truncates', () => {
+    const s = shownPosition({ lat: 12.5649, lon: -100.23456 }, utm(truncate(2)));
+    expect([s.easting, s.northing]).toEqual([365000, 1389000]);
+  });
+
+  it('works south of the equator', () => {
+    const s = shownPosition({ lat: -20.25, lon: 47.5 }, utm(round(2)));
+    expect([s.zone, s.easting, s.northing]).toEqual(['38S', 761000, 7759000]);
+    expect(s.lat).toBeLessThan(0);
+    expect(toUtm(s.lat, s.lon).northing).toBeCloseTo(7759000, 0);
   });
 });
 
@@ -111,6 +156,12 @@ describe('elevation units', () => {
   it('shows metres or feet as whole numbers', () => {
     expect(elevationIn(1000, 'm')).toBe(1000);
     expect(elevationIn(1000, 'ft')).toBe(3281);
+  });
+
+  it('gives the elevation shown back in whole metres, for files that hold metres', () => {
+    expect(shownElevationMetres(1000.123456, 'm')).toBe(1000);
+    expect(shownElevationMetres(1000.6, 'm')).toBe(1001);
+    expect(shownElevationMetres(1000.123456, 'ft')).toBe(1000);
   });
 });
 

@@ -125,7 +125,8 @@ collections:
    these photos"), and Undo it. Turn on "Show each location ID separately" and
    off again.
 8. In Locations, Species and Photos, sort a column, hide one in Columns, and
-   Export CSV; the coordinates in the file match the Display precision.
+   Export CSV; the rows come in the table's order and the coordinates match
+   the Display precision.
 9. In Photos, switch Grid and List and Tagged / Untagged / All while scrolled
    far down: the controls stay under the filter bar and each layout keeps its
    place. Videos show a first frame.
@@ -139,8 +140,10 @@ collections:
     report, on white paper.
 13. Download the spreadsheet, then CSV files (.zip) and Camtrap DP package
     (.zip) from More formats. Open each: the sheets are Summary, Locations,
-    Species, Photos, Detections, and no coordinate is more exact than the
-    Display setting, the package's deployments.csv included.
+    Species, Photos, Detections, in the tables' order, and no coordinate or
+    elevation is more exact than the Display setting, the package's
+    deployments.csv included. With Photos showing "Tagged", every download
+    holds tagged photos only.
 14. Close the report with Esc; the page is where it was and focus is on Report.
 15. Sign out from the account menu, and see the Tagger in another tab sign out
     too (through the dev proxy).

@@ -222,3 +222,14 @@ export function photosForTag(model: Model, photos: number[], tag: PhotoTag): num
   const tagged = tag === 'tagged';
   return photos.filter((i) => model.photos[i].tagged === tagged);
 }
+
+/**
+ * A result with the Photos view's tag switch applied: its photos and their
+ * detections. Camera effort stays as it is, as it does for a species filter.
+ */
+export function resultForTag(model: Model, result: FilterResult, tag: PhotoTag): FilterResult {
+  if (tag === 'all') return result;
+  const photos = photosForTag(model, result.photos, tag);
+  const kept = new Set(photos);
+  return { ...result, photos, detections: result.detections.filter((d) => kept.has(model.detections[d].photo)) };
+}

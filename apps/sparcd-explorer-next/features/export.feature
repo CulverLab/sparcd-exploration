@@ -33,3 +33,21 @@ Feature: Export the rows in view
     When I set the precision method to "Truncate"
     And I export CSV
     Then the CSV row for "AB02" has UTM "5N", easting "817000" and northing "58000"
+
+  @US-034
+  Scenario: A name that a spreadsheet would run as a formula exports as text
+    Given "Alpha Basin" has a camera named "=1+1"
+    And I have opened "Alpha Basin"
+    When I export CSV
+    Then the CSV row for "AB07" reads "'=1+1" under "Location"
+    And the CSV row for "AB02" has latitude "0.53" and longitude "-150.15"
+
+  @US-034
+  Scenario: The CSV lists the rows in the table's order
+    Given I have opened "Alpha Basin"
+    When I sort by "Photos"
+    And I export CSV
+    Then the CSV lists the locations in the table's order
+    When I show the Photos table
+    And I export CSV
+    Then the CSV lists the photos in the table's order

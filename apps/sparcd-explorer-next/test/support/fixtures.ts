@@ -124,7 +124,7 @@ export const siteNamed = (model: Model, name: string) => model.sites.findIndex((
 
 export const EXACT: Precision = { method: 'round', digits: null };
 /** Every site's cell, at full precision unless another is given. */
-export const cellsOf = (model: Model, precision: Precision = EXACT) => siteHexes(model.sites, precision);
+export const cellsOf = (model: Model, precision: Precision = EXACT) => siteHexes(model.sites, { coords: 'latlon', precision });
 export const hexOfSite = (model: Model, site: number) => cellsOf(model).cells[site]!;
 /** The Area filter a click on one cell sets. */
 export const areaOfHex = (model: Model, hex: string) => sitesInHexes(model, cellsOf(model), [hex]);

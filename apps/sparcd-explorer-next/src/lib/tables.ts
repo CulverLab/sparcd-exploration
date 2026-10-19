@@ -1,21 +1,25 @@
 // Column definitions for the Locations, Species and Photos tables. One
 // definition feeds the table cell, its sort and the CSV export, so what is
-// exported is what is shown: coordinates at the display precision, elevation
-// in the chosen unit, common names first.
+// exported is what is shown, in the order shown: positions as the table shows
+// them, elevation in the chosen unit, common names first.
 
 import {
   checkMoved,
   checkNearDuplicateIds,
   elevationIn,
   formatDegrees,
-  formatUtm,
   reduceDegrees,
+  shownPosition,
   type LocationRow,
   type Model,
   type PhotoRow,
   type Position,
+  type Reorder,
   type SpeciesRow,
+  type TableOrder,
 } from '@/data';
+import type { Sorting, TableView } from '@/store';
+import { loadPrefs, shownColumns } from './columnPrefs';
 import { fmtN, formatElevation, formatPosition, type Display } from './format';
 
 export type Cell = string | number | null;
@@ -65,17 +69,34 @@ export function sortRows<R>(rows: R[], cols: Col<R>[], sorting: { id: string; de
     .map((x) => x.r);
 }
 
+/**
+ * Each table's rows in the order the page lists them: by its sort over the
+ * columns it shows, for the downloads and the report to follow.
+ */
+export function tableOrder(ctx: TableContext, sorting: Record<TableView, Sorting>, multi: boolean): TableOrder {
+  const by = <R>(view: TableView, defs: Col<R>[]): Reorder<R> => {
+    const shown = new Set(shownColumns(loadPrefs(view, defs), defs, multi));
+    const cols = defs.filter((c) => shown.has(c.id));
+    return (rows) => sortRows(rows, cols, sorting[view]);
+  };
+  return {
+    locations: by('locations', locationColumns(ctx)),
+    species: by('species', speciesColumns(ctx)),
+    photos: by('photos', photoColumns(ctx)),
+  };
+}
+
 export const cellText = <R>(c: Col<R>, r: R): string => {
   if (c.text) return c.text(r);
   const v = c.value(r);
   return v === null || v === '' ? '—' : typeof v === 'number' ? fmtN(v) : v;
 };
 
-/** Latitude, longitude, UTM zone, easting and northing, all at the display precision. */
+/** Latitude, longitude, UTM zone, easting and northing, all from the position as shown. */
 function positionColumns<R>(pos: (r: R) => Position | null, d: Display): Col<R>[] {
-  const utm = (r: R) => {
+  const shown = (r: R) => {
     const p = pos(r);
-    return p && formatUtm(p, d.precision);
+    return p && shownPosition(p, d);
   };
   const degrees = (axis: 'lat' | 'lon'): Col<R> => ({
     id: axis,
@@ -83,12 +104,12 @@ function positionColumns<R>(pos: (r: R) => Position | null, d: Display): Col<R>[
     def: false,
     mono: true,
     value: (r) => {
-      const p = pos(r);
-      return p && reduceDegrees(p[axis], d.precision);
+      const s = shown(r);
+      return s && reduceDegrees(s[axis], d.precision);
     },
     text: (r) => {
-      const p = pos(r);
-      return p ? formatDegrees(p[axis], d.precision) : '—';
+      const s = shown(r);
+      return s ? formatDegrees(s[axis], d.precision) : '—';
     },
   });
   const metres = (part: 'easting' | 'northing'): Col<R> => ({
@@ -96,18 +117,15 @@ function positionColumns<R>(pos: (r: R) => Position | null, d: Display): Col<R>[
     label: part === 'easting' ? 'Easting' : 'Northing',
     def: false,
     mono: true,
-    value: (r) => {
-      const u = utm(r);
-      return u ? Number(u[part]) : null;
-    },
-    text: (r) => utm(r)?.[part] ?? '—',
+    value: (r) => shown(r)?.[part] ?? null,
+    text: (r) => String(shown(r)?.[part] ?? '—'),
   });
   return [
     degrees('lat'),
     degrees('lon'),
     metres('easting'),
     metres('northing'),
-    { id: 'zone', label: 'UTM zone', def: false, mono: true, value: (r) => utm(r)?.zone ?? null },
+    { id: 'zone', label: 'UTM zone', def: false, mono: true, value: (r) => shown(r)?.zone ?? null },
   ];
 }
 
@@ -118,7 +136,7 @@ const coordinatesColumn = <R>(pos: (r: R) => Position | null, d: Display, def: b
   mono: true,
   value: (r) => {
     const p = pos(r);
-    return p && reduceDegrees(p.lat, d.precision);
+    return p && shownPosition(p, d).lat;
   },
   text: (r) => formatPosition(pos(r), d),
 });

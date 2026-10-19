@@ -2,7 +2,7 @@
 // degrees, with longitude scaled by cos(lat0) so cells read as hexagons at the
 // data's latitude. Cell ids are `q:r`, as before.
 
-import { displayPosition, type Position, type Precision } from './coords';
+import { shownPosition, type CoordDisplay, type Position, type Precision } from './coords';
 import type { Site } from './model';
 
 /** The smallest cell: edge length in degrees of latitude (~3.3 km), comparable to H3 resolution 6. */
@@ -83,18 +83,18 @@ export type SiteHexes = {
 };
 
 /**
- * The grid and cells at a display precision: positions are reduced to the
- * precision first and the cell size follows it, so the map is never more exact
+ * The grid and cells at the display settings: cells take the positions as
+ * shown and their size follows the precision, so the map is never more exact
  * than the tables. Each site position anchors the grid once, however many
  * uploads it has.
  */
-export function siteHexes(sites: Site[], precision: Precision): SiteHexes {
-  const shown = sites.map((s) => (s.position ? displayPosition(s.position, precision) : null));
+export function siteHexes(sites: Site[], display: CoordDisplay): SiteHexes {
+  const shown = sites.map((s) => (s.position ? shownPosition(s.position, display) : null));
   const anchors = new Map<string, Position>();
   sites.forEach((s, i) => {
     const p = shown[i];
     if (p) anchors.set(`${s.locationId}|${p.lat},${p.lon}`, p);
   });
-  const grid = hexGrid([...anchors.values()], hexSizeFor(precision));
+  const grid = hexGrid([...anchors.values()], hexSizeFor(display.precision));
   return { grid, cells: shown.map((p) => (p ? hexOf(grid, p) : null)) };
 }

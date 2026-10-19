@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { S3Config } from '@sparcd/types';
 import type { Registries } from '../../src/data';
-import { readLast, useStore } from '../../src/store';
+import { DEFAULT_SORTING, readLast, useStore } from '../../src/store';
 import { collection, collectionRef, deployment, media, observation } from '../support/fixtures';
 
 vi.hoisted(() => {
@@ -160,5 +160,24 @@ describe('refresh', () => {
     expect(after).not.toBe(before);
     expect(after.problems).toHaveLength(1);
     expect(after.species[0].name).toBe('Bobcat (renamed)');
+  });
+});
+
+describe('table sorts', () => {
+  it('are kept per table in the store, where the downloads and the report read them', () => {
+    open(alpha);
+    useStore.getState().setSorting('photos', [{ id: 'time', desc: false }]);
+    useStore.getState().setSorting('locations', [{ id: 'photos', desc: true }]);
+    expect(useStore.getState().sorting).toEqual({
+      locations: [{ id: 'photos', desc: true }],
+      species: DEFAULT_SORTING.species,
+      photos: [{ id: 'time', desc: false }],
+    });
+  });
+
+  it('go back to the defaults for another account', () => {
+    useStore.getState().setSorting('photos', [{ id: 'time', desc: false }]);
+    useStore.getState().adoptSession(account('bob'));
+    expect(useStore.getState().sorting).toBe(DEFAULT_SORTING);
   });
 });

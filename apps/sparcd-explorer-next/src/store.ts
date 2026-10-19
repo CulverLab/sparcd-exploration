@@ -21,6 +21,9 @@ import type { Display } from '@/lib/format';
 import { readStored, writeStored } from '@/lib/storage';
 
 export type View = 'locations' | 'species' | 'photos' | 'charts';
+export type TableView = Exclude<View, 'charts'>;
+/** A table's sort: its column and direction, as the table's header sets it. */
+export type Sorting = { id: string; desc: boolean }[];
 export type MapMode = 'hexes' | 'sites';
 export type PhotoLayout = 'grid' | 'list';
 export type { Registries };
@@ -51,6 +54,8 @@ type State = {
   separate: boolean;
   view: View;
   photoLayout: PhotoLayout;
+  /** Each table's sort, which its downloads and the report follow too. */
+  sorting: Record<TableView, Sorting>;
   display: Display;
   toast: Toast | null;
   /** Bumped by every open, cancel and account change. */
@@ -80,6 +85,7 @@ type State = {
   setSeparate: (separate: boolean) => void;
   setView: (view: View) => void;
   setPhotoLayout: (layout: PhotoLayout) => void;
+  setSorting: (view: TableView, sorting: Sorting) => void;
   setDisplay: (display: Partial<Display>) => void;
   setMapMode: (mode: MapMode) => void;
   setHighlight: (sites: number[] | null) => void;
@@ -91,6 +97,12 @@ const DISPLAY_KEY = 'sparcd-explorer-display';
 const VIEW_KEY = 'sparcd-explorer-view';
 const LAYOUT_KEY = 'sparcd-explorer-photo-layout';
 const VIEWS: View[] = ['locations', 'species', 'photos', 'charts'];
+
+export const DEFAULT_SORTING: Record<TableView, Sorting> = {
+  locations: [{ id: 'id', desc: false }],
+  species: [{ id: 'dets', desc: true }],
+  photos: [{ id: 'time', desc: true }],
+};
 
 const DEFAULT_DISPLAY: Display = { coords: 'latlon', precision: DEFAULT_PRECISION, elevation: 'm' };
 const isDisplay = (v: unknown): v is Display => {
@@ -133,6 +145,7 @@ export const useStore = create<State>((set, get) => ({
   separate: false,
   view: readStored<View>(VIEW_KEY, 'locations', (v): v is View => VIEWS.includes(v as View)),
   photoLayout: readStored<PhotoLayout>(LAYOUT_KEY, 'grid', (v): v is PhotoLayout => v === 'grid' || v === 'list'),
+  sorting: DEFAULT_SORTING,
   display: readStored(DISPLAY_KEY, DEFAULT_DISPLAY, isDisplay),
   toast: null,
   openGeneration: 0,
@@ -160,6 +173,7 @@ export const useStore = create<State>((set, get) => ({
       model: null,
       filters: NO_FILTERS,
       separate: false,
+      sorting: DEFAULT_SORTING,
       toast: null,
       openGeneration: get().openGeneration + 1,
     });
@@ -254,6 +268,7 @@ export const useStore = create<State>((set, get) => ({
     writeStored(LAYOUT_KEY, photoLayout);
     set({ photoLayout });
   },
+  setSorting: (view, sorting) => set({ sorting: { ...get().sorting, [view]: sorting } }),
   setDisplay: (patch) => {
     const display = { ...get().display, ...patch };
     writeStored(DISPLAY_KEY, display);

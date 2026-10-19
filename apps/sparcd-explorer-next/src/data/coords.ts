@@ -1,8 +1,12 @@
 // Coordinates: positions, UTM, display precision and elevation units.
 // Camera positions are sensitive, so anything shown or exported goes through
-// the current precision first.
+// `shownPosition` at the current display settings first.
 
 export type Position = { lat: number; lon: number };
+
+/** What the Display menu sets. */
+export type Display = { coords: 'latlon' | 'utm'; precision: Precision; elevation: ElevationUnit };
+export type CoordDisplay = Pick<Display, 'coords' | 'precision'>;
 
 /**
  * A deployment's coordinates as a usable position, or null. Latitude and
@@ -56,6 +60,40 @@ export function toUtm(lat: number, lon: number): Utm {
   return { zone, hemisphere: lat >= 0 ? 'N' : 'S', easting, northing };
 }
 
+/** The inverse of `toUtm` (Snyder's series), on the same ellipsoid. */
+export function fromUtm(u: Utm): Position {
+  const a = 6378137.0;
+  const eccSq = 0.00669438;
+  const k0 = 0.9996;
+  const rad = Math.PI / 180;
+  const eccPrimeSq = eccSq / (1 - eccSq);
+  const e1 = (1 - Math.sqrt(1 - eccSq)) / (1 + Math.sqrt(1 - eccSq));
+  const x = u.easting - 500000;
+  const y = u.hemisphere === 'S' ? u.northing - 10000000 : u.northing;
+  const mu = y / k0 / (a * (1 - eccSq / 4 - (3 * eccSq ** 2) / 64 - (5 * eccSq ** 3) / 256));
+  const phi =
+    mu +
+    ((3 * e1) / 2 - (27 * e1 ** 3) / 32) * Math.sin(2 * mu) +
+    ((21 * e1 ** 2) / 16 - (55 * e1 ** 4) / 32) * Math.sin(4 * mu) +
+    ((151 * e1 ** 3) / 96) * Math.sin(6 * mu) +
+    ((1097 * e1 ** 4) / 512) * Math.sin(8 * mu);
+  const n = a / Math.sqrt(1 - eccSq * Math.sin(phi) ** 2);
+  const t = Math.tan(phi) ** 2;
+  const c = eccPrimeSq * Math.cos(phi) ** 2;
+  const r = (a * (1 - eccSq)) / (1 - eccSq * Math.sin(phi) ** 2) ** 1.5;
+  const d = x / (n * k0);
+  const lat =
+    phi -
+    ((n * Math.tan(phi)) / r) *
+      (d ** 2 / 2 -
+        ((5 + 3 * t + 10 * c - 4 * c ** 2 - 9 * eccPrimeSq) * d ** 4) / 24 +
+        ((61 + 90 * t + 298 * c + 45 * t ** 2 - 252 * eccPrimeSq - 3 * c ** 2) * d ** 6) / 720);
+  const lon =
+    (d - ((1 + 2 * t + c) * d ** 3) / 6 + ((5 - 2 * c + 28 * t - 3 * c ** 2 + 8 * eccPrimeSq + 24 * t ** 2) * d ** 5) / 120) /
+    Math.cos(phi);
+  return { lat: lat / rad, lon: (u.zone - 1) * 6 - 180 + 3 + lon / rad };
+}
+
 // --- Display precision -------------------------------------------------------
 
 /** Round or truncate to `digits` decimals of a degree; `null` digits is exact. */
@@ -86,14 +124,33 @@ export function formatDegrees(value: number, p: Precision): string {
   return p.digits === null ? String(v) : v.toFixed(p.digits);
 }
 
-/** UTM as plain integers with no separators, e.g. `3468600`. */
-export function formatUtm(pos: Position, p: Precision): { zone: string; easting: string; northing: string } {
-  const u = toUtm(pos.lat, pos.lon);
-  return {
+/** A position as the page shows it: degrees, and UTM as whole metres (`14N`, `366000`, `1389000`). */
+export type Shown = Position & { zone: string; easting: number; northing: number };
+
+/**
+ * A camera position exactly as the page shows it at these display settings:
+ * the one place every view, map, export and report gets a position from.
+ * Lat/long reduces the degrees and works UTM out from them; UTM reduces
+ * easting and northing and converts them back to degrees. Either way every
+ * coordinate comes from the one reduced position, so two cameras the table
+ * shows alike come out alike everywhere.
+ */
+export function shownPosition(pos: Position, d: CoordDisplay): Shown {
+  const metres = (u: Utm) => ({
     zone: `${u.zone}${u.hemisphere}`,
-    easting: String(reduceMetres(u.easting, p)),
-    northing: String(reduceMetres(u.northing, p)),
-  };
+    easting: reduceMetres(u.easting, d.precision),
+    northing: reduceMetres(u.northing, d.precision),
+  });
+  if (d.coords === 'latlon') {
+    const lat = reduceDegrees(pos.lat, d.precision);
+    const lon = reduceDegrees(pos.lon, d.precision);
+    return { lat, lon, ...metres(toUtm(lat, lon)) };
+  }
+  const u = toUtm(pos.lat, pos.lon);
+  const shown = metres(u);
+  const back = fromUtm({ ...u, easting: shown.easting, northing: shown.northing });
+  // Six decimals (about 0.1 m) is finer than any UTM step, and keeps files tidy.
+  return { lat: Number(back.lat.toFixed(6)), lon: Number(back.lon.toFixed(6)), ...shown };
 }
 
 /**
@@ -110,17 +167,20 @@ export function precisionWords(coords: 'latlon' | 'utm', p: Precision): string {
   return `Coordinates ${how} to ${p.digits} decimal place${p.digits === 1 ? '' : 's'}`;
 }
 
-/** Where a site may be drawn: never more exact than the display precision. */
-export function displayPosition(pos: Position, p: Precision): Position {
-  return { lat: reduceDegrees(pos.lat, p), lon: reduceDegrees(pos.lon, p) };
-}
-
 // --- Elevation -----------------------------------------------------------------
 
 export type ElevationUnit = 'm' | 'ft';
 
+const FEET_PER_METRE = 3.28084;
+
 export function elevationIn(metres: number, unit: ElevationUnit): number {
-  return Math.round(unit === 'ft' ? metres * 3.28084 : metres);
+  return Math.round(unit === 'ft' ? metres * FEET_PER_METRE : metres);
+}
+
+/** The elevation the page shows, back in whole metres, for files that must hold metres. */
+export function shownElevationMetres(metres: number, unit: ElevationUnit): number {
+  const shown = elevationIn(metres, unit);
+  return unit === 'ft' ? Math.round(shown / FEET_PER_METRE) : shown;
 }
 
 // --- Exact sites ---------------------------------------------------------------

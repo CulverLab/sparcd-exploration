@@ -1,16 +1,9 @@
 // Number, date and coordinate text as the tables, summary and exports show it.
 // Coordinates always pass through the display precision first.
 
-import {
-  elevationIn,
-  formatDegrees,
-  formatUtm,
-  type ElevationUnit,
-  type Position,
-  type Precision,
-} from '@/data';
+import { elevationIn, formatDegrees, shownPosition, type Display, type ElevationUnit, type Position } from '@/data';
 
-export type Display = { coords: 'latlon' | 'utm'; precision: Precision; elevation: ElevationUnit };
+export type { Display };
 
 export const fmtN = (n: number): string => Math.round(n).toLocaleString('en-US');
 
@@ -28,11 +21,9 @@ export function formatElevation(metres: number | null, unit: ElevationUnit): str
 /** One position as a single cell: `12.500, -100.250` or `12N 500000 3468600`. */
 export function formatPosition(pos: Position | null, d: Display): string {
   if (!pos) return '—';
-  if (d.coords === 'utm') {
-    const u = formatUtm(pos, d.precision);
-    return `${u.zone} ${u.easting} ${u.northing}`;
-  }
-  return `${formatDegrees(pos.lat, d.precision)}, ${formatDegrees(pos.lon, d.precision)}`;
+  const s = shownPosition(pos, d);
+  if (d.coords === 'utm') return `${s.zone} ${s.easting} ${s.northing}`;
+  return `${formatDegrees(s.lat, d.precision)}, ${formatDegrees(s.lon, d.precision)}`;
 }
 
 /** The two letters on the account button. */

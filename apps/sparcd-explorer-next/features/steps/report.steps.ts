@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { strFromU8, unzipSync } from 'fflate';
-import { Then, When, expect, type Scratch } from './support/world';
+import { Then, When, columnValues, expect, type Scratch } from './support/world';
 
 const report = (page: Page) => page.getByRole('dialog', { name: 'Report preview' });
 const sheet = (page: Page) => report(page).locator('article.sheet');
@@ -292,4 +292,51 @@ Then("the package's datapackage.json follows the Camtrap DP profile and says {st
   ]);
   for (const key of ['created', 'contributors', 'project', 'spatial', 'temporal', 'taxonomic']) expect(dp).toHaveProperty(key);
   expect(dp.description).toContain(note);
+});
+
+// --- Order, the tag switch and text guarded against formulas --------------------------
+
+const ORDER_COLUMN = { locations: 'Location ID', photos: 'Date and time' } as const;
+
+When(/^I note the order of the (Locations|Photos) table$/, async ({ page, scratch }, table: string) => {
+  const key = table.toLowerCase() as keyof typeof ORDER_COLUMN;
+  scratch[`${key}Order`] = await columnValues(page, ORDER_COLUMN[key]);
+  expect((scratch[`${key}Order`] as string[]).length).toBeGreaterThan(1);
+});
+
+const noted = (scratch: Scratch, key: keyof typeof ORDER_COLUMN) => scratch[`${key}Order`] as string[];
+const columnOf = (rows: string[][], name: string) => rows.slice(1).map((r) => r[rows[0].indexOf(name)]);
+
+Then("the report's Locations table lists the locations in the noted order", async ({ page, scratch }) => {
+  await expect(section(page, 'Locations').locator('tbody tr td:first-child')).toHaveText(noted(scratch, 'locations'));
+});
+
+Then(/^the "(Locations|Photos)" sheet lists the (?:locations|photos) in the noted order$/, async ({ scratch }, name: string) => {
+  const key = name.toLowerCase() as keyof typeof ORDER_COLUMN;
+  expect(columnOf(sheets(scratch)[name], ORDER_COLUMN[key])).toEqual(noted(scratch, key));
+});
+
+Then('"photos.csv" in the zip lists the photos in the noted order', async ({ scratch }) => {
+  expect(columnOf(csvRows(filesOf(scratch)['photos.csv']), 'Date and time')).toEqual(noted(scratch, 'photos'));
+});
+
+Then('every row of the {string} sheet reads {string} under {string}', async ({ scratch }, name: string, value: string, column: string) => {
+  expect(new Set(columnOf(sheets(scratch)[name], column))).toEqual(new Set([value]));
+});
+
+Then('the {string} sheet row for {string} holds {string} as text, not a formula', async ({ scratch }, name: string, id: string, text: string) => {
+  expect(rowFor(sheets(scratch)[name], id)('Location')).toBe(text);
+  const files = filesOf(scratch);
+  const xml = Object.keys(files).filter((f) => f.startsWith('xl/worksheets/')).map((f) => files[f]).join('');
+  expect(xml).not.toContain('<f>');
+});
+
+Then('{string} in the zip names {string} {string}', async ({ scratch }, file: string, id: string, name: string) => {
+  expect(rowFor(csvRows(filesOf(scratch)[file]), id)('Location')).toBe(name);
+});
+
+Then("the package's deployment {string} is named {string}", async ({ scratch }, id: string, name: string) => {
+  const row = sparcdRows(filesOf(scratch)['deployments.csv']).find((r) => r[1] === id);
+  expect(row, `deployment ${id}`).toBeTruthy();
+  expect(row![2]).toBe(name);
 });

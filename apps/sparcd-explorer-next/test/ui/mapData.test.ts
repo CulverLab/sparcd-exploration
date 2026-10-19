@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, applyFilters, displayPosition, hexCenter, hexOf, hexRing, hexSizeFor, siteHexes } from '../../src/data';
+import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, shownPosition, siteHexes } from '../../src/data';
 import {
   HEX_STEPS,
   areaLocations,
@@ -99,11 +99,29 @@ describe('hex shading', () => {
 
 describe('site dots', () => {
   it('sit at the display precision, never more exact', () => {
-    const [alpha] = siteViews(model, filter(model), { method: 'round', digits: 2 });
+    const latlon = (method: 'round' | 'truncate', digits: number) => ({ coords: 'latlon' as const, precision: { method, digits } });
+    const [alpha] = siteViews(model, filter(model), latlon('round', 2));
     expect(alpha.position).toEqual({ lat: 12.5, lon: -100.25 });
-    const [two] = siteViews(model, filter(model), { method: 'round', digits: 2 }).slice(1);
+    const [two] = siteViews(model, filter(model), latlon('round', 2)).slice(1);
     expect(two.position).toEqual({ lat: 12.5, lon: -100.25 });
-    expect(siteViews(model, filter(model), { method: 'truncate', digits: 0 })[2].position).toEqual({ lat: 13, lon: -101 });
+    expect(siteViews(model, filter(model), latlon('truncate', 0))[2].position).toEqual({ lat: 13, lon: -101 });
+  });
+
+  it('sit where the tables put them in UTM, so two cameras shown alike share a dot and a cell', () => {
+    const twins = modelOf(
+      collection('Twins', 'ttt')
+        .upload('u1', { deployments: [deployment('TW01', 'North', 12.5651, -100.23456)], media: [media('u1', 'a.jpg', 'TW01', '2023-01-01T10:00:00')] })
+        .upload('u2', { deployments: [deployment('TW02', 'South', 12.5649, -100.23456)], media: [media('u2', 'b.jpg', 'TW02', '2023-01-01T10:00:00')] }),
+    );
+    const utm = { coords: 'utm' as const, precision: { method: 'round' as const, digits: 2 } };
+    const [north, south] = siteViews(twins, filter(twins), utm);
+    expect(north.position).toEqual(south.position);
+    expect(north.position).toEqual({ lat: shownPosition({ lat: 12.5651, lon: -100.23456 }, utm).lat, lon: shownPosition({ lat: 12.5651, lon: -100.23456 }, utm).lon });
+    const cells = siteHexes(twins.sites, utm);
+    expect(cells.cells[0]).toBe(cells.cells[1]);
+    // In lat/long the same two read 12.57 and 12.56, apart.
+    const [n2, s2] = siteViews(twins, filter(twins), { coords: 'latlon', precision: utm.precision });
+    expect([n2.position.lat, s2.position.lat]).toEqual([12.57, 12.56]);
   });
 
   it('grow with detections', () => {
@@ -158,24 +176,24 @@ describe('the grid at a display precision', () => {
   });
 
   it('bins the positions the tables show, not the exact ones', () => {
-    const p = at(1);
-    const grid = siteHexes(model.sites, p);
+    const d = { coords: 'latlon' as const, precision: at(1) };
+    const grid = siteHexes(model.sites, d);
     expect(grid.grid.size).toBeCloseTo(0.1, 12);
     model.sites.forEach((s, i) => {
-      expect(grid.cells[i]).toBe(s.position ? hexOf(grid.grid, displayPosition(s.position, p)) : null);
+      expect(grid.cells[i]).toBe(s.position ? hexOf(grid.grid, shownPosition(s.position, d)) : null);
     });
     // Two cameras that read the same at the precision share a cell.
     expect(grid.cells[index('AA01')]).toBe(grid.cells[index('AA02')]);
   });
 
   it('keeps the Area filter when the precision changes the grid', () => {
-    const fine = siteHexes(model.sites, at(3));
+    const fine = siteHexes(model.sites, { coords: 'latlon', precision: at(3) });
     const area = toggleHex(model, fine, [], fine.cells[index('AA01')]!);
     expect(area.sort()).toEqual([model.sites[index('AA01')].key, model.sites[index('AA02')].key].sort());
     const photos = applyFilters(model, { ...NO_FILTERS, area }).photos;
     expect(photos).toHaveLength(3);
 
-    const coarse = siteHexes(model.sites, at(0));
+    const coarse = siteHexes(model.sites, { coords: 'latlon', precision: at(0) });
     expect(coarse.cells[index('AA01')]).not.toBe(fine.cells[index('AA01')]);
     expect([...selectedHexes(model, coarse, area)]).toEqual([coarse.cells[index('AA01')]]);
     expect(areaLocations(model, area, false)).toBe(2);
