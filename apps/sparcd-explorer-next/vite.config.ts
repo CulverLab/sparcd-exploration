@@ -12,7 +12,8 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, '**/.features-gen/**'],
   },
   // Served from a subpath on GitHub Pages: culverlab.github.io/sparcd-exploration/explorer-next/
-  base: '/sparcd-exploration/explorer-next/',
+  // Pages serves this under the repo's name; a fork with another name sets PAGES_BASE.
+  base: process.env.PAGES_BASE ?? '/sparcd-exploration/explorer-next/',
   server: { port: 5314 },
   plugins: [react()],
   // Deps first imported after the initial page load (thumbnail workers, the

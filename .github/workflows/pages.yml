@@ -79,6 +79,8 @@ jobs:
       # --- Explorer (next, Vite) -> /explorer-next, beside today's explorer ---
       - name: Build explorer-next
         run: pnpm --filter sparcd-explorer-next build
+        env:
+          PAGES_BASE: /${{ github.event.repository.name }}/explorer-next/
 
       # --- Assemble combined site ---
       - name: Assemble site
