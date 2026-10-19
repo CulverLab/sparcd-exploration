@@ -286,14 +286,17 @@ describe('loading thumbnails', () => {
 describe('a slot taken by a load cancelled mid-signing', () => {
   it('frees as soon as the tile scrolls away, and the original is never fetched', async () => {
     let signed!: (url: string) => void;
+    let signing!: () => void;
+    const started = new Promise<void>((resolve) => (signing = resolve));
     const io = fakeIo(async () => main);
     io.presign = (key) => {
       io.calls.push(`presign ${key}`);
+      signing();
       return new Promise((resolve) => (signed = resolve));
     };
     const q = new ThumbQueue((job, s) => loadJob(io, job, s), new ThumbCache(10, () => {}), 1);
     const tile = q.want('slow.jpg', 0, () => {});
-    await settle();
+    await started;
     expect(io.calls).toEqual(['head slow.jpg', 'presign slow.jpg']);
     tile.release();
     signed('https://server.example.org/slow.jpg?signed');
