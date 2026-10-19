@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { S3Config } from '@sparcd/types';
-import { NO_FILTERS, type Registries } from '../../src/data';
+import type { Registries } from '../../src/data';
 import { readLast, useStore } from '../../src/store';
 import { collection, collectionRef, deployment, media, observation } from '../support/fixtures';
 
@@ -110,7 +110,7 @@ describe('changing collections', () => {
       ...f,
       species: ['Lynx rufus'],
       locations: ['id:AA01'],
-      area: { hexes: ['1:2'], boxes: [] },
+      area: [useStore.getState().model!.sites[0].key, 'sparcd-gone::gone|ZZ99||'],
       dateFrom: '2024-01-01',
       dateTo: '2024-12-31',
       elevation: [500, 1500],
@@ -124,7 +124,7 @@ describe('changing collections', () => {
     expect(after.filters).toEqual({
       ...before,
       locations: ['id:AA01'],
-      area: NO_FILTERS.area,
+      area: [before.area[0]],
     });
     expect(after.separate).toBe(true);
     expect(after.toast?.message).toBe('Some filters no longer apply');

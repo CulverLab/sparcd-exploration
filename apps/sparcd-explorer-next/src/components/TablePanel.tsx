@@ -2,7 +2,8 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
 import { activityByLocation } from '@/lib/activity';
-import { monthAxis, monthLabel, monthShade, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
+import { matchLegend } from '@/lib/filterLabels';
+import { barFill, monthAxis, monthLabel, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
 import { fmtN, plural } from '@/lib/format';
@@ -60,12 +61,15 @@ function ActivityCell({
   row,
   months,
   max,
+  legend,
   onTip,
 }: {
   axis: MonthAxis;
   row: LocationRow;
   months?: MonthCounts;
   max: number;
+  /** What the inner bars show, when a species filter is on. */
+  legend: string | null;
   onTip: (tip: TipAt | null) => void;
 }) {
   const H = 14;
@@ -76,7 +80,7 @@ function ActivityCell({
       onPointerMove={(e) => {
         const r = e.currentTarget.getBoundingClientRect();
         const m = axis.first + Math.min(axis.count - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * axis.count)));
-        const [photos, untagged] = months?.get(m) ?? [0, 0];
+        const [photos, untagged, match] = months?.get(m) ?? [0, 0, 0];
         onTip({
           x: e.clientX,
           y: e.clientY,
@@ -86,6 +90,7 @@ function ActivityCell({
               <div className="m">
                 {monthLabel(m)}: {plural(photos, 'photo')}
                 {untagged ? `, ${fmtN(untagged)} untagged` : ''}
+                {legend ? `; ${legend}: ${fmtN(match)}` : ''}
               </div>
             </>
           ),
@@ -95,19 +100,18 @@ function ActivityCell({
     >
       <svg viewBox={`0 0 ${axis.count} ${H}`} preserveAspectRatio="none" aria-hidden="true">
         <rect className="trk" width={axis.count} height={H} />
-        {[...(months ?? [])].map(([m, [n, untagged]]) => (
-          <g key={m}>
-            <rect
-              x={m - axis.first}
-              width={1}
-              height={H}
-              style={{ fill: `color-mix(in srgb, var(--accent) ${Math.round(monthShade(n, max) * 100)}%, var(--accentSoft))` }}
-            />
-            {untagged > 0 && (
-              <rect className="untag" x={m - axis.first} y={H - Math.max(2, (H * untagged) / n)} width={1} height={Math.max(2, (H * untagged) / n)} />
-            )}
-          </g>
-        ))}
+        {[...(months ?? [])].map(([m, [n, untagged, match]]) => {
+          // Untagged photos from the bottom, the photos the species filter keeps on top of them.
+          const uh = untagged ? Math.max(2, (H * untagged) / n) : 0;
+          const mh = match ? Math.min(H - uh, Math.max(3, (H * match) / n)) : 0;
+          return (
+            <g key={m} data-match={legend ? match : undefined}>
+              <rect x={m - axis.first} width={1} height={H} style={{ fill: barFill(n, max, Boolean(legend)) }} />
+              {uh > 0 && <rect className="untag" x={m - axis.first} y={H - uh} width={1} height={uh} />}
+              {mh > 0 && <rect className="match" x={m - axis.first} y={H - uh - mh} width={1} height={mh} />}
+            </g>
+          );
+        })}
         {yearTicks(axis)
           .filter((t) => t.month !== axis.first)
           .map((t) => (
@@ -165,7 +169,12 @@ export function TablePanel() {
   }, [view, model, result, grouping, filters.photoTag]);
   const flags = useMemo(() => locationFlagger(model), [model]);
   const axis = useMemo(() => monthAxis(model), [model]);
-  const activity = useMemo(() => activityByLocation(model, result.photos, grouping.separate), [model, result, grouping]);
+  // The Activity column is camera effort; a species filter's photos sit inside it.
+  const activityLegend = matchLegend(model, filters, false);
+  const activity = useMemo(
+    () => activityByLocation(model, result.effort, grouping.separate, activityLegend ? result.photos : []),
+    [model, result, grouping, activityLegend],
+  );
 
   const count =
     view === 'species'
@@ -211,7 +220,11 @@ export function TablePanel() {
         head={(c) => (c.id === 'activity' && axis ? <ActivityHead axis={axis} /> : undefined)}
         cell={(c, r) => {
           if (c.id === 'activity') {
-            return axis ? <ActivityCell axis={axis} row={r} months={activity.byKey.get(r.key)} max={activity.max} onTip={setTip} /> : '—';
+            return axis ? (
+              <ActivityCell axis={axis} row={r} months={activity.byKey.get(r.key)} max={activity.max} legend={activityLegend} onTip={setTip} />
+            ) : (
+              '—'
+            );
           }
           if (c.id !== 'name') return undefined;
           const f = flags(r);

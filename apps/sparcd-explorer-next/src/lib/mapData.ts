@@ -1,6 +1,7 @@
 // What the map draws, derived from one filter result like every other view.
 // Hexes cover every located site the collections hold, whether or not it is
-// in view, so the grid never moves; their numbers count what is in view.
+// in view, so the grid never moves on a filter change; their numbers count
+// what is in view. The grid itself follows the display precision.
 // "In view" for a place means camera effort in view: at least one photo
 // passing every filter but species, as the Locations table lists it.
 
@@ -9,13 +10,16 @@ import {
   hexCenter,
   hexRing,
   locationKeyOf,
-  type Box,
   type FilterResult,
   type HexGrid,
   type Model,
   type Position,
   type Precision,
+  type SiteHexes,
 } from '@/data';
+
+/** A map rectangle in degrees. */
+export type Box = { south: number; west: number; north: number; east: number };
 
 type SiteTally = { photos: number; detections: number; effort: boolean };
 
@@ -50,17 +54,18 @@ export type HexView = {
   collections: number[];
 };
 
-export function hexViews(model: Model, result: FilterResult, separate: boolean): HexView[] {
+export function hexViews(model: Model, result: FilterResult, separate: boolean, cells: SiteHexes): HexView[] {
   const tallies = tallySites(model, result);
   const hexes = new Map<string, HexView>();
   model.sites.forEach((site, i) => {
-    if (!site.hex) return;
-    let h = hexes.get(site.hex);
+    const id = cells.cells[i];
+    if (!id) return;
+    let h = hexes.get(id);
     if (!h) {
       h = {
-        hex: site.hex,
-        center: hexCenter(model.grid, site.hex),
-        ring: hexRing(model.grid, site.hex),
+        hex: id,
+        center: hexCenter(cells.grid, id),
+        ring: hexRing(cells.grid, id),
         sites: [],
         inView: false,
         photos: 0,
@@ -68,7 +73,7 @@ export function hexViews(model: Model, result: FilterResult, separate: boolean):
         locations: [],
         collections: [],
       };
-      hexes.set(site.hex, h);
+      hexes.set(id, h);
     }
     const t = tallies[i];
     h.sites.push(i);
@@ -150,6 +155,39 @@ function pointInRing(p: Position, ring: Position[]): boolean {
     if (a.lat > p.lat !== b.lat > p.lat && p.lon < ((b.lon - a.lon) * (p.lat - a.lat)) / (b.lat - a.lat) + a.lon) hit = !hit;
   }
   return hit;
+}
+
+// --- The Area filter ----------------------------------------------------------
+// The filter holds site keys, so it means the same places at any precision.
+// Hexes are only how the map draws and picks them.
+
+/** The keys of the sites inside some cells. */
+export function sitesInHexes(model: Model, cells: SiteHexes, ids: Iterable<string>): string[] {
+  const wanted = new Set(ids);
+  return model.sites.flatMap((s, i) => (wanted.has(cells.cells[i]!) ? [s.key] : []));
+}
+
+/** The cells holding at least one site in the area: what the map draws as selected. */
+export function selectedHexes(model: Model, cells: SiteHexes, area: string[]): Set<string> {
+  const keys = new Set(area);
+  const out = new Set<string>();
+  model.sites.forEach((s, i) => {
+    const id = cells.cells[i];
+    if (id && keys.has(s.key)) out.add(id);
+  });
+  return out;
+}
+
+/** A hex click: a cell drawn as selected lets all its sites go, any other takes them all in. */
+export function toggleHex(model: Model, cells: SiteHexes, area: string[], id: string): string[] {
+  const inside = new Set(sitesInHexes(model, cells, [id]));
+  return area.some((k) => inside.has(k)) ? area.filter((k) => !inside.has(k)) : [...area, ...inside];
+}
+
+/** How many locations the area holds, by the grouping in force. */
+export function areaLocations(model: Model, area: string[], separate: boolean): number {
+  const keys = new Set(area);
+  return new Set(model.sites.filter((s) => keys.has(s.key)).map((s) => locationKeyOf(s, separate))).size;
 }
 
 /** Two dragged corners as a box, whichever way the drag went. */

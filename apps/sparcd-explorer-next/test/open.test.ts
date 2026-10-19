@@ -216,6 +216,28 @@ describe('cancel during a refresh', () => {
     expect(await source.db.uploads.count()).toBe(12);
   });
 
+  it('rolls back a cancel that lands after the last write, before the transaction commits', async () => {
+    const { source, before } = await cachedThenChanged();
+    const controller = new AbortController();
+    const { signal } = controller;
+    const table = source.db.collections;
+    const put = table.put.bind(table);
+    let wrote = false;
+    table.put = ((...args: Parameters<typeof put>) => put(...args).then((r) => ((wrote = true), r))) as typeof put;
+    // The check after the last write passes; the cancel lands once the
+    // transaction's callback has returned and the commit is still pending.
+    const check = signal.throwIfAborted.bind(signal);
+    signal.throwIfAborted = () => {
+      check();
+      if (wrote) queueMicrotask(() => controller.abort());
+    };
+    const refreshing = syncCollection(source, REF, { signal });
+    await expect(refreshing).rejects.toMatchObject({ name: 'AbortError' });
+    table.put = put;
+    expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
+    expect(await source.db.uploads.count()).toBe(12);
+  });
+
   it('leaves a first open unread when the final progress report cancels', async () => {
     const s3 = new FakeS3();
     oneUpload(s3);

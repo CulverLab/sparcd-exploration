@@ -13,7 +13,6 @@ import { commonNameFromComments } from '@sparcd/camtrap';
 import type { NullableDeployment } from '@sparcd/camtrap';
 import type { ReadProblem } from './cache';
 import { sitePosition, type Position } from './coords';
-import { hexGrid, hexOf, type HexGrid } from './hex';
 import { isNoLocation, mountainRange } from './locationIds';
 import { registryKey, type RegistryLocation } from './locations';
 import type { LoadedCollection } from './open';
@@ -39,7 +38,6 @@ export type Site = {
   range: string;
   /** The location this site belongs to while IDs are grouped. */
   groupKey: string;
-  hex: string | null;
   deployments: number;
   lastDay: number | null;
 };
@@ -76,7 +74,6 @@ export type Model = {
   detections: Detection[];
   hiddenUploads: { collection: number; folder: string }[];
   problems: (ReadProblem & { collection: number })[];
-  grid: HexGrid;
   dateSpan: { first: string; last: string } | null;
 };
 
@@ -102,7 +99,7 @@ export function buildModel(
   const siteIndex = new Map<string, number>();
   const elevations: number[][] = [];
   const speciesIndex = new Map<string, number>();
-  const m: Omit<Model, 'grid' | 'dateSpan'> = {
+  const m: Omit<Model, 'dateSpan'> = {
     collections: [],
     uploads: [],
     sites,
@@ -113,10 +110,10 @@ export function buildModel(
     problems: [],
   };
 
-  const addSite = (site: Omit<Site, 'deployments' | 'elevation' | 'hex' | 'lastDay'>): number => {
+  const addSite = (site: Omit<Site, 'deployments' | 'elevation' | 'lastDay'>): number => {
     let i = siteIndex.get(site.key);
     if (i === undefined) {
-      i = sites.push({ ...site, deployments: 0, elevation: null, hex: null, lastDay: null }) - 1;
+      i = sites.push({ ...site, deployments: 0, elevation: null, lastDay: null }) - 1;
       siteIndex.set(site.key, i);
       elevations[i] = [];
     }
@@ -232,12 +229,6 @@ export function buildModel(
     const e = elevations[i];
     if (e.length) site.elevation = Math.round(e.reduce((a, b) => a + b, 0) / e.length);
   });
-  // Each site position counts once in the grid's anchor, however many uploads it has.
-  const anchors = new Map<string, Position>();
-  for (const s of sites) if (s.position) anchors.set(`${s.locationId}|${s.position.lat},${s.position.lon}`, s.position);
-  const grid = hexGrid([...anchors.values()]);
-  for (const s of sites) if (s.position) s.hex = hexOf(grid, s.position);
-
   let first: string | null = null;
   let last: string | null = null;
   for (const p of m.photos) {
@@ -247,5 +238,5 @@ export function buildModel(
     const site = sites[p.site];
     if (site.lastDay === null || p.day! > site.lastDay) site.lastDay = p.day;
   }
-  return { ...m, grid, dateSpan: first && last ? { first, last } : null };
+  return { ...m, dateSpan: first && last ? { first, last } : null };
 }

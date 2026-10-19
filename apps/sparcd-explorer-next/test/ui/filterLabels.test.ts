@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NO_FILTERS, type FilterState } from '../../src/data';
-import { filterButtons, locationLabel, photoCountLabel } from '../../src/lib/filterLabels';
+import { filterButtons, locationLabel, matchLegend, photoCountLabel } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
 const alpha = collection('Alpha', 'aaa').upload('u1', {
@@ -30,7 +30,7 @@ describe('filter button labels', () => {
   it('show Collections only with several collections open, and Area only while one is selected', () => {
     expect(labels({}, both)[0]).toBe('Collections');
     expect(labels({ collections: ['sparcd-bbb::bbb'] }, both)[0]).toBe('Collections: Bravo');
-    expect(labels({ area: { hexes: ['1,2', '3,4'], boxes: [] } })).toContain('Area: 2 hexes');
+    expect(labels({ area: [single.sites[0].key] })).toContain('Area: 1 location');
   });
 
   it('name the first value and count the rest', () => {
@@ -72,5 +72,21 @@ describe('photo count', () => {
     expect(photoCountLabel(7235, 7235, false)).toBe('7,235 photos');
     expect(photoCountLabel(2104, 7235, true)).toBe('2,104 of 7,235 photos');
     expect(photoCountLabel(1, 1, false)).toBe('1 photo');
+  });
+});
+
+describe('the inner bars’ legend', () => {
+  const legend = (f: Partial<FilterState>, tagShown = true) => matchLegend(single, { ...NO_FILTERS, ...f }, tagShown);
+
+  it('names what a species filter keeps', () => {
+    expect(legend({})).toBeNull();
+    expect(legend({ species: ['Lynx rufus', 'Canis latrans'] })).toBe('Bobcat +1');
+    expect(legend({ species: ['Lynx rufus'], speciesMode: 'hide' })).toBe('Without Bobcat');
+  });
+
+  it('names the tag switch only while the Photos view shows it', () => {
+    expect(legend({ photoTag: 'tagged' })).toBe('Tagged');
+    expect(legend({ photoTag: 'untagged', species: ['Lynx rufus'] })).toBe('Bobcat, Untagged');
+    expect(legend({ photoTag: 'tagged' }, false)).toBeNull();
   });
 });

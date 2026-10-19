@@ -1,8 +1,8 @@
 // The meanings the numbers rest on (spec, Data layer §5).
 
 import { describe, expect, it } from 'vitest';
-import { NO_LOCATION_NAME, hexBins, locationRows, photoRows, summarize } from '../src/data';
-import { collection, deployment, fileNames, filter, media, modelOf, observation, species } from './support/fixtures';
+import { NO_LOCATION_NAME, locationRows, photoRows, summarize } from '../src/data';
+import { binsOf, collection, deployment, fileNames, filter, media, modelOf, observation, species } from './support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 const grouped = { separate: false };
@@ -93,7 +93,7 @@ describe('location ID 0000 or empty', () => {
   });
 
   it('never reaches the map', () => {
-    expect(hexBins(model, result).map((b) => b.locationNames)).toEqual([['Alpha']]);
+    expect(binsOf(model, result).map((b) => b.locationNames)).toEqual([['Alpha']]);
   });
 });
 

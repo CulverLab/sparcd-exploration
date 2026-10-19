@@ -1093,6 +1093,10 @@ path.st.sel {
 .sw.untag {
   background: var(--warn);
 }
+.sw.match {
+  background: var(--accent);
+  width: 9px;
+}
 svg.effort {
   display: block;
   cursor: pointer;
@@ -1117,6 +1121,10 @@ svg.effort {
 }
 .effort .untag {
   fill: var(--warn);
+}
+.effort .match,
+.spark .match {
+  fill: var(--accent);
 }
 .effort .dim {
   fill: var(--panel);

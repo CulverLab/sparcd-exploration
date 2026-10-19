@@ -3,8 +3,8 @@
 // counts too; it still never reaches the map.
 
 import { describe, expect, it } from 'vitest';
-import { hexBins, locationRows, speciesRows, summarize } from '../../src/data';
-import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
+import { locationRows, speciesRows, summarize } from '../../src/data';
+import { areaOfHex, binsOf, collection, deployment, filter, hexOfSite, media, modelOf, observation } from '../support/fixtures';
 
 const grouped = { separate: false };
 
@@ -35,13 +35,13 @@ describe('test_species_counts', () => {
     expect(summarize(model, result, grouped).species).toBe(rows.length);
     expect(new Set(rows.map((r) => model.species[r.species].name))).toEqual(new Set(['Owl', 'Deer', 'Javelina']));
     // The map holds only the placed sites' species.
-    expect(hexBins(model, result).reduce((n, b) => n + b.richness, 0)).toBe(2);
+    expect(binsOf(model, result).reduce((n, b) => n + b.richness, 0)).toBe(2);
   });
 
   it('the hex panel and the summary agree for a clicked hex', () => {
-    const bravoHex = model.sites.find((s) => s.name === 'Bravo')!.hex!;
-    const result = filter(model, { area: { hexes: [bravoHex], boxes: [] } });
-    const bin = hexBins(model, result).find((b) => b.locationNames.includes('Bravo'))!;
+    const bravoHex = hexOfSite(model, model.sites.findIndex((s) => s.name === 'Bravo'));
+    const result = filter(model, { area: areaOfHex(model, bravoHex) });
+    const bin = binsOf(model, result).find((b) => b.locationNames.includes('Bravo'))!;
     expect(bin.richness).toBe(1);
     expect(summarize(model, result, grouped).species).toBe(1);
     expect(locationRows(model, result, grouped)[0].species).toBe(1);
@@ -60,6 +60,6 @@ describe('test_species_counts', () => {
         observations: tagged.map(([file, common]) => observation('u1', file, 'CCC01', '2024-01-01T10:00:00', { common })),
       }),
     );
-    expect(hexBins(m, filter(m)).map((b) => b.richness)).toEqual([2]);
+    expect(binsOf(m, filter(m)).map((b) => b.richness)).toEqual([2]);
   });
 });

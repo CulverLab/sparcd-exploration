@@ -2,8 +2,8 @@
 // share the ID ZZZ19, as some registry entries do.
 
 import { describe, expect, it } from 'vitest';
-import { hexBins, summarize } from '../../src/data';
-import { collection, deployment, fileNames, filter, media, modelOf, observation, siteNamed } from '../support/fixtures';
+import { summarize } from '../../src/data';
+import { areaOfHex, binsOf, collection, deployment, fileNames, filter, hexOfSite, media, modelOf, observation, siteNamed } from '../support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 
@@ -19,8 +19,8 @@ const model = modelOf(siteUpload(siteUpload(collection(), 'u1', 'Ridge-3', 12.0,
 
 describe('test_site_selection', () => {
   it('clicking a hex shows only its site', () => {
-    const hex = model.sites[siteNamed(model, 'Ridge-3 old')].hex!;
-    const result = filter(model, { area: { hexes: [hex], boxes: [] } });
+    const hex = hexOfSite(model, siteNamed(model, 'Ridge-3 old'));
+    const result = filter(model, { area: areaOfHex(model, hex) });
     expect(summarize(model, result, { separate: false })).toMatchObject({ photos: 2, tagged: 2 });
     expect(fileNames(model, result.photos)).toEqual(['o1.jpg', 'o2.jpg']);
   });
@@ -32,7 +32,7 @@ describe('test_site_selection', () => {
   });
 
   it('hex counts stay with their own site', () => {
-    const counts = Object.fromEntries(hexBins(model, filter(model)).map((b) => [b.locationNames[0], b.tagged]));
+    const counts = Object.fromEntries(binsOf(model, filter(model)).map((b) => [b.locationNames[0], b.tagged]));
     expect(counts).toEqual({ 'Ridge-3': 3, 'Ridge-3 old': 2 });
   });
 });

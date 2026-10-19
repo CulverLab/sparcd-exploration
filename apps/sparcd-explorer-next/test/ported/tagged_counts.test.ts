@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { locationRows, photosForTag, summarize } from '../../src/data';
-import { collection, deployment, fileNames, filter, media, modelOf, observation } from '../support/fixtures';
+import { areaOfHex, collection, deployment, fileNames, filter, hexOfSite, media, modelOf, observation } from '../support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 
@@ -18,8 +18,8 @@ const model = modelOf(
     ],
   }),
 );
-const alphaHex = model.sites[0].hex!;
-const clicked = filter(model, { area: { hexes: [alphaHex], boxes: [] } });
+const alphaHex = hexOfSite(model, 0);
+const clicked = filter(model, { area: areaOfHex(model, alphaHex) });
 
 describe('test_tagged_counts', () => {
   it('placeholder rows count as untagged', () => {

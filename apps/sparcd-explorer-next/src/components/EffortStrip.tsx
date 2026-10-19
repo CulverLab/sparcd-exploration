@@ -1,7 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { applyFilters, clearFilter, type FilterState } from '@/data';
+import { applyFilters, clearFilter, photosForTag, type FilterState } from '@/data';
+import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
-import { countByMonth, datesToMonths, monthAxis, monthLabel, monthShade, monthsToDates, yearOf, yearTicks } from '@/lib/months';
+import { barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthsToDates, yearOf, yearTicks } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { Tip, type TipAt } from './Tip';
@@ -21,13 +22,17 @@ function monthPasses(f: FilterState, m: number, range: [number, number] | null):
 }
 
 /**
- * Photos per month across the opened data, under every filter but Dates, so
- * the time context stays in sight while dates are picked. Drag or click to
- * set Dates; arrows move a cursor and Enter or Space picks.
+ * Camera effort per month across the opened data: every filter but Dates,
+ * species and the tag switch, so the time context stays in sight while dates
+ * are picked. What a species filter or the tag switch keeps is drawn as an
+ * inner bar. Drag or click to set Dates; arrows move a cursor and Enter or
+ * Space picks.
  */
 export function EffortStrip() {
   const { model, filters } = useView();
   const setFilters = useStore((s) => s.setFilters);
+  const tagShown = useStore((s) => s.view === 'photos');
+  const legend = matchLegend(model, filters, tagShown);
   const wrap = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const clearRef = useRef<HTMLButtonElement>(null);
@@ -49,7 +54,10 @@ export function EffortStrip() {
   }, []);
 
   const axis = useMemo(() => monthAxis(model), [model]);
-  const counts = useMemo(() => countByMonth(model, applyFilters(model, clearFilter(filters, 'dates')).photos), [model, filters]);
+  const counts = useMemo(() => {
+    const r = applyFilters(model, clearFilter(filters, 'dates'));
+    return countByMonth(model, r.effort, legend ? photosForTag(model, r.photos, tagShown ? filters.photoTag : 'all') : []);
+  }, [model, filters, legend, tagShown]);
   const max = Math.max(1, ...[...counts.values()].map((c) => c[0]));
   const range = axis && datesToMonths(filters.dateFrom, filters.dateTo, axis);
 
@@ -88,7 +96,7 @@ export function EffortStrip() {
   };
 
   const tipFor = (m: number, x: number, y: number) => {
-    const [photos, untagged] = counts.get(m) ?? [0, 0];
+    const [photos, untagged, match] = counts.get(m) ?? [0, 0, 0];
     setTip({
       x,
       y,
@@ -109,6 +117,12 @@ export function EffortStrip() {
                 <td>Untagged</td>
                 <td className="n">{fmtN(untagged)}</td>
               </tr>
+              {legend && (
+                <tr>
+                  <td>{legend}</td>
+                  <td className="n">{fmtN(match)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </>
@@ -177,7 +191,7 @@ export function EffortStrip() {
     }
   };
 
-  const [cp, cu] = counts.get(at) ?? [0, 0];
+  const [cp, cu, cm] = counts.get(at) ?? [0, 0, 0];
   const shown = drag ? ([Math.min(drag.a, drag.b), Math.max(drag.a, drag.b)] as [number, number]) : range;
   const bracketEnd = range && !drag ? xOf(range[1] + 1) : null;
   const clearW = clearRef.current?.offsetWidth ?? 72;
@@ -195,6 +209,12 @@ export function EffortStrip() {
             <i className="sw untag" />
             Untagged
           </span>
+          {legend && (
+            <span>
+              <i className="sw match" />
+              {legend}
+            </span>
+          )}
         </span>
       </div>
       <div ref={wrap} className="strip">
@@ -209,7 +229,9 @@ export function EffortStrip() {
           aria-valuemin={0}
           aria-valuemax={axis.count - 1}
           aria-valuenow={at - axis.first}
-          aria-valuetext={`${monthLabel(at)}: ${fmtN(cp)} photos, ${fmtN(cu)} untagged${anchor !== null ? `; range from ${monthLabel(anchor)}` : ''}`}
+          aria-valuetext={`${monthLabel(at)}: ${fmtN(cp)} photos, ${fmtN(cu)} untagged${legend ? `, ${legend} ${fmtN(cm)}` : ''}${
+            anchor !== null ? `; range from ${monthLabel(anchor)}` : ''
+          }`}
           onPointerDown={onPointerDown}
           // A click never takes focus, so the keyboard cursor shows only for the keyboard.
           onMouseDown={(e) => e.preventDefault()}
@@ -232,21 +254,19 @@ export function EffortStrip() {
           <text className="scale" x={X0 - 6} y={BASE - 1}>
             0
           </text>
-          {[...counts].map(([m, [photos, untagged]]) => {
+          {[...counts].map(([m, [photos, untagged, match]]) => {
             const h = Math.max(2, ((BASE - TOP) * photos) / max);
             const uh = untagged ? Math.max(2, (h * untagged) / photos) : 0;
+            const mh = match ? Math.max(2, ((BASE - TOP) * match) / max) : 0;
             const x = xOf(m) + 0.5;
             const w = Math.max(1, cw - 1);
+            // Inside the month's bar, narrower where there is room to show both.
+            const mw = w >= 5 ? Math.max(2, Math.round(w * 0.5)) : w;
             return (
-              <g key={m} data-month={m}>
-                <rect
-                  x={x}
-                  y={BASE - h}
-                  width={w}
-                  height={h}
-                  style={{ fill: `color-mix(in srgb, var(--accent) ${Math.round(monthShade(photos, max) * 100)}%, var(--accentSoft))` }}
-                />
+              <g key={m} data-month={m} data-match={legend ? match : undefined}>
+                <rect x={x} y={BASE - h} width={w} height={h} style={{ fill: barFill(photos, max, Boolean(legend)) }} />
                 {uh > 0 && <rect className="untag" x={x} y={BASE - uh} width={w} height={uh} />}
+                {mh > 0 && <rect className="match" x={x + (w - mw) / 2} y={BASE - mh} width={mw} height={mh} />}
               </g>
             );
           })}

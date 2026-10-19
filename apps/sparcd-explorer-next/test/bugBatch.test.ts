@@ -7,7 +7,6 @@ import {
   ExplorerDb,
   accountKey,
   buildModel,
-  hexBins,
   locationRows,
   photoRows,
   readCachedCollection,
@@ -16,7 +15,19 @@ import {
   syncCollection,
 } from '../src/data';
 import { FakeS3, putUpload } from './support/fakeS3';
-import { collection, collectionRef, deployment, fileNames, filter, media, modelOf, observation } from './support/fixtures';
+import {
+  areaOfHex,
+  binsOf,
+  collection,
+  collectionRef,
+  deployment,
+  fileNames,
+  filter,
+  hexOfSite,
+  media,
+  modelOf,
+  observation,
+} from './support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 const grouped = { separate: false };
@@ -55,7 +66,7 @@ describe('#400 date and species filters reduce the image count', () => {
       }),
   );
 
-  it('images and locations follow every filter, untagged images included', () => {
+  it('images and locations follow every filter, untagged images included; locations count camera effort', () => {
     const count = (state: Parameters<typeof filter>[1]) => {
       const s = summarize(model, filter(model, state), grouped);
       return [s.locations, s.photos];
@@ -63,7 +74,7 @@ describe('#400 date and species filters reduce the image count', () => {
     expect(count({})).toEqual([2, 3]);
     expect(count({ years: [2024] })).toEqual([2, 2]);
     expect(count({ dateFrom: '2024-06-01' })).toEqual([1, 1]);
-    expect(count({ species: ['Owl'] })).toEqual([1, 1]);
+    expect(count({ species: ['Owl'] })).toEqual([2, 1]);
   });
 });
 
@@ -90,12 +101,12 @@ describe('#401 species counts agree for one selection', () => {
       const result = filter(model, state);
       const n = summarize(model, result, grouped).species;
       expect(speciesRows(model, result, grouped)).toHaveLength(n);
-      return { n, hexes: hexBins(model, result).map((b) => b.richness), rows: locationRows(model, result, grouped).map((r) => r.species) };
+      return { n, hexes: binsOf(model, result).map((b) => b.richness), rows: locationRows(model, result, grouped).map((r) => r.species) };
     };
     expect(counts({}).n).toBe(3);
     // Bravo still lists, with 0 species: its camera ran while the filter shows none.
     expect(counts({ species: ['Pecari tajacu'] })).toEqual({ n: 1, hexes: [1], rows: [1, 0] });
-    expect(counts({ area: { hexes: [model.sites[0].hex!], boxes: [] } })).toEqual({ n: 2, hexes: [2], rows: [2] });
+    expect(counts({ area: areaOfHex(model, hexOfSite(model, 0)) })).toEqual({ n: 2, hexes: [2], rows: [2] });
   });
 });
 
@@ -163,7 +174,7 @@ describe('#404 selecting one of two same-ID sites', () => {
     );
     const ridgeOld = model.sites.find((s) => s.name === 'Ridge old')!;
     expect(fileNames(model, filter(model, { locations: [ridgeOld.key] }).photos)).toEqual(['old.jpg']);
-    expect(fileNames(model, filter(model, { area: { hexes: [ridgeOld.hex!], boxes: [] } }).photos)).toEqual(['old.jpg']);
+    expect(fileNames(model, filter(model, { area: areaOfHex(model, hexOfSite(model, model.sites.indexOf(ridgeOld))) }).photos)).toEqual(['old.jpg']);
   });
 });
 
@@ -179,15 +190,15 @@ describe('#405 hex cells stay put and never point at a site', () => {
   );
 
   it('a search does not move a site’s cell', () => {
-    const everyCell = hexBins(model, filter(model)).map((b) => b.hex);
-    const searched = hexBins(model, filter(model, { species: ['Javelina'] })).map((b) => b.hex);
+    const everyCell = binsOf(model, filter(model)).map((b) => b.hex);
+    const searched = binsOf(model, filter(model, { species: ['Javelina'] })).map((b) => b.hex);
     expect(everyCell).toContain(searched[0]);
-    expect(searched[0]).toBe(model.sites[0].hex);
+    expect(searched[0]).toBe(hexOfSite(model, 0));
   });
 
   it('a single-site result centres on the cell, not the site', () => {
-    const [bin] = hexBins(model, filter(model, { species: ['Javelina'] }));
+    const [bin] = binsOf(model, filter(model, { species: ['Javelina'] }));
     expect(bin.center).not.toEqual(model.sites[0].position);
-    expect(bin.center).toEqual(hexBins(model, filter(model)).find((b) => b.hex === bin.hex)!.center);
+    expect(bin.center).toEqual(binsOf(model, filter(model)).find((b) => b.hex === bin.hex)!.center);
   });
 });

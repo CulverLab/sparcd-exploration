@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { canShowExactSites, checkNoLocation, displayPosition, hexCenter, hexRing, type Model } from '@/data';
+import { canShowExactSites, checkNoLocation, displayPosition, hexCenter, hexRing, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
@@ -11,9 +11,12 @@ import {
   hexStep,
   hexViews,
   hexesInBox,
+  selectedHexes,
   shortCount,
   siteRadius,
   siteViews,
+  sitesInHexes,
+  toggleHex,
   unplacedPhotos,
   type HexView,
   type SiteView,
@@ -31,6 +34,7 @@ const MAX_ZOOM = 16;
 const STEP_CLASSES = Array.from({ length: HEX_STEPS + 1 }, (_, i) => `s${i}`);
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const toggled = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+const cellIds = (cells: SiteHexes) => new Set(cells.cells.flatMap((id) => (id ? [id] : [])));
 const latLng = (p: { lat: number; lon: number }) => L.latLng(p.lat, p.lon);
 
 /** Where the map stood for a set of collections, so coming back keeps the user's pan and zoom. */
@@ -66,12 +70,12 @@ function siteTip(model: Model, s: SiteView, multi: boolean, unit: 'm' | 'ft'): s
 
 type HexLayer = { poly: L.Polygon; label: L.Marker; center: L.LatLng; ring: L.LatLng[] };
 
-/** Every located place's bounds: what the map fits on first open. */
-function placesBounds(model: Model, inView?: Set<string>): L.LatLngBounds | null {
+/** Every located place's bounds at the display precision: what the map fits on first open. */
+function placesBounds(cells: SiteHexes, inView?: Set<string>): L.LatLngBounds | null {
   const points: L.LatLng[] = [];
-  for (const id of new Set(model.sites.flatMap((s) => (s.hex ? [s.hex] : [])))) {
+  for (const id of cellIds(cells)) {
     if (inView && !inView.has(id)) continue;
-    points.push(...hexRing(model.grid, id).map(latLng));
+    points.push(...hexRing(cells.grid, id).map(latLng));
   }
   return points.length ? L.latLngBounds(points) : null;
 }
@@ -96,7 +100,9 @@ export function MapBand() {
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [clearAt, setClearAt] = useState<{ left: number; top: number } | null>(null);
 
-  const hexes = useMemo(() => hexViews(model, result, grouping.separate), [model, result, grouping.separate]);
+  // The grid follows the display precision: never more exact than the tables.
+  const cells = useMemo(() => siteHexes(model.sites, display.precision), [model, display.precision]);
+  const hexes = useMemo(() => hexViews(model, result, grouping.separate, cells), [model, result, grouping.separate, cells]);
   const sites = useMemo(
     () => (mode === 'sites' ? siteViews(model, result, display.precision) : []),
     [mode, model, result, display.precision],
@@ -166,7 +172,7 @@ export function MapBand() {
       return;
     }
     const inView = new Set(hexes.filter((h) => h.inView).map((h) => h.hex));
-    const bounds = placesBounds(model, inView) ?? placesBounds(model);
+    const bounds = placesBounds(cells, inView) ?? placesBounds(cells);
     if (bounds) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 13, animate: false });
     else map.setView([0, 0], 2, { animate: false });
     // Only the collections decide when to fit; a filter change keeps the view.
@@ -177,12 +183,11 @@ export function MapBand() {
     if (!map || mode !== 'hexes') return;
     const layers = hexLayers.current;
     const group = L.layerGroup().addTo(map);
-    for (const id of new Set(model.sites.flatMap((s) => (s.hex ? [s.hex] : [])))) {
-      const ring = hexRing(model.grid, id).slice(0, 6).map(latLng);
-      const center = latLng(hexCenter(model.grid, id));
+    for (const id of cellIds(cells)) {
+      const ring = hexRing(cells.grid, id).slice(0, 6).map(latLng);
+      const center = latLng(hexCenter(cells.grid, id));
       const poly = L.polygon(ring, { weight: 1 }).addTo(group);
-      const toggle = () =>
-        setFilters((f) => ({ ...f, area: { ...f.area, hexes: toggled(f.area.hexes, id) } }));
+      const toggle = () => setFilters((f) => ({ ...f, area: toggleHex(model, cells, f.area, id) }));
       poly.on('click', toggle);
       poly.bindTooltip('', { sticky: true, direction: 'top', className: 'maptip', opacity: 1 });
       const el = poly.getElement() as SVGPathElement;
@@ -217,18 +222,17 @@ export function MapBand() {
       group.remove();
       layers.clear();
     };
-  }, [map, model, mode, setFilters]);
+  }, [map, model, cells, mode, setFilters]);
 
-  const selectedHexes = filters.area.hexes;
+  const selected = useMemo(() => selectedHexes(model, cells, filters.area), [model, cells, filters.area]);
   const lit = useMemo(() => {
     if (!highlight) return null;
-    return { hexes: new Set(highlight.map((s) => model.sites[s].hex)), sites: new Set(highlight) };
-  }, [highlight, model]);
+    return { hexes: new Set(highlight.map((s) => cells.cells[s])), sites: new Set(highlight) };
+  }, [highlight, cells]);
 
   useEffect(() => {
     if (!map || mode !== 'hexes') return;
     const max = Math.max(1, ...hexes.map((h) => h.detections));
-    const selected = new Set(selectedHexes);
     for (const h of hexes) {
       const layer = hexLayers.current.get(h.hex);
       if (!layer) continue;
@@ -252,7 +256,7 @@ export function MapBand() {
         label.firstElementChild!.textContent = h.inView ? shortCount(h.detections) : '';
       }
     }
-  }, [map, mode, hexes, selectedHexes, lit, model, multi]);
+  }, [map, mode, hexes, selected, lit, model, multi]);
 
   // --- Sites (only where exact points are allowed) ------------------------------
   useEffect(() => {
@@ -296,15 +300,12 @@ export function MapBand() {
     () => (mode === 'sites' ? model.sites.flatMap((s, i) => (s.position && filters.locations.includes(s.key) ? [i] : [])) : []),
     [mode, model, filters.locations],
   );
-  const hasSelection = selectedHexes.length > 0 || filters.area.boxes.length > 0 || siteSelection.length > 0;
+  const hasSelection = selected.size > 0 || siteSelection.length > 0;
   useEffect(() => {
     if (!map || !hasSelection) return setClearAt(null);
     const place = () => {
       const points: L.Point[] = [];
-      for (const id of selectedHexes) for (const p of hexRing(model.grid, id)) points.push(map.latLngToContainerPoint(latLng(p)));
-      for (const b of filters.area.boxes) {
-        points.push(map.latLngToContainerPoint([b.north, b.east]), map.latLngToContainerPoint([b.south, b.west]));
-      }
+      for (const id of selected) for (const p of hexRing(cells.grid, id)) points.push(map.latLngToContainerPoint(latLng(p)));
       for (const i of siteSelection) {
         const c = map.latLngToContainerPoint(siteLayers.current.get(i)?.getLatLng() ?? latLng(model.sites[i].position!));
         points.push(c.subtract([14, 14]), c.add([14, 14]));
@@ -322,12 +323,12 @@ export function MapBand() {
     place();
     map.on('move zoom resize', place);
     return () => void map.off('move zoom resize', place);
-  }, [map, hasSelection, selectedHexes, filters.area.boxes, siteSelection, model]);
+  }, [map, hasSelection, selected, cells, siteSelection, model]);
 
   const clearSelection = () =>
     setFilters((f) => ({
       ...f,
-      area: { hexes: [], boxes: [] },
+      area: [],
       locations: mode === 'sites' ? f.locations.filter((k) => !model.sites.some((s) => s.key === k && s.position)) : f.locations,
     }));
 
@@ -359,8 +360,8 @@ export function MapBand() {
     const a = map.containerPointToLatLng([d.x0, d.y0]);
     const b = map.containerPointToLatLng([d.x1, d.y1]);
     const box = boxOf({ lat: a.lat, lon: a.lng }, { lat: b.lat, lon: b.lng });
-    const picked = hexesInBox(model.grid, hexes.map((h) => h.hex), box);
-    if (picked.length) setFilters((f) => ({ ...f, area: { ...f.area, hexes: [...new Set([...f.area.hexes, ...picked])] } }));
+    const picked = sitesInHexes(model, cells, hexesInBox(cells.grid, hexes.map((h) => h.hex), box));
+    if (picked.length) setFilters((f) => ({ ...f, area: [...new Set([...f.area, ...picked])] }));
   };
 
   const legendMax = Math.max(0, ...hexes.map((h) => h.detections));

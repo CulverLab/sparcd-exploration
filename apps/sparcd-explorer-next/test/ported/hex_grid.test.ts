@@ -1,8 +1,8 @@
 // Ported from apps/sparcd-explorer/tests/test_hex_grid.py.
 
 import { describe, expect, it } from 'vitest';
-import { hexBins, type Model } from '../../src/data';
-import { collection, deployment, filter, media, modelOf } from '../support/fixtures';
+import type { Model } from '../../src/data';
+import { binsOf, collection, deployment, filter, media, modelOf } from '../support/fixtures';
 
 function fixture({ alpha = [11.5, -100.03], delta = [12.2, -100.8], extraCharlieUploads = 0 } = {}) {
   const c = collection();
@@ -22,14 +22,14 @@ function fixture({ alpha = [11.5, -100.03], delta = [12.2, -100.8], extraCharlie
 
 function hexIds(model: Model, locations: string[] = []): Record<string, string> {
   return Object.fromEntries(
-    hexBins(model, filter(model, { locations })).flatMap((b) => b.locationNames.map((name) => [name, b.hex])),
+    binsOf(model, filter(model, { locations })).flatMap((b) => b.locationNames.map((name) => [name, b.hex])),
   );
 }
 
 describe('test_hex_grid', () => {
   it('a search does not move a site’s hex', () => {
     const model = fixture();
-    const alphaOnly = hexBins(model, filter(model, { locations: ['id:AAA01'] }));
+    const alphaOnly = binsOf(model, filter(model, { locations: ['id:AAA01'] }));
     expect(alphaOnly).toHaveLength(1);
     expect(alphaOnly[0].hex).toBe(hexIds(model).Alpha);
   });
@@ -40,7 +40,7 @@ describe('test_hex_grid', () => {
       [11.5, -100.0305],
     ].map((alpha) => {
       const model = fixture({ alpha });
-      const [bin] = hexBins(model, filter(model, { locations: ['id:AAA01'] }));
+      const [bin] = binsOf(model, filter(model, { locations: ['id:AAA01'] }));
       return [bin.hex, bin.center.lat.toFixed(9), bin.center.lon.toFixed(9)];
     });
     // Moving the only site a little within its hex leaves the map centre where it was.

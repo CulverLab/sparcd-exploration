@@ -2,7 +2,7 @@
 // on the page agrees for the same filters.
 
 import type { FilterResult } from './filters';
-import { hexCenter } from './hex';
+import { hexCenter, type SiteHexes } from './hex';
 import { locationKeyOf, type Model } from './model';
 import type { Position } from './coords';
 import { formatTimestamp24 } from './time';
@@ -27,6 +27,7 @@ function effortDays(model: Model, result: FilterResult, { separate }: Grouping):
 }
 
 export type Summary = {
+  /** Locations with camera effort in view, as the Locations table lists them. */
   locations: number;
   photos: number;
   tagged: number;
@@ -47,9 +48,9 @@ export function summarize(model: Model, result: FilterResult, grouping: Grouping
   let tagged = 0;
   let firstDate: string | null = null;
   let lastDate: string | null = null;
+  for (const i of result.effort) locations.add(locationKeyOf(model.sites[model.photos[i].site], grouping.separate));
   for (const i of result.photos) {
     const p = model.photos[i];
-    locations.add(locationKeyOf(model.sites[p.site], grouping.separate));
     byCollection[p.collection].photos++;
     if (p.tagged) {
       tagged++;
@@ -333,16 +334,17 @@ export type HexBin = {
 };
 
 /** Photos in view per hex cell. Sites without a position (and no-location photos) have no cell. */
-export function hexBins(model: Model, result: FilterResult): HexBin[] {
+export function hexBins(model: Model, result: FilterResult, hexes: SiteHexes): HexBin[] {
   const bins = new Map<string, HexBin & { speciesSet: Set<number> }>();
   const binOf = (site: number) => {
     const s = model.sites[site];
-    if (!s.hex) return null;
-    let bin = bins.get(s.hex);
+    const hex = hexes.cells[site];
+    if (!hex) return null;
+    let bin = bins.get(hex);
     if (!bin) {
       bin = {
-        hex: s.hex,
-        center: hexCenter(model.grid, s.hex),
+        hex,
+        center: hexCenter(hexes.grid, hex),
         sites: [],
         locationIds: [],
         locationNames: [],
@@ -351,7 +353,7 @@ export function hexBins(model: Model, result: FilterResult): HexBin[] {
         richness: 0,
         speciesSet: new Set(),
       };
-      bins.set(s.hex, bin);
+      bins.set(hex, bin);
     }
     if (!bin.sites.includes(site)) {
       bin.sites.push(site);

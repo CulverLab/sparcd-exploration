@@ -188,6 +188,10 @@ When('I show only untagged photos', async ({ page }) => {
   await page.getByRole('group', { name: 'Tagged' }).getByRole('button', { name: 'Untagged' }).click();
 });
 
+When('I choose {string} in the Photos switch', async ({ page }, which: string) => {
+  await page.getByRole('group', { name: 'Tagged' }).getByRole('button', { name: which, exact: true }).click();
+});
+
 Then('every row reads {string}', async ({ page }, text: string) => {
   for (const value of await columnValues(page, 'Species')) expect(value).toBe(text);
 });

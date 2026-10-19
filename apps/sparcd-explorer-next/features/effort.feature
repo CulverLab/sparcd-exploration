@@ -1,7 +1,8 @@
 Feature: Camera effort
 
   Photos per month across everything opened, under every filter but Dates,
-  so the time context stays in sight while dates are picked.
+  so the time context stays in sight while dates are picked. A species
+  filter doesn't change the effort; its photos are drawn inside the bars.
 
   Background:
     Given I have opened "Alpha Basin"
@@ -35,10 +36,31 @@ Feature: Camera effort
 
   Scenario: The strip follows every filter but Dates
     Then the strip shows 6 months with photos
+    And the strip draws nothing inside its bars
     When I pick the year 2024 in the dates filter
     Then the strip shows 6 months with photos
-    When I filter species to "Bobcat"
+    When I click the hex holding "AB02"
     Then the strip shows 3 months with photos
+
+  Scenario: Under a species filter the bars stay camera effort, with the species inside
+    When I filter species to "Bobcat"
+    Then the strip shows 6 months with photos
+    And the strip draws "Bobcat" inside 3 months
+    When I also pick "Deer (Mule)" in the species filter
+    Then the strip draws "Bobcat +1" inside 4 months
+
+  Scenario: In Photos, the Tagged switch's photos sit inside the bars
+    When I show the Photos table
+    And I choose "Tagged" in the Photos switch
+    Then the strip shows 6 months with photos
+    And the strip draws "Tagged" inside 5 months
+    When I show the Locations table
+    Then the strip draws nothing inside its bars
+
+  Scenario: Each location's activity keeps its effort, with the species inside
+    When I filter species to "Coyote"
+    Then the Activity of "AB01" shows 2 months with nothing inside
+    And the Activity of "AB02" draws "Coyote" inside 1 month
 
   Scenario: Each location's activity sits on the same months, with a note per cell
     When I point at the Activity of "AB02"

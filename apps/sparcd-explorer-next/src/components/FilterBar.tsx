@@ -60,13 +60,13 @@ function FilterButtonView({ button }: { button: FilterButton }) {
 
 /** One line, always: each filter shows its own state, then the count and Reset. */
 export function FilterBar() {
-  const { model, filters, result, active } = useView();
+  const { model, filters, result, active, grouping } = useView();
   const unit = useStore((s) => s.display.elevation);
   const reset = useStore((s) => s.resetFilters);
   return (
     <div className="filterbar">
       <div className="fbtns" role="group" aria-label="Filters">
-        {filterButtons(model, filters, unit).map((b) => (
+        {filterButtons(model, filters, unit, grouping.separate).map((b) => (
           <FilterButtonView key={b.dim} button={b} />
         ))}
       </div>

@@ -9,9 +9,6 @@
 import { dayNumber } from './time';
 import type { Model, Photo, Site } from './model';
 
-/** A map rectangle in degrees. */
-export type Box = { south: number; west: number; north: number; east: number };
-
 export type PhotoTag = 'all' | 'tagged' | 'untagged';
 
 export type FilterState = {
@@ -22,7 +19,11 @@ export type FilterState = {
   speciesMode: 'only' | 'hide';
   /** Location keys (grouped or separate) or site keys; a photo matching either passes. */
   locations: string[];
-  area: { hexes: string[]; boxes: Box[] };
+  /**
+   * Site keys the map's hex clicks and rectangles took in. Kept as sites, not
+   * cells, so it survives a grid change when the display precision changes.
+   */
+  area: string[];
   /** Inclusive camera-local dates, `YYYY-MM-DD`. */
   dateFrom: string | null;
   dateTo: string | null;
@@ -42,7 +43,7 @@ export const NO_FILTERS: FilterState = {
   species: [],
   speciesMode: 'only',
   locations: [],
-  area: { hexes: [], boxes: [] },
+  area: [],
   dateFrom: null,
   dateTo: null,
   years: [],
@@ -65,7 +66,7 @@ export function clearFilter(state: FilterState, dimension: FilterDimension): Fil
     case 'locations':
       return { ...state, locations: [] };
     case 'area':
-      return { ...state, area: NO_FILTERS.area };
+      return { ...state, area: [] };
     case 'dates':
       return { ...state, dateFrom: null, dateTo: null, years: [], months: [], hours: null };
     case 'elevation':
@@ -80,7 +81,7 @@ export function activeFilters(state: FilterState): FilterDimension[] {
   if (state.collections.length) active.push('collections');
   if (state.species.length) active.push('species');
   if (state.locations.length) active.push('locations');
-  if (state.area.hexes.length || state.area.boxes.length) active.push('area');
+  if (state.area.length) active.push('area');
   if (state.dateFrom || state.dateTo || state.years.length || state.months.length || state.hours) active.push('dates');
   if (state.elevation) active.push('elevation');
   if (state.ranges.length) active.push('ranges');
@@ -97,9 +98,8 @@ export function resetFilters(state: FilterState): { state: FilterState; undo: Fi
 /**
  * The filters that still apply once the open collections change. Species,
  * dates, elevation, mountain ranges and the tagged switch carry over while
- * the new model has their values; locations and collections no longer open
- * drop, and so does a map area, whose cells belong to the old grid.
- * `dropped` says whether anything was let go.
+ * the new model has their values; locations, map-area sites and collections
+ * no longer open drop. `dropped` says whether anything was let go.
  */
 export function carryFilters(model: Model, state: FilterState): { state: FilterState; dropped: boolean } {
   const has = <T,>(values: Iterable<T>) => {
@@ -108,6 +108,7 @@ export function carryFilters(model: Model, state: FilterState): { state: FilterS
   };
   const openCollection = has(model.collections.map((c) => c.key));
   const location = has(model.sites.flatMap((s) => [s.key, s.groupKey]));
+  const area = state.area.filter(has(model.sites.map((s) => s.key)));
   const species = state.species.filter(has(model.species.map((s) => s.key)));
   const ranges = state.ranges.filter(has(model.sites.map((s) => s.range)));
   const collections = state.collections.filter(openCollection);
@@ -117,7 +118,7 @@ export function carryFilters(model: Model, state: FilterState): { state: FilterS
     locations.length < state.locations.length ||
     species.length < state.species.length ||
     ranges.length < state.ranges.length ||
-    activeFilters(state).includes('area');
+    area.length < state.area.length;
   return {
     state: {
       ...state,
@@ -127,7 +128,7 @@ export function carryFilters(model: Model, state: FilterState): { state: FilterS
       species,
       speciesMode: species.length ? state.speciesMode : 'only',
       ranges,
-      area: NO_FILTERS.area,
+      area,
     },
     dropped,
   };
@@ -147,20 +148,13 @@ export type FilterResult = {
 function sitePasses(model: Model, state: FilterState): (site: Site) => boolean {
   const collections = model.collections.length > 1 && state.collections.length ? new Set(state.collections) : null;
   const locations = state.locations.length ? new Set(state.locations) : null;
-  const hexes = new Set(state.area.hexes);
-  const { boxes } = state.area;
-  const area = hexes.size > 0 || boxes.length > 0;
+  const area = state.area.length ? new Set(state.area) : null;
   const ranges = state.ranges.length ? new Set(state.ranges) : null;
   const { elevation } = state;
   return (site) => {
     if (collections && !collections.has(model.collections[site.collection].key)) return false;
     if (locations && !locations.has(site.key) && !locations.has(site.groupKey)) return false;
-    if (area) {
-      const pos = site.position;
-      if (!pos) return false;
-      const inBox = boxes.some((b) => pos.lat >= b.south && pos.lat <= b.north && pos.lon >= b.west && pos.lon <= b.east);
-      if (!inBox && !hexes.has(site.hex!)) return false;
-    }
+    if (area && !area.has(site.key)) return false;
     if (elevation && (site.elevation === null || site.elevation < elevation[0] || site.elevation > elevation[1])) {
       return false;
     }

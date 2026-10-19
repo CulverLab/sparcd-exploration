@@ -1,7 +1,8 @@
 Feature: The map
 
-  Hexes show how many detections are in view. A click on a hex adds it to
-  the Area filter, and "Select area" takes in every hex inside a rectangle.
+  Hexes show how many detections are in view. A click on a hex adds its
+  locations to the Area filter, and "Select area" takes in every hex inside a
+  rectangle. The map is never more exact than the Display precision.
 
   Background:
     Given I have opened "Alpha Basin"
@@ -15,7 +16,7 @@ Feature: The map
 
   Scenario: A click on a hex filters to it, and a second click lets it go
     When I click the hex holding "AB02"
-    Then the area filter reads "Area: 1 hex"
+    Then the area filter reads "Area: 3 locations"
     And the hex holding "AB02" is outlined as selected
     And the photo count reads "5 of 11 photos"
     When I click the hex holding "AB02"
@@ -27,7 +28,7 @@ Feature: The map
     And I press "× Clear" on the map
     Then the filter bar has no "Area" filter
     When I click the hex holding "AB01"
-    Then the area filter reads "Area: 1 hex"
+    Then the area filter reads "Area: 1 location"
     When I clear the Area filter with its ×
     Then the filter bar has no "Area" filter
     And the map has no "× Clear"
@@ -37,7 +38,7 @@ Feature: The map
     Then "Select area" is switched on
     When I drag a rectangle over the middle of the hex holding "AB02"
     Then "Select area" is switched off
-    And the area filter reads "Area: 1 hex"
+    And the area filter reads "Area: 3 locations"
     And the photo count reads "5 of 11 photos"
 
   Scenario: Esc or a second press cancels Select area
@@ -48,6 +49,20 @@ Feature: The map
     And I press "Select area"
     Then "Select area" is switched off
     And the filter bar has no "Area" filter
+
+  @US-001
+  Scenario: A coarser Display precision makes the hexes coarser, and the area stays
+    When I click the hex holding "AB02"
+    Then the map shows 2 hexes
+    When I set the precision to 0 decimals
+    Then the map shows 1 hex
+    And the hex holding "AB02" is outlined as selected
+    And the area filter reads "Area: 3 locations"
+    And the photo count reads "5 of 11 photos"
+    When I set the precision to 3 decimals
+    Then the map shows 2 hexes
+    And the hex holding "AB02" is outlined as selected
+    And the hex holding "AB01" is not outlined as selected
 
   @US-001
   Scenario: Exact sites are not offered on this server

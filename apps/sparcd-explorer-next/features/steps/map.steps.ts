@@ -48,6 +48,16 @@ Then('the hex holding {string} is outlined as selected', async ({ page }, id: st
   await expect(hex).toHaveAttribute('aria-pressed', 'true');
 });
 
+Then('the hex holding {string} is not outlined as selected', async ({ page }, id: string) => {
+  const hex = await hexOf(page, id);
+  await expect(hex).not.toHaveClass(/\bsel\b/);
+  await expect(hex).toHaveAttribute('aria-pressed', 'false');
+});
+
+Then(/^the map shows (\d+) hex(?:es)?$/, async ({ page }, n: string) => {
+  await expect(page.locator('path.hx')).toHaveCount(Number(n));
+});
+
 When('I press "× Clear" on the map', async ({ page }) => {
   await mapClear(page).click();
 });
@@ -172,6 +182,32 @@ When('I press the {string} key on the strip', async ({ page }, key: string) => {
 
 Then('the strip shows {int} months with photos', async ({ page }, n: number) => {
   await expect(strip(page).locator('g[data-month]')).toHaveCount(n);
+});
+
+const legend = (page: Page) => page.getByRole('region', { name: 'Camera effort' }).locator('.tl-legend');
+
+Then('the strip draws nothing inside its bars', async ({ page }) => {
+  await expect(strip(page).locator('rect.match')).toHaveCount(0);
+  await expect(legend(page).locator('.sw.match')).toHaveCount(0);
+});
+
+Then('the strip draws {string} inside {int} months', async ({ page }, name: string, n: number) => {
+  await expect(legend(page).locator('span', { has: page.locator('.sw.match') })).toHaveText(name);
+  await expect(strip(page).locator('rect.match')).toHaveCount(n);
+});
+
+const activityOf = (page: Page, id: string) =>
+  tableRows(page).filter({ has: page.locator('td', { hasText: new RegExp(`^${id}$`) }) }).locator('.spark');
+
+Then('the Activity of {string} shows {int} months with nothing inside', async ({ page }, id: string, n: number) => {
+  await expect(activityOf(page, id).locator('g[data-match]')).toHaveCount(n);
+  await expect(activityOf(page, id).locator('rect.match')).toHaveCount(0);
+});
+
+Then(/^the Activity of "([^"]+)" draws "([^"]+)" inside (\d+) months?$/, async ({ page }, id: string, name: string, n: string) => {
+  await expect(activityOf(page, id).locator('rect.match')).toHaveCount(Number(n));
+  await activityOf(page, id).hover();
+  await expect(page.getByRole('tooltip')).toContainText(`${name}:`);
 });
 
 When('I point at the Activity of {string}', async ({ page }, id: string) => {

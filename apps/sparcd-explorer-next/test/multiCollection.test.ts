@@ -10,7 +10,7 @@ import {
   type Source,
 } from '../src/data';
 import { FakeS3, putUpload } from './support/fakeS3';
-import { collection, collectionRef, deployment, filter, media, modelOf, observation } from './support/fixtures';
+import { cellsOf, collection, collectionRef, deployment, filter, media, modelOf, observation } from './support/fixtures';
 
 const A = collection('Alpha set', 'aaa').upload('u1', {
   deployments: [deployment('SR07', 'Spring', 12.5, -100.25)],
@@ -66,7 +66,8 @@ describe('several collections open together', () => {
   });
 
   it('share one hex grid', () => {
-    expect(model.sites.filter((s) => s.name === 'Spring').map((s) => s.hex)).toEqual([model.sites[0].hex, model.sites[0].hex]);
+    const { cells } = cellsOf(model);
+    expect(model.sites.flatMap((s, i) => (s.name === 'Spring' ? [cells[i]] : []))).toEqual([cells[0], cells[0]]);
   });
 
   it('give the same model for the same collections in any open', () => {

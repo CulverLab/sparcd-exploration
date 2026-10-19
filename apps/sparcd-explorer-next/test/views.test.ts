@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hexBins, locationRows, photoRows, speciesRows, summarize } from '../src/data';
-import { collection, deployment, filter, media, modelOf, observation } from './support/fixtures';
+import { locationRows, photoRows, speciesRows, summarize } from '../src/data';
+import { binsOf, collection, deployment, filter, media, modelOf, observation } from './support/fixtures';
 
 const grouped = { separate: false };
 const separate = { separate: true };
@@ -46,6 +46,26 @@ describe('summarize', () => {
 
   it('counts locations by the grouping in force', () => {
     expect(summarize(model, result, separate).locations).toBe(2);
+  });
+
+  it('counts the locations the Locations table lists, even where the species filter finds nothing', () => {
+    const two = modelOf(
+      collection()
+        .upload('u1', {
+          deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+          media: [media('u1', 'a.jpg', 'AA01', '2024-01-01T10:00:00')],
+          observations: [observation('u1', 'a.jpg', 'AA01', '', { common: 'Bobcat', scientific: 'Lynx rufus' })],
+        })
+        .upload('u2', {
+          deployments: [deployment('BB01', 'Bravo', 13.5, -101.5)],
+          media: [media('u2', 'b.jpg', 'BB01', '2024-01-02T10:00:00')],
+          observations: [observation('u2', 'b.jpg', 'BB01', '', { common: 'Deer', scientific: 'Odocoileus hemionus' })],
+        }),
+    );
+    const bobcats = filter(two, { species: ['Lynx rufus'] });
+    const summary = summarize(two, bobcats, grouped);
+    expect(summary).toMatchObject({ locations: 2, photos: 1, activeDays: 2 });
+    expect(locationRows(two, bobcats, grouped)).toHaveLength(summary.locations);
   });
 });
 
@@ -164,7 +184,7 @@ describe('photoRows', () => {
 
 describe('hexBins', () => {
   it('bins sites by cell with photo counts and species richness', () => {
-    const bins = hexBins(model, result);
+    const bins = binsOf(model, result);
     expect(bins.map((b) => [b.locationNames, b.photos, b.tagged, b.richness])).toEqual([
       [['Spring'], 2, 1, 2],
       [['Spring new'], 1, 1, 1],

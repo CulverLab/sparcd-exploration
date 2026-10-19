@@ -79,16 +79,12 @@ describe('applyFilters, one dimension at a time', () => {
     expect(files({ locations: ['none'] })).toEqual(['n1.jpg']);
   });
 
-  it('area, by hex or by box; photos with no position are outside every area', () => {
-    const alpha = model.sites[siteNamed(model, 'Alpha')];
-    expect(files({ area: { hexes: [alpha.hex!], boxes: [] } })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg']);
-    expect(files({ area: { hexes: [], boxes: [{ south: 13, west: -102, north: 14, east: -101 }] } })).toEqual(['c1.jpg']);
-    expect(files({ area: { hexes: [alpha.hex!], boxes: [{ south: 13, west: -102, north: 14, east: -101 }] } })).toEqual([
-      'a1.jpg',
-      'a2.jpg',
-      'a3.jpg',
-      'c1.jpg',
-    ]);
+  it('area, by the sites the map took in; photos with no position are outside every area', () => {
+    const alpha = model.sites[siteNamed(model, 'Alpha')].key;
+    const charlie = model.sites.find((s) => s.locationId === 'CD01')!.key;
+    expect(files({ area: [alpha] })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg']);
+    expect(files({ area: [charlie] })).toEqual(['c1.jpg']);
+    expect(files({ area: [alpha, charlie] })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'c1.jpg']);
   });
 
   it('date range, inclusive, on the camera-local date; undated photos are outside it', () => {
@@ -155,7 +151,7 @@ describe('reset and undo', () => {
     species: ['Lynx rufus'],
     speciesMode: 'hide',
     years: [2024],
-    area: { hexes: ['1:2'], boxes: [] },
+    area: ['sparcd-aaa::aaa|AA01|Alpha|12.5,-100.25'],
     photoTag: 'untagged',
   };
 
@@ -184,7 +180,7 @@ describe('each filter button', () => {
     species: ['Lynx rufus'],
     speciesMode: 'hide',
     locations: ['id:AA01'],
-    area: { hexes: ['1:2'], boxes: [{ south: 0, west: 0, north: 1, east: 1 }] },
+    area: ['sparcd-aaa::aaa|AA01|Alpha|12.5,-100.25'],
     dateFrom: '2024-01-01',
     dateTo: '2024-12-31',
     years: [2024],
@@ -218,7 +214,7 @@ describe('carrying filters to another set of collections', () => {
     collections: [both.collections[0].key],
     species: ['Lynx rufus', 'Strigiformes'],
     locations: ['id:AA01'],
-    area: { hexes: ['3:4'], boxes: [] },
+    area: [both.sites[0].key],
     dateFrom: '2024-01-01',
     elevation: [0, 3000],
     ranges: ['AA0'],
@@ -233,13 +229,13 @@ describe('carrying filters to another set of collections', () => {
       collections: [],
       species: [],
       locations: [],
-      area: NO_FILTERS.area,
+      area: [],
       ranges: [],
     });
   });
 
   it('drops nothing when every value is still there', () => {
-    const kept = { ...state, area: NO_FILTERS.area, species: ['Lynx rufus'] };
+    const kept = { ...state, species: ['Lynx rufus'] };
     expect(carryFilters(both, kept)).toEqual({ state: kept, dropped: false });
   });
 });

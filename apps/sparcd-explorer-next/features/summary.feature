@@ -22,6 +22,11 @@ Feature: In view
     When I press "Bobcat" in the top species
     Then the species filter reads "Species"
 
+  Scenario: In view counts the locations the Locations table lists, whatever species is picked
+    When I filter species to "Coyote"
+    Then "In view" reads "Locations" "5 of 5"
+    And the Locations table still lists every location with photos
+
   Scenario: The top species work from the keyboard
     When I move to "Coyote" in the top species and press Enter
     Then the species filter reads "Species: Coyote"

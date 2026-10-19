@@ -60,7 +60,6 @@ export {
   isFiltered,
   photosForTag,
   resetFilters,
-  type Box,
   type FilterDimension,
   type FilterResult,
   type FilterState,
@@ -109,6 +108,6 @@ export {
   type Precision,
   type Utm,
 } from './coords';
-export { HEX_SIZE_DEG, hexCenter, hexGrid, hexOf, hexRing, type HexGrid } from './hex';
+export { HEX_SIZE_DEG, hexCenter, hexGrid, hexOf, hexRing, hexSizeFor, siteHexes, type HexGrid, type SiteHexes } from './hex';
 export { isNoLocation, mountainRange, normalizeLocationId } from './locationIds';
 export { dayNumber, formatTimestamp24, parseLocalTimestamp, type LocalTime } from './time';

@@ -53,21 +53,40 @@ describe('the shared month axis', () => {
 
 describe('photos per month', () => {
   it('counts photos and untagged photos by camera-local month, leaving undated ones out', () => {
-    expect([...countByMonth(model, filter(model).photos)]).toEqual([
-      [NOV_2023, [2, 1]],
-      [NOV_2023 + 2, [1, 1]],
-      [NOV_2023 + 15, [1, 0]],
+    expect([...countByMonth(model, filter(model).effort)]).toEqual([
+      [NOV_2023, [2, 1, 0]],
+      [NOV_2023 + 2, [1, 1, 0]],
+      [NOV_2023 + 15, [1, 0, 0]],
+    ]);
+  });
+
+  it('keeps camera effort as the bars under a species filter, and counts the matching photos inside them', () => {
+    const bobcats = filter(model, { species: ['Lynx rufus'] });
+    expect([...countByMonth(model, bobcats.effort, bobcats.photos)]).toEqual([
+      [NOV_2023, [2, 1, 1]],
+      [NOV_2023 + 2, [1, 1, 0]],
+      [NOV_2023 + 15, [1, 0, 0]],
     ]);
   });
 
   it('per location for the Activity column, on the same axis', () => {
-    const { byKey, max } = activityByLocation(model, filter(model).photos, false);
+    const { byKey, max } = activityByLocation(model, filter(model).effort, false);
     expect([...byKey.get('id:AA01')!]).toEqual([
-      [NOV_2023, [2, 1]],
-      [NOV_2023 + 2, [1, 1]],
+      [NOV_2023, [2, 1, 0]],
+      [NOV_2023 + 2, [1, 1, 0]],
     ]);
-    expect([...byKey.get('id:BB01')!]).toEqual([[NOV_2023 + 15, [1, 0]]]);
+    expect([...byKey.get('id:BB01')!]).toEqual([[NOV_2023 + 15, [1, 0, 0]]]);
     expect(max).toBe(2);
+  });
+
+  it('per location under a species filter: every location keeps its effort, the matches sit inside', () => {
+    const deer = filter(model, { species: ['Odocoileus hemionus'] });
+    const { byKey } = activityByLocation(model, deer.effort, false, deer.photos);
+    expect([...byKey.get('id:AA01')!]).toEqual([
+      [NOV_2023, [2, 1, 0]],
+      [NOV_2023 + 2, [1, 1, 0]],
+    ]);
+    expect([...byKey.get('id:BB01')!]).toEqual([[NOV_2023 + 15, [1, 0, 1]]]);
   });
 
   it('shades busier months darker, from a quarter to full', () => {

@@ -7,12 +7,17 @@ import {
   NO_FILTERS,
   applyFilters,
   buildModel,
+  hexBins,
+  siteHexes,
+  type FilterResult,
   type FilterState,
   type LoadedCollection,
   type LoadedUpload,
   type Model,
+  type Precision,
   type Species,
 } from '../../src/data';
+import { sitesInHexes } from '../../src/lib/mapData';
 
 export function collectionRef(name = 'Test', uuid = 'test'): CollectionRef {
   return { key: `sparcd-${uuid}::${uuid}`, bucket: `sparcd-${uuid}`, uuid, name, organization: null, contact: null, description: null };
@@ -116,6 +121,14 @@ export function filter(model: Model, state: Partial<FilterState> = {}) {
 export const fileNames = (model: Model, photos: number[]) => photos.map((i) => model.photos[i].fileName).sort();
 
 export const siteNamed = (model: Model, name: string) => model.sites.findIndex((s) => s.name === name);
+
+export const EXACT: Precision = { method: 'round', digits: null };
+/** Every site's cell, at full precision unless another is given. */
+export const cellsOf = (model: Model, precision: Precision = EXACT) => siteHexes(model.sites, precision);
+export const hexOfSite = (model: Model, site: number) => cellsOf(model).cells[site]!;
+/** The Area filter a click on one cell sets. */
+export const areaOfHex = (model: Model, hex: string) => sitesInHexes(model, cellsOf(model), [hex]);
+export const binsOf = (model: Model, result: FilterResult) => hexBins(model, result, cellsOf(model));
 
 export function species(commonName: string, scientificName: string): Species {
   return { key: scientificName, commonName, scientificName, iconUrl: '', keyBinding: null };

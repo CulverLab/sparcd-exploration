@@ -5,8 +5,8 @@
 import type { Model } from '@/data';
 
 export type MonthAxis = { first: number; count: number };
-/** Per month: [photos, untagged photos]. */
-export type MonthCounts = Map<number, [number, number]>;
+/** Per month: [photos, untagged photos, matching photos]. */
+export type MonthCounts = Map<number, [number, number, number]>;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -25,16 +25,29 @@ export function monthAxis(model: Model): MonthAxis | null {
   return { first, count: monthIndex(model.dateSpan.last) - first + 1 };
 }
 
-export function countByMonth(model: Model, photos: number[]): MonthCounts {
+const monthOf = (model: Model, i: number): number | null => {
+  const p = model.photos[i];
+  return p.year === null ? null : p.year * 12 + p.month! - 1;
+};
+
+/**
+ * Camera effort per month: the `effort` photos, tagged and untagged, and how
+ * many of them are in `match` (the photos a species filter or the tag switch
+ * keeps, a subset of `effort`).
+ */
+export function countByMonth(model: Model, effort: number[], match: number[] = []): MonthCounts {
   const counts: MonthCounts = new Map();
-  for (const i of photos) {
-    const p = model.photos[i];
-    if (p.year === null) continue;
-    const m = p.year * 12 + p.month! - 1;
-    const c = counts.get(m) ?? [0, 0];
+  for (const i of effort) {
+    const m = monthOf(model, i);
+    if (m === null) continue;
+    const c = counts.get(m) ?? [0, 0, 0];
     c[0]++;
-    if (!p.tagged) c[1]++;
+    if (!model.photos[i].tagged) c[1]++;
     counts.set(m, c);
+  }
+  for (const i of match) {
+    const m = monthOf(model, i);
+    if (m !== null) counts.get(m)![2]++;
   }
   return counts;
 }
@@ -66,3 +79,7 @@ export function yearTicks(axis: MonthAxis): { month: number; year: number; at: n
 
 /** How dark a month's bar is, from 0.25 for the quietest to 1 for the busiest. */
 export const monthShade = (photos: number, max: number): number => 0.25 + 0.75 * Math.sqrt(photos / Math.max(1, max));
+
+/** A month bar's fill: busier months darker, and every one lighter while inner bars sit on top. */
+export const barFill = (photos: number, max: number, behind: boolean): string =>
+  `color-mix(in srgb, var(--accent) ${Math.round(monthShade(photos, max) * (behind ? 40 : 100))}%, var(--accentSoft))`;
