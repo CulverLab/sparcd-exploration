@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import { NO_FILTERS, type FilterState } from '../../src/data';
+import { filterButtons, locationLabel, photoCountLabel } from '../../src/lib/filterLabels';
+import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
+
+const alpha = collection('Alpha', 'aaa').upload('u1', {
+  deployments: [deployment('AA01', 'Spring', 12.5, -100.25, 1000)],
+  media: [media('u1', 'a.jpg', 'AA01', '2023-01-01T10:00:00')],
+  observations: [
+    observation('u1', 'a.jpg', 'AA01', '', { common: 'Bobcat', scientific: 'Lynx rufus' }),
+    observation('u1', 'a.jpg', 'AA01', '', { common: 'Coyote', scientific: 'Canis latrans' }),
+  ],
+});
+const bravo = collection('Bravo', 'bbb').upload('u1', {
+  deployments: [deployment('0000', '', null, null)],
+  media: [media('u1', 'b.jpg', '0000', '2024-01-01T10:00:00')],
+});
+const single = modelOf(alpha);
+const both = modelOf([alpha, bravo]);
+
+const labels = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') =>
+  filterButtons(model, { ...NO_FILTERS, ...f }, unit).map((b) => b.label);
+
+describe('filter button labels', () => {
+  it('read the filter names while nothing is filtered', () => {
+    expect(labels({})).toEqual(['Species', 'Locations', 'Dates', 'Elevation', 'Mountain range']);
+    expect(filterButtons(single, NO_FILTERS, 'm').every((b) => !b.active)).toBe(true);
+  });
+
+  it('show Collections only with several collections open, and Area only while one is selected', () => {
+    expect(labels({}, both)[0]).toBe('Collections');
+    expect(labels({ collections: ['sparcd-bbb::bbb'] }, both)[0]).toBe('Collections: Bravo');
+    expect(labels({ area: { hexes: ['1,2', '3,4'], boxes: [] } })).toContain('Area: 2 hexes');
+  });
+
+  it('name the first value and count the rest', () => {
+    expect(labels({ species: ['Lynx rufus'] })[0]).toBe('Species: Bobcat');
+    expect(labels({ species: ['Lynx rufus', 'Canis latrans'] })[0]).toBe('Species: Bobcat +1');
+    expect(labels({ species: ['Lynx rufus'], speciesMode: 'hide' })[0]).toBe('Hiding: Bobcat');
+    expect(labels({ locations: ['id:AA01', 'none'] })[1]).toBe('Locations: AA01 +1');
+    expect(labels({ ranges: ['BBB', 'AAA'] })[4]).toBe('Mountain range: AAA +1');
+  });
+
+  it('say "No location set" for the no-location key', () => {
+    expect(locationLabel(both, 'none')).toBe('No location set');
+    expect(locationLabel(both, both.sites[0].key)).toBe('AA01');
+  });
+
+  it('show date ranges by month when they cover whole months', () => {
+    expect(labels({ dateFrom: '2023-09-01', dateTo: '2025-09-30' })[2]).toBe('Dates: Sep 2023 – Sep 2025');
+    expect(labels({ dateFrom: '2023-09-01', dateTo: '2023-09-30' })[2]).toBe('Dates: Sep 2023');
+    expect(labels({ dateFrom: '2023-09-01' })[2]).toBe('Dates: from Sep 2023');
+    expect(labels({ dateTo: '2024-02-29' })[2]).toBe('Dates: until Feb 2024');
+    expect(labels({ dateFrom: '2023-09-14', dateTo: '2023-10-01' })[2]).toBe('Dates: 2023-09-14 – 2023-10-01');
+  });
+
+  it('show years, then how many more date filters there are', () => {
+    expect(labels({ years: [2024, 2023] })[2]).toBe('Dates: 2023, 2024');
+    expect(labels({ years: [2022, 2023, 2024] })[2]).toBe('Dates: 3 years');
+    expect(labels({ dateFrom: '2023-09-01', years: [2024] })[2]).toBe('Dates: from Sep 2023 +1');
+    expect(labels({ hours: [22, 4] })[2]).toBe('Dates: hours 22:00–04:59');
+  });
+
+  it('show elevation in the chosen unit', () => {
+    expect(labels({ elevation: [1000, 2000] })[3]).toBe('Elevation: 1,000–2,000 m');
+    expect(labels({ elevation: [1000, 2000] }, single, 'ft')[3]).toBe('Elevation: 3,281–6,562 ft');
+  });
+});
+
+describe('photo count', () => {
+  it('reads the total, or what is in view of the total', () => {
+    expect(photoCountLabel(7235, 7235, false)).toBe('7,235 photos');
+    expect(photoCountLabel(2104, 7235, true)).toBe('2,104 of 7,235 photos');
+    expect(photoCountLabel(1, 1, false)).toBe('1 photo');
+  });
+});
