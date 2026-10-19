@@ -15,6 +15,9 @@ export default defineConfig({
   base: '/sparcd-exploration/explorer-next/',
   server: { port: 5314 },
   plugins: [react()],
+  // Deps first imported after the initial page load (thumbnail workers, the
+  // map) make a cold Vite cache re-optimize and reload the page mid-run.
+  optimizeDeps: { include: ['exifr', 'leaflet'] },
   resolve: {
     alias: {
       '@sparcd/types': pkg('types', 'index.ts'),

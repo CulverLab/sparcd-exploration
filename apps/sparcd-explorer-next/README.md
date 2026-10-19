@@ -6,8 +6,10 @@ second look. It reads the collections' Camtrap-DP-flavored files straight from
 S3 with read-only credentials and keeps a local copy in IndexedDB, so a
 collection opened before shows at once.
 
-It is being built in phases. Today it holds the data layer and a placeholder
-page.
+It is being built in phases. Today it signs in, opens collections (from the
+local copy when there is one), and shows the filter bar, the In view summary,
+Data checks and the Locations, Species and Photos tables with CSV export. The
+map, the effort strip, the photo grid, charts and reports come next.
 
 ## Run
 
