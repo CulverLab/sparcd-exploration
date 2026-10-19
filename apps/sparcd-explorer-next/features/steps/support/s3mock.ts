@@ -2,8 +2,8 @@
 // from the Tagger's mock. The explorer reaches storage only through
 // `@sparcd/s3-safe` (AWS SDK v3 against `cfg.endpoint`); the tests point the
 // endpoint at the app's own origin, so every request is same-origin and this
-// handler answers ListBuckets, ListObjectsV2, GetObject and HeadObject.
-// Requests not addressed to a mock bucket fall through to Vite.
+// handler answers ListBuckets, ListObjectsV2, GetObject (with byte ranges)
+// and HeadObject. Requests not addressed to a mock bucket fall through to Vite.
 
 import { createHash } from 'node:crypto';
 import type { BrowserContext, Page, Route } from '@playwright/test';
@@ -23,6 +23,10 @@ export class MockS3 {
   readonly delays = new Map<string, number>();
   /** Access keys the store refuses, as a wrong username or password. */
   readonly rejectedKeys = new Set<string>();
+  /** Every GET of an object, with its byte range when it asked for one. */
+  readonly gets: { key: string; range: string | null }[] = [];
+  /** Fail ranged GETs at the network level, as a CORS policy without `Range` does. */
+  refuseRanges = false;
 
   addBucket(name: string): void {
     if (!this.buckets.includes(name)) this.buckets.push(name);
@@ -157,15 +161,27 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
     }
     if (request.method() === 'GET') {
       s3.countRead(key);
-      await route.fulfill(
-        existing
-          ? {
-              status: 200,
-              headers: { 'content-type': existing.contentType, etag: `"${existing.etag}"`, 'cache-control': 'no-store' },
-              body: existing.body,
-            }
-          : { status: 404, headers: XML, body: errorXml('NoSuchKey', `no such key ${key}`) },
-      );
+      const range = request.headers()['range'] ?? null;
+      s3.gets.push({ key, range });
+      if (range && s3.refuseRanges) return route.abort('failed');
+      if (!existing) {
+        await route.fulfill({ status: 404, headers: XML, body: errorXml('NoSuchKey', `no such key ${key}`) });
+        return;
+      }
+      const headers = { 'content-type': existing.contentType, etag: `"${existing.etag}"`, 'cache-control': 'no-store' };
+      const bytes = range && /^bytes=(\d+)-(\d*)$/.exec(range);
+      if (bytes) {
+        const size = existing.body.length;
+        const start = Number(bytes[1]);
+        const end = Math.min(size - 1, bytes[2] ? Number(bytes[2]) : size - 1);
+        await route.fulfill({
+          status: 206,
+          headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` },
+          body: existing.body.subarray(start, end + 1),
+        });
+        return;
+      }
+      await route.fulfill({ status: 200, headers, body: existing.body });
       return;
     }
     await route.fulfill({ status: 405, headers: XML, body: errorXml('MethodNotAllowed', 'the explorer only reads') });

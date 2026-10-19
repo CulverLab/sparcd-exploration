@@ -17,7 +17,7 @@ Feature: Data checks
     Given I have opened "Alpha Basin"
     When I open Data checks
     And I press "Show these photos" in Data checks
-    Then the Photos table has 2 rows
+    Then the grid shows 2 photos
     And the locations filter reads "Locations: No location set"
 
   Scenario: Showing each location ID separately splits a moved camera

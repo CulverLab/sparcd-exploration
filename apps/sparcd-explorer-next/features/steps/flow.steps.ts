@@ -1,7 +1,7 @@
 // Sign in, choose collections, open them, and share the session across tabs.
 
 import type { Page } from '@playwright/test';
-import { ALPHA, BRAVO, NEW_UPLOAD, addUpload, uploadPrefix } from './support/data';
+import { ALPHA, BRAVO, CHARLIE, NEW_UPLOAD, addUpload, uploadPrefix } from './support/data';
 import { installS3Mock } from './support/s3mock';
 import {
   APP_URL,
@@ -16,7 +16,7 @@ import {
   signedIn,
 } from './support/world';
 
-const COLLECTIONS: Record<string, { uuid: string }> = { 'Alpha Basin': ALPHA, 'Bravo Flats': BRAVO };
+const COLLECTIONS: Record<string, { uuid: string }> = { 'Alpha Basin': ALPHA, 'Bravo Flats': BRAVO, 'Charlie Pond': CHARLIE };
 const openButton = (page: Page) => page.locator('.choose-foot .bigbtn');
 const continueButton = (page: Page) => page.getByRole('button', { name: /^Continue with/ });
 

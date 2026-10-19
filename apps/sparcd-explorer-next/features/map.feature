@@ -72,7 +72,7 @@ Feature: The map
   Scenario: Photos with no location are counted on the map, never placed
     Then the map says "2 photos have no location"
     When I press "2 photos have no location"
-    Then the Photos table has 2 rows
+    Then the grid shows 2 photos
     And the locations filter reads "Locations: No location set"
     And I see the note "Showing photos with no location" with Undo
 

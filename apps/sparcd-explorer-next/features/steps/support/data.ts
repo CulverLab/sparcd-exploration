@@ -2,15 +2,25 @@
 // is made up; the positions sit in open ocean. Files follow the fixed-column
 // Camtrap-DP-flavoured layout `@sparcd/camtrap` reads (no header rows).
 
+import { cameraJpeg } from './images';
 import { MockS3 } from './s3mock';
 
 export const ALPHA = { name: 'Alpha Basin', uuid: 'aaaaaaaa-0000-4000-8000-000000000001' };
 export const BRAVO = { name: 'Bravo Flats', uuid: 'bbbbbbbb-0000-4000-8000-000000000002' };
+export const CHARLIE = { name: 'Charlie Pond', uuid: 'cccccccc-0000-4000-8000-000000000003' };
 export const bucketOf = (c: { uuid: string }) => `sparcd-${c.uuid}`;
 export const uploadPrefix = (c: { uuid: string }, stamp: string) => `Collections/${c.uuid}/Uploads/${stamp}/`;
 
 type Deployment = { id: string; name: string; lat: number | null; lon: number | null; elevation: number | null };
-type Photo = { file: string; time: string; species?: { sci: string; common: string; count?: number }[] };
+type Photo = {
+  file: string;
+  time: string;
+  species?: { sci: string; common: string; count?: number }[];
+  /** `image/jpeg` unless given. */
+  mime?: string;
+  /** Whether the JPEG embeds an EXIF thumbnail; it does unless false. */
+  thumbnail?: boolean;
+};
 export type Upload = { stamp: string; deployment: Deployment; photos: Photo[]; complete?: boolean };
 
 const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -43,7 +53,7 @@ function putUpload(s3: MockS3, c: { uuid: string }, u: Upload): void {
     u.photos
       .map((p) => {
         const key = `${prefix}${p.file}`;
-        return row({ 0: key, 1: dep, 2: key, 4: p.time, 5: key, 6: p.file, 7: 'image/jpeg', 9: 'false' }, 11);
+        return row({ 0: key, 1: dep, 2: key, 4: p.time, 5: key, 6: p.file, 7: p.mime ?? 'image/jpeg', 9: 'false' }, 11);
       })
       .join('\n'),
   );
@@ -61,6 +71,23 @@ function putUpload(s3: MockS3, c: { uuid: string }, u: Upload): void {
       )
       .join('\n'),
   );
+  putMediaFiles(s3, c, u);
+}
+
+const seedOf = (s: string) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
+
+/** The photo and video files themselves. */
+function putMediaFiles(s3: MockS3, c: { uuid: string }, u: Upload): void {
+  for (const p of u.photos) {
+    const key = `${uploadPrefix(c, u.stamp)}${p.file}`;
+    if (p.mime?.startsWith('video/')) {
+      s3.put(bucketOf(c), key, Buffer.from('not really a video'), p.mime);
+      continue;
+    }
+    const hour = Number(p.time.slice(11, 13));
+    const night = hour >= 19 || hour < 6;
+    s3.put(bucketOf(c), key, cameraJpeg(seedOf(p.file), { animal: Boolean(p.species?.length), night, thumbnail: p.thumbnail }), 'image/jpeg');
+  }
 }
 
 export function putCollection(s3: MockS3, c: { name: string; uuid: string }, uploads: Upload[]): void {
@@ -149,9 +176,23 @@ export const NEW_UPLOAD: Upload = {
   photos: [{ file: 'IMG0901.JPG', time: '2025-07-30T06:00:00', species: [COYOTE] }],
 };
 
+/** A pond camera with a video and a photo whose JPEG has no thumbnail. */
+export const CHARLIE_UPLOADS: Upload[] = [
+  {
+    stamp: '2025.02.01.10.00.00_fielduser',
+    deployment: { id: 'CP01', name: 'Reed Bank', lat: 0.7, lon: -150.4, elevation: 800 },
+    photos: [
+      { file: 'IMG2001.JPG', time: '2025-01-20T09:00:00', species: [COYOTE] },
+      { file: 'IMG2002.JPG', time: '2025-01-21T10:00:00', species: [DEER], thumbnail: false },
+      { file: 'CLIP2003.MP4', time: '2025-01-22T11:00:00', species: [FOX], mime: 'video/mp4' },
+    ],
+  },
+];
+
 export function seedFixtures(s3: MockS3): void {
   putCollection(s3, ALPHA, ALPHA_UPLOADS);
   putCollection(s3, BRAVO, BRAVO_UPLOADS);
+  putCollection(s3, CHARLIE, CHARLIE_UPLOADS);
 }
 
 export function addUpload(s3: MockS3, c: { uuid: string }, u: Upload): void {
