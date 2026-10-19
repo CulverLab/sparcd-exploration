@@ -1206,13 +1206,39 @@ svg.effort {
 .tablepanel {
   min-height: 420px;
 }
+/* The table's controls ride under the sticky header and filter bar, one line
+   that scrolls sideways when narrow, with Columns and Export always at the end. */
 .tbl-head {
+  position: sticky;
+  top: calc(var(--stickyH) - 8px + env(safe-area-inset-top, 0px));
+  z-index: 6;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
-  padding: 10px 10px 8px;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
   border-bottom: 1px solid var(--rule);
+}
+.tbl-tools {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tbl-tools::-webkit-scrollbar {
+  display: none;
+}
+.tbl-tools > * {
+  flex: none;
+}
+.tbl-acts {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
 }
 .view-seg button {
   font-size: 13px;

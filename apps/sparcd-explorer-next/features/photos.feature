@@ -33,6 +33,19 @@ Feature: Photos grid and detail
     Then the last tile shows its embedded thumbnail
     And fewer than 200 of the 400 photos have been read
 
+  Scenario: The table's controls stay in reach while a long table scrolls
+    Given a collection "Echo Wash" with 400 photos
+    And I have opened "Echo Wash"
+    When I show the Photos table
+    And I note the height of the table's controls
+    And I scroll far down the table
+    Then the table's controls sit just under the filter bar, on one line
+    And the table's column headers sit just under the table's controls
+    When I note where the table's controls are
+    And I show the Photos grid
+    Then the table's controls have not moved
+    And the first tile shows its embedded thumbnail
+
   Scenario: Each tile keeps its own thumbnail when answers arrive out of order
     Given a collection "Echo Wash" with 400 photos
     And some thumbnails are slow to arrive

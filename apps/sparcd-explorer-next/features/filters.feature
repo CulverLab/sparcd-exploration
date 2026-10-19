@@ -56,4 +56,4 @@ Feature: Filter the photos in view
   Scenario: The header and filter bar stay in view while the page scrolls
     When I scroll down to the table
     Then the filter bar is still at the top of the screen
-    And the table's column headers sit just under it
+    And the table's controls sit just under it, on one line

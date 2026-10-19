@@ -86,15 +86,17 @@ export function DataTable<R>({
   const before = items.length ? items[0].start - margin : 0;
   const after = items.length ? virtualizer.getTotalSize() - (items[items.length - 1].end - margin) : 0;
 
-  // Column headers ride under the sticky bar while the table scrolls past, even
-  // though a wide table scrolls sideways in its own box.
+  // Column headers ride under the sticky bar and the table's own toolbar while
+  // the table scrolls past, even though a wide table scrolls sideways in its own box.
   useEffect(() => {
     const stick = () => {
       const t = tableRef.current;
       const bar = document.getElementById('sticky-top');
       if (!t || !bar || !t.tHead) return;
+      const tools = t.closest('#table')?.querySelector('.tbl-head');
+      const above = Math.max(bar.getBoundingClientRect().bottom, tools?.getBoundingClientRect().bottom ?? 0);
       const r = t.getBoundingClientRect();
-      const off = Math.min(Math.max(bar.getBoundingClientRect().bottom - r.top, 0), Math.max(0, r.height - t.tHead.offsetHeight - 80));
+      const off = Math.min(Math.max(above - r.top, 0), Math.max(0, r.height - t.tHead.offsetHeight - 80));
       t.style.setProperty('--hy', `${off}px`);
     };
     stick();

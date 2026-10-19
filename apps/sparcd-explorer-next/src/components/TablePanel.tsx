@@ -196,14 +196,16 @@ export function TablePanel() {
 
   // Grid and List each keep their own place in the page: back to where a
   // layout was, and one not scrolled yet starts at the table's top (the page
-  // stays put when that is already in view). The new layout's virtualizer
-  // starts at that place too, so it never scrolls back to the old one.
+  // stays put when that is already in view). The table's top is where its
+  // controls just reach their place under the filter bar, so they never move
+  // on a switch. The new layout's virtualizer starts at that place too, so it
+  // never scrolls back to the old one.
   const offsets = useRef<Record<PhotoLayout, number>>({ grid: 0, list: 0 });
   const restore = useRef<number | null>(null);
   const switchLayout = (next: PhotoLayout) => {
     if (next === layout) return;
     const panel = document.getElementById('table')!;
-    const top = panel.getBoundingClientRect().top + scrollY - (document.getElementById('sticky-top')?.offsetHeight ?? 0) - 8;
+    const top = panel.getBoundingClientRect().top + scrollY + panel.clientTop - (document.getElementById('sticky-top')?.offsetHeight ?? 0);
     offsets.current[layout] = Math.max(0, scrollY - top);
     const back = offsets.current[next];
     restore.current = Math.round(back > 0 ? top + back : Math.min(scrollY, Math.max(0, top)));
@@ -358,69 +360,73 @@ export function TablePanel() {
 
   return (
     <section id="table" className="tablepanel panel" aria-label="Table">
+      {/* One line that stays under the filter bar while the table scrolls. */}
       <div className="tbl-head">
-        <Seg
-          className="seg view-seg"
-          label="Show"
-          value={view}
-          options={[
-            ['locations', 'Locations'],
-            ['species', 'Species'],
-            ['photos', 'Photos'],
-            ['charts', 'Charts'],
-          ]}
-          onChange={setView}
-        />
-        <span className="rowcount" aria-live="polite">
-          {nothing ? '' : count}
-        </span>
-        <div className="flex-1" />
-        <ColumnsEditor
-          title={view === 'species' ? 'Species' : view === 'photos' ? 'Photos list' : 'Locations'}
-          defs={defs}
-          prefs={prefs}
-          multi={multi}
-          disabled={!tableView}
-          onChange={change}
-        />
-        <button type="button" className="btn" disabled={view === 'charts'} onClick={exportCsv}>
-          Export CSV
-        </button>
-      </div>
-      {view === 'photos' && (
-        <div className="subbar">
+        <div className="tbl-tools">
           <Seg
-            label="Layout"
-            value={layout}
+            className="seg view-seg"
+            label="Show"
+            value={view}
             options={[
-              ['grid', 'Grid'],
-              ['list', 'List'],
+              ['locations', 'Locations'],
+              ['species', 'Species'],
+              ['photos', 'Photos'],
+              ['charts', 'Charts'],
             ]}
-            onChange={switchLayout}
+            onChange={setView}
           />
-          <Seg
-            label="Tagged"
-            value={filters.photoTag}
-            options={[
-              ['tagged', 'Tagged'],
-              ['untagged', 'Untagged'],
-              ['all', 'All'],
-            ]}
-            onChange={(photoTag) => setFilters((f) => ({ ...f, photoTag }))}
-          />
-          {layout === 'grid' && (
-            <Seg<'new' | 'old' | ''>
-              label="Order"
-              value={sorting.photos[0]?.id === 'time' ? (sorting.photos[0].desc ? 'new' : 'old') : ''}
-              options={[
-                ['new', 'Newest first'],
-                ['old', 'Oldest first'],
-              ]}
-              onChange={(order) => setSorting((all) => ({ ...all, photos: [{ id: 'time', desc: order === 'new' }] }))}
-            />
+          {view === 'photos' && (
+            <>
+              <Seg
+                label="Layout"
+                value={layout}
+                options={[
+                  ['grid', 'Grid'],
+                  ['list', 'List'],
+                ]}
+                onChange={switchLayout}
+              />
+              <Seg
+                label="Tagged"
+                value={filters.photoTag}
+                options={[
+                  ['tagged', 'Tagged'],
+                  ['untagged', 'Untagged'],
+                  ['all', 'All'],
+                ]}
+                onChange={(photoTag) => setFilters((f) => ({ ...f, photoTag }))}
+              />
+              {layout === 'grid' && (
+                <Seg<'new' | 'old' | ''>
+                  label="Order"
+                  value={sorting.photos[0]?.id === 'time' ? (sorting.photos[0].desc ? 'new' : 'old') : ''}
+                  options={[
+                    ['new', 'Newest first'],
+                    ['old', 'Oldest first'],
+                  ]}
+                  onChange={(order) => setSorting((all) => ({ ...all, photos: [{ id: 'time', desc: order === 'new' }] }))}
+                />
+              )}
+            </>
           )}
+          <span className="rowcount" aria-live="polite">
+            {nothing ? '' : count}
+          </span>
         </div>
-      )}
+        <div className="tbl-acts">
+          <ColumnsEditor
+            title={view === 'species' ? 'Species' : view === 'photos' ? 'Photos list' : 'Locations'}
+            defs={defs}
+            prefs={prefs}
+            multi={multi}
+            disabled={!tableView}
+            onChange={change}
+          />
+          <button type="button" className="btn" disabled={view === 'charts'} onClick={exportCsv}>
+            Export CSV
+          </button>
+        </div>
+      </div>
       {view === 'locations' && grouping.separate && (
         <div className="subbar">
           <span className="state">Each location ID shown separately</span>

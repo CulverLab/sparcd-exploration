@@ -337,9 +337,38 @@ Then('the filter bar is still at the top of the screen', async ({ page }) => {
   await expect(page.locator('.filterbar')).toBeInViewport();
 });
 
-Then("the table's column headers sit just under it", async ({ page }) => {
+const tools = (page: Page) => page.locator('#table .tbl-head');
+
+When("I note the height of the table's controls", async ({ page, scratch }) => {
+  scratch.toolsHeight = (await tools(page).boundingBox())!.height;
+});
+
+When('I scroll far down the table', async ({ page }) => {
+  await page.evaluate(() => scrollTo(0, document.getElementById('table')!.getBoundingClientRect().top + scrollY + 2500));
+});
+
+Then(/^the table's controls sit just under (?:it|the filter bar), on one line$/, async ({ page, scratch }) => {
   const bar = (await page.locator('#sticky-top').boundingBox())!;
+  await expect.poll(async () => Math.abs(Math.round((await tools(page).boundingBox())!.y - (bar.y + bar.height)))).toBeLessThan(2);
+  const box = (await tools(page).boundingBox())!;
+  expect(box.height).toBeLessThan(60);
+  if (scratch.toolsHeight !== undefined) expect(box.height).toBe(scratch.toolsHeight);
+  await expect(tools(page).getByRole('button', { name: 'Export CSV' })).toBeInViewport();
+});
+
+When("I note where the table's controls are", async ({ page, scratch }) => {
+  scratch.toolsAt = (await tools(page).boundingBox())!.y;
+});
+
+Then("the table's controls have not moved", async ({ page, scratch }) => {
+  await expect.poll(async () => Math.round((await tools(page).boundingBox())!.y)).toBe(Math.round(scratch.toolsAt as number));
+});
+
+Then("the table's column headers sit just under the table's controls", async ({ page }) => {
   await expect
-    .poll(async () => Math.abs(Math.round((await headerCells(page).first().boundingBox())!.y - (bar.y + bar.height))))
+    .poll(async () => {
+      const box = (await tools(page).boundingBox())!;
+      return Math.abs(Math.round((await headerCells(page).first().boundingBox())!.y - (box.y + box.height)));
+    })
     .toBeLessThan(4);
 });
