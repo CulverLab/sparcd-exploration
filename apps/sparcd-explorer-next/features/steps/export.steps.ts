@@ -28,6 +28,7 @@ function parseCsv(text: string): string[][] {
 When('I export CSV', async ({ page, scratch }) => {
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
   const [header, ...rows] = parseCsv(await readFile((await download.path())!, 'utf8'));
+  scratch.name = download.suggestedFilename();
   scratch.csv = { name: download.suggestedFilename(), header, rows } satisfies Csv;
 });
 
@@ -35,7 +36,7 @@ const csvOf = (scratch: Record<string, unknown>) => scratch.csv as Csv;
 
 Then('the file is named like {string}', async ({ scratch }, pattern: string) => {
   const re = new RegExp(`^${pattern.replace(/[.]/g, '\\.').replace('<date>', '\\d{4}-\\d{2}-\\d{2}')}$`);
-  expect(csvOf(scratch).name).toMatch(re);
+  expect(scratch.name).toMatch(re);
 });
 
 Then('the CSV has the header {string}', async ({ scratch }, header: string) => {

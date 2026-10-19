@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
 import { activityByLocation } from '@/lib/activity';
@@ -6,18 +6,18 @@ import { matchLegend } from '@/lib/filterLabels';
 import { barFill, monthAxis, monthLabel, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
+import { saveBlob } from '@/lib/download';
 import { fmtN, plural } from '@/lib/format';
 import { locationColumns, locationFlagger, photoColumns, sortRows, speciesColumns, type Col, type TableContext } from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore, type PhotoLayout, type View } from '@/store';
-import { Charts } from './Charts';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { DataTable } from './DataTable';
-import { PhotoDetail } from './PhotoDetail';
 import { PhotoGrid } from './PhotoGrid';
 import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
+import { Charts, PhotoDetail } from './later';
 
 type TableView = Exclude<View, 'charts'>;
 
@@ -26,15 +26,6 @@ const DEFAULT_SORT: Record<TableView, SortingState> = {
   species: [{ id: 'dets', desc: true }],
   photos: [{ id: 'time', desc: true }],
 };
-
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 function ActivityHead({ axis }: { axis: MonthAxis }) {
   return (
@@ -232,7 +223,10 @@ export function TablePanel() {
 
   const exportCsv = () => {
     const csvCols = csvColumns(defs, shown, display);
-    download(csvFileName(model.collections.map((c) => c.name), view, new Date()), toCsv(csvCols, rows as never[]));
+    saveBlob(
+      csvFileName(model.collections.map((c) => c.name), view, new Date()),
+      new Blob([toCsv(csvCols, rows as never[])], { type: 'text/csv;charset=utf-8' }),
+    );
   };
 
   const nothing = active && result.photos.length === 0;
@@ -247,7 +241,11 @@ export function TablePanel() {
       </div>
     );
   } else if (view === 'charts') {
-    body = <Charts />;
+    body = (
+      <Suspense fallback={<div className="charts" />}>
+        <Charts />
+      </Suspense>
+    );
   } else if (!tableView) {
     body = (
       <>
@@ -439,13 +437,15 @@ export function TablePanel() {
       <div className="tbl-wrap">{body}</div>
       <Tip at={tip} />
       {detail && view === 'photos' && (
-        <PhotoDetail
-          model={detail.model}
-          order={detail.order}
-          index={detail.index}
-          onIndex={(index) => setDetail({ ...detail, index })}
-          onClose={closeDetail}
-        />
+        <Suspense fallback={null}>
+          <PhotoDetail
+            model={detail.model}
+            order={detail.order}
+            index={detail.index}
+            onIndex={(index) => setDetail({ ...detail, index })}
+            onClose={closeDetail}
+          />
+        </Suspense>
       )}
     </section>
   );

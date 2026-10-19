@@ -19,7 +19,7 @@ import { useStore } from '@/store';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function useWidth() {
+export function useWidth() {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -33,7 +33,7 @@ function useWidth() {
   return [ref, Math.max(280, width)] as const;
 }
 
-/** One bar: a button that toggles its filter, by click or Enter / Space. */
+/** One bar: a button that toggles its filter, by click or Enter / Space. Without `onToggle`, a plain drawing. */
 function Bar({
   label,
   state,
@@ -43,10 +43,18 @@ function Bar({
 }: {
   label: string;
   state: BarState;
-  onToggle: () => void;
+  onToggle?: () => void;
   data: Record<string, string | number>;
   children: ReactNode;
 }) {
+  if (!onToggle) {
+    return (
+      <g className="row" {...data}>
+        <title>{label}</title>
+        {children}
+      </g>
+    );
+  }
   return (
     <g
       className="row"
@@ -114,7 +122,8 @@ function SpeciesChart({ rows, filters, onPick }: { rows: { key: string; name: st
   );
 }
 
-function HourChart({ hours, filters, onPick }: { hours: number[]; filters: FilterState; onPick: (hour: number) => void }) {
+/** Detections per camera-clock hour, night shaded. With `onPick`, a bar toggles its hour. */
+export function HourChart({ hours, filters, onPick }: { hours: number[]; filters: FilterState; onPick?: (hour: number) => void }) {
   const [ref, W] = useWidth();
   const H = 248;
   const left = 44;
@@ -125,7 +134,7 @@ function HourChart({ hours, filters, onPick }: { hours: number[]; filters: Filte
   const bw = (W - left - 8) / 24;
   return (
     <div ref={ref}>
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="group" aria-label="Detections by hour of day">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role={onPick ? 'group' : 'img'} aria-label="Detections by hour of day">
         {/* Night: 19:00 to 06:00 on the camera's clock. */}
         <rect className="night" x={left} y={0} width={bw * 6} height={base} />
         <rect className="night" x={left + bw * 19} y={0} width={bw * 5} height={base} />
@@ -147,7 +156,7 @@ function HourChart({ hours, filters, onPick }: { hours: number[]; filters: Filte
           const x = left + hour * bw;
           const state = hourBar(filters, hour);
           return (
-            <Bar key={hour} label={`${pad(hour)}:00, ${fmtN(n)} detections`} state={state} onToggle={() => onPick(hour)} data={{ 'data-hour': hour }}>
+            <Bar key={hour} label={`${pad(hour)}:00, ${fmtN(n)} detections`} state={state} onToggle={onPick && (() => onPick(hour))} data={{ 'data-hour': hour }}>
               <rect className="hit" x={x} y={0} width={bw} height={base} />
               <rect className={barClass(state)} x={x + 1.5} y={base - h(n)} width={Math.max(1, bw - 3)} height={h(n)} />
             </Bar>

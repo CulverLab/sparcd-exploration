@@ -296,10 +296,13 @@ When('I show the Charts', async ({ page }) => {
 Then(
   'the species chart reads {string}, {string}, {string} and {string}',
   async ({ page }, a: string, b: string, c: string, d: string) => {
-    const labels = await chart(page, 'species')
-      .getByRole('button')
-      .evaluateAll((bars) => bars.map((g) => g.getAttribute('aria-label')!.replace(/: (\d+) detections?$/, ' $1')));
-    expect(labels).toEqual([a, b, c, d]);
+    await expect
+      .poll(() =>
+        chart(page, 'species')
+          .getByRole('button')
+          .evaluateAll((bars) => bars.map((g) => g.getAttribute('aria-label')!.replace(/: (\d+) detections?$/, ' $1'))),
+      )
+      .toEqual([a, b, c, d]);
   },
 );
 

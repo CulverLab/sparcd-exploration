@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import type { Precision } from '@/data';
 import { initials } from '@/lib/format';
 import { checkForUploads, stopChecking } from '@/lib/opening';
 import { currentTheme, setTheme } from '@/lib/theme';
 import { useStore } from '@/store';
+import { ReportSheet } from './later';
 import { Popover, Seg, usePopover } from './Popover';
 
 /** Sibling tools, from this app's own base path, as the shared BrandSwitcher does. */
@@ -238,6 +239,8 @@ export function Header() {
   const names = model.collections.map((c) => c.name);
   const multi = names.length > 1;
   const change = multi ? 'Change collections' : 'Change collection';
+  const [report, setReport] = useState(false);
+  const reportButton = useRef<HTMLButtonElement>(null);
   return (
     <header className="top">
       <div className="top-inner">
@@ -250,9 +253,19 @@ export function Header() {
           <span className="show-sm">Change</span>
         </button>
         <div className="wrap-sm flex-1" />
-        <button type="button" className="btn wrap-sm" disabled>
+        <button ref={reportButton} type="button" className="btn wrap-sm" aria-haspopup="dialog" onClick={() => setReport(true)}>
           Report
         </button>
+        {report && (
+          <Suspense fallback={null}>
+            <ReportSheet
+              onClose={() => {
+                setReport(false);
+                reportButton.current?.focus({ preventScroll: true });
+              }}
+            />
+          </Suspense>
+        )}
         <DisplayMenu />
         <Status />
         <AccountMenu changeLabel={change} />
