@@ -108,8 +108,8 @@ describe('locationRows', () => {
 describe('speciesRows', () => {
   it('counts detections, photos, animals and locations per species, most detected first', () => {
     expect(speciesRows(model, result, separate)).toEqual([
-      { species: 0, detections: 2, photos: 2, animals: 3, locations: 2 },
-      { species: 1, detections: 1, photos: 1, animals: 1, locations: 1 },
+      { species: 0, detections: 2, photos: 2, animals: 3, locations: 2, firstDate: '2023-01-01', lastDate: '2024-05-01' },
+      { species: 1, detections: 1, photos: 1, animals: 1, locations: 1, firstDate: '2023-01-01', lastDate: '2023-01-01' },
     ]);
   });
 });
@@ -122,6 +122,8 @@ describe('photoRows', () => {
       time: '2023-01-01 10:00:00',
       date: '2023-01-01',
       species: 'Bobcat, Deer',
+      scientificNames: 'Lynx rufus, Odocoileus hemionus',
+      count: 3,
       locationId: 'SR07',
       locationName: 'Spring',
       collection: 'Test',
@@ -132,7 +134,7 @@ describe('photoRows', () => {
 
   it('limits species to the detections in view', () => {
     const bobcats = filter(model, { species: ['Lynx rufus'] });
-    expect(photoRows(model, bobcats.photos, bobcats.detections)[0].species).toBe('Bobcat');
+    expect(photoRows(model, bobcats.photos, bobcats.detections)[0]).toMatchObject({ species: 'Bobcat', count: 2 });
   });
 });
 

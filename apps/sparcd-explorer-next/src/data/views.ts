@@ -181,7 +181,15 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
   });
 }
 
-export type SpeciesRow = { species: number; detections: number; photos: number; animals: number; locations: number };
+export type SpeciesRow = {
+  species: number;
+  detections: number;
+  photos: number;
+  animals: number;
+  locations: number;
+  firstDate: string | null;
+  lastDate: string | null;
+};
 
 export function speciesRows(model: Model, result: FilterResult, grouping: Grouping): SpeciesRow[] {
   const rows = new Map<number, SpeciesRow & { photoSet: Set<number>; locationSet: Set<string> }>();
@@ -195,15 +203,22 @@ export function speciesRows(model: Model, result: FilterResult, grouping: Groupi
         photos: 0,
         animals: 0,
         locations: 0,
+        firstDate: null,
+        lastDate: null,
         photoSet: new Set(),
         locationSet: new Set(),
       };
       rows.set(det.species, row);
     }
+    const photo = model.photos[det.photo];
     row.detections++;
     row.animals += det.count;
     row.photoSet.add(det.photo);
-    row.locationSet.add(locationKeyOf(model.sites[model.photos[det.photo].site], grouping.separate));
+    row.locationSet.add(locationKeyOf(model.sites[photo.site], grouping.separate));
+    if (photo.date !== null) {
+      if (row.firstDate === null || photo.date < row.firstDate) row.firstDate = photo.date;
+      if (row.lastDate === null || photo.date > row.lastDate) row.lastDate = photo.date;
+    }
   }
   return [...rows.values()]
     .map(({ photoSet, locationSet, ...row }) => ({ ...row, photos: photoSet.size, locations: locationSet.size }))
@@ -218,6 +233,9 @@ export type PhotoRow = {
   date: string | null;
   /** Common names of the species shown on this photo, without removed or corrected-away ones. */
   species: string;
+  scientificNames: string;
+  /** Animals counted across the species shown. */
+  count: number;
   locationId: string;
   locationName: string;
   collection: string;
@@ -232,8 +250,14 @@ export function photoRows(model: Model, photos: number[], detections?: number[])
     const p = model.photos[i];
     const site = model.sites[p.site];
     const names = new Set<string>();
+    const scientific = new Set<string>();
+    let count = 0;
     for (const d of p.detections) {
-      if (!shown || shown.has(d)) names.add(model.species[model.detections[d].species].name);
+      if (shown && !shown.has(d)) continue;
+      const det = model.detections[d];
+      names.add(model.species[det.species].name);
+      if (model.species[det.species].scientificName) scientific.add(model.species[det.species].scientificName);
+      count += det.count;
     }
     return {
       photo: i,
@@ -241,6 +265,8 @@ export function photoRows(model: Model, photos: number[], detections?: number[])
       time: formatTimestamp24(p.timestamp),
       date: p.date,
       species: [...names].join(', '),
+      scientificNames: [...scientific].join(', '),
+      count,
       locationId: site.locationId,
       locationName: site.name,
       collection: model.collections[p.collection].name,
