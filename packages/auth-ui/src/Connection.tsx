@@ -22,6 +22,8 @@ export type ConnectionProps = {
    *  into a caller's own layout (e.g. mid-wizard, asking to connect only once
    *  a step needs it) instead of taking over the whole viewport. */
   embedded?: boolean;
+  /** Field labels for the two credentials. Default "Access key" / "Secret key". */
+  labels?: { accessKey?: string; secretKey?: string };
 };
 
 const fieldLabel = 'block font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
@@ -34,7 +36,7 @@ const textInput =
  * The shared credentials/connection screen for every SPARC'd JS tool. Three
  * fields — endpoint, access key, secret key — with region / path-style /
  * secure inferred from the endpoint and exposed only behind "Advanced".
- * Parameterized solely by `toolName`.
+ * Parameterized by `toolName`, with optional credential `labels`.
  */
 export function Connection({
   toolName,
@@ -42,6 +44,7 @@ export function Connection({
   onConnect,
   onSkip,
   embedded,
+  labels,
 }: ConnectionProps) {
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
   const [accessKey, setAccessKey] = useState(initialConfig?.accessKey ?? '');
@@ -130,7 +133,7 @@ export function Connection({
           </div>
           <div>
             <label htmlFor="accessKey" className={fieldLabel}>
-              Access key
+              {labels?.accessKey ?? 'Access key'}
             </label>
             <input
               id="accessKey"
@@ -144,7 +147,7 @@ export function Connection({
           </div>
           <div>
             <label htmlFor="secretKey" className={fieldLabel}>
-              Secret key
+              {labels?.secretKey ?? 'Secret key'}
             </label>
             <input
               id="secretKey"
