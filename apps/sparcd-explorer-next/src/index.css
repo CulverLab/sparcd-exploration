@@ -1520,6 +1520,13 @@ table.data {
   font-size: 11.5px;
   color: var(--inkMute);
 }
+/* Listed in the upload data, but not on the server. */
+.tile.missing {
+  border-color: var(--warn);
+}
+.tile.missing .noprev {
+  color: var(--warn);
+}
 .play {
   position: absolute;
   top: 6px;
@@ -1621,6 +1628,17 @@ table.data {
   place-items: center;
   font-size: 13px;
   color: var(--photoText);
+}
+.detail-img .noprev.gone {
+  place-content: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+}
+.detail-img .noprev.gone code {
+  font-size: 11.5px;
+  opacity: 0.8;
+  word-break: break-all;
 }
 .detail-side {
   display: grid;

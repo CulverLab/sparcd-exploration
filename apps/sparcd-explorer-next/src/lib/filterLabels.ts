@@ -23,6 +23,7 @@ const NAMES: Record<FilterDimension, string> = {
   species: 'Species',
   locations: 'Locations',
   area: 'Area',
+  files: 'Files',
   dates: 'Dates',
   elevation: 'Elevation',
   ranges: 'Mountain range',
@@ -130,6 +131,8 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
       return listFilterValue(model, f, dim, separate);
     case 'area':
       return plural(areaLocations(model, f.area, separate), 'location');
+    case 'files':
+      return 'not on the server';
     case 'dates': {
       const parts: string[] = [];
       const range = dateRange(f.dateFrom, f.dateTo);
@@ -153,9 +156,9 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
  */
 export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit, separate = false): FilterButton[] {
   const active = new Set(activeFilters(f));
-  const dims: FilterDimension[] = ['collections', 'species', 'locations', 'area', 'dates', 'elevation', 'ranges'];
+  const dims: FilterDimension[] = ['collections', 'species', 'locations', 'area', 'files', 'dates', 'elevation', 'ranges'];
   return dims
-    .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' ? active.has('area') : true))
+    .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' || dim === 'files' ? active.has(dim) : true))
     .map((dim) => {
       const v = active.has(dim) ? value(model, f, dim, unit, separate) : null;
       return { dim, name: NAMES[dim], label: v ? `${NAMES[dim]}: ${v}` : NAMES[dim], active: active.has(dim) };
@@ -180,6 +183,7 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
   const locations = list('locations');
   if (locations) parts.push(`Locations: ${locations}`);
   if (f.area.length) parts.push(`Map area: ${plural(areaLocations(model, f.area, separate), 'location')}`);
+  if (f.missing === 'only') parts.push('Only photos whose files are missing');
   const range = dateRange(f.dateFrom, f.dateTo);
   if (range) parts.push(`Dates: ${range}`);
   if (f.years.length) parts.push(`Years: ${[...f.years].sort().join(', ')}`);
@@ -189,7 +193,8 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
   const ranges = list('ranges');
   if (ranges) parts.push(`Mountain range: ${ranges}`);
   if (tagShown && f.photoTag !== 'all') parts.push(f.photoTag === 'tagged' ? 'Tagged photos only' : 'Untagged photos only');
-  return parts.length ? parts.join(' · ') : 'No filters: all photos';
+  const words = parts.length ? parts.join(' · ') : 'No filters: all photos';
+  return f.missing === 'show' ? `${words} · Including photos whose files are missing` : words;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NO_LOCATION_KEY, dataChecks, type DataCheck, type Model } from '../../src/data';
 import { describeCheck } from '../../src/lib/checkText';
-import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
+import { collection, deployment, media, mediaPath, modelOf, observation } from '../support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 const alpha = collection('Alpha', 'aaa')
@@ -75,5 +75,25 @@ describe('data check sentences', () => {
     });
     expect(line.text).toBe("media.csv in upload u1 of Alpha couldn't be read, so its rows are missing (Access denied reading media.csv).");
     expect(line.action).toEqual({ label: 'Try again', kind: 'retry' });
+  });
+});
+
+describe('the missing-files check', () => {
+  const stale = (n: number) =>
+    collection('Gaps', 'gap').upload('u1', {
+      deployments: [deployment('GG01', 'Gap', 12.5, -100.25)],
+      media: Array.from({ length: n }, (_, i) => media('u1', `s${i}.jpg`, 'GG01', '')),
+    });
+  const line = (n: number) => {
+    const m = modelOf(stale(n), { missing: Array.from({ length: n }, (_, i) => 'sparcd-gap/' + mediaPath('u1', `s${i}.jpg`)) });
+    return describeCheck(m, dataChecks(m).find((c) => c.kind === 'missing-files')!);
+  };
+
+  it('says how many photos and uploads, with an action that shows them', () => {
+    expect(line(3)).toMatchObject({
+      text: "3 photos are listed in the upload data, but their files aren't on the server (1 upload).",
+      action: { label: 'Show them', kind: 'missing-files' },
+    });
+    expect(line(1).text).toBe("1 photo is listed in the upload data, but its file isn't on the server (1 upload).");
   });
 });

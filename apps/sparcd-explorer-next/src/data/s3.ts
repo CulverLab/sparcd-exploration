@@ -6,7 +6,7 @@ import { SafeS3Client } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
 
 /** The read calls the data layer makes. `SafeS3Client` has them; tests pass an in-memory fake. */
-export type ReadClient = Pick<SafeS3Client, 'listBuckets' | 'statObject' | 'getObject' | 'listFolder'>;
+export type ReadClient = Pick<SafeS3Client, 'listBuckets' | 'statObject' | 'getObject' | 'listFolder' | 'listObjects'>;
 
 // Not a security boundary in a static app: the connected key's IAM policy and
 // the bucket CORS gate access. The wrapper only requires an explicit scope.

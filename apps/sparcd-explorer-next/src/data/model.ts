@@ -59,6 +59,8 @@ export type Photo = {
   hour: number | null;
   /** At least one observation names a species. Placeholders and removal-only rows don't. */
   tagged: boolean;
+  /** media.csv lists it, but its file isn't in storage. Left out of everything until shown. */
+  missing: boolean;
   detections: number[];
   /** What people wrote on the photo and its tags, without the tools' `[PREFIX:value]` markers. */
   comments: string;
@@ -102,10 +104,12 @@ function stampOf(folder: string): string {
   return folder.replace(/\/$/, '').split('/').pop() ?? folder;
 }
 
+/** `missing`: the photo files storage lacks, as `bucket/key` (see `checkPhotoFiles`). */
 export function buildModel(
   collections: LoadedCollection[],
-  opts: { species?: Species[][]; registry?: RegistryLocation[] } = {},
+  opts: { species?: Species[][]; registry?: RegistryLocation[]; missing?: ReadonlySet<string> } = {},
 ): Model {
+  const missing = opts.missing?.size ? opts.missing : null;
   const nameSpecies = speciesNamer(...(opts.species ?? []));
   const registry = new Map((opts.registry ?? []).map((l) => [l.key, l]));
   const sites: Site[] = [];
@@ -211,6 +215,7 @@ export function buildModel(
             month: t?.month ?? null,
             hour: t?.hour ?? null,
             tagged: false,
+            missing: missing?.has(`${c.ref.bucket}/${media.mediaPath}`) ?? false,
             detections: NO_DETECTIONS,
             comments: commentText(media.comments),
           }) - 1,

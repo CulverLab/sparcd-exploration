@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { CollectionRef } from '@sparcd/s3-safe';
 import { discoverCollections } from '@/data';
-import { checkForUploads, openSelection, sourceFor, type Progress } from '@/lib/opening';
+import { checkFiles, checkForUploads, openSelection, sourceFor, type Progress } from '@/lib/opening';
 import { readLast, useStore } from '@/store';
 import { Stepper } from './Stepper';
 import { OpeningPanel } from './OpeningPanel';
@@ -72,7 +72,10 @@ export function Chooser() {
       });
       if (!enterWorkspace(stamp, refs, loaded, registries)) return setOpening(mine(null));
       // Anything that came from this device is checked for new uploads now.
+      // The photo files are checked at once too, from their cached answers
+      // where media.csv is unchanged, and again after any new uploads land.
       if (refs.some((r) => all.find((c) => c.key === r.key)?.cached)) void checkForUploads();
+      void checkFiles();
     } catch {
       setOpening(mine((o) => (controller.signal.aborted ? null : { ...o, failed: true })));
     }

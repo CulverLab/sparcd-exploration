@@ -1,5 +1,5 @@
 import { useMemo, useState, type RefObject } from 'react';
-import { NO_FILTERS, dataChecks, onlyLocations } from '@/data';
+import { dataChecks, onlyLocations, resetFilters } from '@/data';
 import { describeCheck, type CheckTarget } from '@/lib/checkText';
 import { checkForUploads } from '@/lib/opening';
 import { useStore } from '@/store';
@@ -15,10 +15,26 @@ export function useShowTarget() {
   const model = useStore((s) => s.model)!;
   const withUndo = useStore((s) => s.withUndo);
   return (t: CheckTarget) => {
-    withUndo(t.message, (s) => ({
-      filters: { ...NO_FILTERS, locations: onlyLocations(model, t.locations), photoTag: t.view === 'photos' ? 'all' : s.filters.photoTag },
-      separate: t.separate ?? s.separate,
-      view: t.view ?? s.view,
+    withUndo(t.message, (s) => {
+      const clear = resetFilters(s.filters).state;
+      return {
+        filters: { ...clear, locations: onlyLocations(model, t.locations), photoTag: t.view === 'photos' ? 'all' : clear.photoTag },
+        separate: t.separate ?? s.separate,
+        view: t.view ?? s.view,
+      };
+    });
+    document.getElementById('table')?.scrollIntoView({ block: 'start' });
+  };
+}
+
+/** Show the photos whose files are missing, alone, in Photos, with Undo. */
+export function useShowMissing() {
+  const withUndo = useStore((s) => s.withUndo);
+  return () => {
+    withUndo('Showing photos whose files are missing', (s) => ({
+      ...s,
+      filters: { ...resetFilters(s.filters).state, missing: 'only', photoTag: 'all' },
+      view: 'photos',
     }));
     document.getElementById('table')?.scrollIntoView({ block: 'start' });
   };
@@ -28,7 +44,11 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
   const checks = useDataChecks();
   const separate = useStore((s) => s.separate);
   const setSeparate = useStore((s) => s.setSeparate);
+  const missing = useStore((s) => s.filters.missing);
+  const setFilters = useStore((s) => s.setFilters);
   const show = useShowTarget();
+  const showMissing = useShowMissing();
+  const anyMissing = checks.some((c) => c.action.kind === 'missing-files');
   const [listed, setListed] = useState<number | null>(null);
   return (
     <Popover anchor={anchor} label="Data checks" onClose={onClose}>
@@ -48,6 +68,7 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
                     if (c.action.kind === 'list') return setListed(listed === i ? null : i);
                     onClose(false);
                     if (c.action.kind === 'retry') void checkForUploads();
+                    else if (c.action.kind === 'missing-files') showMissing();
                     else show(c.action.target);
                   }}
                 >
@@ -75,6 +96,22 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
             onClick={() => setSeparate(!separate)}
           />
         </div>
+        {anyMissing && (
+          <div className="row">
+            <span id="missing-label" className="text-[13px] font-[500]">
+              Include photos whose files are missing
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              role="switch"
+              className="switch"
+              aria-checked={missing !== 'hide'}
+              aria-labelledby="missing-label"
+              onClick={() => setFilters((f) => ({ ...f, missing: f.missing === 'hide' ? 'show' : 'hide' }))}
+            />
+          </div>
+        )}
       </div>
     </Popover>
   );

@@ -148,6 +148,7 @@ function ago(at: number, now: number): string {
 
 function Status() {
   const checking = useStore((s) => s.checking);
+  const checkingFiles = useStore((s) => s.checkingFiles);
   const checkedAt = useStore((s) => s.checkedAt);
   const error = useStore((s) => s.checkError);
   const [now, setNow] = useState(Date.now());
@@ -164,6 +165,7 @@ function Status() {
           : error
             ? `Couldn't check for new uploads. ${error}`
             : checkedAt !== null && ago(checkedAt, now)}
+        {!checking && checkingFiles && ' · Checking photo files…'}
       </span>
       <button
         type="button"
@@ -171,7 +173,7 @@ function Status() {
         aria-label="Check for new uploads"
         title="Check for new uploads"
         disabled={checking}
-        onClick={() => void checkForUploads()}
+        onClick={() => void checkForUploads(true)}
       >
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
           <path d="M13.4 8.6A5.5 5.5 0 1 1 11.9 4" />

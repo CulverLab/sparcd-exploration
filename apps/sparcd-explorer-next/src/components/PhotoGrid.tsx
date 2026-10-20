@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import type { Model, PhotoRow } from '@/data';
-import { frameJob, photoKey, useThumb } from '@/lib/thumbs';
+import { frameJob, photoKey, useMissing, useThumb } from '@/lib/thumbs';
 
 // Tiles at least 150px wide (130px on phones), 3:2 pictures over a fixed caption.
 const GAP = 8;
@@ -27,14 +27,16 @@ function Tile({ model, row, priority, onOpen }: { model: Model; row: PhotoRow; p
   const photo = model.photos[row.photo];
   const site = model.sites[photo.site];
   const key = photoKey(model, row.photo);
+  const missing = useMissing(model, row.photo);
   // A video shows its first frame, loaded only while its tile is on screen.
-  const { thumb, failed } = useThumb(photo.video ? (priority === 0 ? frameJob(key) : null) : key, priority);
-  const state = photo.video ? (thumb ? 'frame' : 'video') : thumb ? thumb.kind : failed ? 'failed' : 'loading';
+  const job = missing ? null : photo.video ? (priority === 0 ? frameJob(key) : null) : key;
+  const { thumb, failed } = useThumb(job, priority);
+  const state = missing ? 'missing' : photo.video ? (thumb ? 'frame' : 'video') : thumb ? thumb.kind : failed ? 'failed' : 'loading';
   const names = row.species || 'Untagged';
   return (
     <button
       type="button"
-      className="tile"
+      className={missing ? 'tile missing' : 'tile'}
       data-photo={row.photo}
       data-thumb={state}
       aria-label={`${names}, ${row.time}${photo.video ? ', video' : ''}`}
@@ -42,8 +44,12 @@ function Tile({ model, row, priority, onOpen }: { model: Model; row: PhotoRow; p
     >
       <span className={photo.video ? 'ph video' : 'ph'}>
         {thumb?.video ? <Frame video={thumb.video} /> : thumb && <img src={thumb.url} alt="" draggable={false} />}
-        {failed && !photo.video && <span className="noprev">No preview</span>}
-        {photo.video && <span className="play">Video</span>}
+        {missing ? (
+          <span className="noprev">File not found</span>
+        ) : (
+          failed && !photo.video && <span className="noprev">No preview</span>
+        )}
+        {photo.video && !missing && <span className="play">Video</span>}
       </span>
       <span className="cap">
         <b className={row.species ? undefined : 'untag'}>{names}</b>

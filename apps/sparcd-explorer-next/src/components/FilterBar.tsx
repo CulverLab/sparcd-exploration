@@ -31,7 +31,7 @@ function FilterButtonView({ button }: { button: FilterButton }) {
         className="btn fbtn"
         aria-haspopup={Picker ? 'dialog' : undefined}
         aria-expanded={Picker ? pop.open : undefined}
-        onClick={Picker ? pop.toggle : () => document.getElementById('map')?.scrollIntoView({ block: 'nearest' })}
+        onClick={Picker ? pop.toggle : () => document.getElementById(button.dim === 'area' ? 'map' : 'table')?.scrollIntoView({ block: 'nearest' })}
       >
         <span className="lbl">{button.label}</span>
         {!button.active && <span className="caret" />}
@@ -72,7 +72,7 @@ export function FilterBar() {
       </div>
       <div className="fright">
         <span className="result" aria-live="polite">
-          {photoCountLabel(result.photos.length, model.photos.length, active)}
+          {photoCountLabel(result.photos.length, result.total, active)}
         </span>
         <button type="button" className="btn" disabled={!active} onClick={reset}>
           <span className="rs-long">Reset filters</span>

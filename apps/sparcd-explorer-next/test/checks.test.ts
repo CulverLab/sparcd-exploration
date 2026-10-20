@@ -3,6 +3,7 @@ import {
   buildModel,
   checkBadTimestamps,
   checkHiddenUploads,
+  checkMissingFiles,
   checkMoved,
   checkNearDuplicateIds,
   checkNoCoordinates,
@@ -11,7 +12,7 @@ import {
   checkUnreadable,
   dataChecks,
 } from '../src/data';
-import { collection, deployment, media, modelOf, observation } from './support/fixtures';
+import { collection, deployment, media, mediaPath, modelOf, observation } from './support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
 
@@ -127,5 +128,30 @@ describe('data checks', () => {
         .upload('u3', { deployments: [deployment('AA01', 'Alpha', 12.75, -100.25)], media: [media('u3', 'c.jpg', 'AA01', 'bad')] }),
     );
     expect(dataChecks(model).map((c) => c.kind)).toEqual(['no-location', 'hidden-uploads', 'moved', 'bad-timestamps']);
+  });
+});
+
+describe('photos whose files are missing', () => {
+  // Rows an older uploader wrote before the files arrived: no time, no species.
+  const c = collection('Gaps', 'gap')
+    .upload('u1', {
+      deployments: [deployment('0000', '', null, null)],
+      media: [media('u1', 'here.jpg', '0000', '2024-01-01T10:00:00'), media('u1', 'stale1.jpg', '0000', '')],
+    })
+    .upload('u2', { deployments: [deployment('GG01', 'Gap', 12.5, -100.25)], media: [media('u2', 'stale2.jpg', 'GG01', '')] });
+  const missing = ['sparcd-gap/' + mediaPath('u1', 'stale1.jpg'), 'sparcd-gap/' + mediaPath('u2', 'stale2.jpg')];
+
+  it('are counted, with the uploads they are in', () => {
+    expect(checkMissingFiles(modelOf(c, { missing }))).toEqual([{ kind: 'missing-files', photos: 2, uploads: 2 }]);
+    expect(checkMissingFiles(modelOf(c))).toEqual([]);
+  });
+
+  it('are left out of the other checks, which they would only repeat', () => {
+    const before = modelOf(c);
+    expect(checkNoLocation(before)[0].photos).toBe(2);
+    expect(checkBadTimestamps(before).flatMap((x) => x.photos)).toHaveLength(2);
+    const after = modelOf(c, { missing });
+    expect(checkNoLocation(after)[0].photos).toBe(1);
+    expect(checkBadTimestamps(after)).toEqual([]);
   });
 });

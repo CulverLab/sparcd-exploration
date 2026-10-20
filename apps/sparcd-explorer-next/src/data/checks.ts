@@ -17,6 +17,7 @@ export type SharedLocationCheck = {
 };
 export type BadTimestampsCheck = { kind: 'bad-timestamps'; upload: number; photos: number[] };
 export type UnreadableCheck = { kind: 'unreadable'; collection: number; folder: string; file: string; message: string };
+export type MissingFilesCheck = { kind: 'missing-files'; photos: number; uploads: number };
 
 export type DataCheck =
   | NoLocationCheck
@@ -26,7 +27,8 @@ export type DataCheck =
   | HiddenUploadsCheck
   | SharedLocationCheck
   | BadTimestampsCheck
-  | UnreadableCheck;
+  | UnreadableCheck
+  | MissingFilesCheck;
 
 /** Photos whose location is 0000, empty or missing: kept in every count, never on the map. */
 export function checkNoLocation(model: Model): NoLocationCheck[] {
@@ -34,7 +36,7 @@ export function checkNoLocation(model: Model): NoLocationCheck[] {
   let untagged = 0;
   const years = new Set<number>();
   for (const p of model.photos) {
-    if (!model.sites[p.site].noLocation) continue;
+    if (p.missing || !model.sites[p.site].noLocation) continue;
     photos++;
     if (!p.tagged) untagged++;
     if (p.year !== null) years.add(p.year);
@@ -119,7 +121,7 @@ export function checkSharedLocations(model: Model): SharedLocationCheck[] {
 export function checkBadTimestamps(model: Model): BadTimestampsCheck[] {
   const byUpload = new Map<number, number[]>();
   model.photos.forEach((p, i) => {
-    if (p.date !== null) return;
+    if (p.date !== null || p.missing) return;
     if (!byUpload.has(p.upload)) byUpload.set(p.upload, []);
     byUpload.get(p.upload)!.push(i);
   });
@@ -131,10 +133,27 @@ export function checkUnreadable(model: Model): UnreadableCheck[] {
   return model.problems.map((p) => ({ kind: 'unreadable', ...p }));
 }
 
+/**
+ * Photos media.csv lists whose files storage doesn't have. They are left out
+ * of every count until the Data checks switch shows them, so other checks
+ * skip them too.
+ */
+export function checkMissingFiles(model: Model): MissingFilesCheck[] {
+  let photos = 0;
+  const uploads = new Set<number>();
+  for (const p of model.photos) {
+    if (!p.missing) continue;
+    photos++;
+    uploads.add(p.upload);
+  }
+  return photos ? [{ kind: 'missing-files', photos, uploads: uploads.size }] : [];
+}
+
 /** Every check, the ones that change counts most first. */
 export function dataChecks(model: Model): DataCheck[] {
   return [
     ...checkNoLocation(model),
+    ...checkMissingFiles(model),
     ...checkUnreadable(model),
     ...checkHiddenUploads(model),
     ...checkSharedLocations(model),

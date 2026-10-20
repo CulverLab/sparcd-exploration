@@ -12,7 +12,7 @@ export function LocationsPicker() {
   const unit = useStore((s) => s.display.elevation);
   const without = useWithout('locations');
   const all = useMemo(() => {
-    const rows = locationRows(model, applyFilters(model, NO_FILTERS), grouping);
+    const rows = locationRows(model, applyFilters(model, { ...NO_FILTERS, missing: 'show' }), grouping);
     const flags = locationFlagger(model);
     return rows
       .map((r) => ({ ...r, flags: flags(r) }))

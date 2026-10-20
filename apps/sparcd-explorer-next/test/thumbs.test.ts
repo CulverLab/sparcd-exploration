@@ -8,6 +8,7 @@ import {
   ThumbCache,
   ThumbQueue,
   ThumbSessions,
+  FileNotFoundError,
   extractThumbnail,
   keepSigned,
   loadJob,
@@ -86,6 +87,23 @@ describe('which picture a tile shows', () => {
   it('the original when the ranged read fails, as when the server refuses ranges', async () => {
     const io = fakeIo(async () => Promise.reject(new TypeError('Failed to fetch')));
     expect((await loadThumb(io, 'c.jpg', signal())).kind).toBe('original');
+  });
+
+  it('no second request when the server has no such file', async () => {
+    const noSuchKey = Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } });
+    const io = fakeIo(async () => Promise.reject(noSuchKey));
+    await expect(loadThumb(io, 'gone.jpg', signal())).rejects.toEqual(new FileNotFoundError('gone.jpg'));
+    expect(io.calls).toEqual(['head gone.jpg']);
+    // A bare 404, as some servers send without an error code.
+    const bare = fakeIo(async () => Promise.reject(Object.assign(new Error('UnknownError'), { $metadata: { httpStatusCode: 404 } })));
+    await expect(loadThumb(bare, 'gone.jpg', signal())).rejects.toBeInstanceOf(FileNotFoundError);
+    expect(bare.calls).toEqual(['head gone.jpg']);
+  });
+
+  it('the original when the ranged read is refused for another reason', async () => {
+    const denied = Object.assign(new Error('AccessDenied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } });
+    const io = fakeIo(async () => Promise.reject(denied));
+    expect((await loadThumb(io, 'e.jpg', signal())).kind).toBe('original');
   });
 
   it('the original when the bytes are not a JPEG at all', async () => {

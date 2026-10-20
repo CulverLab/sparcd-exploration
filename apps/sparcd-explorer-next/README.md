@@ -88,6 +88,8 @@ runs the unit and BDD suites on pull requests.
 - `src/data/` is the data layer: plain TypeScript over plain objects, no React.
   - `open.ts` and `cache.ts` read collections (ETag-checked, 8 requests in
     flight, cancellable) and cache them per account.
+  - `files.ts` lists every upload folder in the background for the photos
+    media.csv lists but storage lacks, cached by media.csv's ETag.
   - `model.ts` builds the model, `filters.ts` filters it, `views.ts` derives
     what each view shows, and `checks.ts` finds data problems.
   - `coords.ts` holds UTM, display precision and the exact-sites gate; `hex.ts`
@@ -123,7 +125,8 @@ collections:
    with its "× Clear".
 7. Open Data checks: read each problem, press one button (for example "Show
    these photos"), and Undo it. Turn on "Show each location ID separately" and
-   off again.
+   off again. Where photos' files are missing, turn on "Include photos whose
+   files are missing" and see the photo count grow.
 8. In Locations, Species and Photos, sort a column, hide one in Columns, and
    Export CSV; the rows come in the table's order and the coordinates match
    the Display precision.

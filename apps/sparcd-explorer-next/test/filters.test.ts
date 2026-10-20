@@ -19,7 +19,7 @@ import {
   toggleSpecies,
   type FilterState,
 } from '../src/data';
-import { collection, deployment, fileNames, filter, media, modelOf, observation, siteNamed } from './support/fixtures';
+import { collection, deployment, fileNames, filter, media, mediaPath, modelOf, observation, siteNamed } from './support/fixtures';
 
 const a = collection('A', 'aaa')
   .upload('u1', {
@@ -173,6 +173,41 @@ describe('applyFilters, combined', () => {
   });
 });
 
+describe('photos whose files are missing', () => {
+  // b1 and n1 are listed in media.csv, but their files aren't in storage.
+  const gone = modelOf([a, b], { missing: ['sparcd-aaa/' + mediaPath('u2', 'b1.jpg'), 'sparcd-aaa/' + mediaPath('u3', 'n1.jpg')] });
+  const names = (state: Partial<FilterState>) => fileNames(gone, filter(gone, state).photos);
+
+  it('are kept in the model, flagged', () => {
+    expect(gone.photos.filter((p) => p.missing).map((p) => p.fileName)).toEqual(['b1.jpg', 'n1.jpg']);
+  });
+
+  it('are left out of everything by default, counts and camera effort too', () => {
+    const result = filter(gone);
+    expect(names({})).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'b2.jpg', 'c1.jpg']);
+    expect(result.total).toBe(5);
+    expect(fileNames(gone, result.effort)).toEqual(names({}));
+    expect(result.detections).toHaveLength(3);
+    expect(isFiltered(NO_FILTERS)).toBe(false);
+  });
+
+  it('count with the rest while the Data checks switch shows them', () => {
+    const result = filter(gone, { missing: 'show' });
+    expect(fileNames(gone, result.photos)).toEqual(ALL);
+    expect(result.total).toBe(7);
+    expect(isFiltered({ ...NO_FILTERS, missing: 'show' })).toBe(false);
+  });
+
+  it('show alone as a filter, which Reset and its × clear back to the switch', () => {
+    expect(names({ missing: 'only' })).toEqual(['b1.jpg', 'n1.jpg']);
+    expect(filter(gone, { missing: 'only' }).total).toBe(7);
+    const only: FilterState = { ...NO_FILTERS, missing: 'only', years: [2024] };
+    expect(resetFilters(only).state.missing).toBe('show');
+    expect(clearFilter(only, 'files').missing).toBe('show');
+    expect(resetFilters({ ...NO_FILTERS, missing: 'hide', years: [2024] }).state.missing).toBe('hide');
+  });
+});
+
 describe('the list pickers', () => {
   const species = listKeys(model, 'species');
 
@@ -267,10 +302,11 @@ describe('each filter button', () => {
     elevation: [0, 10],
     ranges: { hidden: ['AA0'] },
     photoTag: 'all',
+    missing: 'only',
   };
 
   it('shows which filters are active', () => {
-    expect(activeFilters(everything)).toEqual(['collections', 'species', 'locations', 'area', 'dates', 'elevation', 'ranges']);
+    expect(activeFilters(everything)).toEqual(['collections', 'species', 'locations', 'area', 'files', 'dates', 'elevation', 'ranges']);
     expect(activeFilters({ ...NO_FILTERS, hours: [1, 2] })).toEqual(['dates']);
   });
 

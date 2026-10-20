@@ -45,6 +45,12 @@ export type FilterState = {
   ranges: ListFilter;
   /** Which photos the Photos view lists. A view setting: counts and Reset ignore it. */
   photoTag: PhotoTag;
+  /**
+   * Photos whose files aren't in storage: left out (`hide`, the default),
+   * counted with the rest (`show`, the Data checks switch), or alone (`only`,
+   * a filter). Reset keeps the switch.
+   */
+  missing: 'hide' | 'show' | 'only';
 };
 
 const ALL: ListFilter = { hidden: [] };
@@ -63,10 +69,11 @@ export const NO_FILTERS: FilterState = {
   elevation: null,
   ranges: ALL,
   photoTag: 'all',
+  missing: 'hide',
 };
 
 /** The groups a filter button clears with its ×. */
-export type FilterDimension = 'collections' | 'species' | 'locations' | 'area' | 'dates' | 'elevation' | 'ranges';
+export type FilterDimension = 'collections' | 'species' | 'locations' | 'area' | 'files' | 'dates' | 'elevation' | 'ranges';
 /** The filters picked from a list of ticked items. */
 export type ListDimension = 'collections' | 'species' | 'locations' | 'ranges';
 
@@ -80,6 +87,8 @@ export function clearFilter(state: FilterState, dimension: FilterDimension): Fil
       return { ...state, locations: ALL };
     case 'area':
       return { ...state, area: [] };
+    case 'files':
+      return { ...state, missing: 'show' };
     case 'dates':
       return { ...state, dateFrom: null, dateTo: null, years: [], months: [], hours: null };
     case 'elevation':
@@ -95,6 +104,7 @@ export function activeFilters(state: FilterState): FilterDimension[] {
   if (state.species.hidden.length || state.species.hideUntagged) active.push('species');
   if (state.locations.hidden.length) active.push('locations');
   if (state.area.length) active.push('area');
+  if (state.missing === 'only') active.push('files');
   if (state.dateFrom || state.dateTo || state.years.length || state.months.length || state.hours) active.push('dates');
   if (state.elevation) active.push('elevation');
   if (state.ranges.hidden.length) active.push('ranges');
@@ -105,7 +115,8 @@ export const isFiltered = (state: FilterState): boolean => activeFilters(state).
 
 /** Clear every filter. `undo` is the state to put back. */
 export function resetFilters(state: FilterState): { state: FilterState; undo: FilterState } {
-  return { state: { ...NO_FILTERS, photoTag: state.photoTag }, undo: state };
+  const missing = state.missing === 'hide' ? 'hide' : 'show';
+  return { state: { ...NO_FILTERS, photoTag: state.photoTag, missing }, undo: state };
 }
 
 // --- The list pickers ---------------------------------------------------------
@@ -247,6 +258,8 @@ export function carryFilters(
 export type FilterResult = {
   /** Photos passing every filter. */
   photos: number[];
+  /** Photos with nothing filtered: every one, less those with missing files while they are left out. */
+  total: number;
   /** Their detections, less any the species filter hides. */
   detections: number[];
   /** Photos passing every filter but species: camera effort, for active days. */
@@ -308,12 +321,17 @@ export function applyFilters(model: Model, state: FilterState): FilterResult {
   const off = new Set(hidden);
   const ticked = hidden.length ? model.species.map((s) => !off.has(s.key)) : null;
 
+  const { missing } = state;
   const photos: number[] = [];
   const detections: number[] = [];
   const effort: number[] = [];
+  let total = 0;
   const { detections: allDetections } = model;
   for (let i = 0; i < model.photos.length; i++) {
     const p = model.photos[i];
+    if (p.missing && missing === 'hide') continue;
+    total++;
+    if (missing === 'only' && !p.missing) continue;
     if (!sitePass[p.site] || (timeOk && !timeOk(p))) continue;
     effort.push(i);
     const own = p.detections;
@@ -328,7 +346,7 @@ export function applyFilters(model: Model, state: FilterState): FilterResult {
       if (detections.length > before) photos.push(i);
     }
   }
-  return { photos, detections, effort, sitePass };
+  return { photos, total, detections, effort, sitePass };
 }
 
 /** The photos the Photos view lists for its Tagged / Untagged / All switch. */

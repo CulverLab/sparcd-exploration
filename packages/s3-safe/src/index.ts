@@ -371,7 +371,8 @@ export class SafeS3Client {
     return (res.Buckets ?? []).map((b) => b.Name!).filter(Boolean);
   }
 
-  async *listObjects(bucket: string, prefix?: string): AsyncIterable<ObjectInfo> {
+  /** Every object under `prefix`, page by page. `signal` aborts the page in flight and stops the walk. */
+  async *listObjects(bucket: string, prefix?: string, opts: { signal?: AbortSignal } = {}): AsyncIterable<ObjectInfo> {
     this.assertAllowed(bucket);
     let token: string | undefined;
     do {
@@ -381,6 +382,7 @@ export class SafeS3Client {
           Prefix: prefix,
           ContinuationToken: token,
         }),
+        { abortSignal: opts.signal },
       );
       for (const o of res.Contents ?? []) {
         yield {

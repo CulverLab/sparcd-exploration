@@ -1,7 +1,7 @@
 // Opening collections and checking them for new uploads. A collection read
 // before on this device opens from the cache at once; the rest are read with
 // per-collection progress. Either way the workspace then checks every ETag in
-// the background.
+// the background, then which photo files storage lacks.
 
 import type { CollectionRef } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
@@ -10,6 +10,7 @@ import {
   REQUESTS_IN_FLIGHT,
   accountKey,
   cachedRegistries,
+  checkPhotoFiles,
   createLimiter,
   fetchRegistries,
   readCachedCollection,
@@ -98,15 +99,41 @@ export async function openSelection(
 }
 
 let checking: AbortController | null = null;
+let filesCheck: AbortController | null = null;
 
-/** Stop a background check, e.g. when leaving the workspace. */
+/** Stop the background checks, e.g. when leaving the workspace. */
 export function stopChecking(): void {
   checking?.abort();
   checking = null;
+  filesCheck?.abort();
+  filesCheck = null;
 }
 
-/** Check every open collection's ETags and apply what changed. */
-export async function checkForUploads(): Promise<void> {
+/**
+ * List the open uploads' folders and leave out the photos whose files aren't
+ * there. Folders whose media.csv is unchanged since their last listing are
+ * skipped unless `force`. Nothing waits on it, and a failed check changes nothing.
+ */
+export async function checkFiles(force = false): Promise<void> {
+  const { config, loaded, setCheckingFiles, applyMissing } = useStore.getState();
+  if (!config || !loaded.length) return;
+  filesCheck?.abort();
+  const controller = (filesCheck = new AbortController());
+  setCheckingFiles(true);
+  try {
+    const missing = await checkPhotoFiles(sourceFor(config), loaded, { signal: controller.signal, force });
+    if (useStore.getState().loaded === loaded) applyMissing(missing);
+  } catch {
+    // Cancelled, or storage refused: the counts stay as they are.
+  } finally {
+    // A newer check that replaced this one keeps the status.
+    if (filesCheck === controller) filesCheck = null;
+    if (filesCheck === null) setCheckingFiles(false);
+  }
+}
+
+/** Check every open collection's ETags and apply what changed, then the photo files. `force` lists every folder again. */
+export async function checkForUploads(force = false): Promise<void> {
   const { config, refs, setChecking, applyRefresh } = useStore.getState();
   if (!config || !refs.length) return;
   stopChecking();
@@ -122,6 +149,7 @@ export async function checkForUploads(): Promise<void> {
     if (useStore.getState().refs !== refs) return;
     applyRefresh(loaded, registries);
     setChecking(false);
+    void checkFiles(force);
   } catch (err) {
     // A newer check replaced this one; leave its spinner alone.
     if (controller.signal.aborted) {
@@ -129,6 +157,7 @@ export async function checkForUploads(): Promise<void> {
       return;
     }
     setChecking(false, errorText(err));
+    void checkFiles(force);
   } finally {
     if (checking === controller) checking = null;
   }

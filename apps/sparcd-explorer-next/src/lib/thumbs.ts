@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { S3Config } from '@sparcd/types';
 import {
   FRAME_JOB,
+  FileNotFoundError,
   HEAD_BYTES,
   ORIGINAL_JOB,
   THUMBS_KEPT,
@@ -125,7 +126,13 @@ export function thumbSession(): Session {
   return sessions.get(id, () => {
     const io = browserIo(state.config!);
     const cache = new ThumbCache(THUMBS_KEPT, (url) => URL.revokeObjectURL(url));
-    return { io, queue: new ThumbQueue((job, signal) => loadJob(io, job, signal), cache) };
+    // A file found gone is marked so, and never asked for again this session.
+    const load = (job: string, signal: AbortSignal) =>
+      loadJob(io, job, signal).catch((err) => {
+        if (err instanceof FileNotFoundError) useStore.getState().markGone(err.key);
+        throw err;
+      });
+    return { io, queue: new ThumbQueue(load, cache) };
   });
 }
 
@@ -136,6 +143,13 @@ export const openThumbSession = (): Session | undefined => {
 };
 
 export type ThumbState = { thumb: Thumb | null; failed: boolean };
+
+/** Whether a photo's file is known not to be on the server: by the listing, or by a read this session. */
+export function useMissing(model: Model, photo: number): boolean {
+  const key = photoKey(model, photo);
+  const gone = useStore((s) => s.gone.has(key));
+  return model.photos[photo].missing || gone;
+}
 
 /**
  * A queue job's picture, loaded while the caller is mounted: a thumbnail by

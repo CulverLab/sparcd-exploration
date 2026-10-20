@@ -49,6 +49,12 @@ type State = {
   checking: boolean;
   checkedAt: number | null;
   checkError: string | null;
+  /** Photo files media.csv lists that storage lacks, as `bucket/key`, from the last listing. */
+  missingFiles: ReadonlySet<string>;
+  /** The listing behind `missingFiles` is running. */
+  checkingFiles: boolean;
+  /** Photo files a thumbnail read found gone this session, as `bucket/key`: never requested again. */
+  gone: ReadonlySet<string>;
   filters: FilterState;
   /** "Show each location ID separately", in Data checks. */
   separate: boolean;
@@ -77,6 +83,10 @@ type State = {
   enterWorkspace: (stamp: OpenStamp, refs: CollectionRef[], loaded: LoadedCollection[], registries: Registries) => boolean;
   applyRefresh: (loaded: LoadedCollection[], registries: Registries) => void;
   setChecking: (checking: boolean, error?: string | null) => void;
+  setCheckingFiles: (checking: boolean) => void;
+  /** Rebuild with these photo files missing, unless they are the ones already applied. */
+  applyMissing: (missing: ReadonlySet<string>) => void;
+  markGone: (key: string) => void;
   setFilters: (change: (f: FilterState) => FilterState) => void;
   clearFilter: (dim: FilterDimension) => void;
   /** Apply a change to filters and view state with an Undo toast. */
@@ -125,9 +135,13 @@ export const readLast = (account: string): string[] =>
 const initial = loadSessionConnection();
 let toastId = 0;
 
-function model(loaded: LoadedCollection[], registries: Registries): Model {
-  return buildModel(loaded, { species: registries.species, registry: registries.registry });
+const NONE: ReadonlySet<string> = new Set();
+
+function model(loaded: LoadedCollection[], registries: Registries, missing: ReadonlySet<string>): Model {
+  return buildModel(loaded, { species: registries.species, registry: registries.registry, missing });
 }
+
+const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((k) => b.has(k));
 
 export const useStore = create<State>((set, get) => ({
   config: initial,
@@ -141,6 +155,9 @@ export const useStore = create<State>((set, get) => ({
   checking: false,
   checkedAt: null,
   checkError: null,
+  missingFiles: NONE,
+  checkingFiles: false,
+  gone: NONE,
   filters: NO_FILTERS,
   separate: false,
   view: readStored<View>(VIEW_KEY, 'locations', (v): v is View => VIEWS.includes(v as View)),
@@ -171,6 +188,8 @@ export const useStore = create<State>((set, get) => ({
       refs: [],
       loaded: [],
       model: null,
+      missingFiles: NONE,
+      gone: NONE,
       filters: NO_FILTERS,
       separate: false,
       sorting: DEFAULT_SORTING,
@@ -206,7 +225,7 @@ export const useStore = create<State>((set, get) => ({
     const { account, openGeneration, model: before, filters: previous, separate } = get();
     if (stamp.account !== account || stamp.generation !== openGeneration) return false;
     writeStored(lastKey(account), refs.map((r) => r.key));
-    const next = model(loaded, registries);
+    const next = model(loaded, registries, get().missingFiles);
     // Another set of collections keeps the filters that still apply.
     const carried = before ? carryFilters(before, next, previous) : { state: NO_FILTERS, dropped: false };
     set({
@@ -236,7 +255,7 @@ export const useStore = create<State>((set, get) => ({
   // The filters carry over, so a new species or location doesn't slip into a
   // filter that showed only a few.
   applyRefresh: (loaded, registries) => {
-    const next = model(loaded, registries);
+    const next = model(loaded, registries, get().missingFiles);
     const { model: before, filters } = get();
     set({
       loaded,
@@ -250,6 +269,16 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setChecking: (checking, error = null) => set({ checking, ...(error !== null ? { checkError: error } : {}) }),
+  setCheckingFiles: (checkingFiles) => set({ checkingFiles }),
+
+  applyMissing: (missing) => {
+    const { model: before, loaded, registries, filters, missingFiles } = get();
+    if (sameSet(missing, missingFiles)) return;
+    if (!before) return set({ missingFiles: missing });
+    const next = model(loaded, registries, missing);
+    set({ missingFiles: missing, model: next, filters: carryFilters(before, next, filters).state });
+  },
+  markGone: (key) => set({ gone: new Set([...get().gone, key]) }),
 
   setFilters: (change) => set({ filters: change(get().filters) }),
   clearFilter: (dim) => set({ filters: clearFilter(get().filters, dim) }),

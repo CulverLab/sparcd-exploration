@@ -32,6 +32,7 @@ const FILTER_NAMES: Record<string, string> = {
   locations: 'Locations',
   dates: 'Dates',
   area: 'Area',
+  files: 'Files',
   'mountain range': 'Mountain range',
   collections: 'Collections',
 };
@@ -120,11 +121,11 @@ Then('the species filter lists {string} first, apart from the species', async ({
   await expect(first.getByRole('button', { name: `Only ${item}`, exact: true })).toBeAttached();
 });
 
-Then(/^the (species|dates|locations|area|mountain range) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
+Then(/^the (species|dates|locations|area|files|mountain range) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
   await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${FILTER_NAMES[which]}`) })).toHaveText(label);
 });
 
-When(/^I clear the (Species|Area|Locations) filter with its ×$/, async ({ page }, name: string) => {
+When(/^I clear the (Species|Area|Locations|Files) filter with its ×$/, async ({ page }, name: string) => {
   await page.getByRole('button', { name: `Clear ${name} filter` }).click();
 });
 

@@ -1,9 +1,12 @@
 // Thumbnails for the photo grid. Cameras embed a small JPEG in the EXIF block
 // at the start of every photo, so one ranged read of the first bytes is
 // usually enough; without one (or when the server refuses ranges) the tile
-// shows the original. Video tiles show their first frame, and the detail view
+// shows the original. A file the server doesn't have is reported as such,
+// with no second request. Video tiles show their first frame, and the detail view
 // its original, through the same line of requests. Everything here runs over
 // injected I/O, so tests drive it without a browser or a server.
+
+import { isMissingObjectError } from './s3';
 
 /** Bytes read from a photo's start: the EXIF block (64 KB at most) and its thumbnail. */
 export const HEAD_BYTES = 66_000;
@@ -46,6 +49,14 @@ export type ThumbIo = {
   now(): number;
 };
 
+/** The photo's file isn't on the server, so there is nothing else to try. */
+export class FileNotFoundError extends Error {
+  constructor(readonly key: string) {
+    super(`${key} isn't on the server`);
+    this.name = 'FileNotFoundError';
+  }
+}
+
 /** The EXIF thumbnail inside the first bytes of a JPEG, or undefined. */
 export async function extractThumbnail(head: Uint8Array): Promise<Uint8Array | undefined> {
   const { thumbnail } = await import('exifr/dist/mini.esm.mjs');
@@ -58,9 +69,10 @@ export async function loadThumb(io: ThumbIo, key: string, signal: AbortSignal): 
   let head: Uint8Array | null = null;
   try {
     head = await io.readHead(key, signal);
-  } catch {
-    // A server, or a CORS policy, that refuses ranged reads: show the original.
+  } catch (err) {
     signal.throwIfAborted();
+    if (isMissingObjectError(err)) throw new FileNotFoundError(key);
+    // A server, or a CORS policy, that refuses ranged reads: show the original.
   }
   const embedded = head ? await io.extract(head).catch(() => undefined) : undefined;
   signal.throwIfAborted();

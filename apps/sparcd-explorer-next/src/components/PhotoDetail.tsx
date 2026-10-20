@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { createPortal } from 'react-dom';
 import { formatTimestamp24, type Model } from '@/data';
 import { fmtN, formatElevation, formatPosition } from '@/lib/format';
-import { originalJob, photoKey, useFreshUrl, useThumb } from '@/lib/thumbs';
+import { originalJob, photoKey, useFreshUrl, useMissing, useThumb } from '@/lib/thumbs';
 import { useStore } from '@/store';
 
 const FOCUSABLE = 'button:not([disabled]), a[href], video, [tabindex]:not([tabindex="-1"])';
@@ -57,7 +57,8 @@ export function PhotoDetail({
   // The thumbnail shows at once, ahead of every grid tile; the original
   // replaces it once it arrives, loaded in the same line as the thumbnails,
   // first of all, and only when the thumbnail wasn't the original already.
-  const { thumb, failed } = useThumb(photo.video ? null : key, -2);
+  const missing = useMissing(model, i);
+  const { thumb, failed } = useThumb(photo.video || missing ? null : key, -2);
   const { thumb: original } = useThumb(thumb?.kind === 'embedded' ? originalJob(key) : null, -1);
   const full = thumb?.kind === 'original' ? thumb.url : (original?.url ?? null);
   // Links that outlive the panel's first minutes: Open full size and the video.
@@ -136,7 +137,12 @@ export function PhotoDetail({
     >
       <div ref={card} className="detail-card" onKeyDown={trap}>
         <div className="detail-img" data-photo={i}>
-          {photo.video ? (
+          {missing ? (
+            <span className="noprev gone">
+              <span>This photo's file isn't on the server</span>
+              <code className="mono">{photo.key}</code>
+            </span>
+          ) : photo.video ? (
             link && <Clip key={key} url={link} name={photo.fileName} />
           ) : (
             <>
@@ -153,7 +159,7 @@ export function PhotoDetail({
               )}
             </>
           )}
-          {photo.video && <span className="badge play">Video</span>}
+          {photo.video && !missing && <span className="badge play">Video</span>}
         </div>
         <div className="detail-side">
           <div className="detail-nav">
@@ -183,7 +189,7 @@ export function PhotoDetail({
               </div>
             ))}
           </dl>
-          {link ? (
+          {link && !missing ? (
             <a className="btn sm fullsize" href={link} target="_blank" rel="noopener">
               Open full size
             </a>

@@ -7,7 +7,9 @@ import {
   NO_FILTERS,
   applyFilters,
   buildModel,
+  checkPhotoFiles,
   listKeys,
+  missingKeys,
   only,
   onlyLocations,
   onlySpecies,
@@ -102,5 +104,45 @@ describe('performance', () => {
     applyFilters(model, state); // warm up
     const best = Math.min(...Array.from({ length: 5 }, () => timed(() => applyFilters(model, state))));
     expect(best).toBeLessThan(BUDGET_MS);
+  });
+});
+
+describe('checking 70k photo files', () => {
+  const FILES = 70_000;
+  const folder = 'Collections/perf/Uploads/big/';
+  const media = Array.from({ length: FILES }, (_, i) => ({ mediaPath: `${folder}IMG_${i}.JPG` }));
+  // One in thirty never arrived.
+  const keys = media.filter((_, i) => i % 30).map((m) => m.mediaPath);
+
+  it('compares media.csv with the listing in one pass', () => {
+    const listed = new Set(keys);
+    const best = Math.min(...Array.from({ length: 5 }, () => timed(() => missingKeys(media, listed))));
+    expect(missingKeys(media, listed)).toHaveLength(Math.ceil(FILES / 30));
+    expect(best).toBeLessThan(BUDGET_MS / 2);
+  });
+
+  it('never holds the main thread for long while it lists, page by page', async () => {
+    const client = {
+      async *listObjects(_bucket: string, _prefix?: string, opts: { signal?: AbortSignal } = {}) {
+        for (let i = 0; i < keys.length; i += 1000) {
+          await new Promise((r) => setTimeout(r, 0));
+          opts.signal?.throwIfAborted();
+          for (const key of keys.slice(i, i + 1000)) yield { key, size: 1 };
+        }
+      },
+    };
+    const db = { files: { where: () => ({ equals: () => ({ toArray: async () => [] }) }), put: async () => undefined } };
+    const loaded = [{ ref: collectionRef('Perf', 'perf'), uploads: [{ folder, etags: { 'media.csv': 'v1' }, media }] }];
+    let longest = 0;
+    let last = performance.now();
+    const probe = setInterval(() => {
+      const now = performance.now();
+      longest = Math.max(longest, now - last);
+      last = now;
+    }, 1);
+    const missing = await checkPhotoFiles({ client, db, account: 'perf' } as never, loaded as never);
+    clearInterval(probe);
+    expect(missing.size).toBe(Math.ceil(FILES / 30));
+    expect(longest).toBeLessThan(BUDGET_MS / 2);
   });
 });

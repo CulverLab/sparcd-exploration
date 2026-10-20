@@ -6,7 +6,12 @@ import { fmtN, monthName } from './format';
 /** Where an action takes the workspace: these locations, optionally split and in a view. */
 export type CheckTarget = { locations: string[]; separate?: boolean; view?: 'locations' | 'photos'; message: string };
 
-export type CheckAction = { label: string } & ({ kind: 'show'; target: CheckTarget } | { kind: 'retry' } | { kind: 'list' });
+export type CheckAction = { label: string } & (
+  | { kind: 'show'; target: CheckTarget }
+  | { kind: 'retry' }
+  | { kind: 'list' }
+  | { kind: 'missing-files' }
+);
 
 export type CheckLine = { text: string; action: CheckAction; details?: string[] };
 
@@ -36,6 +41,13 @@ export function describeCheck(model: Model, check: DataCheck): CheckLine {
           kind: 'show',
           target: { locations: [NO_LOCATION_KEY], view: 'photos', message: 'Showing photos with no location' },
         },
+      };
+    }
+    case 'missing-files': {
+      const one = check.photos === 1;
+      return {
+        text: `${fmtN(check.photos)} ${one ? 'photo is' : 'photos are'} listed in the upload data, but ${one ? "its file isn't" : "their files aren't"} on the server (${check.uploads === 1 ? '1 upload' : `${fmtN(check.uploads)} uploads`}).`,
+        action: { label: one ? 'Show it' : 'Show them', kind: 'missing-files' },
       };
     }
     case 'unreadable': {

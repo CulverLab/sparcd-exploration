@@ -103,14 +103,15 @@ export class CollectionBuilder {
 
 export const collection = (name?: string, uuid?: string) => new CollectionBuilder(collectionRef(name, uuid));
 
+/** `missing`: photo files storage lacks, as `bucket/key`. */
 export function modelOf(
   collections: CollectionBuilder | CollectionBuilder[],
-  opts: { species?: Species[] } = {},
+  opts: { species?: Species[]; missing?: string[] } = {},
 ): Model {
   const list = Array.isArray(collections) ? collections : [collections];
   return buildModel(
     list.map((c) => c.build()),
-    { species: opts.species ? [opts.species] : [] },
+    { species: opts.species ? [opts.species] : [], missing: new Set(opts.missing) },
   );
 }
 

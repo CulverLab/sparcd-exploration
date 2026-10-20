@@ -51,10 +51,17 @@ export type CachedRegistries = {
   registry: RegistryLocation[];
 };
 
+/**
+ * The media.csv rows of one upload folder whose files storage doesn't have,
+ * as of the media.csv with ETag `mediaEtag`.
+ */
+export type CachedFileCheck = { account: string; bucket: string; folder: string; mediaEtag: string; missing: string[] };
+
 export class ExplorerDb extends Dexie {
   uploads!: Table<CachedUpload, [string, string, string]>;
   collections!: Table<CachedCollection, [string, string, string]>;
   registries!: Table<CachedRegistries, [string, string]>;
+  files!: Table<CachedFileCheck, [string, string, string]>;
 
   constructor(name = 'sparcd-explorer') {
     super(name);
@@ -63,6 +70,7 @@ export class ExplorerDb extends Dexie {
       collections: '[account+bucket+uuid]',
     });
     this.version(2).stores({ registries: '[account+collection]' });
+    this.version(3).stores({ files: '[account+bucket+folder], [account+bucket]' });
   }
 }
 

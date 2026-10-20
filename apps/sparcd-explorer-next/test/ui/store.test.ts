@@ -193,6 +193,25 @@ describe('refresh', () => {
   });
 });
 
+describe('photo files missing from storage', () => {
+  it('rebuild the model with those photos flagged, and only when the set changes', () => {
+    open(alpha);
+    const key = `${alpha.ref.bucket}/${useStore.getState().model!.photos[0].key}`;
+    useStore.getState().applyMissing(new Set([key]));
+    const flagged = useStore.getState().model!;
+    expect(flagged.photos[0].missing).toBe(true);
+    useStore.getState().applyMissing(new Set([key]));
+    expect(useStore.getState().model).toBe(flagged);
+  });
+
+  it('found gone while browsing are remembered for the session, and forgotten for another account', () => {
+    useStore.getState().markGone('sparcd-aaa/x.jpg');
+    expect(useStore.getState().gone.has('sparcd-aaa/x.jpg')).toBe(true);
+    useStore.getState().adoptSession(account('bob'));
+    expect(useStore.getState().gone.size).toBe(0);
+  });
+});
+
 describe('table sorts', () => {
   it('are kept per table in the store, where the downloads and the report read them', () => {
     open(alpha);

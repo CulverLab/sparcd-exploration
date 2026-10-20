@@ -20,6 +20,8 @@ export class FakeS3 implements ReadClient {
   peak = 0;
   /** Milliseconds each request takes. */
   latency = 0;
+  /** Keys per page of a recursive listing. */
+  pageSize = 1000;
 
   put(bucket: string, key: string, text: string): this {
     this.objects.set(`${bucket}/${key}`, { body: new TextEncoder().encode(text), etag: `"v${++this.version}"` });
@@ -93,6 +95,23 @@ export class FakeS3 implements ReadClient {
       else objects.push({ key, size: body.length, etag });
     }
     return { prefixes: [...prefixes].sort(), objects: objects.sort((a, b) => a.key.localeCompare(b.key)) };
+  }
+
+  /** Every object under `prefix`, a page of `pageSize` per request. */
+  async *listObjects(bucket: string, prefix = '', opts: { signal?: AbortSignal } = {}): AsyncIterable<ObjectInfo> {
+    this.lists.push(`${bucket}/${prefix}**`);
+    const keys = [...this.objects.keys()].filter((path) => path.startsWith(`${bucket}/${prefix}`)).sort();
+    let i = 0;
+    do {
+      await this.request(opts.signal);
+      const failure = this.failures.get(`${bucket}/${prefix}`);
+      if (failure) throw failure;
+      for (const path of keys.slice(i, i + this.pageSize)) {
+        const { body, etag } = this.objects.get(path)!;
+        yield { key: path.slice(bucket.length + 1), size: body.length, etag };
+      }
+      i += this.pageSize;
+    } while (i < keys.length);
   }
 }
 

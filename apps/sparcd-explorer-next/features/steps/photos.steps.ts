@@ -1,7 +1,7 @@
 // The Photos grid, the photo panel and the Charts view.
 
 import type { Locator, Page } from '@playwright/test';
-import { putCollection, type Upload } from './support/data';
+import { ALPHA, ALPHA_UPLOADS, BRAVO, CHARLIE, addUpload, bucketOf, putCollection, uploadPrefix, type Upload } from './support/data';
 import { Given, Then, When, expect, tableRows, viewButton, type Scratch } from './support/world';
 
 // --- Grid ------------------------------------------------------------------------
@@ -354,4 +354,59 @@ Then(/^the "(.*)" bar in the (species|hour|month) chart is (highlighted|dimmed)$
 
 Then(/^no bar in the (species|hour|month) chart is highlighted$/, async ({ page }, which: string) => {
   await expect(chart(page, which).locator('[data-state]')).toHaveCount(0);
+});
+
+// --- Files that aren't on the server ---------------------------------------------
+
+const COLLECTIONS: Record<string, { uuid: string }> = { 'Alpha Basin': ALPHA, 'Bravo Flats': BRAVO, 'Charlie Pond': CHARLIE };
+
+Given(/^"(.*)" has an upload listing (\d+) photos whose files aren't on the server$/, async ({ s3, scratch }, name: string, n: string) => {
+  const c = COLLECTIONS[name];
+  // Rows an older uploader wrote before the files arrived: no time, no species.
+  const upload: Upload = {
+    stamp: '2025.06.01.08.00.00_fielduser',
+    deployment: { id: 'AB02', name: 'Cedar Draw', lat: 0.53, lon: -150.15, elevation: 1500 },
+    photos: Array.from({ length: Number(n) }, (_, i) => ({ file: `STALE${i}.JPG`, time: '' })),
+  };
+  addUpload(s3, c, upload);
+  const keys = upload.photos.map((p) => `${uploadPrefix(c, upload.stamp)}${p.file}`);
+  for (const key of keys) s3.delete(bucketOf(c), key);
+  scratch.missing = keys;
+});
+
+Then('{int} tiles say {string}', async ({ page }, n: number, text: string) => {
+  await expect(tiles(page).filter({ hasText: text })).toHaveCount(n);
+  await expect(page.locator('#table .gallery .tile[data-thumb="missing"]')).toHaveCount(n);
+});
+
+Then('the server was never asked for those files', async ({ s3, scratch }) => {
+  const keys = scratch.missing as string[];
+  expect(s3.gets.filter((g) => keys.includes(g.key))).toEqual([]);
+});
+
+Given('the photo files have been checked', async ({ page }) => {
+  await expect(page.locator('.updated')).toHaveText(/^Updated/);
+  await expect(page.locator('.updated')).not.toContainText('Checking photo files');
+});
+
+When('the file {string} of {string} is removed from the server', async ({ s3 }, file: string, name: string) => {
+  const c = COLLECTIONS[name] as typeof ALPHA;
+  const upload = ALPHA_UPLOADS.find((u) => u.photos.some((p) => p.file === file))!;
+  s3.delete(bucketOf(c), `${uploadPrefix(c, upload.stamp)}${file}`);
+});
+
+Then('the tile taken at {string} says {string}', async ({ page }, time: string, text: string) => {
+  await expect(tileAt(page, time)).toHaveAttribute('data-thumb', 'missing');
+  await expect(tileAt(page, time).locator('.noprev')).toHaveText(text);
+});
+
+Then("the panel says the file isn't on the server, naming {string}", async ({ page }, file: string) => {
+  const gone = panel(page).locator('.detail-img .gone');
+  await expect(gone).toContainText("This photo's file isn't on the server");
+  await expect(gone.locator('code')).toHaveText(new RegExp(`/${file.replace('.', '\\.')}$`));
+  await expect(panel(page).locator('.detail-img img')).toHaveCount(0);
+});
+
+Then('the server was asked for {string} once', async ({ s3 }, file: string) => {
+  expect(s3.gets.filter((g) => g.key.endsWith(`/${file}`))).toHaveLength(1);
 });
