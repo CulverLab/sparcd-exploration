@@ -27,9 +27,41 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const appliedChip = (page: Page, label: string) =>
   page.locator('span.inline-flex:not([data-testid="applied-species-summary"])').filter({ hasText: label }).first();
 
+const removedSpeciesReviewText = /Not reviewed|Originally identified by|Originally classified by/i;
+
+async function expectNoRemovedSpeciesReviewText(page: Page, label: string): Promise<void> {
+  const chip = appliedChip(page, label);
+  await expect(chip).not.toContainText(removedSpeciesReviewText);
+  await expect(chip.locator('.text-warn')).toHaveCount(0);
+  await expect(chip.locator('[aria-label*="Originally"], [aria-label="Not reviewed"]')).toHaveCount(0);
+}
+
+async function setImg004ReviewState(
+  s3: { text: (bucket: string, key: string) => string; put: (bucket: string, key: string, body: string, contentType?: string) => void },
+  state: 'unreviewed' | 'reviewed',
+): Promise<void> {
+  const key = `${PREFIX_A}observations.csv`;
+  const rows = parseCsvRows(s3.text(BUCKET, key));
+  for (const row of rows) {
+    if (!row[OBS_COL.mediaId]?.endsWith('IMG004.JPG')) continue;
+    const comments = (row[OBS_COL.comments] ?? '')
+      .replace(/\[REVIEWED_BY:[^\]]*\]/g, '')
+      .replace(/\[REVIEWED_AT:[^\]]*\]/g, '');
+    row[OBS_COL.comments] = state === 'reviewed'
+      ? `${comments}[REVIEWED_BY:fielduser][REVIEWED_AT:2024-01-12T09:30:00.000Z]`
+      : comments;
+  }
+  s3.put(BUCKET, key, serializeCsvRows(rows), 'text/csv');
+}
+
 async function expandApplied(page: Page): Promise<void> {
-  const summary = page.locator('button[title="Show all applied species"]');
-  if (await summary.count()) await summary.click();
+  const speciesPanel = page.getByTestId('species-panel');
+  const summary = speciesPanel.locator('button[title="Show all applied species"]');
+  const controls = speciesPanel.locator(
+    '[data-testid="applied-species-summary"], span.inline-flex:not([data-testid="applied-species-summary"])',
+  ).first();
+  await expect(controls).toBeVisible();
+  if (await summary.isVisible()) await summary.click();
 }
 
 async function draftSpecies(page: Page, fileName: string): Promise<string[]> {
@@ -94,9 +126,84 @@ Given('an image with mixed reviewed and unreviewed identifications is focused', 
   await expandApplied(page);
 });
 
-Then('each identification shows whether it is reviewed', async ({ page }) => {
+Given('an unreviewed single-species image is focused', async ({ page }) => {
+  await focusFrame(page, 'IMG001.JPG');
+});
+
+Given('a multi-species image with no review events is focused', async ({ page, s3 }) => {
+  await setImg004ReviewState(s3, 'unreviewed');
+  await page.reload();
+  await openWorkspace(page);
+  await focusFrame(page, 'IMG004.JPG');
+  await expandApplied(page);
+});
+
+Given('a multi-species image with all identifications reviewed is focused', async ({ page, s3 }) => {
+  await setImg004ReviewState(s3, 'reviewed');
+  await page.reload();
+  await openWorkspace(page);
+  await focusFrame(page, 'IMG004.JPG');
+  await expandApplied(page);
+});
+
+Then('the species control has no original attribution or negative review text', async ({ page }) => {
+  await expect(appliedChip(page, 'Mule Deer')).toBeVisible();
+  await expectNoRemovedSpeciesReviewText(page, 'Mule Deer');
+});
+
+Then('expanded species controls have no original attribution or negative review text', async ({ page }) => {
+  await expandApplied(page);
+  await expectNoRemovedSpeciesReviewText(page, 'Mountain Lion');
+  await expectNoRemovedSpeciesReviewText(page, 'Coyote');
+});
+
+Then('expanded species controls show positive review information without original attribution', async ({ page }) => {
+  await expandApplied(page);
+  for (const label of ['Mountain Lion', 'Coyote']) {
+    await expect(appliedChip(page, label).getByText(/Reviewed by fielduser at 2024-01-12T09:30:00\.000Z/)).toBeVisible();
+    await expect(appliedChip(page, label)).not.toContainText(/Originally identified by|Originally classified by/i);
+  }
+});
+
+Then('expanded species controls show positive review information without negative labels', async ({ page }) => {
+  await expandApplied(page);
   await expect(appliedChip(page, 'Coyote').getByText(/Reviewed by fielduser/)).toBeVisible();
-  await expect(appliedChip(page, 'Mountain Lion').getByText('Not reviewed', { exact: true })).toBeVisible();
+  await expectNoRemovedSpeciesReviewText(page, 'Mountain Lion');
+  await expect(appliedChip(page, 'Coyote')).not.toContainText(/Originally identified by|Originally classified by/i);
+});
+
+When('species controls are collapsed', async ({ page }) => {
+  await page.getByRole('button', { name: 'Collapse applied species' }).click();
+});
+
+When('the viewport is set to 390 pixels wide', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the collapsed species summary has no review label or original attribution', async ({ page }) => {
+  const summary = page.locator('[data-testid="applied-species-summary"]');
+  await expect(summary).toBeVisible();
+  await expect(summary).not.toContainText(/Reviewed|Partly reviewed|Not reviewed|mixed|unreviewed|Originally/i);
+});
+
+Then('the collapsed species summary says Reviewed', async ({ page }) => {
+  const summary = page.locator('[data-testid="applied-species-summary"]');
+  await expect(summary).toContainText('Reviewed');
+  await expect(summary).not.toContainText('Partly reviewed');
+});
+
+Then('the collapsed species summary says Partly reviewed', async ({ page }) => {
+  const summary = page.locator('[data-testid="applied-species-summary"]');
+  await expect(summary).toContainText('Partly reviewed');
+  await expect(summary).not.toContainText(/Not reviewed|mixed|unreviewed|Originally/i);
+});
+
+When('the same species controls are shown in Focus', async ({ page }) => {
+  await enterFocusView(page);
+});
+
+When('the species control is shown in Focus', async ({ page }) => {
+  await enterFocusView(page);
 });
 
 Then('the image tile reports a mixed review status', async ({ page }) => {
@@ -314,7 +421,8 @@ Given('an existing identification has original attribution', async ({ page, s3 }
   await page.reload();
   await openWorkspace(page);
   await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer');
-  await expect(page.locator('[aria-label="Originally identified by fielduser"]')).toBeVisible();
+  await expect(appliedChip(page, 'Mule Deer')).not.toContainText(/Originally identified by fielduser/);
+  await expect(page.locator('[aria-label="Originally identified by fielduser"]')).toHaveCount(0);
 });
 
 Given('the original upload data is captured before a review', async ({ s3, scratch }) => {

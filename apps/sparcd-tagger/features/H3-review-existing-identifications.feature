@@ -119,6 +119,48 @@ Feature: Review, correct and remove identifications that already exist
     When a live sync is run
     Then the original identifier and separate review remain visible in the stored image
 
+  @H3 @H3-8
+  Scenario: A single unreviewed species control omits attribution and review warnings in Overview and Focus
+    Given an unreviewed single-species image is focused
+    Then the species control has no original attribution or negative review text
+    When the species control is shown in Focus
+    Then the species control has no original attribution or negative review text
+
+  @H3 @H3-8
+  Scenario: Unreviewed multi-species controls omit attribution and review summaries in Overview and Focus
+    Given a multi-species image with no review events is focused
+    When species controls are collapsed
+    And the viewport is set to 390 pixels wide
+    Then expanded species controls have no original attribution or negative review text
+    When species controls are collapsed
+    Then the collapsed species summary has no review label or original attribution
+    When the same species controls are shown in Focus
+    Then expanded species controls have no original attribution or negative review text
+    When species controls are collapsed
+    Then the collapsed species summary has no review label or original attribution
+
+  @H3 @H3-8
+  Scenario: Reviewed multi-species controls retain positive review information in Overview and Focus
+    Given a multi-species image with all identifications reviewed is focused
+    Then expanded species controls show positive review information without original attribution
+    When species controls are collapsed
+    Then the collapsed species summary says Reviewed
+    When the same species controls are shown in Focus
+    Then expanded species controls show positive review information without original attribution
+    When species controls are collapsed
+    Then the collapsed species summary says Reviewed
+
+  @H3 @H3-8
+  Scenario: Mixed multi-species controls use Partly reviewed in Overview and Focus
+    Given an image with mixed reviewed and unreviewed identifications is focused
+    Then expanded species controls show positive review information without negative labels
+    When species controls are collapsed
+    Then the collapsed species summary says Partly reviewed
+    When the same species controls are shown in Focus
+    Then expanded species controls show positive review information without negative labels
+    When species controls are collapsed
+    Then the collapsed species summary says Partly reviewed
+
   @H3 @H3-7
   Scenario: A correction preserves the immutable original upload baseline
     Given the original upload data is captured before a review
@@ -147,9 +189,8 @@ Feature: Review, correct and remove identifications that already exist
     And the live audit records the correction identity and time
 
   @H3 @H3-8
-  Scenario: Reviewed and unreviewed identifications are visibly distinguished
+  Scenario: Overview shows the mixed review state for an image
     Given an image with mixed reviewed and unreviewed identifications is focused
-    Then each identification shows whether it is reviewed
     And the image tile reports a mixed review status
     And the list row reports a mixed review status
     And an identification without a review event is labelled not reviewed
