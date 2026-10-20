@@ -66,7 +66,6 @@ import {
 } from '../lib/keys';
 import { useLocalBatch, saveLocalTags } from '../lib/localBatch';
 import { localTagImages } from '../lib/localWorkspace';
-import { DEFAULT_SPECIES } from '../lib/defaultSpecies';
 import type { Species } from '../lib/species';
 import { isVideoImage, type TagImage } from '../lib/workspace';
 import type { DraftRecord } from '../lib/db';
@@ -106,16 +105,16 @@ export function Tag() {
   const needsGesture = useLocalBatch((s) => s.needsGesture);
   const attachOriginals = useLocalBatch((s) => s.attachOriginals);
 
-  const images = useTagImages(cfg, connectionId, collectionKey, uploadPrefix);
-  const species = useSpecies(cfg, connectionId, collectionKey);
-  const locations = useLocations(cfg, connectionId, collectionKey);
-  const currentDeployment = useCurrentDeployment(cfg, connectionId, collectionKey, uploadPrefix);
+  const images = useTagImages(localRecord ? null : cfg, connectionId, collectionKey, uploadPrefix);
+  const species = useSpecies(localRecord ? null : cfg, connectionId, collectionKey);
+  const locations = useLocations(localRecord ? null : cfg, connectionId, collectionKey);
+  const currentDeployment = useCurrentDeployment(localRecord ? null : cfg, connectionId, collectionKey, uploadPrefix);
   const captureTimeZone = currentDeployment.data
     ? tzlookup(currentDeployment.data.latitude, currentDeployment.data.longitude)
     : undefined;
-  const collections = useCollections(cfg, connectionId);
+  const collections = useCollections(localRecord ? null : cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
-  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
+  const snapshots = useUploadSnapshots(localRecord ? null : cfg, connectionId, collectionKey, uploadPrefix);
   const hasSnapshot = (snapshots.data?.length ?? 0) > 0;
 
   const localImages = useMemo(
@@ -546,7 +545,7 @@ export function Tag() {
   const assignKey = useKeyBindings((state) => state.assignKey);
   const clearKey = useKeyBindings((state) => state.clearKey);
   const keysUnsaved = useKeyBindings((state) => state.unsaved);
-  const speciesList = localRecord ? DEFAULT_SPECIES : species.data?.species ?? [];
+  const speciesList = localRecord ? localRecord.preparedSpecies?.species ?? [] : species.data?.species ?? [];
 
   const bindingFor = (sci: string): string | null => {
     const k = effectiveKey(sci, speciesJsonKey(speciesList, sci), overrides);

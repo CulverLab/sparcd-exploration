@@ -147,6 +147,7 @@ export function DropZone() {
         <input
           ref={inputRef}
           type="file"
+          aria-label="New upload folder"
           // @ts-expect-error — non-standard but widely supported folder picker
           webkitdirectory=""
           directory=""
@@ -158,6 +159,7 @@ export function DropZone() {
         <input
           ref={inputRef}
           type="file"
+          aria-label="New upload files"
           accept="image/jpeg,video/mp4"
           multiple
           hidden

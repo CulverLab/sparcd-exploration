@@ -92,6 +92,7 @@ export type LogLine = { kind: 'put' | 'info' | 'warn' | 'error'; text: string };
 export type UploadSnapshot = {
   version: number; // bumped each emit so React re-renders the live arrays
   sessionId: string;
+  preparationId?: string; // local preparation published by this session
   phase: UploadPhase;
   dryRun: boolean;
   files: FileProgress[];
@@ -125,6 +126,7 @@ export type UploadParams = {
   dryRun: boolean;
   concurrency: ConcurrencyControl; // parallel blob lanes
   // Resume metadata persisted in the batch row; absent for dry runs.
+  preparationId?: string;
   uploaderUser?: string; // raw identity (the slug lives in build.uploaderSlug)
   fileAccessMode?: FileAccessMode;
   dirHandle?: FileSystemDirectoryHandle | null;
@@ -1304,6 +1306,7 @@ export function runStreamingUpload(
     dryRun,
   });
   const sessionId = crypto.randomUUID();
+  runner.snap.preparationId = params.preparationId;
   runner.snap.sessionId = sessionId;
   runner.snap.collectionUuid = build.collectionUuid;
   // Surface the prep work — freezing every object key and opening the resume
@@ -1359,6 +1362,7 @@ export function runStreamingUpload(
     const deploymentId = locationToDeployment(build.location, build.collectionUuid).deploymentId;
     const batch: BatchRecord = {
       id: sessionId,
+      preparationId: params.preparationId,
       targetBucket: build.bucket,
       uploadPrefix: naming.uploadPath,
       deploymentId,
@@ -1532,6 +1536,7 @@ export function resumeUpload(
     isResume: true,
     dryRun: false,
   });
+  runner.snap.preparationId = batch.preparationId;
   runner.snap.sessionId = batch.id;
   runner.snap.collectionUuid = batch.collectionUuid;
 

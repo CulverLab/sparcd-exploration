@@ -38,6 +38,7 @@ export type PersistedFileState = 'awaiting-processing' | 'pending' | 'uploading'
 
 export interface BatchRecord {
   id: string; // sessionId — crypto.randomUUID, stable across resume
+  preparationId?: string; // explicit owner; absent on legacy upload sessions
   targetBucket: string;
   uploadPrefix: string; // Collections/<uuid>/Uploads/<stamp>_<slug>
   deploymentId: string;

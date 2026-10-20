@@ -177,7 +177,7 @@ type UploaderState = {
   /** Adopt a batch coming back from the tagger, already reattached to real
    *  Files and already carrying its Inspect results — nothing to re-process. */
   adoptTaggedBatch: (input: {
-    flipId: string;
+    flipId: string | null;
     files: FileEntry[];
     dirHandle: FileSystemDirectoryHandle | null;
   }) => void;

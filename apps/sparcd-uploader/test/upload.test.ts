@@ -2012,3 +2012,23 @@ describe('endpoint sharding', () => {
     expect(shard.writeImmutable).not.toHaveBeenCalled();
   });
 });
+
+describe('preparation ownership follows upload sessions', () => {
+  it('persists a fresh upload owner and includes it in completion snapshots', async () => {
+    const entries = [makeFileEntry(0)]; mocks.client = makeStreamingClient();
+    let last: UploadSnapshot | null = null;
+    const run = runStreamingUpload({ config: CONFIG, preparationId: 'preparation-B', dryRun: false, concurrency: manual(1), build: { location: LOCATION, collectionUuid: 'collection', bucket: 'bucket', uploaderSlug: 'user', description: '', timeZone: 'UTC', files: entries } }, snap => { last = snap; });
+    run.close(entries);
+    expect((await collect(run, () => last)).preparationId).toBe('preparation-B');
+    expect(mocks.openSession.mock.calls[0][0].preparationId).toBe('preparation-B');
+  });
+  it.each([undefined, 'preparation-A'])('uses only the resumed session owner %s', async owner => {
+    const session = makeSession(['done']); session.batch.preparationId = owner;
+    mocks.client = makeClient(session.files);
+    let last: UploadSnapshot | null = null;
+    const run = resumeUpload({ config: CONFIG, session, attached: new Map(), concurrency: manual(1) }, snap => { last = snap; });
+    const snap = await collect(run, () => last);
+    expect(snap.phase).toBe('done');
+    expect(snap.preparationId).toBe(owner);
+  });
+});

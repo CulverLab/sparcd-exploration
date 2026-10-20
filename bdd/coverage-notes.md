@@ -144,3 +144,33 @@
 | H2 | 4 | 0 | 2 | 1 | 7 |
 | H3 | 6 | 2 | 0 | 0 | 8 |
 | Overall | 45 | 10 | 11 | 7 | 73 |
+
+## Issue #498: prepared offline Uploader and local Tagger
+
+Production implementation checks are in Uploader's `e2e/production/` and
+`features/prepared-species.feature`, plus the existing F1-2 and cross-tool flows.
+They cover prepared collection vocabulary, durable pre-upload recovery, true
+cold offline Chrome reopening, installed-PWA launch/Inspect/local tagging/return,
+and safe failed/staged updates. Unit coverage exercises migrations, storage
+failure/retry, verified reselection, readiness and cache isolation. Run
+`pnpm --filter sparcd-uploader test:production:offline`; see that harness's README
+for exact boundaries. This adds #498 regression evidence without marking #497's
+independent browser/platform/manual shutdown acceptance matrix complete or
+expanding F1-2 beyond offline Inspect.
+
+## Issue #497: offline acceptance follow-up
+
+The #498 production harness is extended by `offline-restart.spec.ts`,
+`pwa.spec.ts`, and `missing-species-restart.spec.ts` under Uploader's
+`e2e/production/`. Coverage adds edited-count restart persistence, browser/PWA
+missing-species cold recovery, reconnection through verified publication, and
+accessible online-only scope explanations. See
+`docs/2026-10-18-issue-497-offline-acceptance.md` for the requirement mapping and
+remaining manual OS-restart/device checks. No new story identifier is invented;
+F1-2 remains scoped to offline Inspect. #497 is not closed by automation alone.
+
+PR #565 also fixes the inherited preparation-cleanup ownership defect without
+changing PR #562. `history-preparation-owner.spec.ts` covers owned and legacy
+History completions while a different batch is saved. Both publication lifecycle
+tests positively verify removal of the preparation actually published; unit
+coverage includes later work under a lingering done snapshot and queued saves.

@@ -8,6 +8,7 @@ import { useCollections } from '../lib/useCollections';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { formatUploadComments } from '../lib/uploadComments';
 import { formatBytes } from '../lib/scanFiles';
+import { preparationIdForUpload } from '../lib/preparation';
 import { loadSession, type BatchRecord } from '../lib/db';
 import type { ReconcileProblem } from '../lib/resume';
 import {
@@ -249,6 +250,7 @@ export function Upload() {
       {
         config: s3Config,
         dryRun: effectiveDryRun,
+        preparationId: preparationIdForUpload(),
         concurrency: concurrencyControl(),
         uploaderUser,
         fileAccessMode,

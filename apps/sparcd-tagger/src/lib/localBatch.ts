@@ -13,7 +13,7 @@
 // exposed as an action the UI can offer rather than something that just fails.
 
 import { create } from 'zustand';
-import { readFlipRecord, finishFlipRecord, updateFlipTags, type FlipRecord } from '@sparcd/flip';
+import { hashOriginal, flipRecordUnavailableReason, readFlipRecord, finishFlipRecord, updateFlipTags, type FlipRecord } from '@sparcd/flip';
 import type { DraftRecord } from './db';
 import { tagsFromDrafts } from './localWorkspace';
 import { safeReturnUrl } from './siblings';
@@ -25,7 +25,7 @@ import { safeReturnUrl } from './siblings';
 export const localBatchId =
   typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('batch');
 
-export type LocalBatchStatus = 'loading' | 'ready' | 'missing';
+export type LocalBatchStatus = 'loading' | 'ready' | 'missing' | 'error';
 
 type LocalBatchState = {
   status: LocalBatchStatus;
@@ -35,6 +35,9 @@ type LocalBatchState = {
   record: FlipRecord | null;
   media: Record<string, Blob>; // relPath → the best blob we have (thumb, then original)
   fullAttached: boolean;
+  originalError: string;
+  saveError: string;
+  loadError: string;
   /** The browser wants a click before it will open the folder. */
   needsGesture: boolean;
 
@@ -47,19 +50,25 @@ export const useLocalBatch = create<LocalBatchState>((set, get) => ({
   record: null,
   media: {},
   fullAttached: false,
+  originalError: '',
+  saveError: '',
+  loadError: '',
   needsGesture: false,
 
   load: async () => {
     if (!localBatchId) return;
-    const record = await readFlipRecord(localBatchId);
+    let record;
+    try { record = await readFlipRecord(localBatchId); }
+    catch { set({ status: 'error', loadError: 'Local batch storage could not be read. Keep this window open, check browser storage, then reload to retry.' }); return; }
     if (!record) {
-      set({ status: 'missing' });
+      const message = await flipRecordUnavailableReason(localBatchId).catch(() => 'Local batch storage could not be read. Check browser storage and reload to retry.');
+      set({ status: 'missing', loadError: message });
       return;
     }
     const media: Record<string, Blob> = {};
     for (const f of record.files) if (f.thumb) media[f.relPath] = f.thumb;
     set({ status: 'ready', record, media });
-    if (record.dirHandle) await get().attachOriginals();
+    if (record.dirHandle) await get().attachOriginals().catch(() => set({ originalError: 'Original files could not be opened. Saved thumbnails and tags remain available.' }));
   },
 
   attachOriginals: async () => {
@@ -78,15 +87,16 @@ export const useLocalBatch = create<LocalBatchState>((set, get) => ({
 
     const record = get().record!;
     const onDisk = await walkDirectory(handle);
-    // Same trusted matching the uploader's own round trip uses: path and size.
-    // The record's hashes were computed from these very bytes minutes ago, so
-    // re-proving them would cost seconds to learn nothing.
+    // Reopened handles may reference edited bytes; verify before using originals.
     const media = { ...get().media };
+    const problems: string[] = [];
     for (const f of record.files) {
       const file = onDisk.get(f.relPath);
-      if (file && file.size === f.size) media[f.relPath] = file;
+      if (file && file.size === f.size && await hashOriginal(file) === f.sha256) media[f.relPath] = file;
+      else problems.push(f.fileName);
     }
-    set({ media, fullAttached: true, needsGesture: false });
+    set({ media, fullAttached: problems.length === 0, needsGesture: false,
+      originalError: problems.length ? `Missing or changed originals: ${problems.join(', ')}. Saved thumbnails and tags are unchanged.` : '' });
   },
 }));
 
@@ -110,8 +120,9 @@ async function walkDirectory(dir: FileSystemDirectoryHandle): Promise<Map<string
 
 // --- Saving back -----------------------------------------------------------
 
-export function saveLocalTags(id: string, drafts: Record<string, DraftRecord>): Promise<void> {
-  return updateFlipTags(id, tagsFromDrafts(drafts));
+export async function saveLocalTags(id: string, drafts: Record<string, DraftRecord>): Promise<void> {
+  try { await updateFlipTags(id, tagsFromDrafts(drafts)); useLocalBatch.setState({ saveError: '' }); }
+  catch { useLocalBatch.setState({ saveError: 'Tags could not be copied to the local batch. Keep this tab open, check browser storage, and retry saving tags.' }); }
 }
 
 /** Hand the batch back: the final tags, who tagged them, and the return trip. */

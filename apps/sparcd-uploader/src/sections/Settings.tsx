@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OfflineBanner } from '@sparcd/auth-ui';
 import { useStore } from '../store';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { listResumable } from '../lib/db';
 import { resetLocalState } from '../lib/reset';
+import { countPreparationsForDiscard, recoveryGuard } from '../lib/preparation';
 
 export function Settings() {
   const s3Config = useStore((s) => s.s3Config);
@@ -19,17 +20,25 @@ export function Settings() {
   const setConcurrency = useStore((s) => s.setUploadConcurrency);
   const slug = sanitizeUploaderUser(uploaderUser);
 
-  // Logout clears all local data so the next user gets a clean app. Guard it:
-  // if there are resumable (incomplete) uploads, confirm before wiping them.
-  const [pendingResumable, setPendingResumable] = useState<number | null>(null);
+  // Settings Disconnect is destructive; include pre-upload work and unreadable
+  // journals, not only sessions that have already started uploading.
+  const [pendingWork, setPendingWork] = useState<{ uploads: number; preparations: number } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [disconnectError, setDisconnectError] = useState('');
+  const warning = useRef<HTMLDialogElement>(null);
+  const disconnectButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (pendingWork && !warning.current?.open) warning.current?.showModal(); }, [pendingWork]);
 
   async function logout() {
-    const open = await listResumable();
-    if (open.length > 0) {
-      setPendingResumable(open.length);
-      return;
-    }
-    await wipeAndLogout();
+    const guard = recoveryGuard();
+    setChecking(true); setDisconnectError('');
+    try {
+      const [open, preparations] = await Promise.all([listResumable(), countPreparationsForDiscard()]);
+      guard();
+      if (open.length || preparations) setPendingWork({ uploads: open.length, preparations });
+      else await wipeAndLogout();
+    } catch { setDisconnectError('Local work could not be checked. Nothing was cleared. Keep this window open and retry Disconnect.'); }
+    finally { setChecking(false); }
   }
 
   async function wipeAndLogout() {
@@ -40,6 +49,7 @@ export function Settings() {
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto space-y-8">
       <OfflineBanner />
+      {disconnectError && <p role="alert" className="text-warn">{disconnectError}</p>}
       <section>
         <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-3">
           Connection
@@ -53,15 +63,17 @@ export function Settings() {
                 (region <span className="font-mono text-ink">{s3Config?.region}</span>).
               </p>
               <button
+                ref={disconnectButton}
                 onClick={() => void logout()}
+                disabled={checking}
                 aria-describedby="settings-disconnect-help"
                 className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
                 Disconnect
               </button>
               <p id="settings-disconnect-help" className="font-body text-[12px] text-inkMute">
-                Clears this browser's local upload sessions and logs you out. Remembered connection
-                details remain. Disconnect before leaving a shared or public computer.
+                Clears this browser’s local upload sessions, saved preparations and prepared species. Originals and files already in S3 are unchanged.
+                Remembered connection details remain. Disconnect before leaving a shared or public computer.
               </p>
             </>
           ) : (
@@ -152,48 +164,49 @@ export function Settings() {
         </div>
       </details>
 
-      {pendingResumable !== null && (
-        <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4">
+      {pendingWork !== null && (
+        <dialog ref={warning} aria-labelledby="disconnect-warning-title" aria-describedby="disconnect-warning-description" onClose={() => { setPendingWork(null); disconnectButton.current?.focus(); }} className="w-[440px] max-w-[calc(100%-2rem)] max-h-[90dvh] p-0 border-0 bg-transparent backdrop:bg-ink/40">
           <div className="w-full max-w-[440px] max-h-[90dvh] overflow-y-auto bg-paper border border-ink shadow-xl">
             <header className="border-b border-rule px-5 h-12 flex items-center">
-              <h2 className="font-display text-[18px] text-ink">Unfinished uploads</h2>
+              <h2 id="disconnect-warning-title" className="font-display text-[18px] text-ink">{pendingWork.uploads ? 'Unfinished uploads' : 'Saved preparations'}</h2>
             </header>
-            <div className="px-5 py-4 space-y-3 text-[14px] text-ink font-body">
-              <p>
-                You have <span className="font-mono">{pendingResumable}</span> resumable upload
-                {pendingResumable === 1 ? '' : 's'} in this browser. Disconnecting clears all local
-                data on this machine — you would not be able to resume{' '}
-                {pendingResumable === 1 ? 'it' : 'them'}.
-              </p>
+            <div id="disconnect-warning-description" className="px-5 py-4 space-y-3 text-[14px] text-ink font-body">
+              {pendingWork.uploads > 0 && <p>
+                You have <span className="font-mono">{pendingWork.uploads}</span> resumable upload{pendingWork.uploads === 1 ? '' : 's'} in this browser.
+              </p>}
+              {pendingWork.preparations > 0 && <p>
+                You have <span className="font-mono">{pendingWork.preparations}</span> saved preparation{pendingWork.preparations === 1 ? '' : 's'} in this browser, including any preparations still waiting to save or using an unsupported format. Disconnecting removes their saved timestamps, notes and recovery information.
+              </p>}
               <p className="text-inkSoft text-[13px]">
-                Finish or resume from History first, or discard and disconnect.
+                Disconnecting deletes these local records. Original files and files already in S3 are unchanged. Cancel to keep your work, review it first, or discard and disconnect.
               </p>
             </div>
             <footer className="flex flex-col sm:flex-row sm:justify-end gap-2 border-t border-rule px-5 py-3">
               <button
-                onClick={() => setPendingResumable(null)}
+                autoFocus
+                onClick={() => warning.current?.close()}
                 className="text-[13px] border border-rule px-3 py-1.5 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Cancel
               </button>
               <button
                 onClick={() => {
-                  setPendingResumable(null);
-                  setSection('history');
+                  warning.current?.close();
+                  setSection(pendingWork.uploads ? 'history' : 'new');
                 }}
                 className="text-[13px] border border-ink bg-ink text-paper px-3 py-1.5 hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
-                Review uploads
+                {pendingWork.uploads ? 'Review uploads' : 'Review preparations'}
               </button>
               <button
-                onClick={() => void wipeAndLogout()}
+                onClick={() => { warning.current?.close(); void wipeAndLogout(); }}
                 className="text-[13px] border border-warn text-warn px-3 py-1.5 hover:bg-warn hover:text-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 Discard &amp; disconnect
               </button>
             </footer>
           </div>
-        </div>
+        </dialog>
       )}
     </div>
   );

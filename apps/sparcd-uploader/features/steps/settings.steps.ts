@@ -35,6 +35,7 @@ Given('there are no unfinished uploads on this machine', async ({ app }) => {
   const batches = await app.readBatchRecords();
   expect(batches).toHaveLength(1);
   expect(batches[0].completedAt).toBeTruthy();
+  app.notes.settingsDisconnectReloads = true;
 });
 
 Given('there are unfinished uploads recorded on this machine', async ({ app }) => {
@@ -47,7 +48,11 @@ Given('there are unfinished uploads recorded on this machine', async ({ app }) =
 When('"Disconnect" is chosen', async ({ app }) => {
   await app.gotoSection('Settings');
   await app.page.getByText('Defaults', { exact: true }).click();
-  await app.page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+  const click = () => app.page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+  // The connection gate appears before asynchronous storage cleanup and reload.
+  // Register the load listener before the action that initiates the reload.
+  if (app.notes.settingsDisconnectReloads) await Promise.all([app.page.waitForEvent('load'), click()]);
+  else await click();
 });
 
 Then('the connection is ended', async ({ app }) => {
@@ -88,7 +93,10 @@ Then('nothing is cleared unless discarding is explicitly chosen', async ({ app }
   await expect(app.page.getByRole('button', { name: 'Logout', exact: true })).toBeVisible();
 
   await app.page.getByRole('button', { name: 'Disconnect' }).click();
-  await app.page.getByRole('button', { name: 'Discard & disconnect' }).click();
+  await Promise.all([
+    app.page.waitForEvent('load'),
+    app.page.getByRole('button', { name: 'Discard & disconnect' }).click(),
+  ]);
   await expect(app.connectForm()).toBeVisible({ timeout: 30_000 });
   expect(await app.readBatchRecords()).toHaveLength(0);
 });
@@ -161,7 +169,7 @@ When('Disconnect is chosen after reviewing its security explanation', async ({ a
   const button = app.page.getByRole('button', { name: 'Disconnect', exact: true });
   await button.focus();
   await expect(button).toBeFocused();
-  const explanation = "Clears this browser's local upload sessions and logs you out. Remembered connection details remain. Disconnect before leaving a shared or public computer.";
+  const explanation = "Clears this browser’s local upload sessions, saved preparations and prepared species. Originals and files already in S3 are unchanged. Remembered connection details remain. Disconnect before leaving a shared or public computer.";
   await expect(app.page.locator('#settings-disconnect-help')).toHaveText(explanation);
   await expect(button).toHaveAccessibleDescription(explanation);
   const remembered = await app.page.evaluate(() => JSON.parse(localStorage.getItem('sparcd-connection')!));

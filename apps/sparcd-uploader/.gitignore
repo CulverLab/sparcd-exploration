@@ -14,3 +14,5 @@ bench/.fixtures/
 bench/results/
 
 .features-gen-offline
+
+features/.features-gen-production/

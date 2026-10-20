@@ -14,7 +14,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "dexie": "^4.0.8"
+    "dexie": "^4.0.8",
+    "hash-wasm": "^4.12.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.11",
