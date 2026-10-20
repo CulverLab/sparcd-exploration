@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { BrandSwitcher, ConnectionChip } from '@sparcd/auth-ui';
 import { useStore, type Section } from '../store';
 import { useDraftStore, dirtyCount } from '../lib/drafts';
-import { finishLocalBatch, useLocalBatch } from '../lib/localBatch';
+import { finishLocalBatch, useLocalBatch, saveLocalTags } from '../lib/localBatch';
 import { StatePill } from './StatePill';
 
 // Reuses the uploader's section-tab chrome treatment so the tools read as
@@ -40,6 +40,9 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
   const leavingRef = useRef(false);
   const doneButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (saveError) doneButton.current?.focus(); }, [saveError]);
+  const fullAttached = useLocalBatch(s => s.fullAttached);
+  const tagSaveError = useLocalBatch(s => s.saveError);
+  const originalError = useLocalBatch(s => s.originalError);
 
   const done = async () => {
     // Guard immediately as well as disabling the rendered button.
@@ -94,6 +97,9 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
         </div>
       </header>
 
+      {!fullAttached && <p className="px-4 py-1 text-sm">Showing saved thumbnails. Original files remain in your folder.</p>}
+      {originalError && <p role="alert" className="px-4">{originalError}</p>}
+      {tagSaveError && <div className="px-4"><p role="alert">{tagSaveError}</p><button type="button" onClick={() => void saveLocalTags(record.id, useDraftStore.getState().drafts)}>Retry saving tags</button></div>}
       <main className="flex-1 min-h-0 overflow-y-auto">
         {saveError && <p id={saveErrorId} role="alert" className="m-3 border border-warn bg-panel p-3 text-[13px] text-warn">
           Could not save the batch for the Uploader. Your edits are still open here. Try Done again.

@@ -116,6 +116,8 @@ Feature: Establish the true capture time of every file
   Scenario: An EXIF ModifyDate override travels in the uploader's Tagger hand-off
     Given a file whose only EXIF time is ModifyDate
     When that modified metadata time is overridden by hand
+    And the batch is returned to Inspect before local tagging
+    And species have been prepared for local tagging
     Then the hand-off gives the Tagger the overridden time
 
   @unmapped

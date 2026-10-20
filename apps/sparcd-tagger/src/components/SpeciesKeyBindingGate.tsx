@@ -2,7 +2,6 @@ import { useEffect, useMemo, type ReactNode } from 'react';
 import { useStore } from '../store';
 import { useLocalBatch } from '../lib/localBatch';
 import { useSpecies } from '../lib/queries';
-import { DEFAULT_SPECIES } from '../lib/defaultSpecies';
 import {
   activeKeyProfile,
   keyProfileId,
@@ -34,7 +33,7 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   const connectionId = useStore((state) => state.connectionId);
   const collectionKey = useStore((state) => state.selectedCollectionKey);
   const localRecord = useLocalBatch((state) => (state.status === 'ready' ? state.record : null));
-  const species = useSpecies(cfg, connectionId, collectionKey);
+  const species = useSpecies(localRecord ? null : cfg, connectionId, collectionKey);
   const activeProfileId = useKeyBindings((state) => state.activeProfileId);
   const activateProfile = useKeyBindings((state) => state.activateProfile);
   const stageSpecies = useKeyBindings((state) => state.stageSpecies);
@@ -42,26 +41,20 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
     (state) => state.acknowledgeSpeciesChange,
   );
 
-  const profileId = cfg
-    ? keyProfileId(cfg.endpoint, cfg.accessKey)
-    : localRecord
-      ? keyProfileId('local-batch', localRecord.taggerUser || 'anonymous')
-      : null;
-  const current = useMemo(
-    () =>
-      cfg
-        ? species.data
-          ? {
-              source: `${species.data.sourceBucket}/${species.data.sourceKey}`,
-              shared: species.data.settingsBucket !== null,
-              species: keyConfig(species.data.species),
-            }
-          : null
-        : localRecord
-          ? { source: 'local-batch', shared: true, species: keyConfig(DEFAULT_SPECIES) }
-          : null,
-    [cfg, localRecord, species.data],
-  );
+  const profileId = localRecord
+    ? keyProfileId('local-batch', localRecord.id)
+    : cfg ? keyProfileId(cfg.endpoint, cfg.accessKey) : null;
+  const current = useMemo(() => localRecord
+    ? localRecord.preparedSpecies ? {
+        source: `prepared/${localRecord.preparedSpecies.sourceHash}`,
+        shared: false,
+        species: keyConfig(localRecord.preparedSpecies.species),
+      } : null
+    : species.data ? {
+        source: `${species.data.sourceBucket}/${species.data.sourceKey}`,
+        shared: species.data.settingsBucket !== null,
+        species: keyConfig(species.data.species),
+      } : null, [localRecord, species.data]);
   const source = current?.source;
   const pending = useKeyBindings((state) =>
     state.activeProfileId === profileId && source
@@ -70,8 +63,17 @@ export function SpeciesKeyBindingGate({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (profileId) activateProfile(profileId);
-  }, [activateProfile, profileId]);
+    if (profileId) {
+      const existing = useKeyBindings.getState().profiles[profileId];
+      activateProfile(profileId);
+      if (!existing && localRecord?.preparedSpecies) {
+        for (const [name, key] of Object.entries(localRecord.preparedSpecies.overrides)) {
+          if (key === null) useKeyBindings.getState().clearKey(name);
+          else useKeyBindings.getState().assignKey(name, key);
+        }
+      }
+    }
+  }, [activateProfile, profileId, localRecord]);
 
   useEffect(() => {
     if (profileId === activeProfileId && current) {

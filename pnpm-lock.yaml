@@ -224,6 +224,9 @@ importers:
       '@sparcd/types':
         specifier: workspace:*
         version: link:../types
+      zustand:
+        specifier: ^5.0.0
+        version: 5.0.14(@types/react@18.3.30)(react@18.3.1)
     devDependencies:
       '@types/react':
         specifier: ^18.3.11
@@ -249,6 +252,9 @@ importers:
       dexie:
         specifier: ^4.0.8
         version: 4.4.3
+      hash-wasm:
+        specifier: ^4.12.0
+        version: 4.12.0
     devDependencies:
       '@types/node':
         specifier: ^20.16.11

@@ -14,6 +14,7 @@ Feature: Identify species before the batch is uploaded
   Background:
     Given a folder of media has been scanned
     And the New upload section is showing the Verify step
+    And species have been prepared for local tagging
 
   @A1
   Scenario: Tagging is offered as soon as the batch is fit to upload
@@ -32,8 +33,8 @@ Feature: Identify species before the batch is uploaded
     When "Tag species before upload" is chosen
     Then every examined file is handed over with everything the examination established
     And the browser goes to the Tagger carrying the batch's id
-    # The batch is rebuilt from the hand-off on the way back and never examined
-    # a second time, so anything left behind here is lost for good.
+    # Stored Inspect metadata remains authoritative on return; source bytes
+    # are verified before being reattached.
 
   @cross-tool
   Scenario: The real Tagger reads and returns the Uploader hand-off through the unified dev origin

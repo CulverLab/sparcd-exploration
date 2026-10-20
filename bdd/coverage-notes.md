@@ -144,3 +144,16 @@
 | H2 | 4 | 0 | 2 | 1 | 7 |
 | H3 | 6 | 2 | 0 | 0 | 8 |
 | Overall | 45 | 10 | 11 | 7 | 73 |
+
+## Issue #498: prepared offline Uploader and local Tagger
+
+Production implementation checks are in Uploader's `e2e/production/` and
+`features/prepared-species.feature`, plus the existing F1-2 and cross-tool flows.
+They cover prepared collection vocabulary, durable pre-upload recovery, true
+cold offline Chrome reopening, installed-PWA launch/Inspect/local tagging/return,
+and safe failed/staged updates. Unit coverage exercises migrations, storage
+failure/retry, verified reselection, readiness and cache isolation. Run
+`pnpm --filter sparcd-uploader test:production:offline`; see that harness's README
+for exact boundaries. This adds #498 regression evidence without marking #497's
+independent browser/platform/manual shutdown acceptance matrix complete or
+expanding F1-2 beyond offline Inspect.

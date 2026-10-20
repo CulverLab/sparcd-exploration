@@ -2,6 +2,7 @@
 // they are served from the same origin, so these steps seed and read it
 // directly — that IS the interface between the two tools.
 
+import { DEFAULT_SPECIES } from '../../test/fixtures/defaultSpecies';
 import type { Page } from '@playwright/test';
 import {
   Given,
@@ -35,7 +36,7 @@ async function openBatch(page: Page, id: string): Promise<void> {
  *  the "thumbnails only" case a reselect-required batch lands in. */
 async function seedBatch(page: Page): Promise<void> {
   await page.evaluate(
-    async ({ id, returnUrl, files }: { id: string; returnUrl: string; files: string[] }) => {
+    async ({ id, returnUrl, files, species }) => {
       // A 1×1 GIF — the smallest thing a browser will decode.
       const gif = Uint8Array.from(
         atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
@@ -49,7 +50,7 @@ async function seedBatch(page: Page): Promise<void> {
         const tx = db.transaction('records', 'readwrite');
         tx.objectStore('records').put({
           id,
-          v: 1,
+          v: 2,
           createdAt: new Date().toISOString(),
           returnUrl,
           // Everything the Uploader's Inspect pass would have established, so
@@ -69,12 +70,13 @@ async function seedBatch(page: Page): Promise<void> {
             thumb: new Blob([gif], { type: 'image/gif' }),
           })),
           tags: {},
+          preparedSpecies: { v: 1, endpoint: 'https://prepared.test', account: 'prepared-user', collectionKey: 'bucket::prepared', collectionName: 'Prepared collection', sourceBucket: 'bucket', sourceKey: 'Collections/prepared/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'prepared', overrides: {}, species },
         });
         tx.oncomplete = () => resolve();
       });
       db.close();
     },
-    { id: BATCH_ID, returnUrl: RETURN_URL, files: FILES },
+    { id: BATCH_ID, returnUrl: RETURN_URL, files: FILES, species: DEFAULT_SPECIES },
   );
 }
 

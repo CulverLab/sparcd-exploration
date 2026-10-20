@@ -27,14 +27,19 @@ const storage = () => {
 
 // The hand-off's transport is IndexedDB, which node has none of; everything
 // else in the package — `captureTimestampOf` above all — is the real thing.
-const stored = vi.hoisted(() => ({ record: undefined as FlipRecord | undefined }));
+const stored = vi.hoisted(() => ({ record: undefined as FlipRecord | undefined, preparation: null as import('../src/lib/preparation').LocalPreparation | null }));
 vi.mock('@sparcd/flip', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@sparcd/flip')>()),
+  loadPreparedSpecies: async () => ({ v: 1, endpoint: 'https://prepared.test', account: 'test', collectionKey: 'bucket::collection', collectionName: 'Test collection', sourceBucket: 'bucket', sourceKey: 'Collections/collection/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'test', overrides: {}, species: [{ key: 'Canis latrans', scientificName: 'Canis latrans', commonName: 'Coyote', iconUrl: '', keyBinding: 'C' }] }),
   writeFlipRecord: async (r: FlipRecord) => void (stored.record = r),
   readFlipRecord: async () => stored.record,
 }));
-// resume.ts pulls in the worker pool; nothing here hashes anything.
-vi.mock('../src/lib/processPool', () => ({ processBatch: vi.fn() }));
+vi.mock('../src/lib/preparation', () => ({ recoveryGuard: () => () => {}, flushPreparation: async () => {}, readPreparation: async () => null, readPreparationForFlip: async () => stored.preparation, bindCurrentPreparationSpecies: () => {} }));
+// Model the worker's hash result; provenance assertions still use real restore.
+vi.mock('../src/lib/processPool', () => ({ processBatch: (items: any[], _started: any, result: any) => {
+  for (const item of items) result({ id: item.id, sha256: `sha-${item.file.name}`, mediaKind: 'image' });
+  return { done: Promise.resolve(), cancel() {} };
+} }));
 
 let useStore: typeof import('../src/store')['useStore'];
 let handOffToTagger: typeof import('../src/lib/flip')['handOffToTagger'];
@@ -209,7 +214,7 @@ it('round-trips file-modified spread provenance, including its applied timezone'
   });
 });
 
-it('does not classify a legacy Flip spread as file-modified', () => {
+it('does not classify a legacy Flip spread as file-modified', async () => {
   const legacy: FlipRecord = {
     id: 'legacy-spread',
     v: 1,
@@ -219,7 +224,7 @@ it('does not classify a legacy Flip spread as file-modified', () => {
       relPath: 'trip/1-camera.jpg',
       fileName: '1-camera.jpg',
       size: SIZE,
-      sha256: 'legacy-sha',
+      sha256: 'sha-1-camera.jpg',
       mediaKind: 'image',
       manualTimestamp: '2026-07-01T11:00:00',
       timestampSource: 'spread',
@@ -227,7 +232,7 @@ it('does not classify a legacy Flip spread as file-modified', () => {
     tags: {},
   };
 
-  adoptReselected(legacy, [{
+  await adoptReselected(legacy, [{
     relPath: 'trip/1-camera.jpg',
     size: SIZE,
     file: new File([new Uint8Array(SIZE)], '1-camera.jpg', { type: 'image/jpeg' }),
@@ -238,4 +243,13 @@ it('does not classify a legacy Flip spread as file-modified', () => {
     manualSpreadMethod: undefined,
     manualSpreadTimeZone: undefined,
   });
+});
+
+it('restores only the returning batch’s saved inputs instead of another window’s defaults', async () => {
+  const file = entry('return.jpg', {});
+  stored.preparation = { v: 1, id: 'batch-owned', savedAt: new Date().toISOString(), files: [], flipId: 'return', species: null, inputs: { selectedBucket: 'own bucket', selectedLocationId: 'own location', uploadDescription: 'own notes', uploadTimeZone: 'America/Phoenix' } };
+  useStore.setState({ uploadDescription: 'other window notes', selectedBucket: 'other bucket', uploadTimeZone: 'America/New_York' });
+  await adoptReselected({ v: 1, id: 'return', createdAt: new Date().toISOString(), returnUrl: '', files: [{ relPath: file.relPath, fileName: file.fileName, size: file.size, sha256: file.sha256!, mediaKind: 'image' }], tags: {} }, [{ relPath: file.relPath, size: file.size, file: file.file }]);
+  expect(useStore.getState()).toMatchObject(stored.preparation.inputs);
+  stored.preparation = null;
 });

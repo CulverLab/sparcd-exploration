@@ -7,7 +7,7 @@ import type { FlipRecord } from '@sparcd/flip';
 import { localTagImages, tagsFromDrafts } from '../src/lib/localWorkspace';
 import { isVideoImage } from '../src/lib/workspace';
 import { safeReturnUrl, uploaderPath } from '../src/lib/siblings';
-import { DEFAULT_SPECIES } from '../src/lib/defaultSpecies';
+import { DEFAULT_SPECIES } from './fixtures/defaultSpecies';
 import { blankDraft } from '../src/lib/drafts';
 import type { DraftObservation, DraftRecord } from '../src/lib/db';
 
@@ -105,7 +105,7 @@ describe('drafts on the way back into the record', () => {
   });
 });
 
-describe('the offline species vocabulary', () => {
+describe('the legacy registry fixture', () => {
   it('parses the registry the desktop app ships', () => {
     expect(DEFAULT_SPECIES.length).toBeGreaterThan(40);
     const coyoteEntry = DEFAULT_SPECIES.find((s) => s.scientificName === 'Canis latrans');

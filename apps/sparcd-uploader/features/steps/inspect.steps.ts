@@ -549,6 +549,7 @@ Then('preview preserves filter and scroll and restores focus after virtualizatio
   await app.waitForInspected();
   if (!(await app.fileListPane().count())) await app.fileListToggle().click();
   const list = app.fileListPane();
+  await list.scrollIntoViewIfNeeded();
   await list.evaluate(el => { el.scrollTop = 1000; });
   const opener = app.page.getByRole('button', { name: 'Preview IMG_0025.JPG', exact: true });
   await expect(opener).toBeInViewport();

@@ -12,9 +12,13 @@
 // is a Dexie store and not a query string.
 //
 // Schema versioning follows the two apps' rule: Dexie's versioning API with
-// forward-carrying upgrade callbacks. v1 is the initial schema.
+// forward-carrying upgrade callbacks. Dexie v2 adds the vocabulary cache;
+// the separate record v2 contract identifies batch-bound species snapshots.
 
 import Dexie, { type Table } from 'dexie';
+import { validPreparedSpecies, copyPreparedSpecies, type PreparedSpecies } from './preparedSpecies';
+export { validPreparedSpecies } from './preparedSpecies';
+export type { PreparedSpecies } from './preparedSpecies';
 
 /** One species applied to one image. Structurally identical to the tagger's
  *  `DraftObservation` and deliberately duplicated — the two apps stay
@@ -49,6 +53,7 @@ export interface FlipFile {
   fileName: string;
   size: number;
   sha256: string;
+  lastModified?: number;
   mediaKind: 'image' | 'video';
 
   // Capture time, naive wall-clock `YYYY-MM-DDTHH:mm:ss` with no zone applied.
@@ -95,8 +100,8 @@ export const captureTimestampOf = (file: FlipFile): string | undefined =>
 export interface FlipRecord {
   id: string;
   /** Schema version. A record this build does not understand is treated as
-   *  absent rather than guessed at, so a future v2 can never be misread. */
-  v: 1;
+   *  absent rather than guessed at. v2 carries a prepared species snapshot. */
+  v: 1 | 2;
   createdAt: string; // ISO
   /** ISO; bumped on every read and tag write, and what the pruning sweep ages
    *  from. Absent on a record neither tool has touched since it was written. */
@@ -109,14 +114,20 @@ export interface FlipRecord {
   files: FlipFile[];
   tags: Record<string, FlipObservation[]>; // keyed by relPath; `[]` means detagged
   taggerUser?: string;
+  /** Optional for legacy records; new local tagging requires preparation. */
+  preparedSpecies?: PreparedSpecies;
 }
 
 class FlipDb extends Dexie {
   records!: Table<FlipRecord, string>;
+  preparations!: Table<{ id: string; value: unknown }, string>;
+  vocabularies!: Table<{ id: string; snapshot: PreparedSpecies }, string>;
 
   constructor() {
     super('sparcd-flip');
     this.version(1).stores({ records: 'id' });
+    this.version(2).stores({ records: 'id', vocabularies: 'id' });
+    this.version(3).stores({ records: 'id', vocabularies: 'id', preparations: 'id' });
   }
 }
 
@@ -144,22 +155,27 @@ export async function writeFlipRecord(record: FlipRecord): Promise<void> {
 /**
  * Read a record this build understands. A row stamped with a schema version
  * this build has never seen is reported absent rather than half-read: both
- * tools already have an honest "no such batch" state, and a v2 record read as
- * a v1 one would silently lose or misplace whatever v2 added.
+ * tools already have an honest "no such batch" state. Version 1 remains
+ * readable for explicit legacy preparation; version 2 requires a snapshot.
  */
 export async function readFlipRecord(id: string): Promise<FlipRecord | undefined> {
   const rec = await flipDb.records.get(id);
-  if (rec?.v !== 1) return undefined;
+  if (rec?.v !== 1 && rec?.v !== 2) return undefined;
   const usedAt = new Date().toISOString();
   await flipDb.records.update(id, { usedAt });
   return { ...rec, usedAt };
+}
+
+export async function flipRecordUnavailableReason(id: string): Promise<string> {
+  const record = await flipDb.records.get(id);
+  return record ? 'This batch uses an unsupported app version. Reconnect and reopen a compatible updated app. The stored batch has been kept unchanged.' : 'The local batch is missing. Browser storage may have been cleared; reselect your originals in Uploader.';
 }
 
 export async function deleteFlipRecord(id: string): Promise<void> {
   await flipDb.records.delete(id);
 }
 
-/** How long a hand-off nobody opens or tags is kept. */
+/** Legacy v1 retention only. Prepared v2 work is never expired implicitly. */
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
@@ -178,7 +194,7 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export async function pruneFlipRecords(now = Date.now()): Promise<number> {
   const cutoff = new Date(now - MAX_AGE_MS).toISOString();
-  return flipDb.records.filter((r) => (r.usedAt ?? r.createdAt) < cutoff).delete();
+  return flipDb.records.filter((r) => r.v === 1 && (r.usedAt ?? r.createdAt) < cutoff).delete();
 }
 
 // Sweep on first import, in both tools. Nothing waits on it and nothing depends
@@ -197,7 +213,7 @@ export async function updateFlipTags(
 ): Promise<void> {
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
-    if (!rec) return;
+    if (!rec) throw new Error('This local batch is no longer stored. Keep this tab open and retry after checking browser storage.');
     await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, partial), usedAt: new Date().toISOString() });
   });
 }
@@ -210,7 +226,41 @@ export async function finishFlipRecord(
 ): Promise<void> {
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
-    if (!rec) return;
+    if (!rec) throw new Error('This local batch is no longer stored. Keep this tab open and retry after checking browser storage.');
     await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, tags), taggerUser, usedAt: new Date().toISOString() });
   });
+}
+
+
+/** Store only the explicit non-secret snapshot shape, never a connection config. */
+export async function savePreparedSpecies(snapshot: PreparedSpecies): Promise<void> {
+  if (!validPreparedSpecies(snapshot)) throw new Error('Species preparation is invalid or empty. Prepare it online again.');
+  await flipDb.vocabularies.put({ id: 'selected', snapshot: copyPreparedSpecies(snapshot) });
+}
+
+export async function loadPreparedSpecies(scope?: { endpoint: string; accessKey: string }): Promise<PreparedSpecies | null> {
+  const value = (await flipDb.vocabularies.get('selected'))?.snapshot;
+  if (!validPreparedSpecies(value)) return null;
+  if (scope && (value.endpoint !== scope.endpoint || value.account !== scope.accessKey)) return null;
+  return value;
+}
+
+/** A legacy handoff may be prepared explicitly; existing snapshots never change. */
+export async function bindPreparedSpecies(id: string, snapshot: PreparedSpecies): Promise<void> {
+  if (!validPreparedSpecies(snapshot)) throw new Error('Prepare species online before tagging.');
+  await flipDb.transaction('rw', flipDb.records, async () => {
+    const record = await flipDb.records.get(id);
+    if (!record) throw new Error('This local batch is no longer available.');
+    if (validPreparedSpecies(record.preparedSpecies)) throw new Error('This batch already has its own prepared species list.');
+    await flipDb.records.update(id, { v: 2, preparedSpecies: copyPreparedSpecies(snapshot) });
+  });
+}
+
+/** Bounded-memory verification for originals reopened after a browser restart. */
+export async function hashOriginal(blob: Blob): Promise<string> {
+  const { createSHA256 } = await import('hash-wasm');
+  const hasher = await createSHA256();
+  hasher.init();
+  for (let offset = 0; offset < blob.size; offset += 1024 * 1024) hasher.update(new Uint8Array(await blob.slice(offset, offset + 1024 * 1024).arrayBuffer()));
+  return hasher.digest('hex');
 }

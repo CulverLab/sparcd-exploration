@@ -1,4 +1,5 @@
 import { Given, When, Then, expect } from './fixtures';
+import { COLLECTION_A_NAME } from './fixtures-data';
 import { APP_PATH, type App } from './app';
 import { FAILING_FILE, expectStoredAtLocation, publishedUploads, writtenCsvRows } from './helpers';
 import { jpegModifyDateOnly } from './batches';
@@ -430,3 +431,12 @@ Then(
     expect(identified.sort()).toEqual(['Canis latrans', 'Casper']);
   },
 );
+
+
+Given('species have been prepared for local tagging', async ({ app }) => {
+  const panel = app.page.getByRole('region', { name: 'Prepare species for local tagging' });
+  await panel.getByRole('button', { name: 'Collection for species preparation', exact: true }).click();
+  await panel.getByRole('option').filter({ hasText: COLLECTION_A_NAME }).click();
+  await panel.getByRole('button', { name: 'Prepare species', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('Species prepared for Alpha Collection');
+});

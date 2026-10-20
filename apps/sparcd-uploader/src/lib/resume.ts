@@ -81,8 +81,8 @@ export type ReconcileProblem = { localPath: string; fileName: string; reason: st
  * it's only consumed here after the gated permission call resolves.
  */
 export async function restoreFromHandle(
-  batch: BatchRecord,
-  recordsPromise: Promise<FileRecord[]>,
+  batch: Pick<BatchRecord, 'dirHandle'>,
+  recordsPromise: Promise<RecoveryFile[]>,
   onProgress?: (done: number, total: number) => void,
 ): Promise<RestoreResult> {
   const handle = batch.dirHandle;
@@ -213,14 +213,16 @@ function hashAll(
  * has nothing to compare against — path + size is all there is to check, and
  * this pass's own result becomes its first hash instead of a mismatch.
  */
+export type RecoveryFile = Pick<FileRecord, 'localPath' | 'fileName' | 'size' | 'sha256'>;
+
 export async function reconcileReselect(
-  records: FileRecord[],
+  records: RecoveryFile[],
   scanned: ScannedFile[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ attached: Map<string, File>; problems: ReconcileProblem[]; resolved: Map<string, ProcessResponse> }> {
   const byPath = new Map(scanned.map((f) => [f.relPath, f]));
   const problems: ReconcileProblem[] = [];
-  const candidates: { record: FileRecord; file: File; mediaKind: MediaKind }[] = [];
+  const candidates: { record: RecoveryFile; file: File; mediaKind: MediaKind }[] = [];
 
   for (const rec of records) {
     const sf = byPath.get(rec.localPath);
@@ -247,7 +249,7 @@ export async function reconcileReselect(
   const attached = new Map<string, File>();
   for (const c of candidates) {
     const r = resolved.get(c.record.localPath);
-    if (c.record.sha256 !== undefined && r?.sha256 !== c.record.sha256) {
+    if (!r?.sha256 || (c.record.sha256 !== undefined && r.sha256 !== c.record.sha256)) {
       problems.push({
         localPath: c.record.localPath,
         fileName: c.record.fileName,

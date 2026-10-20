@@ -171,6 +171,10 @@ export const uploadMetaJson = (opts: {
 export function seedDefaultStorage(s3: S3Mock): void {
   s3.buckets = [SETTINGS_BUCKET, BUCKET_A, BUCKET_B, 'unrelated-bucket'];
   s3.put(SETTINGS_BUCKET, LOCATIONS_KEY, locationsJson(), { contentType: 'application/json' });
+  s3.put(SETTINGS_BUCKET, 'Settings/species.json', JSON.stringify([
+    { name: 'Coyote', scientificName: 'Canis latrans', speciesIconURL: '', keyBinding: 'C' },
+    { name: 'Ghost', scientificName: 'Casper', speciesIconURL: '', keyBinding: 'G' },
+  ]), { contentType: 'application/json' });
   s3.put(BUCKET_A, `Collections/${UUID_A}/collection.json`, collectionJson(COLLECTION_A_NAME, 'Alpha Org', 'alpha@example.org', 'The alpha test collection'), { contentType: 'application/json' });
   s3.put(BUCKET_B, `Collections/${UUID_B}/collection.json`, collectionJson(COLLECTION_B_NAME, 'Beta Org', 'beta@example.org', 'The beta test collection'), { contentType: 'application/json' });
   seedPriorUpload(s3);

@@ -137,7 +137,7 @@ describe('the record round trip', () => {
   });
 
   it('reports a record from a schema it does not know as absent', async () => {
-    await flipDb.records.put({ ...record(), v: 2 } as unknown as FlipRecord);
+    await flipDb.records.put({ ...record(), v: 3 } as unknown as FlipRecord);
     expect(await readFlipRecord('batch-1')).toBeUndefined();
   });
 });
@@ -214,6 +214,12 @@ describe('not keeping batches forever', () => {
   });
 });
 
+it('does not expire a prepared handoff while it may be carried offline', async () => {
+  await writeFlipRecord(record({ v: 2, createdAt: '2000-01-01T00:00:00.000Z' }));
+  expect(await pruneFlipRecords()).toBe(0);
+  expect(await flipDb.records.get('batch-1')).toBeDefined();
+});
+
 describe('tag updates', () => {
   it('merges one image at a time without disturbing the others', async () => {
     await writeFlipRecord(record());
@@ -223,8 +229,9 @@ describe('tag updates', () => {
     expect(back!.tags).toEqual({ 'SD/IMG_0001.JPG': [coyote], 'SD/IMG_0002.JPG': [ghost] });
   });
 
-  it('ignores an id that is not there rather than creating one', async () => {
-    await updateFlipTags('gone', { x: [coyote] });
+  it('reports a missing destination instead of claiming tags were saved', async () => {
+    await expect(updateFlipTags('gone', { x: [coyote] })).rejects.toThrow('no longer stored');
+    await expect(finishFlipRecord('gone', { x: [coyote] }, 'anita')).rejects.toThrow('no longer stored');
     expect(await readFlipRecord('gone')).toBeUndefined();
   });
 });
@@ -254,4 +261,83 @@ it('reads old records and resolves optional estimated timestamps after camera an
   expect(captureTimestampOf(f)).toBe(f.estimatedTimestamp);
   expect(captureTimestampOf({ ...f, manualTimestamp: 'manual' })).toBe('manual');
   expect(captureTimestampOf({ ...f, manualTimestamp: 'manual', exifTimestamp: 'camera' })).toBe('camera');
+});
+
+it('persists non-secret preparation with account isolation and an immutable handoff snapshot', async () => {
+  const { savePreparedSpecies, loadPreparedSpecies, bindPreparedSpecies } = await import('../src/index');
+  const snapshot = {
+    v: 1 as const, endpoint: 'https://storage.test', account: 'person', collectionKey: 'bucket::one', collectionName: 'One',
+    sourceBucket: 'bucket', sourceKey: 'Collections/one/species.json', sourceHash: 'a'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: { 'Canis latrans': 'y' },
+    species: [{ key: 'Canis latrans', scientificName: 'Canis latrans', commonName: 'Coyote', iconUrl: '', keyBinding: 'C' }],
+  };
+  await savePreparedSpecies({ ...snapshot, secretKey: 'MUST-NOT-PERSIST' } as typeof snapshot);
+  expect(JSON.stringify(await flipDb.vocabularies.toArray())).not.toContain('MUST-NOT-PERSIST');
+  expect(await loadPreparedSpecies({ endpoint: snapshot.endpoint, accessKey: 'other' })).toBeNull();
+  expect(await loadPreparedSpecies({ endpoint: 'https://other.test', accessKey: snapshot.account })).toBeNull();
+  expect(await loadPreparedSpecies({ endpoint: snapshot.endpoint, accessKey: snapshot.account })).toEqual(snapshot);
+  await writeFlipRecord(record());
+  await bindPreparedSpecies('batch-1', snapshot);
+  expect((await readFlipRecord('batch-1'))?.v).toBe(2);
+  snapshot.species[0].commonName = 'Later change';
+  await savePreparedSpecies({ ...snapshot, collectionKey: 'bucket::two', collectionName: 'Two' });
+  expect((await readFlipRecord('batch-1'))?.preparedSpecies?.collectionKey).toBe('bucket::one');
+  expect((await readFlipRecord('batch-1'))?.preparedSpecies?.species[0].commonName).toBe('Coyote');
+  await expect(bindPreparedSpecies('batch-1', snapshot)).rejects.toThrow('already has');
+  await updateFlipTags('batch-1', { 'SD/IMG_0001.JPG': [coyote] });
+  await finishFlipRecord('batch-1', {}, 'anita');
+  expect((await readFlipRecord('batch-1'))?.preparedSpecies?.species[0].commonName).toBe('Coyote');
+});
+
+it('rejects invalid preparation and preserves the previously saved list on failure', async () => {
+  const { savePreparedSpecies, loadPreparedSpecies } = await import('../src/index');
+  await flipDb.vocabularies.clear();
+  await expect(savePreparedSpecies({ v: 2 } as any)).rejects.toThrow('invalid or empty');
+  expect(await loadPreparedSpecies()).toBeNull();
+  await flipDb.vocabularies.put({ id: 'selected', snapshot: { v: 1, species: [] } as any });
+  expect(await loadPreparedSpecies()).toBeNull();
+});
+
+it('a failed preparation write leaves the previous accepted snapshot available', async () => {
+  const { savePreparedSpecies, loadPreparedSpecies } = await import('../src/index');
+  const snapshot = { v: 1 as const, endpoint: 'https://storage.test', account: 'person', collectionKey: 'bucket::one', collectionName: 'One', sourceBucket: 'bucket', sourceKey: 'species.json', sourceHash: 'a'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: {}, species: [{ key: 'Coyote', scientificName: 'Coyote', commonName: 'Coyote', iconUrl: '', keyBinding: null }] };
+  await savePreparedSpecies(snapshot);
+  const write = vi.spyOn(flipDb.vocabularies, 'put').mockRejectedValueOnce(new Error('QuotaExceededError'));
+  try {
+    await expect(savePreparedSpecies({ ...snapshot, collectionName: 'New list' })).rejects.toThrow('QuotaExceededError');
+    expect(await loadPreparedSpecies()).toEqual(snapshot);
+  } finally { write.mockRestore(); }
+});
+
+it('upgrades the original database without losing handoff metadata or tags', async () => {
+  const { default: Dexie } = await import('dexie');
+  flipDb.close();
+  await Dexie.delete('sparcd-flip');
+  const legacy = new Dexie('sparcd-flip');
+  legacy.version(1).stores({ records: 'id' });
+  const original = record({ tags: { 'SD/IMG_0001.JPG': [coyote] } });
+  await legacy.table('records').put(original);
+  legacy.close();
+  await flipDb.open();
+  expect((await readFlipRecord(original.id))?.tags).toEqual(original.tags);
+  expect(await flipDb.preparations.toArray()).toEqual([]);
+  expect(await flipDb.vocabularies.toArray()).toEqual([]);
+});
+
+it('an aborted journal transaction preserves the previously committed preparation', async () => {
+  await flipDb.preparations.put({ id: 'active', value: { id: 'stable-batch', files: ['unchanged'] } });
+  await expect(flipDb.transaction('rw', flipDb.preparations, async () => {
+    await flipDb.preparations.put({ id: 'active', value: { id: 'interrupted', files: [] } });
+    throw new Error('interrupted write');
+  })).rejects.toThrow('interrupted write');
+  expect((await flipDb.preparations.get('active'))?.value).toEqual({ id: 'stable-batch', files: ['unchanged'] });
+});
+
+it('explains unsupported handoffs without changing their stored contents', async () => {
+  const { flipRecordUnavailableReason } = await import('../src/index');
+  const future = { ...record(), v: 99 } as unknown as FlipRecord;
+  await flipDb.records.put(future);
+  expect(await readFlipRecord(future.id)).toBeUndefined();
+  expect(await flipRecordUnavailableReason(future.id)).toContain('unsupported app version');
+  expect(await flipDb.records.get(future.id)).toEqual(future);
+  expect(await flipRecordUnavailableReason('missing')).toContain('missing');
 });

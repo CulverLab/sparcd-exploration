@@ -25,8 +25,12 @@ export type FileSpec = {
 };
 
 export type OpenOptions = {
+  /** Production recovery tests can reopen the exact local-batch entry URL. */
+  path?: string;
   /** Simulate a browser with no folder picker at all (phone-shaped). */
   noFolderPicker?: boolean;
+  /** Keep the desktop directory input but disable the File System Access API. */
+  noDirectoryHandle?: boolean;
 };
 
 type WireFile = { path: string; mime: string; b64?: string; zeroBytes?: number; padBytes?: number; broken?: boolean };
@@ -86,12 +90,13 @@ export class App {
         return w.__pickedFolder;
       };
     });
-    if (opts.noFolderPicker) {
-      await this.page.addInitScript(() => {
-        // A device that cannot present a folder picker: no File System Access
-        // API and a coarse pointer.
+    if (opts.noFolderPicker || opts.noDirectoryHandle) {
+      await this.page.addInitScript((phone) => {
+        // Disable File System Access while retaining real input pickers.
+        // The phone-shaped fixture also reports a coarse pointer.
         // @ts-expect-error deleting an optional capability
         delete window.showDirectoryPicker;
+        if (!phone) return;
         const real = window.matchMedia.bind(window);
         window.matchMedia = (q: string) =>
           q.includes('pointer: coarse')
@@ -106,9 +111,9 @@ export class App {
                 dispatchEvent: () => false,
               } as unknown as MediaQueryList)
             : real(q);
-      });
+      }, opts.noFolderPicker ?? false);
     }
-    await this.page.goto(APP_PATH);
+    await this.page.goto(opts.path ?? APP_PATH);
   }
 
   /** Re-open the app in the same context (same storage), e.g. after a reload. */
@@ -464,7 +469,7 @@ export class App {
 
   async pickFolder(specs: FileSpec[], dir: string): Promise<void> {
     await this.writeFolderToDisk(specs, dir);
-    await this.page.locator('input[type="file"]').first().setInputFiles(dir);
+    await this.page.getByLabel('New upload folder', { exact: true }).setInputFiles(dir);
   }
 
   async readBundleRecords(): Promise<Record<string, unknown>[]> {
@@ -473,7 +478,7 @@ export class App {
 
   /** Choose individual files through the plain (non-directory) file input. */
   async pickFiles(specs: FileSpec[]): Promise<void> {
-    await this.page.locator('input[type="file"]').first().setInputFiles(
+    await this.page.getByLabel('New upload files', { exact: true }).setInputFiles(
       specs.map((s) => ({
         name: s.path.split('/').pop()!,
         mimeType: s.mime ?? (s.path.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
@@ -638,13 +643,19 @@ export class App {
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(open.error);
       });
-      if (!db.objectStoreNames.contains(storeName)) return [];
-      const tx = db.transaction(storeName, 'readonly');
-      const req = tx.objectStore(storeName).getAll();
-      return new Promise((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
-        req.onerror = () => reject(req.error);
-      });
+      try {
+        if (!db.objectStoreNames.contains(storeName)) return [];
+        return await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const req = tx.objectStore(storeName).getAll();
+          tx.oncomplete = () => resolve(req.result as Record<string, unknown>[]);
+          tx.onabort = () => reject(tx.error ?? new Error('IndexedDB read aborted'));
+          tx.onerror = () => reject(tx.error ?? req.error);
+          req.onerror = () => reject(req.error);
+        });
+      } finally {
+        db.close();
+      }
     }, store);
 
     try {

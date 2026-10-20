@@ -302,6 +302,9 @@ export class S3Mock {
           'content-length': String(obj.body.length),
           'last-modified': 'Mon, 01 Jan 2024 00:00:00 GMT',
           'accept-ranges': 'bytes',
+          // Production tests call this storage origin cross-origin. Mirror S3's
+          // CORS exposure so final verification can read custom digest metadata.
+          'access-control-expose-headers': ['etag', ...Object.keys(obj.meta).map(k => `x-amz-meta-${k}`)].join(', '),
         };
         for (const [k, v] of Object.entries(obj.meta)) headers[`x-amz-meta-${k}`] = v;
         await route.fulfill({

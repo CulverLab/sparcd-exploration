@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CollectionRef } from '../lib/s3';
 
 type Props = {
+  label?: string;
   collections: CollectionRef[];
   value: string | null; // selected CollectionRef.key
   onChange: (key: string) => void;
@@ -18,7 +19,7 @@ function meta(c: CollectionRef): string {
  * highlight, Enter selects, Esc closes. Bespoke to match the Field Notebook
  * chrome (mirrors DeploymentPicker) rather than pulling in a dropdown library.
  */
-export function CollectionPicker({ collections, value, onChange }: Props) {
+export function CollectionPicker({ collections, value, onChange, label }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
@@ -84,6 +85,7 @@ export function CollectionPicker({ collections, value, onChange }: Props) {
           setOpen((v) => !v);
           requestAnimationFrame(() => inputRef.current?.focus());
         }}
+        aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
         className="w-full flex items-center justify-between gap-3 border border-rule bg-paper px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"

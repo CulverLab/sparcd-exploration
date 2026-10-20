@@ -1,4 +1,4 @@
-# DRAFT — for review, not yet agreed. Generated 2026-08-25 from apps/sparcd-tagger (src/App.tsx, src/components/Chrome.tsx, src/sections/Tag.tsx, src/lib/localBatch.ts, src/lib/localWorkspace.ts, src/lib/defaultSpecies.ts, src/lib/useMediaUrl.ts) plus packages/flip.
+# DRAFT — for review, not yet agreed. Generated 2026-08-25 from apps/sparcd-tagger (src/App.tsx, src/components/Chrome.tsx, src/sections/Tag.tsx, src/lib/localBatch.ts, src/lib/localWorkspace.ts, src/lib/useMediaUrl.ts) plus packages/flip.
 
 Feature: Tag a batch that has not been uploaded yet
 
@@ -6,8 +6,8 @@ Feature: Tag a batch that has not been uploaded yet
   As-built flow: the Uploader hands over a batch of images still sitting on the
   researcher's card and opens the tagger on it. There is no collection, so
   there is nothing to connect to: the workspace opens straight away, the images
-  come from the folder on this machine, and the species list travels with the
-  app. Tags go back into the hand-off record, and the Done button returns to
+  come from the folder on this machine, and the prepared collection species snapshot travels with the
+  batch. Tags go back into the hand-off record, and the Done button returns to
   the Uploader with them.
   """
 
@@ -19,7 +19,7 @@ Feature: Tag a batch that has not been uploaded yet
   Scenario: The workspace opens with no connection at all
     Then no connection screen is shown
     And the images are listed ready to tag
-    # Requirement A1: Anita tags before she has a connection.
+    # Prior online species preparation is required; tagging itself needs no live connection.
 
   @A1
   Scenario: The chrome says whose batch this is and how to give it back

@@ -701,3 +701,6 @@ export function parseCollectionKey(key: string): { bucket: string; uuid: string 
   const [bucket, uuid] = key.split('::');
   return { bucket, uuid };
 }
+
+export { loadSpeciesVocabulary, parseSpecies, SpeciesShapeError, SPECIES_KEY } from './species';
+export type { RawSpecies, Species, SkippedSpecies, SpeciesParse, SpeciesResult } from './species';

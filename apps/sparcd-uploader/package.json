@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:bdd": "bddgen && playwright test",
     "test:bdd:offline": "pnpm build && bddgen --config playwright.offline.config.ts && playwright test --config playwright.offline.config.ts",
-    "test:bdd:cross-tool": "bddgen --config playwright.cross-tool.config.ts && playwright test --config playwright.cross-tool.config.ts"
+    "test:bdd:cross-tool": "bddgen --config playwright.cross-tool.config.ts && playwright test --config playwright.cross-tool.config.ts",
+    "test:production:offline": "pnpm build && pnpm --filter sparcd-tagger build && node ../../scripts/build-offline.mjs && bddgen --config playwright.production.config.ts && playwright test --config playwright.production.config.ts",
+    "test:production:server": "node --test e2e/production/server.test.mjs ../../scripts/offline/worker.test.mjs"
   },
   "dependencies": {
     "@sparcd/auth-ui": "workspace:*",

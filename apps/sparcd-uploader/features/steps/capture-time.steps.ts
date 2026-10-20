@@ -323,9 +323,12 @@ When('that modified metadata time is overridden by hand', async ({ app }) => {
   await input.fill('2026-07-02T03:04:05');
 });
 
-Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
+When('the batch is returned to Inspect before local tagging', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back', exact: true }).click();
   await app.expectStep('Verify');
+});
+
+Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.stubTagger();
   await app.page.getByRole('button', { name: 'Tag species before upload' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
