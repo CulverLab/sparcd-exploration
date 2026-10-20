@@ -766,6 +766,7 @@ Then('only the rows currently in view are rendered', async ({ page, scratch }) =
 });
 
 Then('the keyboard-focused image is scrolled into view as focus moves', async ({ page }) => {
+  await page.getByRole('button', { name: 'Find & filter', exact: true }).click();
   await page.getByPlaceholder('Find image…').fill('BIG2500');
   await expect(page.getByText('2501 / 3000')).toBeVisible();
   const focused = page.locator('button[aria-current="true"][title^="BIG"]').first();

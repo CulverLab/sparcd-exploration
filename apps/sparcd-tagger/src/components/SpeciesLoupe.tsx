@@ -10,11 +10,13 @@ export function SpeciesLoupe({ species, onClose }: { species: Species; onClose: 
   const [failed, setFailed] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
 
-  // Escape closes; stopPropagation keeps it from reaching the tagger's global
-  // keydown handler (which would clear selection / fire other UI).
+  // Consume Escape completely: closing this viewer may restore a native
+  // modal rail, which must not receive the same key's default dismiss action.
+  // Propagation must also stop before the tagger's global shortcut handler.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         e.stopPropagation();
         onClose();
       }

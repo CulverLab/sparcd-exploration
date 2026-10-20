@@ -32,6 +32,7 @@ import { KeyConflictDialog } from '../components/KeyConflictDialog';
 import { ImageAdjustments } from '../components/ImageAdjustments';
 import { PawTrail } from '../components/Paw';
 import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
+import { FindFilterRail } from '../components/FindFilterRail';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
@@ -399,7 +400,28 @@ export function Tag() {
   const exhaustedFocusRef = useRef<{ key: string; filter: ImageFilter } | null>(null);
   const [showImageFilter, setShowImageFilter] = useState(false);
   const imageFilterButtonRef = useRef<HTMLButtonElement>(null);
-  const imageFilterTextRef = useRef<HTMLInputElement>(null);
+  const overviewAreaRef = useRef<HTMLDivElement>(null);
+  const [railDocked, setRailDocked] = useState(false);
+  // Yield to the active workspace dialog without invoking Close's clearing
+  // behavior. Restore the remembered rail in the current layout on dismissal.
+  const overviewDialogOpen = showSync || showSnapshots || showDiscard || showTimeShift ||
+    showChangeLocation || bulkTime !== null || zoomSpecies !== null ||
+    pendingKeyConflict !== null || showCheatsheet;
+  const railVisible = showImageFilter && !overviewDialogOpen;
+  useLayoutEffect(() => {
+    if (view !== 'overview' || !overviewAreaRef.current) return;
+    const area = overviewAreaRef.current;
+    // Reserve 30rem for readable list rows or at least two image cards, plus
+    // the 18rem rail. Measure after the existing Species panel takes its space.
+    const measure = () => setRailDocked(area.clientWidth >= 48 * parseFloat(getComputedStyle(document.documentElement).fontSize));
+    const observer = new ResizeObserver(measure);
+    observer.observe(area);
+    const rail = document.getElementById('image-filter-panel');
+    if (rail) observer.observe(rail);
+    measure();
+    return () => observer.disconnect();
+  }, [view, list.length, uploadPrefix, images.isError]);
+  useEffect(() => { setShowImageFilter(false); }, [view, uploadPrefix]);
   const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => matchesImageFilter(
     {
       fileName: image.fileName,
@@ -421,20 +443,30 @@ export function Tag() {
     imageFilter.day !== '' ||
     imageFilter.hour !== '' ||
     imageFilter.minute !== '';
+  const imageFilterSummary = [
+    imageFilter.text && `“${imageFilter.text}”`,
+    imageFilter.scope !== 'all' && { filename: 'Filename', species: 'Species', date: 'Date' }[imageFilter.scope],
+    imageFilter.tagged !== 'all' && (imageFilter.tagged === 'tagged' ? 'Tagged only' : 'Untagged only'),
+    ...(['year', 'month', 'day', 'hour', 'minute'] as const).map((part) =>
+      imageFilter[part] && `${part}: ${imageFilter[part]}`),
+  ].filter(Boolean).join(' · ');
   const visibleIndexSet = useMemo(() => new Set(visibleIndices), [visibleIndices]);
   const selectedForActions = useMemo(
     () => (imageFilterActive ? [...selected].filter((i) => visibleIndexSet.has(i)) : [...selected]),
     [imageFilterActive, selected, visibleIndexSet],
   );
 
+  const openImageFind = () => {
+    if (showImageFilter) imgSearchRef.current?.focus();
+    else setShowImageFilter(true);
+  };
+
   const closeImageFilter = () => {
+    setImgQuery('');
+    setImageFilter(EMPTY_IMAGE_FILTER);
     setShowImageFilter(false);
     requestAnimationFrame(() => imageFilterButtonRef.current?.focus());
   };
-
-  useEffect(() => {
-    if (showImageFilter) imageFilterTextRef.current?.focus();
-  }, [showImageFilter]);
 
   // Exhausted auto-advance retains the image that was just tagged, even if
   // that edit hid it. A changed filter or explicit move releases that hold.
@@ -825,7 +857,7 @@ export function Tag() {
     showCheatsheet,
     setShowCheatsheet,
     filterRef,
-    imgSearchRef,
+    openFindImage: openImageFind,
     speciesList,
     filter,
     view,
@@ -833,6 +865,7 @@ export function Tag() {
     enterFocus,
     closeFocus,
     isModalOpen: () =>
+      (railVisible && !railDocked) ||
       modalOpenRef.current ||
       showDiscard ||
       showSync ||
@@ -1016,169 +1049,15 @@ export function Tag() {
           </DisabledActionHint>
         )}
 
-        {/* Find image by filename — jumps focus to a match (the virtualizer then
-            scrolls it into view). Separate from the species filter. */}
-        <div className="inline-flex items-center gap-1 border border-rule px-1.5 py-0.5">
-          <span aria-hidden className="text-[12px] text-inkMute">
-            ⌕
-          </span>
-          <input
-            ref={imgSearchRef}
-            value={imgQuery}
-            onChange={(e) => setImgQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                jumpToMatch(matchPos + (e.shiftKey ? -1 : 1));
-              } else if (e.key === 'Escape') {
-                setImgQuery('');
-                imgSearchRef.current?.blur();
-              }
-            }}
-            placeholder="Find image…"
-            className="w-28 bg-transparent text-[12px] font-mono text-ink placeholder:text-inkMute focus:outline-none"
-            title="Find image by filename (Enter / Shift+Enter to cycle, / to focus)"
-          />
-          {imgQuery.trim() && (
-            <>
-              <span
-                className={`text-[11px] font-mono ${matches.length ? 'text-accent' : 'text-warn'}`}
-              >
-                {matches.length ? matchPos + 1 : 0}/{matches.length}
-              </span>
-              <button
-                onClick={() => jumpToMatch(matchPos - 1)}
-                disabled={!matches.length}
-                className="text-[12px] text-inkSoft hover:text-ink disabled:opacity-40 px-0.5 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
-                title="Previous match"
-                aria-label="Previous match"
-              >
-                ‹
-              </button>
-              <button
-                onClick={() => jumpToMatch(matchPos + 1)}
-                disabled={!matches.length}
-                className="text-[12px] text-inkSoft hover:text-ink disabled:opacity-40 px-0.5 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
-                title="Next match"
-                aria-label="Next match"
-              >
-                ›
-              </button>
-              <button
-                onClick={() => {
-                  setImgQuery('');
-                  imgSearchRef.current?.focus();
-                }}
-                className="text-[12px] text-inkMute hover:text-ink px-0.5 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
-                title="Clear"
-                aria-label="Clear image search"
-              >
-                ✕
-              </button>
-            </>
-          )}
-        </div>
-        <div className="relative">
-          <button
-            ref={imageFilterButtonRef}
-            type="button"
-            onClick={() => setShowImageFilter((shown) => !shown)}
-            aria-expanded={showImageFilter}
-            aria-controls="image-filter-panel"
-            className={`inline-flex min-h-11 items-center gap-1 border px-2 py-1 text-[12px] font-mono focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent sm:min-h-0 ${
-              imageFilterActive ? 'border-ink bg-mark text-ink' : 'border-rule text-inkSoft hover:text-ink hover:border-ink'
-            }`}
-          >
-            Filter {imageFilterActive ? `${visibleIndices.length}/${list.length}` : ''}
+        {view === 'overview' && <div className="flex max-w-full flex-wrap items-center gap-2 text-[12px] font-mono">
+          <button ref={imageFilterButtonRef} type="button"
+            onClick={openImageFind}
+            aria-expanded={showImageFilter} aria-controls="image-filter-panel"
+            className={`min-h-11 border px-2 ${imageFilterActive ? 'border-ink bg-mark' : 'border-rule'}`}>
+            Find &amp; filter
           </button>
-          {showImageFilter && (
-            <div
-              id="image-filter-panel"
-              role="region"
-              aria-label="Image filters"
-              onKeyDown={(e) => {
-                if (e.key !== 'Escape') return;
-                e.preventDefault();
-                e.stopPropagation();
-                closeImageFilter();
-              }}
-              className="absolute left-0 top-full z-40 mt-1 w-80 max-w-[calc(100vw-2rem)] space-y-3 border border-rule bg-panel p-3 shadow-lg max-sm:fixed max-sm:inset-x-2 max-sm:top-14 max-sm:mt-0 max-sm:w-auto"
-            >
-              <label className="block text-[11px] font-mono text-inkSoft">
-                Match text
-                <input
-                  ref={imageFilterTextRef}
-                  value={imageFilter.text}
-                  onChange={(e) => setImageFilter((f) => ({ ...f, text: e.target.value }))}
-                  placeholder="Filename, species, or date"
-                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                />
-              </label>
-              <label className="block text-[11px] font-mono text-inkSoft">
-                Search in
-                <select
-                  value={imageFilter.scope}
-                  onChange={(e) =>
-                    setImageFilter((f) => ({ ...f, scope: e.target.value as ImageFilter['scope'] }))
-                  }
-                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink"
-                >
-                  <option value="all">All fields</option>
-                  <option value="filename">Filename</option>
-                  <option value="species">Species</option>
-                  <option value="date">Date</option>
-                </select>
-              </label>
-              <label className="block text-[11px] font-mono text-inkSoft">
-                Tag state
-                <select
-                  value={imageFilter.tagged}
-                  onChange={(e) =>
-                    setImageFilter((f) => ({
-                      ...f,
-                      tagged: e.target.value as ImageFilter['tagged'],
-                    }))
-                  }
-                  className="mt-1 w-full border border-rule bg-paper px-2 py-1 text-[13px] text-ink"
-                >
-                  <option value="all">All images</option>
-                  <option value="tagged">Tagged only</option>
-                  <option value="untagged">Untagged only</option>
-                </select>
-              </label>
-              <fieldset>
-                <legend className="text-[11px] font-mono text-inkSoft">Capture date</legend>
-                <div className="mt-1 grid grid-cols-5 gap-1">
-                  {(['year', 'month', 'day', 'hour', 'minute'] as const).map((part) => (
-                    <input
-                      key={part}
-                      aria-label={`Capture ${part}`}
-                      value={imageFilter[part]}
-                      onChange={(e) =>
-                        setImageFilter((f) => ({ ...f, [part]: e.target.value }))
-                      }
-                      placeholder={{ year: 'YYYY', month: 'MM', day: 'DD', hour: 'HH', minute: 'MM' }[part]}
-                      inputMode="numeric"
-                      className="min-w-0 border border-rule bg-paper px-1 py-1 text-[12px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                    />
-                  ))}
-                </div>
-              </fieldset>
-              <div className="flex items-center justify-between">
-                <span aria-live="polite" className="text-[11px] font-mono text-inkSoft">
-                  {visibleIndices.length} of {list.length} images
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setImageFilter(EMPTY_IMAGE_FILTER)}
-                  className="text-[12px] font-mono text-inkSoft underline decoration-dotted hover:text-ink"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+          {imageFilterActive && <span aria-label="Active image filter" title={imageFilterSummary} className="max-w-[20rem] truncate">Filter active · {imageFilterSummary} · {visibleIndices.length}/{list.length}</span>}
+        </div>}
 
         <div className="ml-auto flex flex-wrap items-center gap-3">
           {savedAt > 0 && <span className="text-[12px] font-mono text-accent">saved ✓</span>}
@@ -1255,29 +1134,36 @@ export function Tag() {
 
       <div className="flex-1 min-h-0">
         {view === 'overview' ? (
-          <div className="h-full grid grid-cols-1 lg:grid-cols-[1fr_340px] min-h-0 overflow-y-auto lg:overflow-visible">
-            <div className="flex flex-col min-h-[60svh] lg:min-h-0">
-              <SortBar field={sortField} dir={sortDir} onSort={handleSort} />
-              <div className="flex-1 min-h-0">
-                {imageFilterActive && visibleIndices.length === 0 ? (
-                  <p className="p-5 text-[13px] font-mono text-inkSoft" role="status">
-                    No images match these filters.
-                  </p>
-                ) : (
-                  <Overview
-                    list={list}
-                    visibleIndices={imageFilterActive ? visibleIndices : undefined}
-                    grouping={grouping}
-                    focus={focus}
-                    selected={selected}
-                    kind={overviewKind}
-                    onPick={pick}
-                    onSelectBurst={selectBurst}
-                    onDrill={drill}
-                    onDropSpecies={applyIncrementAt}
-                    timeZone={captureTimeZone}
-                  />
-                )}
+          <div className="h-full grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] min-h-0 overflow-y-auto lg:overflow-visible">
+            <div ref={overviewAreaRef} className="flex min-w-0 min-h-[60svh] lg:min-h-0">
+              <FindFilterRail open={railVisible} docked={railDocked} onClose={closeImageFilter}
+                findRef={imgSearchRef} query={imgQuery} setQuery={setImgQuery}
+                position={matchPos} matchCount={matches.length} jump={jumpToMatch}
+                filter={imageFilter} setFilter={setImageFilter} shown={visibleIndices.length} total={list.length} />
+              <div className="flex flex-1 min-w-0 flex-col min-h-0">
+                <SortBar field={sortField} dir={sortDir} onSort={handleSort} />
+                <div className="flex-1 min-h-0">
+                  {imageFilterActive && visibleIndices.length === 0 ? (
+                    <div className="p-5 text-[13px] font-mono text-inkSoft">
+                      <p role="status">No images match these filters.</p>
+                      <button type="button" onClick={() => setImageFilter(EMPTY_IMAGE_FILTER)} className="mt-2 min-h-11 border border-rule px-2">Reset filter</button>
+                    </div>
+                  ) : (
+                    <Overview
+                      list={list}
+                      visibleIndices={imageFilterActive ? visibleIndices : undefined}
+                      grouping={grouping}
+                      focus={focus}
+                      selected={selected}
+                      kind={overviewKind}
+                      onPick={pick}
+                      onSelectBurst={selectBurst}
+                      onDrill={drill}
+                      onDropSpecies={applyIncrementAt}
+                      timeZone={captureTimeZone}
+                    />
+                  )}
+                </div>
               </div>
             </div>
             <SpeciesPanel {...speciesPanelProps()} />
@@ -2166,7 +2052,7 @@ type HandlerState = {
   showCheatsheet: boolean;
   setShowCheatsheet: (v: boolean) => void;
   filterRef: React.RefObject<HTMLInputElement>;
-  imgSearchRef: React.RefObject<HTMLInputElement>;
+  openFindImage: () => void;
   speciesList: Species[];
   filter: string;
   view: View;
@@ -2431,15 +2317,13 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
       gotoBurst(s, -1);
       return;
     case '/':
-      // The Overview search remains mounted for state continuity, but Focus
-      // owns the entire viewport and must not send a shortcut into that
-      // hidden control.
+      // Focus owns the viewport; Find exists only in Overview.
       if (s.view === 'focus') {
         e.preventDefault();
         return;
       }
       e.preventDefault();
-      s.imgSearchRef.current?.focus();
+      s.openFindImage();
       return;
     case ' ':
       e.preventDefault();

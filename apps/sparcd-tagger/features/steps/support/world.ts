@@ -173,3 +173,8 @@ export async function enterFocusView(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible();
 }
+
+export async function openFindFilter(page: Page) {
+  const opener = page.getByRole('button', { name: 'Find & filter', exact: true });
+  if (await opener.getAttribute('aria-expanded') !== 'true') await opener.click();
+}
