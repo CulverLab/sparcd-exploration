@@ -170,9 +170,11 @@ function Row(p: RowProps) {
       }
     >
       {/* Loupe: a sibling of the apply button (never nested — button-in-button is
-          invalid and would fire apply), overlaid on the thumbnail's top-left and
-          revealed on row hover/focus. stopPropagation keeps clicking it from
-          applying the species. */}
+          invalid and would fire apply), overlaid over the whole thumbnail.
+          Invisible — no icon or background — so hovering anywhere on the
+          thumbnail just shows the native "Enlarge reference" tooltip instead
+          of a separate overlay control. stopPropagation keeps clicking it
+          from applying the species. */}
       {p.iconUrl && p.onZoom && (
         <button
           type="button"
@@ -181,12 +183,10 @@ function Row(p: RowProps) {
             e.preventDefault();
             p.onZoom!();
           }}
-          className="absolute top-2 left-3 min-w-11 min-h-11 md:min-w-0 md:min-h-0 md:w-4 md:h-4 grid place-items-center bg-ink/55 text-paper text-[10px] font-mono opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 cursor-zoom-in focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
           title="Enlarge reference"
           aria-label={`Enlarge ${p.common} reference image`}
-        >
-          ⊕
-        </button>
+        />
       )}
       <button
         onClick={p.onSelect ?? p.onApply}

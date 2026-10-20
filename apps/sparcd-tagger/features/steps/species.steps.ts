@@ -947,6 +947,35 @@ When('its enlarge control is used', async ({ page }) => {
   await expect(loupe(page)).toBeVisible();
 });
 
+// The enlarge control is an invisible overlay sized to the whole 40×40
+// thumbnail, not a small icon in one corner. It intercepts pointer events
+// over the thumbnail's img, so clicking near its far corner (rather than
+// the image itself) proves the whole thumbnail is live, not just the
+// top-left — a direct click on the img there would instead be refused as
+// intercepted if the overlay were still corner-sized.
+When('the thumbnail is clicked away from its top-left corner', async ({ page }) => {
+  const thumbnail = speciesRow(page, 'Puma concolor').locator('img');
+  const box = await thumbnail.boundingBox();
+  expect(box).not.toBeNull();
+  // Click the thumbnail's true bottom-right pixel. The overlay must cover
+  // the complete image even when row actions make the row taller than it.
+  await page.mouse.click(box!.x + box!.width - 1, box!.y + box!.height - 1);
+});
+
+Then('that species was not applied by the click', async ({ page }) => {
+  await expect(speciesRow(page, 'Puma concolor').locator('[aria-label="Applied"]')).toHaveCount(0);
+});
+
+Then('the enlarge control shows no icon of its own', async ({ page }) => {
+  await expect(speciesLoupeButton(page, 'Puma concolor')).toBeEmpty();
+});
+
+Then('the enlarge control exposes its hover text and accessible name', async ({ page }) => {
+  const button = speciesLoupeButton(page, 'Puma concolor');
+  await expect(button).toHaveAttribute('title', 'Enlarge reference');
+  await expect(button).toHaveAccessibleName('Enlarge Mountain Lion reference image');
+});
+
 Then('the reference image is shown enlarged over the workspace', async ({ page }) => {
   const img = loupe(page).locator('img[alt="Mountain Lion"]');
   await expect(img).toBeVisible();
