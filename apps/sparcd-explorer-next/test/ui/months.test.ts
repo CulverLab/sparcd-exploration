@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { onlySpecies } from '../../src/data';
 import { activityByLocation } from '../../src/lib/activity';
 import {
   countByMonth,
@@ -61,7 +62,7 @@ describe('photos per month', () => {
   });
 
   it('keeps camera effort as the bars under a species filter, and counts the matching photos inside them', () => {
-    const bobcats = filter(model, { species: ['Lynx rufus'] });
+    const bobcats = filter(model, { species: onlySpecies(model, ['Lynx rufus']) });
     expect([...countByMonth(model, bobcats.effort, bobcats.photos)]).toEqual([
       [NOV_2023, [2, 1, 1]],
       [NOV_2023 + 2, [1, 1, 0]],
@@ -80,7 +81,7 @@ describe('photos per month', () => {
   });
 
   it('per location under a species filter: every location keeps its effort, the matches sit inside', () => {
-    const deer = filter(model, { species: ['Odocoileus hemionus'] });
+    const deer = filter(model, { species: onlySpecies(model, ['Odocoileus hemionus']) });
     const { byKey } = activityByLocation(model, deer.effort, false, deer.photos);
     expect([...byKey.get('id:AA01')!]).toEqual([
       [NOV_2023, [2, 1, 0]],

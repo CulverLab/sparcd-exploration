@@ -3,7 +3,17 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Media, NullableDeployment, Observation } from '@sparcd/camtrap';
-import { NO_FILTERS, applyFilters, buildModel, type FilterState, type LoadedCollection } from '../src/data';
+import {
+  NO_FILTERS,
+  applyFilters,
+  buildModel,
+  listKeys,
+  only,
+  onlyLocations,
+  onlySpecies,
+  type FilterState,
+  type LoadedCollection,
+} from '../src/data';
 import { collectionRef } from './support/fixtures';
 
 const PHOTOS = 200_000;
@@ -63,20 +73,21 @@ describe('performance', () => {
 
   const states: [string, Partial<FilterState>][] = [
     ['no filter', {}],
-    ['species only', { species: ['Genus alpha', 'Genus beta'] }],
-    ['species hide', { species: ['Genus alpha'], speciesMode: 'hide' }],
+    ['two species ticked', { species: onlySpecies(model, ['Genus alpha', 'Genus beta']) }],
+    ['one species unticked', { species: { hidden: ['Genus alpha'], hideUntagged: false } }],
+    ['untagged photos unticked', { species: { hidden: [], hideUntagged: true } }],
     [
       'everything at once',
       {
-        species: ['Genus gamma'],
+        species: onlySpecies(model, ['Genus gamma']),
         years: [2020, 2021, 2022],
         months: [3, 4, 5, 6],
         dateFrom: '2020-02-01',
         dateTo: '2023-11-30',
         hours: [20, 6],
         elevation: [600, 2200],
-        ranges: ['S00', 'S01', 'S02', 'S05'],
-        locations: Array.from({ length: 60 }, (_, i) => `id:S${String(i).padStart(3, '0')}`),
+        ranges: only(listKeys(model, 'ranges'), ['S00', 'S01', 'S02', 'S05']),
+        locations: onlyLocations(model, Array.from({ length: 60 }, (_, i) => `id:S${String(i).padStart(3, '0')}`)),
       },
     ],
   ];

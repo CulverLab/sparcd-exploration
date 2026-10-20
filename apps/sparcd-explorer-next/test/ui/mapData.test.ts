@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, shownPosition, siteHexes } from '../../src/data';
+import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, onlyLocations, onlySpecies, shownPosition, siteHexes } from '../../src/data';
 import {
   HEX_STEPS,
   areaLocations,
@@ -62,7 +62,7 @@ describe('hexes on the map', () => {
   });
 
   it('stay on the map when filtered out, with nothing in view', () => {
-    const hexes = hexViews(model, filter(model, { locations: ['id:BB01'] }), false, cells);
+    const hexes = hexViews(model, filter(model, { locations: onlyLocations(model, ['id:BB01']) }), false, cells);
     expect(hexes.map((h) => [h.inView, h.detections])).toEqual([
       [false, 0],
       [true, 1],
@@ -70,14 +70,14 @@ describe('hexes on the map', () => {
   });
 
   it('keep a place with camera effort in view at 0 detections under a species filter', () => {
-    const hexes = hexViews(model, filter(model, { species: ['Lynx rufus'] }), false, cells);
+    const hexes = hexViews(model, filter(model, { species: onlySpecies(model, ['Lynx rufus']) }), false, cells);
     const bravo = hexes.find((h) => h.hex === hexOfSite('BB01'))!;
     expect(bravo).toMatchObject({ inView: true, photos: 0, detections: 0 });
   });
 
   it('never place photos with no location, and count them', () => {
     expect(unplacedPhotos(model, filter(model))).toBe(2);
-    expect(unplacedPhotos(model, filter(model, { species: ['Lynx rufus'] }))).toBe(0);
+    expect(unplacedPhotos(model, filter(model, { species: onlySpecies(model, ['Lynx rufus']) }))).toBe(0);
   });
 });
 

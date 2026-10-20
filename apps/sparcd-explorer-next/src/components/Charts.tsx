@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { FilterState } from '@/data';
+import { toggleSpecies, type FilterState } from '@/data';
 import {
   chartData,
   hourBar,
@@ -9,7 +9,6 @@ import {
   speciesBar,
   toggleHour,
   toggleMonth,
-  toggleSpecies,
   type BarState,
 } from '@/lib/charts';
 import { fmtN } from '@/lib/format';
@@ -236,7 +235,7 @@ export function Charts() {
       <figure className="chart">
         <h3>Detections by species</h3>
         <p>Common names</p>
-        <SpeciesChart rows={species} filters={filters} onPick={(key) => setFilters((f) => toggleSpecies(f, key))} />
+        <SpeciesChart rows={species} filters={filters} onPick={(key) => setFilters((f) => toggleSpecies(model, f, key))} />
       </figure>
       <figure className="chart">
         <h3>Activity by hour of day</h3>

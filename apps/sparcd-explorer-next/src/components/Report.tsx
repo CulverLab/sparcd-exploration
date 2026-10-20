@@ -197,7 +197,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
   const allLocations = useMemo(() => summarize(model, applyFilters(model, NO_FILTERS), grouping).locations, [model, grouping]);
   const species = useMemo(() => speciesTable(model, result, opts), [model, result, grouping, order]);
   const locations = useMemo(() => orderedLocations(model, result, opts), [model, result, grouping, order]);
-  const byCollection = useMemo(() => collectionsTable(model, result, opts, filters.collections), [model, result, grouping, filters.collections]);
+  const byCollection = useMemo(() => collectionsTable(model, result, opts, filters.collections.hidden), [model, result, grouping, filters.collections]);
   const hours = useMemo(() => hourCounts(model, result.detections), [model, result]);
   const unplaced = useMemo(() => locations.filter((l) => l.noLocation).reduce((n, l) => n + l.photos, 0), [locations]);
   // A species filter's photos, or the tag switch's, are drawn inside the effort bars, as on the page.
@@ -274,7 +274,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
     setProblem(null);
     try {
       if (format === 'xlsx') {
-        saveBlob(exportFileName(names, 'report.xlsx', prepared), await xlsxBlob(spreadsheetTables(model, result, opts, facts, filters.collections)));
+        saveBlob(exportFileName(names, 'report.xlsx', prepared), await xlsxBlob(spreadsheetTables(model, result, opts, facts, filters.collections.hidden)));
       } else if (format === 'csv') {
         saveBlob(exportFileName(names, 'csv.zip', prepared), await zipBlob(csvFiles(model, result, opts)));
       } else {

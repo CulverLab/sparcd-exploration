@@ -47,7 +47,7 @@ Feature: Camera effort
     Then the strip shows 6 months with photos
     And the strip draws "Bobcat" inside 3 months
     When I also pick "Deer (Mule)" in the species filter
-    Then the strip draws "Bobcat +1" inside 4 months
+    Then the strip draws "Bobcat, Deer (Mule)" inside 4 months
 
   Scenario: In Photos, the Tagged switch's photos sit inside the bars
     When I show the Photos table

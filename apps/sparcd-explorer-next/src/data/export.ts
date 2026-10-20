@@ -231,11 +231,11 @@ export function detectionsTable(model: Model, result: FilterResult, o: ExportOpt
 }
 
 /**
- * Totals per open collection, those the Collections filter keeps (`picked`,
- * empty for all): locations with camera effort, photos, tagged photos,
+ * Totals per open collection, less those the Collections filter unticks
+ * (`hidden`): locations with camera effort, photos, tagged photos,
  * detections, species, and the first and last photo.
  */
-export function collectionsTable(model: Model, result: FilterResult, o: ExportOptions, picked: string[] = []): Table {
+export function collectionsTable(model: Model, result: FilterResult, o: ExportOptions, hidden: string[] = []): Table {
   const totals = model.collections.map(() => ({
     locations: new Set<string>(),
     photos: 0,
@@ -268,7 +268,7 @@ export function collectionsTable(model: Model, result: FilterResult, o: ExportOp
     name: 'By collection',
     columns: ['Collection', 'Locations', 'Photos', 'Tagged', 'Detections', 'Species', 'First photo', 'Last photo'],
     rows: model.collections.flatMap((c, i) => {
-      if (picked.length && !picked.includes(c.key)) return [];
+      if (hidden.includes(c.key)) return [];
       const t = totals[i];
       return [[c.name, t.locations.size, t.photos, t.tagged, t.detections, t.species.size, t.first, t.last]];
     }),
@@ -276,7 +276,7 @@ export function collectionsTable(model: Model, result: FilterResult, o: ExportOp
 }
 
 /** The report's key facts and numbers as two columns, with the per-collection totals under them when several are open. */
-export function summaryTable(model: Model, result: FilterResult, o: ExportOptions, facts: ReportFacts, picked: string[] = []): Table {
+export function summaryTable(model: Model, result: FilterResult, o: ExportOptions, facts: ReportFacts, hidden: string[] = []): Table {
   const s = summarize(model, result, o);
   const rows: ExportCell[][] = [
     ['Collections', facts.collections],
@@ -297,7 +297,7 @@ export function summaryTable(model: Model, result: FilterResult, o: ExportOption
     ['Last photo', s.lastDate],
   ];
   if (multi(model)) {
-    const by = collectionsTable(model, result, o, picked);
+    const by = collectionsTable(model, result, o, hidden);
     rows.push([], [by.name], by.columns, ...by.rows);
   }
   return { name: 'Summary', columns: ['Item', 'Value'], rows };
@@ -309,10 +309,10 @@ export function spreadsheetTables(
   result: FilterResult,
   o: ExportOptions,
   facts: ReportFacts,
-  picked: string[] = [],
+  hidden: string[] = [],
 ): Table[] {
   return [
-    summaryTable(model, result, o, facts, picked),
+    summaryTable(model, result, o, facts, hidden),
     locationsTable(model, result, o),
     speciesTable(model, result, o),
     photosTable(model, result, o),

@@ -1,14 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import {
-  ExplorerDb,
-  buildModel,
-  locationRows,
-  openCollections,
-  readCachedCollection,
-  summarize,
-  type Source,
-} from '../src/data';
+import { ExplorerDb, buildModel, listKeys, locationRows, only, openCollections, readCachedCollection, summarize, type Source } from '../src/data';
 import { FakeS3, putUpload } from './support/fakeS3';
 import { cellsOf, collection, collectionRef, deployment, filter, media, modelOf, observation } from './support/fixtures';
 
@@ -57,7 +49,7 @@ describe('several collections open together', () => {
   });
 
   it('filter by collection and total per collection', () => {
-    const onlyB = filter(model, { collections: ['sparcd-bbb::bbb'] });
+    const onlyB = filter(model, { collections: only(listKeys(model, 'collections'), ['sparcd-bbb::bbb']) });
     expect(onlyB.photos.map((i) => model.photos[i].fileName)).toEqual(['b1.jpg', 'b2.jpg']);
     expect(summarize(model, result, { separate: false }).byCollection).toEqual([
       { collection: 0, photos: 2, tagged: 1, detections: 1 },

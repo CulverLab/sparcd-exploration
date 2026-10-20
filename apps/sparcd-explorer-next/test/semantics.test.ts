@@ -1,7 +1,7 @@
 // The meanings the numbers rest on (spec, Data layer §5).
 
 import { describe, expect, it } from 'vitest';
-import { NO_LOCATION_NAME, locationRows, photoRows, summarize } from '../src/data';
+import { NO_LOCATION_NAME, locationRows, onlyLocations, onlySpecies, photoRows, summarize } from '../src/data';
 import { binsOf, collection, deployment, fileNames, filter, media, modelOf, observation, species } from './support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
@@ -146,9 +146,9 @@ describe('active days', () => {
   });
 
   it('follow location and date filters but not the species filter: they measure camera effort', () => {
-    expect(summarize(model, filter(model, { locations: ['id:AA01'] }), grouped).activeDays).toBe(2);
+    expect(summarize(model, filter(model, { locations: onlyLocations(model, ['id:AA01']) }), grouped).activeDays).toBe(2);
     expect(summarize(model, filter(model, { dateFrom: '2024-01-02' }), grouped).activeDays).toBe(1);
-    const owls = summarize(model, filter(model, { species: ['Owl'] }), grouped);
+    const owls = summarize(model, filter(model, { species: onlySpecies(model, ['Owl']) }), grouped);
     expect(owls).toMatchObject({ photos: 1, activeDays: 3 });
   });
 });

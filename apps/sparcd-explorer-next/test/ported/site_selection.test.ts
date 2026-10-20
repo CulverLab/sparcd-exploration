@@ -2,7 +2,7 @@
 // share the ID ZZZ19, as some registry entries do.
 
 import { describe, expect, it } from 'vitest';
-import { summarize } from '../../src/data';
+import { onlyLocations, summarize } from '../../src/data';
 import { areaOfHex, binsOf, collection, deployment, fileNames, filter, hexOfSite, media, modelOf, observation, siteNamed } from '../support/fixtures';
 
 const TS = '2024-01-01T10:00:00';
@@ -26,7 +26,7 @@ describe('test_site_selection', () => {
   });
 
   it('clicking a site point shows only its site', () => {
-    const result = filter(model, { locations: [model.sites[siteNamed(model, 'Ridge-3')].key] });
+    const result = filter(model, { locations: onlyLocations(model, [model.sites[siteNamed(model, 'Ridge-3')].key]) });
     expect(result.photos).toHaveLength(3);
     expect(fileNames(model, result.photos)).toEqual(['n1.jpg', 'n2.jpg', 'n3.jpg']);
   });

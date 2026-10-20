@@ -13,14 +13,77 @@ Feature: Filter the photos in view
     Then the species filter reads "Species: Bobcat"
     And the photo count reads "4 of 11 photos"
     When I also pick "Coyote" in the species filter
-    Then the species filter reads "Species: Bobcat +1"
+    Then the species filter reads "Species: Bobcat, Coyote"
     When I clear the Species filter with its ×
     Then the species filter reads "Species"
     And the photo count reads "11 photos"
 
-  Scenario: Hiding species and picking years
+  Scenario: Every species starts ticked, untagged photos too
+    When I open the species filter
+    Then every row of the species filter is ticked
+    And the species filter lists "Untagged photos" first, apart from the species
+    And the species filter reads "Species"
+
+  Scenario: Only shows one species and unticks the rest, untagged photos too
+    When I press Only on "Deer (Mule)" in the species filter
+    Then "Deer (Mule)" is ticked in the species filter
+    And "Bobcat" is unticked in the species filter
+    And "Untagged photos" is unticked in the species filter
+    And the species filter reads "Species: Deer (Mule)"
+    And the photo count reads "2 of 11 photos"
+
+  Scenario: Unticking species and untagged photos
+    When I untick "Bobcat" in the species filter
+    Then the species filter reads "Species: all but Bobcat"
+    And the photo count reads "8 of 11 photos"
+    When I untick "Coyote" in the species filter
+    Then the species filter reads "Species: Deer (Mule), Gray Fox"
+    When I clear the Species filter with its ×
+    And I untick "Untagged photos" in the species filter
+    Then the species filter reads "Species: no untagged"
+    And the photo count reads "7 of 11 photos"
+
+  Scenario: Clear all, then Select all
+    When I open the species filter
+    And I press "Clear all" in the species filter
+    Then the species filter reads "Species: none"
+    And the photo count reads "0 of 11 photos"
+    And the table says "No species selected"
+    When I press "Select all" in the species filter
+    Then the species filter reads "Species"
+    And the photo count reads "11 photos"
+
+  Scenario: With nothing selected, the table offers Select all
+    When I open the species filter
+    And I press "Clear all" in the species filter
+    And I press Escape
+    And I press the big "Select all" button
+    Then the species filter reads "Species"
+    And the photo count reads "11 photos"
+
+  Scenario: Select all and Clear all act on the species a search finds
+    When I open the species filter
+    And I search the species filter for "deer"
+    And I press "Clear all" in the species filter
+    Then the species filter reads "Species: all but Deer (Mule)"
+    And the photo count reads "10 of 11 photos"
+    When I press "Select all" in the species filter
+    Then the species filter reads "Species"
+
+  Scenario: Only on a location
+    When I press Only on "AB02" in the locations filter
+    Then the locations filter reads "Locations: AB02"
+    And the photo count reads "3 of 11 photos"
+    When I tick "AB03" in the locations filter
+    Then the locations filter reads "Locations: AB02, AB03"
+    When I clear the Locations filter with its ×
+    And I untick "AB03" in the locations filter
+    Then the locations filter reads "Locations: all but AB03"
+    And the photo count reads "10 of 11 photos"
+
+  Scenario: Hiding a species and picking years
     When I hide the species "Bobcat"
-    Then the species filter reads "Hiding: Bobcat"
+    Then the species filter reads "Species: all but Bobcat"
     And the photo count reads "8 of 11 photos"
     When I clear the Species filter with its ×
     And I pick the year 2024 in the dates filter

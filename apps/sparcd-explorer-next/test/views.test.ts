@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { locationRows, photoRows, speciesRows, summarize } from '../src/data';
+import { locationRows, onlyLocations, onlySpecies, photoRows, speciesRows, summarize } from '../src/data';
 import { binsOf, collection, deployment, filter, media, modelOf, observation } from './support/fixtures';
 
 const grouped = { separate: false };
@@ -62,7 +62,7 @@ describe('summarize', () => {
           observations: [observation('u2', 'b.jpg', 'BB01', '', { common: 'Deer', scientific: 'Odocoileus hemionus' })],
         }),
     );
-    const bobcats = filter(two, { species: ['Lynx rufus'] });
+    const bobcats = filter(two, { species: onlySpecies(two, ['Lynx rufus']) });
     const summary = summarize(two, bobcats, grouped);
     expect(summary).toMatchObject({ locations: 2, photos: 1, activeDays: 2 });
     expect(locationRows(two, bobcats, grouped)).toHaveLength(summary.locations);
@@ -119,7 +119,7 @@ describe('locationRows', () => {
         observations: [observation('u1', 'owl.jpg', 'AA01', '2024-01-01T22:00:00', { common: 'Owl', scientific: 'Bubo virginianus' })],
       }),
     );
-    const onlyOwls = filter(owls, { species: ['Bubo virginianus'] });
+    const onlyOwls = filter(owls, { species: onlySpecies(owls, ['Bubo virginianus']) });
     expect(summarize(owls, onlyOwls, grouped)).toMatchObject({ photos: 1, activeDays: 2 });
     expect(locationRows(owls, onlyOwls, grouped)).toMatchObject([{ photos: 1, activeDays: 2 }]);
   });
@@ -137,7 +137,7 @@ describe('locationRows', () => {
           media: [media('u2', 'x.jpg', 'BB01', '2024-02-01T10:00:00'), media('u2', 'y.jpg', 'BB01', '2024-02-03T10:00:00')],
         }),
     );
-    const onlyOwls = filter(two, { species: ['Bubo virginianus'] });
+    const onlyOwls = filter(two, { species: onlySpecies(two, ['Bubo virginianus']) });
     const rows = locationRows(two, onlyOwls, grouped);
     expect(rows.map((r) => [r.ids[0], r.photos, r.detections, r.species, r.firstDate, r.activeDays])).toEqual([
       ['AA01', 1, 1, 1, '2024-01-01', 1],
@@ -145,7 +145,7 @@ describe('locationRows', () => {
     ]);
     expect(rows.reduce((n, r) => n + r.activeDays, 0)).toBe(summarize(two, onlyOwls, grouped).activeDays);
     // A location filter still leaves other locations out.
-    expect(locationRows(two, filter(two, { locations: ['id:AA01'] }), grouped).map((r) => r.ids[0])).toEqual(['AA01']);
+    expect(locationRows(two, filter(two, { locations: onlyLocations(two, ['id:AA01']) }), grouped).map((r) => r.ids[0])).toEqual(['AA01']);
   });
 });
 
@@ -177,7 +177,7 @@ describe('photoRows', () => {
   });
 
   it('limits species to the detections in view', () => {
-    const bobcats = filter(model, { species: ['Lynx rufus'] });
+    const bobcats = filter(model, { species: onlySpecies(model, ['Lynx rufus']) });
     expect(photoRows(model, bobcats.photos, bobcats.detections)[0]).toMatchObject({ species: 'Bobcat', count: 2 });
   });
 });

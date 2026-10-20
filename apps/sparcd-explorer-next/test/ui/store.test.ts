@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { S3Config } from '@sparcd/types';
-import type { Registries } from '../../src/data';
+import { onlyLocations, type Registries } from '../../src/data';
 import { DEFAULT_SORTING, readLast, useStore } from '../../src/store';
 import { collection, collectionRef, deployment, media, observation } from '../support/fixtures';
 
@@ -40,6 +40,7 @@ function loaded(name: string, uuid: string, site: string) {
 
 const alpha = loaded('Alpha', 'aaa', 'AA01');
 const bravo = loaded('Bravo', 'bbb', 'BB01');
+const charlie = loaded('Charlie', 'ccc', 'CC01');
 
 function open(...parts: (typeof alpha)[]) {
   const s = useStore.getState();
@@ -94,7 +95,7 @@ describe('changing collections', () => {
   it('returns to the same selection untouched', () => {
     open(alpha);
     const s = useStore.getState();
-    s.setFilters((f) => ({ ...f, species: ['Lynx rufus'], photoTag: 'untagged' }));
+    s.setFilters((f) => ({ ...f, species: { hidden: [], hideUntagged: true }, photoTag: 'untagged' }));
     s.setSeparate(true);
     const { model, filters } = useStore.getState();
     s.showChooser();
@@ -104,13 +105,14 @@ describe('changing collections', () => {
   });
 
   it('keeps the filters that still apply and says when some no longer do, with Undo', () => {
-    open(alpha);
+    open(alpha, bravo);
     const s = useStore.getState();
+    const two = useStore.getState().model!;
     s.setFilters((f) => ({
       ...f,
-      species: ['Lynx rufus'],
-      locations: ['id:AA01'],
-      area: [useStore.getState().model!.sites[0].key, 'sparcd-gone::gone|ZZ99||'],
+      species: { hidden: [], hideUntagged: true },
+      locations: onlyLocations(two, ['id:AA01']),
+      area: [two.sites[0].key],
       dateFrom: '2024-01-01',
       dateTo: '2024-12-31',
       elevation: [500, 1500],
@@ -119,31 +121,51 @@ describe('changing collections', () => {
     s.setSeparate(true);
     const before = useStore.getState().filters;
     s.showChooser();
-    expect(open(alpha, bravo)).toBe(true);
+    expect(open(alpha)).toBe(true);
     const after = useStore.getState();
-    expect(after.filters).toEqual({
-      ...before,
-      locations: ['id:AA01'],
-      area: [before.area[0]],
-    });
+    // AA01 was the one location ticked, and it is all there is now.
+    expect(after.filters).toEqual({ ...before, locations: { hidden: [] } });
     expect(after.separate).toBe(true);
-    expect(after.toast?.message).toBe('Some filters no longer apply');
+    expect(after.toast).toBeNull();
 
     s.showChooser();
     expect(open(bravo)).toBe(true);
-    expect(useStore.getState().filters.locations).toEqual([]);
-    expect(useStore.getState().filters.species).toEqual(['Lynx rufus']);
+    expect(useStore.getState().filters.area).toEqual([]);
+    expect(useStore.getState().filters.species).toEqual({ hidden: [], hideUntagged: true });
+    expect(useStore.getState().toast?.message).toBe('Some filters no longer apply');
     useStore.getState().toast!.undo!();
-    expect(useStore.getState().filters.locations).toEqual(['id:AA01']);
+    expect(useStore.getState().filters.area).toEqual(before.area);
   });
 
   it('says nothing when every filter still applies', () => {
     open(alpha);
-    useStore.getState().setFilters((f) => ({ ...f, species: ['Lynx rufus'] }));
+    useStore.getState().setFilters((f) => ({ ...f, species: { hidden: [], hideUntagged: true } }));
     useStore.getState().showChooser();
     open(alpha, bravo);
     expect(useStore.getState().toast).toBeNull();
-    expect(useStore.getState().filters.species).toEqual(['Lynx rufus']);
+    expect(useStore.getState().filters.species).toEqual({ hidden: [], hideUntagged: true });
+  });
+
+  it('keeps "only these" on a location when another collection brings new ones', () => {
+    open(alpha, bravo);
+    const two = useStore.getState().model!;
+    useStore.getState().setFilters((f) => ({ ...f, locations: onlyLocations(two, ['id:AA01']) }));
+    useStore.getState().showChooser();
+    open(alpha, bravo, charlie);
+    const { model, filters } = useStore.getState();
+    expect(filters.locations.hidden.map((k) => model!.sites.find((s) => s.key === k)!.locationId).sort()).toEqual(['BB01', 'CC01']);
+  });
+
+  it('never stores filters, so no filter shape from an older build can come back', () => {
+    const written: string[] = [];
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation((k: string, v: string) => void written.push(`${k}=${v}`));
+    open(alpha, bravo);
+    const two = useStore.getState().model!;
+    useStore.getState().setFilters((f) => ({ ...f, locations: onlyLocations(two, ['id:AA01']), years: [2024] }));
+    useStore.getState().resetFilters();
+    useStore.getState().toast!.undo!();
+    setItem.mockRestore();
+    expect(written.join('\n')).not.toMatch(/"hidden"|"years"|speciesMode/);
   });
 });
 
@@ -160,6 +182,14 @@ describe('refresh', () => {
     expect(after).not.toBe(before);
     expect(after.problems).toHaveLength(1);
     expect(after.species[0].name).toBe('Bobcat (renamed)');
+  });
+
+  it('carries the filters onto the rebuilt model', () => {
+    open(alpha);
+    const site = useStore.getState().model!.sites[0].key;
+    useStore.getState().setFilters((f) => ({ ...f, area: [site, 'sparcd-gone::gone|ZZ99||'] }));
+    useStore.getState().applyRefresh([alpha.loaded], NONE);
+    expect(useStore.getState().filters.area).toEqual([site]);
   });
 });
 

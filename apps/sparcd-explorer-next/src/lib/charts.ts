@@ -3,7 +3,7 @@
 // bar toggles that filter. Hours and months are camera-local, read from the
 // timestamp text.
 
-import { applyFilters, type FilterState, type Model } from '@/data';
+import { NO_FILTERS, applyFilters, type FilterState, type Model } from '@/data';
 import { datesToMonths, monthPasses, monthsToDates, type MonthAxis } from './months';
 
 /** Round tick values (steps of 1, 2 or 5 × 10ⁿ, never below 1) from 0 to at least `max`. */
@@ -60,7 +60,7 @@ export function monthCounts(model: Model, detections: number[], axis: MonthAxis)
 export function chartData(model: Model, f: FilterState, axis: MonthAxis | null) {
   const without = (change: Partial<FilterState>) => applyFilters(model, { ...f, ...change }).detections;
   return {
-    species: speciesCounts(model, without({ species: [], speciesMode: 'only' })),
+    species: speciesCounts(model, without({ species: NO_FILTERS.species })),
     hours: hourCounts(model, without({ hours: null })),
     months: axis ? monthCounts(model, without({ dateFrom: null, dateTo: null, years: [], months: [] }), axis) : [],
   };
@@ -70,10 +70,9 @@ export function chartData(model: Model, f: FilterState, axis: MonthAxis | null) 
 export type BarState = 'on' | 'dim' | null;
 
 export function speciesBar(f: FilterState, key: string): BarState {
-  if (!f.species.length) return null;
-  const picked = f.species.includes(key);
-  if (f.speciesMode === 'hide') return picked ? 'dim' : null;
-  return picked ? 'on' : 'dim';
+  const { hidden, hideUntagged } = f.species;
+  if (!hidden.length && !hideUntagged) return null;
+  return hidden.includes(key) ? 'dim' : 'on';
 }
 
 export const inHours = ([h0, h1]: [number, number], h: number): boolean => (h0 <= h1 ? h >= h0 && h <= h1 : h >= h0 || h <= h1);
@@ -86,12 +85,6 @@ export function hourBar(f: FilterState, hour: number): BarState {
 export function monthBar(f: FilterState, m: number, axis: MonthAxis): BarState {
   if (!f.dateFrom && !f.dateTo && !f.years.length && !f.months.length) return null;
   return monthPasses(f, m, datesToMonths(f.dateFrom, f.dateTo, axis)) ? 'on' : 'dim';
-}
-
-/** A species bar: that species alone, or no species filter when it already was. */
-export function toggleSpecies(f: FilterState, key: string): FilterState {
-  const alone = f.speciesMode === 'only' && f.species.length === 1 && f.species[0] === key;
-  return alone ? { ...f, species: [] } : { ...f, species: [key], speciesMode: 'only' };
 }
 
 /** An hour bar: that hour alone, or no hours when it already was. */

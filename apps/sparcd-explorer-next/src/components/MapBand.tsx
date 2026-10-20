@@ -281,7 +281,7 @@ export function MapBand() {
       if (!site.position) return;
       // Drawn where the tables put it, never more exact.
       const dot = L.circleMarker(latLng(shownPosition(site.position, { coords, precision })), { radius: 4, weight: 1.2 }).addTo(group);
-      dot.on('click', () => setFilters((f) => ({ ...f, locations: toggled(f.locations, site.key) })));
+      dot.on('click', () => setFilters((f) => ({ ...f, area: toggled(f.area, site.key) })));
       dot.bindTooltip('', { direction: 'top', className: 'maptip', opacity: 1 });
       (dot.getElement() as SVGPathElement).dataset.site = site.locationId;
       layers.set(i, dot);
@@ -295,7 +295,7 @@ export function MapBand() {
   useEffect(() => {
     if (!map || mode !== 'sites') return;
     const max = Math.max(1, ...sites.map((s) => s.detections));
-    const picked = new Set(filters.locations);
+    const picked = new Set(filters.area);
     for (const s of sites) {
       const dot = siteLayers.current.get(s.site);
       if (!dot) continue;
@@ -307,12 +307,12 @@ export function MapBand() {
       );
       dot.setTooltipContent(siteTip(model, s, multi, display.elevation));
     }
-  }, [map, mode, sites, filters.locations, lit, model, multi, display.elevation]);
+  }, [map, mode, sites, filters.area, lit, model, multi, display.elevation]);
 
   // --- "× Clear" sits just above the selection's top-right corner -----------------
   const siteSelection = useMemo(
-    () => (mode === 'sites' ? model.sites.flatMap((s, i) => (s.position && filters.locations.includes(s.key) ? [i] : [])) : []),
-    [mode, model, filters.locations],
+    () => (mode === 'sites' ? model.sites.flatMap((s, i) => (s.position && filters.area.includes(s.key) ? [i] : [])) : []),
+    [mode, model, filters.area],
   );
   const hasSelection = selected.size > 0 || siteSelection.length > 0;
   useEffect(() => {
@@ -340,12 +340,7 @@ export function MapBand() {
     return () => void map.off('move zoom resize', place);
   }, [map, hasSelection, selected, cells, siteSelection, model]);
 
-  const clearSelection = () =>
-    setFilters((f) => ({
-      ...f,
-      area: [],
-      locations: mode === 'sites' ? f.locations.filter((k) => !model.sites.some((s) => s.key === k && s.position)) : f.locations,
-    }));
+  const clearSelection = () => setFilters((f) => ({ ...f, area: [] }));
 
   // --- Select area ------------------------------------------------------------
   useEffect(() => {

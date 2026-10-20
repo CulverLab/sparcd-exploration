@@ -23,13 +23,34 @@ import {
 // --- Filters --------------------------------------------------------------------
 
 async function openFilter(page: Page, name: string) {
-  const button = filterButton(page, new RegExp(`^(${name}|Hiding)`));
+  const button = filterButton(page, new RegExp(`^${name}`));
   if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click();
 }
 
-async function pickSpecies(page: Page, species: string) {
-  await openFilter(page, 'Species');
-  await popover(page, 'Species').getByRole('checkbox', { name: species }).check();
+const FILTER_NAMES: Record<string, string> = {
+  species: 'Species',
+  locations: 'Locations',
+  dates: 'Dates',
+  area: 'Area',
+  'mountain range': 'Mountain range',
+  collections: 'Collections',
+};
+
+/** A picker row: its checkbox, and the Only button that shows as the pointer rests on it. */
+function pickerRow(page: Page, filter: string, item: string) {
+  const name = FILTER_NAMES[filter];
+  const row = popover(page, name)
+    .locator('.opt')
+    .filter({ has: page.getByRole('button', { name: `Only ${item}`, exact: true }) });
+  return { row, box: row.getByRole('checkbox'), only: row.getByRole('button', { name: `Only ${item}`, exact: true }) };
+}
+
+async function pressOnly(page: Page, filter: string, item: string) {
+  await openFilter(page, FILTER_NAMES[filter]);
+  const { row, only } = pickerRow(page, filter, item);
+  await row.hover();
+  await expect(only).toHaveCSS('opacity', '1');
+  await only.click();
 }
 
 Then(
@@ -44,28 +65,66 @@ Then('{string} is disabled', async ({ page }, label: string) => {
 });
 
 When('I filter species to {string}', async ({ page }, species: string) => {
-  await pickSpecies(page, species);
+  await pressOnly(page, 'species', species);
   await page.keyboard.press('Escape');
 });
 
 When('I also pick {string} in the species filter', async ({ page }, species: string) => {
-  await pickSpecies(page, species);
+  await openFilter(page, 'Species');
+  await pickerRow(page, 'species', species).box.check();
   await page.keyboard.press('Escape');
 });
 
 When('I hide the species {string}', async ({ page }, species: string) => {
   await openFilter(page, 'Species');
-  await popover(page, 'Species').getByRole('button', { name: 'Hide these' }).click();
-  await popover(page, 'Species').getByRole('checkbox', { name: species }).check();
+  await pickerRow(page, 'species', species).box.uncheck();
   await page.keyboard.press('Escape');
 });
 
-Then(/^the (species|dates|locations|area) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
-  const name = { species: '(Species|Hiding)', dates: 'Dates', locations: 'Locations', area: 'Area' }[which]!;
-  await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${name}`) })).toHaveText(label);
+When(/^I open the (species|locations|mountain range|collections) filter$/, async ({ page }, filter: string) => {
+  await openFilter(page, FILTER_NAMES[filter]);
 });
 
-When(/^I clear the (Species|Area) filter with its ×$/, async ({ page }, name: string) => {
+When(/^I press Only on "(.*)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, item: string, filter: string) => {
+  await pressOnly(page, filter, item);
+});
+
+When(/^I (tick|untick) "(.*)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, verb: string, item: string, filter: string) => {
+  await openFilter(page, FILTER_NAMES[filter]);
+  const { box } = pickerRow(page, filter, item);
+  await (verb === 'tick' ? box.check() : box.uncheck());
+});
+
+When(/^I press "(Select all|Clear all)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, label: string, filter: string) => {
+  await popover(page, FILTER_NAMES[filter]).getByRole('button', { name: label, exact: true }).click();
+});
+
+When('I search the species filter for {string}', async ({ page }, text: string) => {
+  await popover(page, 'Species').getByRole('searchbox', { name: 'Search species' }).fill(text);
+});
+
+Then(/^every row of the (species|locations) filter is ticked$/, async ({ page }, filter: string) => {
+  const boxes = popover(page, FILTER_NAMES[filter]).getByRole('checkbox');
+  expect(await boxes.count()).toBeGreaterThan(1);
+  for (const box of await boxes.all()) await expect(box).toBeChecked();
+});
+
+Then(/^"(.*)" is (ticked|unticked) in the (species|locations) filter$/, async ({ page }, item: string, state: string, filter: string) => {
+  const { box } = pickerRow(page, filter, item);
+  await (state === 'ticked' ? expect(box).toBeChecked() : expect(box).not.toBeChecked());
+});
+
+Then('the species filter lists {string} first, apart from the species', async ({ page }, item: string) => {
+  const first = popover(page, 'Species').locator('.opt').first();
+  await expect(first).toHaveClass(/apart/);
+  await expect(first.getByRole('button', { name: `Only ${item}`, exact: true })).toBeAttached();
+});
+
+Then(/^the (species|dates|locations|area|mountain range) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
+  await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${FILTER_NAMES[which]}`) })).toHaveText(label);
+});
+
+When(/^I clear the (Species|Area|Locations) filter with its ×$/, async ({ page }, name: string) => {
   await page.getByRole('button', { name: `Clear ${name} filter` }).click();
 });
 
@@ -102,8 +161,7 @@ Then('there is no note', async ({ page }) => {
 });
 
 When('I filter locations to {string}', async ({ page }, id: string) => {
-  await openFilter(page, 'Locations');
-  await popover(page, 'Locations').getByRole('checkbox', { name: new RegExp(`^${id} `) }).check();
+  await pressOnly(page, 'locations', id);
   await page.keyboard.press('Escape');
 });
 

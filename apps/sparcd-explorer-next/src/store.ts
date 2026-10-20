@@ -208,7 +208,7 @@ export const useStore = create<State>((set, get) => ({
     writeStored(lastKey(account), refs.map((r) => r.key));
     const next = model(loaded, registries);
     // Another set of collections keeps the filters that still apply.
-    const carried = before ? carryFilters(next, previous) : { state: NO_FILTERS, dropped: false };
+    const carried = before ? carryFilters(before, next, previous) : { state: NO_FILTERS, dropped: false };
     set({
       screen: 'workspace',
       refs,
@@ -224,7 +224,7 @@ export const useStore = create<State>((set, get) => ({
     });
     if (carried.dropped) {
       get().showToast('Some filters no longer apply', () => {
-        set({ filters: previous });
+        set({ filters: carryFilters(before!, next, previous, true).state });
         get().showToast('Filters restored');
       });
     }
@@ -233,8 +233,21 @@ export const useStore = create<State>((set, get) => ({
 
   // Every finished check rebuilds: a new read problem or a corrected species
   // or location name changes what the model says even when no upload did.
-  applyRefresh: (loaded, registries) =>
-    set({ loaded, registries, checkedAt: Date.now(), checkError: null, model: model(loaded, registries), highlight: null }),
+  // The filters carry over, so a new species or location doesn't slip into a
+  // filter that showed only a few.
+  applyRefresh: (loaded, registries) => {
+    const next = model(loaded, registries);
+    const { model: before, filters } = get();
+    set({
+      loaded,
+      registries,
+      checkedAt: Date.now(),
+      checkError: null,
+      model: next,
+      filters: before ? carryFilters(before, next, filters).state : filters,
+      highlight: null,
+    });
+  },
 
   setChecking: (checking, error = null) => set({ checking, ...(error !== null ? { checkError: error } : {}) }),
 

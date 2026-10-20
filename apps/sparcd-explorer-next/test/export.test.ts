@@ -1,31 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { parseDeploymentsNullable, parseMedia, parseObservations } from '@sparcd/camtrap';
 import { describe, expect, it } from 'vitest';
-import {
-  CAMTRAP_PROFILE,
-  buildModel,
-  camtrapPackage,
-  csvFiles,
-  detectionsTable,
-  exportFileName,
-  formulaSafe,
-  locationsTable,
-  photosTable,
-  precisionWords,
-  resultForTag,
-  speciesTable,
-  spreadsheetTables,
-  summaryTable,
-  tableCsv,
-  xlsxBlob,
-  zipBlob,
-  type Display,
-  type ExportOptions,
-  type FilterResult,
-  type LoadedCollection,
-  type Model,
-  type ReportFacts,
-} from '../src/data';
+import { CAMTRAP_PROFILE, buildModel, camtrapPackage, csvFiles, detectionsTable, exportFileName, formulaSafe, locationsTable, onlySpecies, photosTable, precisionWords, resultForTag, speciesTable, spreadsheetTables, summaryTable, tableCsv, xlsxBlob, zipBlob, type Display, type ExportOptions, type FilterResult, type LoadedCollection, type Model, type ReportFacts } from '../src/data';
 import { tableOrder } from '../src/lib/tables';
 import { collection, deployment, filter, media, observation } from './support/fixtures';
 
@@ -143,7 +119,7 @@ describe('the Species, Photos and Detections sheets', () => {
   });
 
   it('follow the filters: a species filter keeps its photos, and their other species out', () => {
-    const result = filter(model, { species: ['Lynx rufus'] });
+    const result = filter(model, { species: onlySpecies(model, ['Lynx rufus']) });
     expect(column(photosTable(model, result, opts()), 'Species')).toEqual(['Bobcat', 'Bobcat']);
     const d = detectionsTable(model, result, opts());
     expect(column(d, 'Common name')).toEqual(['Bobcat', 'Bobcat']);
@@ -176,8 +152,9 @@ describe('the Summary sheet', () => {
     });
   });
 
-  it('adds the totals by collection when several are open, only those the Collections filter keeps', () => {
-    const t = summaryTable(multiModel, filter(multiModel), opts(), facts, ['sparcd-bbb::bbb']);
+  it('adds the totals by collection when several are open, less those the Collections filter unticks', () => {
+    const others = multiModel.collections.filter((c) => c.name !== 'Bravo Flats').map((c) => c.key);
+    const t = summaryTable(multiModel, filter(multiModel), opts(), facts, others);
     const at = t.rows.findIndex((r) => r[0] === 'By collection');
     expect(t.rows.slice(at + 1)).toEqual([
       ['Collection', 'Locations', 'Photos', 'Tagged', 'Detections', 'Species', 'First photo', 'Last photo'],
@@ -246,7 +223,7 @@ describe('the Camtrap DP package', () => {
   });
 
   it('keeps only the photos in view, and leaves out a species the filters hide', () => {
-    const files = pack(filter(model, { species: ['Lynx rufus'] }));
+    const files = pack(filter(model, { species: onlySpecies(model, ['Lynx rufus']) }));
     expect(parseMedia(files['media.csv']).map((m) => m.fileName)).toEqual(['a.jpg', 'd.jpg']);
     expect(parseObservations(files['observations.csv']).map((o) => o.scientificName)).toEqual(['Lynx rufus', 'Lynx rufus']);
     expect(parseDeploymentsNullable(files['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', 'AA10']);

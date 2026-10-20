@@ -1,7 +1,18 @@
 // What each filter button says: its name when inactive, its value when active
-// ("Species: Bobcat +1"), so the bar stays one line with no chip row.
+// ("Species: Bobcat, Coyote"), so the bar stays one line with no chip row.
 
-import { activeFilters, elevationIn, type ElevationUnit, type FilterDimension, type FilterState, type Model } from '@/data';
+import {
+  activeFilters,
+  elevationIn,
+  listKeys,
+  locationKeyOf,
+  photoSites,
+  type ElevationUnit,
+  type FilterDimension,
+  type FilterState,
+  type ListDimension,
+  type Model,
+} from '@/data';
 import { fmtN, monthName, plural } from './format';
 import { areaLocations } from './mapData';
 
@@ -17,13 +28,84 @@ const NAMES: Record<FilterDimension, string> = {
   ranges: 'Mountain range',
 };
 
-const first = (values: string[]): string => (values.length > 1 ? `${values[0]} +${values.length - 1}` : values[0]);
+/** What "No … selected" calls each list's items. */
+export const LIST_NOUNS: Record<ListDimension, string> = {
+  collections: 'collections',
+  species: 'species',
+  locations: 'locations',
+  ranges: 'mountain ranges',
+};
 
-/** A location filter key as people know it: the location ID, or "No location set". */
-export function locationLabel(model: Model, key: string): string {
-  if (key.startsWith('id:')) return key.slice(3);
-  const site = model.sites.find((s) => s.key === key || s.groupKey === key);
-  return !site || site.noLocation ? 'No location set' : site.locationId;
+type Item = { label: string; ticked: boolean };
+
+/**
+ * A list filter in words, or null when every item is ticked: the ticked items
+ * when there are one or two ("Bobcat, Coyote"), else the unticked ones when
+ * there are one or two ("all but Ghost"), else a count ("7 of 13"). `names`
+ * says the words list what is ticked.
+ */
+function listValue(items: Item[]): { text: string; names: boolean } | null {
+  const on = items.filter((i) => i.ticked).map((i) => i.label);
+  const off = items.filter((i) => !i.ticked).map((i) => i.label);
+  if (!off.length) return null;
+  if (!on.length) return { text: 'none', names: false };
+  if (on.length <= 2) return { text: on.join(', '), names: true };
+  if (off.length <= 2) return { text: `all but ${off.join(', ')}`, names: false };
+  return { text: `${on.length} of ${items.length}`, names: false };
+}
+
+/** Locations as the picker lists them: by location ID, or by site with IDs shown separately. */
+function locationItems(model: Model, f: FilterState, separate: boolean): Item[] {
+  const hidden = new Set(f.locations.hidden);
+  const items = new Map<string, Item>();
+  for (const s of photoSites(model)) {
+    const key = locationKeyOf(s, separate);
+    const item = items.get(key) ?? { label: s.noLocation ? 'No location set' : s.locationId, ticked: false };
+    item.ticked ||= !hidden.has(s.key);
+    items.set(key, item);
+  }
+  return [...items.values()];
+}
+
+function listItems(model: Model, f: FilterState, dim: ListDimension, separate: boolean): Item[] {
+  if (dim === 'locations') return locationItems(model, f, separate);
+  const hidden = new Set(f[dim].hidden);
+  const label =
+    dim === 'species'
+      ? (key: string) => model.species.find((s) => s.key === key)!.name
+      : dim === 'collections'
+        ? (key: string) => model.collections.find((c) => c.key === key)!.name
+        : (key: string) => key;
+  return listKeys(model, dim).map((key) => ({ label: label(key), ticked: !hidden.has(key) }));
+}
+
+/**
+ * A list filter's value. "Untagged photos" counts as a species only when it
+ * is all that is unticked ("no untagged"), or all that is ticked.
+ */
+function listFilterValue(model: Model, f: FilterState, dim: ListDimension, separate: boolean): string | null {
+  const value = listValue(listItems(model, f, dim, separate));
+  if (dim !== 'species') return value?.text ?? null;
+  const untagged = !f.species.hideUntagged;
+  if (!value) return untagged ? null : 'no untagged';
+  if (value.text === 'none' && untagged) return 'untagged only';
+  return value.text;
+}
+
+/** The species filter in full for a report: what it says of untagged photos too. */
+function speciesWords(model: Model, f: FilterState): string | null {
+  const value = listValue(listItems(model, f, 'species', false));
+  const untagged = !f.species.hideUntagged;
+  if (!value) return untagged ? null : 'no untagged photos';
+  if (value.text === 'none') return untagged ? 'untagged photos only' : 'none';
+  if (value.names) return untagged ? `${value.text}, untagged photos` : value.text;
+  return untagged ? value.text : `${value.text}, no untagged photos`;
+}
+
+/** The list filter, if any, with nothing at all ticked, so nothing can match. */
+export function noneTicked(model: Model, f: FilterState, separate = false): ListDimension | null {
+  const lists: ListDimension[] = ['collections', 'species', 'locations', 'ranges'];
+  return lists.find((dim) => activeFilters(f).includes(dim) && listFilterValue(model, f, dim, separate) === 'none') ?? null;
 }
 
 const lastDayOf = (date: string): number =>
@@ -39,16 +121,13 @@ function dateRange(from: string | null, to: string | null): string | null {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function value(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean): string {
+function value(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean): string | null {
   switch (dim) {
     case 'collections':
-      return first(model.collections.filter((c) => f.collections.includes(c.key)).map((c) => c.name));
-    case 'species': {
-      const byKey = new Map(model.species.map((s) => [s.key, s.name]));
-      return first(f.species.map((k) => byKey.get(k) ?? k));
-    }
+    case 'species':
     case 'locations':
-      return first(f.locations.map((k) => locationLabel(model, k)));
+    case 'ranges':
+      return listFilterValue(model, f, dim, separate);
     case 'area':
       return plural(areaLocations(model, f.area, separate), 'location');
     case 'dates': {
@@ -59,14 +138,12 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
       if (years.length) parts.push(years.length <= 2 ? years.join(', ') : `${years.length} years`);
       if (f.months.length) parts.push(`${f.months.length} month${f.months.length === 1 ? '' : 's'}`);
       if (f.hours) parts.push(`hours ${pad(f.hours[0])}:00–${pad(f.hours[1])}:59`);
-      return first(parts);
+      return parts.length > 1 ? `${parts[0]} +${parts.length - 1}` : parts[0];
     }
     case 'elevation': {
       const [lo, hi] = f.elevation!;
       return `${fmtN(elevationIn(lo, unit))}–${fmtN(elevationIn(hi, unit))} ${unit}`;
     }
-    case 'ranges':
-      return first([...f.ranges].sort());
   }
 }
 
@@ -80,9 +157,8 @@ export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit,
   return dims
     .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' ? active.has('area') : true))
     .map((dim) => {
-      const on = active.has(dim);
-      const name = dim === 'species' && f.speciesMode === 'hide' ? 'Hiding' : NAMES[dim];
-      return { dim, name: NAMES[dim], label: on ? `${name}: ${value(model, f, dim, unit, separate)}` : NAMES[dim], active: on };
+      const v = active.has(dim) ? value(model, f, dim, unit, separate) : null;
+      return { dim, name: NAMES[dim], label: v ? `${NAMES[dim]}: ${v}` : NAMES[dim], active: active.has(dim) };
     });
 }
 
@@ -96,14 +172,13 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  */
 export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, separate = false, tagShown = false): string {
   const parts: string[] = [];
-  if (model.collections.length > 1 && f.collections.length) {
-    parts.push(`Collections: ${model.collections.filter((c) => f.collections.includes(c.key)).map((c) => c.name).join(', ')}`);
-  }
-  if (f.species.length) {
-    const byKey = new Map(model.species.map((s) => [s.key, s.name]));
-    parts.push(`${f.speciesMode === 'hide' ? 'Hiding species' : 'Species'}: ${f.species.map((k) => byKey.get(k) ?? k).join(', ')}`);
-  }
-  if (f.locations.length) parts.push(`Locations: ${f.locations.map((k) => locationLabel(model, k)).join(', ')}`);
+  const list = (dim: ListDimension) => (model.collections.length > 1 || dim !== 'collections') && listFilterValue(model, f, dim, separate);
+  const collections = list('collections');
+  if (collections) parts.push(`Collections: ${collections}`);
+  const species = speciesWords(model, f);
+  if (species) parts.push(`Species: ${species}`);
+  const locations = list('locations');
+  if (locations) parts.push(`Locations: ${locations}`);
   if (f.area.length) parts.push(`Map area: ${plural(areaLocations(model, f.area, separate), 'location')}`);
   const range = dateRange(f.dateFrom, f.dateTo);
   if (range) parts.push(`Dates: ${range}`);
@@ -111,7 +186,8 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
   if (f.months.length) parts.push(`Months: ${[...f.months].sort((a, b) => a - b).map((m) => MONTHS[m - 1]).join(', ')}`);
   if (f.hours) parts.push(`Hours: ${pad(f.hours[0])}:00–${pad(f.hours[1])}:59`);
   if (f.elevation) parts.push(`Elevation: ${value(model, f, 'elevation', unit, separate)}`);
-  if (f.ranges.length) parts.push(`Mountain range: ${[...f.ranges].sort().join(', ')}`);
+  const ranges = list('ranges');
+  if (ranges) parts.push(`Mountain range: ${ranges}`);
   if (tagShown && f.photoTag !== 'all') parts.push(f.photoTag === 'tagged' ? 'Tagged photos only' : 'Untagged photos only');
   return parts.length ? parts.join(' · ') : 'No filters: all photos';
 }
@@ -119,14 +195,12 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
 /**
  * What the effort strip and the Activity column draw inside their bars: the
  * photos a species filter keeps, or the Photos view's tag switch while it
- * shows. "Bobcat +1", "Without Bobcat", "Tagged"; null when neither is on.
+ * shows. "Bobcat, Coyote", "All but Ghost", "Tagged"; null when neither is on.
  */
 export function matchLegend(model: Model, f: FilterState, tagShown: boolean): string | null {
   const parts: string[] = [];
-  if (f.species.length) {
-    const names = value(model, f, 'species', 'm', false);
-    parts.push(f.speciesMode === 'hide' ? `Without ${names}` : names);
-  }
+  const species = listFilterValue(model, f, 'species', false);
+  if (species) parts.push(species[0].toUpperCase() + species.slice(1));
   if (tagShown && f.photoTag !== 'all') parts.push(f.photoTag === 'tagged' ? 'Tagged' : 'Untagged');
   return parts.length ? parts.join(', ') : null;
 }

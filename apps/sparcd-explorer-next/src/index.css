@@ -198,6 +198,11 @@ select {
   font-size: inherit;
   cursor: pointer;
 }
+.linkbtn:disabled {
+  color: var(--inkMute);
+  text-decoration: none;
+  cursor: default;
+}
 .iconbtn {
   width: 30px;
   height: 30px;
@@ -1805,15 +1810,49 @@ dl.fields dd {
 }
 .opt {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  gap: 0 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  padding: 6px 4px;
   border-bottom: 1px solid var(--ruleSoft);
-  cursor: pointer;
 }
 .opt:hover {
   background: var(--panelHover);
+}
+.opt.apart {
+  border-bottom-color: var(--rule);
+}
+.opt > label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 0 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0 6px 4px;
+  cursor: pointer;
+}
+/* "Only" shows on hover or focus, and always where there is no hover. */
+.opt .only {
+  align-self: stretch;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: 600 11.5px/1 'Inter Tight', system-ui, sans-serif;
+  cursor: pointer;
+  opacity: 0;
+}
+.opt:hover .only,
+.opt:focus-within .only {
+  opacity: 1;
+}
+.opt .only:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (hover: none) {
+  .opt .only {
+    opacity: 1;
+    padding: 0 12px;
+  }
 }
 .opt .t {
   overflow: hidden;

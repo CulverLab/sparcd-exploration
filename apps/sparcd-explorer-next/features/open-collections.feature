@@ -85,4 +85,4 @@ Feature: Open collections
     And the species filter reads "Species: Deer (Mule)"
     And the locations filter reads "Locations"
     When I press Undo
-    Then the locations filter reads "Locations: AB02"
+    Then the locations filter reads "Locations: none"

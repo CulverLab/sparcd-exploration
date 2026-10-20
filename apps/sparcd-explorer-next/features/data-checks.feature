@@ -46,7 +46,7 @@ Feature: Data checks
     When I open Data checks
     And I press "Show both IDs" in Data checks
     Then the Locations table has 2 rows
-    And the locations filter reads "Locations: AB-03 +1"
+    And the locations filter reads "Locations: AB03, AB-03"
 
   Scenario: Hidden uploads are named on request
     Given I have opened "Alpha Basin"

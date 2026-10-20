@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { NO_FILTERS, applyFilters, summarize } from '@/data';
+import { NO_FILTERS, applyFilters, listKeys, only, soleSpecies, summarize, toggleSpecies } from '@/data';
 import { fmtN } from '@/lib/format';
 import { ACTIVE_DAYS_HELP } from '@/lib/tables';
 import { useView } from '@/lib/useView';
@@ -21,8 +21,11 @@ function ByCollection() {
   const { model, filters } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const counts = useCollectionCounts();
-  const only = (key: string) =>
-    setFilters((f) => ({ ...f, collections: f.collections.length === 1 && f.collections[0] === key ? [] : [key] }));
+  const { hidden } = filters.collections;
+  const ticked = model.collections.filter((c) => !hidden.includes(c.key));
+  const sole = hidden.length && ticked.length === 1 ? ticked[0].key : null;
+  const pick = (key: string) =>
+    setFilters((f) => ({ ...f, collections: sole === key ? NO_FILTERS.collections : only(listKeys(model, 'collections'), [key]) }));
   return (
     <div>
       <h3 className="label mb-1">By collection</h3>
@@ -36,11 +39,11 @@ function ByCollection() {
         </thead>
         <tbody>
           {model.collections.map((c, i) => {
-            const on = filters.collections.includes(c.key);
+            const on = hidden.length > 0 && !hidden.includes(c.key);
             return (
               <tr key={c.key} className={on ? 'on' : undefined}>
                 <td>
-                  <button type="button" className="linkbtn text-left text-[12px]" aria-pressed={on} onClick={() => only(c.key)}>
+                  <button type="button" className="linkbtn text-left text-[12px]" aria-pressed={on} onClick={() => pick(c.key)}>
                     {c.name}
                   </button>
                 </td>
@@ -67,12 +70,7 @@ export function InView() {
   );
   const top = sum.topSpecies.slice(0, 5);
   const max = top[0]?.detections ?? 1;
-  const toggleSpecies = (key: string) =>
-    setFilters((f) =>
-      f.speciesMode === 'only' && f.species.length === 1 && f.species[0] === key
-        ? { ...f, species: [] }
-        : { ...f, species: [key], speciesMode: 'only' },
-    );
+  const sole = soleSpecies(model, filters.species);
   return (
     <section className="summary" aria-label="In view">
       <div className="sumhead">
@@ -121,9 +119,9 @@ export function InView() {
         {top.length ? (
           top.map((t) => {
             const s = model.species[t.species];
-            const on = filters.speciesMode === 'only' && filters.species.length === 1 && filters.species[0] === s.key;
+            const on = sole === s.key;
             return (
-              <button key={s.key} type="button" className="spbar" aria-pressed={on} onClick={() => toggleSpecies(s.key)}>
+              <button key={s.key} type="button" className="spbar" aria-pressed={on} onClick={() => setFilters((f) => toggleSpecies(model, f, s.key))}>
                 <span className="t">{s.name}</span>
                 <span className="c">{fmtN(t.detections)}</span>
                 <span className="b">

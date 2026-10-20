@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, type FilterState } from '../../src/data';
+import { NO_FILTERS, onlySpecies, toggleSpecies, type FilterState } from '../../src/data';
 import {
   chartData,
   hourBar,
@@ -12,7 +12,6 @@ import {
   speciesCounts,
   toggleHour,
   toggleMonth,
-  toggleSpecies,
 } from '../../src/lib/charts';
 import { monthAxis } from '../../src/lib/months';
 import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
@@ -85,7 +84,7 @@ describe('chart bins', () => {
   });
 
   it('leave each chart’s own filter out, so any bar can still be picked', () => {
-    const data = chartData(model, state({ species: ['Lynx rufus'], hours: [23, 23], dateFrom: '2024-01-01', dateTo: '2024-01-31' }), axis);
+    const data = chartData(model, state({ species: onlySpecies(model, ['Lynx rufus']), hours: [23, 23], dateFrom: '2024-01-01', dateTo: '2024-01-31' }), axis);
     // Species: January 2024, 23:00 → nothing. Hours: Bobcat in January. Months: Bobcat at 23:00.
     expect(data.species).toEqual([]);
     expect(data.hours[0] + data.hours[6]).toBe(2);
@@ -95,13 +94,11 @@ describe('chart bins', () => {
 
 describe('clicking a bar', () => {
   it('filters to that species alone, and a second click lets it go', () => {
-    const one = toggleSpecies(NO_FILTERS, 'Lynx rufus');
-    expect(one).toMatchObject({ species: ['Lynx rufus'], speciesMode: 'only' });
-    expect(toggleSpecies(one, 'Lynx rufus').species).toEqual([]);
-    expect(toggleSpecies(state({ species: ['Lynx rufus'], speciesMode: 'hide' }), 'Lynx rufus')).toMatchObject({
-      species: ['Lynx rufus'],
-      speciesMode: 'only',
-    });
+    const one = toggleSpecies(model, NO_FILTERS, 'Lynx rufus');
+    expect(one.species).toEqual({ hidden: ['Odocoileus hemionus'], hideUntagged: true });
+    expect(toggleSpecies(model, one, 'Lynx rufus').species).toEqual(NO_FILTERS.species);
+    // Bobcat unticked among others: the click shows it alone.
+    expect(toggleSpecies(model, state({ species: { hidden: ['Lynx rufus'], hideUntagged: false } }), 'Lynx rufus').species).toEqual(one.species);
   });
 
   it('filters to that hour, and a second click lets it go', () => {
@@ -118,12 +115,11 @@ describe('clicking a bar', () => {
 });
 
 describe('the active filter on the charts', () => {
-  it('lights the species shown alone and dims the rest; dims hidden ones', () => {
+  it('lights the species ticked and dims the unticked ones', () => {
     expect(speciesBar(NO_FILTERS, 'Lynx rufus')).toBeNull();
-    expect(speciesBar(state({ species: ['Lynx rufus'] }), 'Lynx rufus')).toBe('on');
-    expect(speciesBar(state({ species: ['Lynx rufus'] }), 'Odocoileus hemionus')).toBe('dim');
-    expect(speciesBar(state({ species: ['Lynx rufus'], speciesMode: 'hide' }), 'Lynx rufus')).toBe('dim');
-    expect(speciesBar(state({ species: ['Lynx rufus'], speciesMode: 'hide' }), 'Odocoileus hemionus')).toBeNull();
+    expect(speciesBar(state({ species: onlySpecies(model, ['Lynx rufus']) }), 'Lynx rufus')).toBe('on');
+    expect(speciesBar(state({ species: onlySpecies(model, ['Lynx rufus']) }), 'Odocoileus hemionus')).toBe('dim');
+    expect(speciesBar(state({ species: { hidden: [], hideUntagged: true } }), 'Lynx rufus')).toBe('on');
   });
 
   it('lights the hours picked, past midnight too', () => {

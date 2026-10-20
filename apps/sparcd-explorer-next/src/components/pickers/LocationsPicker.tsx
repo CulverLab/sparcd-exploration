@@ -1,17 +1,16 @@
-import { useMemo, useState } from 'react';
-import { NO_FILTERS, applyFilters, locationRows } from '@/data';
+import { useMemo } from 'react';
+import { NO_FILTERS, applyFilters, locationRows, onlyLocations, tick } from '@/data';
 import { fmtN, formatElevation } from '@/lib/format';
 import { locationFlagger } from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
-import { ClearRow, Option, toggled, useWithout } from './shared';
+import { ListPicker, tickedOf, useWithout } from './shared';
 
 export function LocationsPicker() {
   const { model, filters, grouping, multi } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const unit = useStore((s) => s.display.elevation);
   const without = useWithout('locations');
-  const [search, setSearch] = useState('');
   const all = useMemo(() => {
     const rows = locationRows(model, applyFilters(model, NO_FILTERS), grouping);
     const flags = locationFlagger(model);
@@ -23,48 +22,36 @@ export function LocationsPicker() {
     () => new Map(locationRows(model, without, grouping).map((r) => [r.key, r.photos])),
     [model, without, grouping],
   );
-  const q = search.trim().toLowerCase();
-  const shown = all.filter((r) => !q || r.ids.some((id) => id.toLowerCase().includes(q)) || r.name.toLowerCase().includes(q));
+  const off = new Set(filters.locations.hidden);
+  const siteKeys = (sites: number[]) => sites.map((i) => model.sites[i].key);
   return (
-    <>
-      <div className="sect">
-        <h3>Locations</h3>
-        <label className="sr" htmlFor="loc-search">
-          Search locations
-        </label>
-        <input
-          id="loc-search"
-          className="field"
-          type="search"
-          placeholder="Search ID or name"
-          autoComplete="off"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
-      <div className="opts">
-        {shown.map((r) => {
-          const n = counts.get(r.key) ?? 0;
-          const where = r.noLocation ? 'No map position' : [r.range, formatElevation(r.elevation, unit)].filter(Boolean).join(' · ');
-          return (
-            <Option
-              key={r.key}
-              checked={filters.locations.includes(r.key)}
-              onChange={(on) => setFilters((f) => ({ ...f, locations: toggled(f.locations, r.key, on) }))}
-              title={
-                <>
-                  <span className="mono">{r.noLocation ? '0000' : r.ids.join(', ')}</span> {r.noLocation ? 'No location set' : r.name}
-                  {r.flags.length > 0 && <span className="text-warn"> · {r.flags.join(', ')}</span>}
-                </>
-              }
-              count={fmtN(n)}
-              sub={multi ? `${r.collections.map((c) => model.collections[c].name).join(', ')} · ${where}` : where}
-              zero={n === 0}
-            />
-          );
-        })}
-      </div>
-      <ClearRow onClear={() => setFilters((f) => ({ ...f, locations: [] }))} />
-    </>
+    <ListPicker
+      title="Locations"
+      search={{ label: 'Search locations', placeholder: 'Search ID or name' }}
+      rows={all.map((r) => {
+        const n = counts.get(r.key) ?? 0;
+        const where = r.noLocation ? 'No map position' : [r.range, formatElevation(r.elevation, unit)].filter(Boolean).join(' · ');
+        const ids = r.noLocation ? '0000' : r.ids.join(', ');
+        return {
+          key: r.key,
+          name: r.noLocation ? 'No location set' : ids,
+          title: (
+            <>
+              <span className="mono">{ids}</span> {r.noLocation ? 'No location set' : r.name}
+              {r.flags.length > 0 && <span className="text-warn"> · {r.flags.join(', ')}</span>}
+            </>
+          ),
+          find: `${r.ids.join('\n')}\n${r.noLocation ? 'no location set' : r.name}`.toLowerCase(),
+          count: fmtN(n),
+          sub: multi ? `${r.collections.map((c) => model.collections[c].name).join(', ')} · ${where}` : where,
+          zero: n === 0,
+          ticked: tickedOf(off, siteKeys(r.sites)),
+        };
+      })}
+      onTick={(picked, on) =>
+        setFilters((f) => ({ ...f, locations: tick(f.locations, picked.flatMap((r) => siteKeys(all.find((a) => a.key === r.key)!.sites)), on) }))
+      }
+      onOnly={(r) => setFilters((f) => ({ ...f, locations: onlyLocations(model, [r.key]) }))}
+    />
   );
 }

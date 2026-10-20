@@ -1,5 +1,5 @@
 import { useMemo, useState, type RefObject } from 'react';
-import { NO_FILTERS, dataChecks } from '@/data';
+import { NO_FILTERS, dataChecks, onlyLocations } from '@/data';
 import { describeCheck, type CheckTarget } from '@/lib/checkText';
 import { checkForUploads } from '@/lib/opening';
 import { useStore } from '@/store';
@@ -12,10 +12,11 @@ export function useDataChecks() {
 
 /** Show what a check is about: its locations alone, with Undo. */
 export function useShowTarget() {
+  const model = useStore((s) => s.model)!;
   const withUndo = useStore((s) => s.withUndo);
   return (t: CheckTarget) => {
     withUndo(t.message, (s) => ({
-      filters: { ...NO_FILTERS, locations: t.locations, photoTag: t.view === 'photos' ? 'all' : s.filters.photoTag },
+      filters: { ...NO_FILTERS, locations: onlyLocations(model, t.locations), photoTag: t.view === 'photos' ? 'all' : s.filters.photoTag },
       separate: t.separate ?? s.separate,
       view: t.view ?? s.view,
     }));

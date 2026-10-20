@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
+import { listKeys, only, tick } from '@/data';
 import { fmtN, plural } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
-import { ClearRow, Option, toggled, useWithout } from './shared';
+import { ListPicker, useWithout } from './shared';
 
 /** Photos and locations per collection, ignoring the Collections filter. */
 export function useCollectionCounts() {
@@ -24,25 +25,21 @@ export function CollectionsPicker() {
   const { model, filters } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const counts = useCollectionCounts();
+  const off = new Set(filters.collections.hidden);
   return (
-    <>
-      <div className="sect">
-        <h3>Collections</h3>
-      </div>
-      <div className="opts">
-        {model.collections.map((c, i) => (
-          <Option
-            key={c.key}
-            checked={filters.collections.includes(c.key)}
-            onChange={(on) => setFilters((f) => ({ ...f, collections: toggled(f.collections, c.key, on) }))}
-            title={c.name}
-            count={fmtN(counts[i].photos)}
-            sub={plural(counts[i].locations.size, 'location')}
-            zero={counts[i].photos === 0}
-          />
-        ))}
-      </div>
-      <ClearRow onClear={() => setFilters((f) => ({ ...f, collections: [] }))} />
-    </>
+    <ListPicker
+      title="Collections"
+      rows={model.collections.map((c, i) => ({
+        key: c.key,
+        name: c.name,
+        title: c.name,
+        count: fmtN(counts[i].photos),
+        sub: plural(counts[i].locations.size, 'location'),
+        zero: counts[i].photos === 0,
+        ticked: !off.has(c.key),
+      }))}
+      onTick={(picked, on) => setFilters((f) => ({ ...f, collections: tick(f.collections, picked.map((r) => r.key), on) }))}
+      onOnly={(r) => setFilters((f) => ({ ...f, collections: only(listKeys(model, 'collections'), [r.key]) }))}
+    />
   );
 }

@@ -253,7 +253,7 @@ Then('the Activity of {string} shows {int} months with nothing inside', async ({
 Then(/^the Activity of "([^"]+)" draws "([^"]+)" inside (\d+) months?$/, async ({ page }, id: string, name: string, n: string) => {
   await expect(activityOf(page, id).locator('rect.match')).toHaveCount(Number(n));
   await activityOf(page, id).hover();
-  await expect(page.getByRole('tooltip')).toContainText(`${name}:`);
+  await expect(page.locator('.tip[role="tooltip"]')).toContainText(`${name}:`);
 });
 
 When('I point at the Activity of {string}', async ({ page }, id: string) => {

@@ -3,17 +3,7 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { serializeObservations } from '@sparcd/camtrap';
-import {
-  ExplorerDb,
-  accountKey,
-  buildModel,
-  locationRows,
-  photoRows,
-  readCachedCollection,
-  speciesRows,
-  summarize,
-  syncCollection,
-} from '../src/data';
+import { ExplorerDb, accountKey, buildModel, locationRows, onlyLocations, onlySpecies, photoRows, readCachedCollection, speciesRows, summarize, syncCollection } from '../src/data';
 import { FakeS3, putUpload } from './support/fakeS3';
 import {
   areaOfHex,
@@ -74,7 +64,7 @@ describe('#400 date and species filters reduce the image count', () => {
     expect(count({})).toEqual([2, 3]);
     expect(count({ years: [2024] })).toEqual([2, 2]);
     expect(count({ dateFrom: '2024-06-01' })).toEqual([1, 1]);
-    expect(count({ species: ['Owl'] })).toEqual([2, 1]);
+    expect(count({ species: onlySpecies(model, ['Owl']) })).toEqual([2, 1]);
   });
 });
 
@@ -105,7 +95,7 @@ describe('#401 species counts agree for one selection', () => {
     };
     expect(counts({}).n).toBe(3);
     // Bravo still lists, with 0 species: its camera ran while the filter shows none.
-    expect(counts({ species: ['Pecari tajacu'] })).toEqual({ n: 1, hexes: [1], rows: [1, 0] });
+    expect(counts({ species: onlySpecies(model, ['Pecari tajacu']) })).toEqual({ n: 1, hexes: [1], rows: [1, 0] });
     expect(counts({ area: areaOfHex(model, hexOfSite(model, 0)) })).toEqual({ n: 2, hexes: [2], rows: [2] });
   });
 });
@@ -173,7 +163,7 @@ describe('#404 selecting one of two same-ID sites', () => {
         .upload('u2', { deployments: [deployment('ZZ19', 'Ridge old', 12.6, -100.0)], media: [media('u2', 'old.jpg', 'ZZ19', TS)] }),
     );
     const ridgeOld = model.sites.find((s) => s.name === 'Ridge old')!;
-    expect(fileNames(model, filter(model, { locations: [ridgeOld.key] }).photos)).toEqual(['old.jpg']);
+    expect(fileNames(model, filter(model, { locations: onlyLocations(model, [ridgeOld.key]) }).photos)).toEqual(['old.jpg']);
     expect(fileNames(model, filter(model, { area: areaOfHex(model, hexOfSite(model, model.sites.indexOf(ridgeOld))) }).photos)).toEqual(['old.jpg']);
   });
 });
@@ -191,13 +181,13 @@ describe('#405 hex cells stay put and never point at a site', () => {
 
   it('a search does not move a site’s cell', () => {
     const everyCell = binsOf(model, filter(model)).map((b) => b.hex);
-    const searched = binsOf(model, filter(model, { species: ['Javelina'] })).map((b) => b.hex);
+    const searched = binsOf(model, filter(model, { species: onlySpecies(model, ['Javelina']) })).map((b) => b.hex);
     expect(everyCell).toContain(searched[0]);
     expect(searched[0]).toBe(hexOfSite(model, 0));
   });
 
   it('a single-site result centres on the cell, not the site', () => {
-    const [bin] = binsOf(model, filter(model, { species: ['Javelina'] }));
+    const [bin] = binsOf(model, filter(model, { species: onlySpecies(model, ['Javelina']) }));
     expect(bin.center).not.toEqual(model.sites[0].position);
     expect(bin.center).toEqual(binsOf(model, filter(model)).find((b) => b.hex === bin.hex)!.center);
   });

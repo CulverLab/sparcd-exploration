@@ -1,6 +1,7 @@
+import { listKeys, only, tick } from '@/data';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
-import { ClearRow, Option, toggled } from './shared';
+import { ListPicker } from './shared';
 
 export function RangePicker() {
   const { model, filters } = useView();
@@ -11,23 +12,19 @@ export function RangePicker() {
     if (!locations.has(s.range)) locations.set(s.range, new Set());
     locations.get(s.range)!.add(s.groupKey);
   }
+  const off = new Set(filters.ranges.hidden);
   return (
-    <>
-      <div className="sect">
-        <h3>Mountain range</h3>
-      </div>
-      <div className="opts">
-        {[...locations].sort(([a], [b]) => a.localeCompare(b)).map(([range, keys]) => (
-          <Option
-            key={range}
-            checked={filters.ranges.includes(range)}
-            onChange={(on) => setFilters((f) => ({ ...f, ranges: toggled(f.ranges, range, on) }))}
-            title={range}
-            count={`${keys.size} loc.`}
-          />
-        ))}
-      </div>
-      <ClearRow onClear={() => setFilters((f) => ({ ...f, ranges: [] }))} />
-    </>
+    <ListPicker
+      title="Mountain range"
+      rows={listKeys(model, 'ranges').map((range) => ({
+        key: range,
+        name: range,
+        title: range,
+        count: `${locations.get(range)!.size} loc.`,
+        ticked: !off.has(range),
+      }))}
+      onTick={(picked, on) => setFilters((f) => ({ ...f, ranges: tick(f.ranges, picked.map((r) => r.key), on) }))}
+      onOnly={(r) => setFilters((f) => ({ ...f, ranges: only(listKeys(model, 'ranges'), [r.key]) }))}
+    />
   );
 }

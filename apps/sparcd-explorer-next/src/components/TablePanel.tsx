@@ -1,7 +1,19 @@
 import { Fragment, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { locationRows, photoRows, photosForTag, speciesRows, type LocationRow, type PhotoRow, type SpeciesRow } from '@/data';
+import {
+  clearFilter,
+  locationRows,
+  onlyLocations,
+  photoRows,
+  photosForTag,
+  soleSpecies,
+  speciesRows,
+  toggleSpecies,
+  type LocationRow,
+  type PhotoRow,
+  type SpeciesRow,
+} from '@/data';
 import { activityByLocation } from '@/lib/activity';
-import { matchLegend } from '@/lib/filterLabels';
+import { LIST_NOUNS, matchLegend, noneTicked } from '@/lib/filterLabels';
 import { barFill, monthAxis, monthLabel, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
@@ -224,14 +236,22 @@ export function TablePanel() {
   };
 
   const nothing = active && result.photos.length === 0;
+  const unpicked = nothing ? noneTicked(model, filters, grouping.separate) : null;
   let body;
   if (nothing) {
     body = (
       <div className="empty">
-        <h3>No photos match these filters</h3>
-        <button type="button" className="btn primary" onClick={reset}>
-          Reset filters
-        </button>
+        <h3>{unpicked ? `No ${LIST_NOUNS[unpicked]} selected` : 'No photos match these filters'}</h3>
+        <div className="flex flex-wrap justify-center gap-2">
+          {unpicked && (
+            <button type="button" className="btn primary" onClick={() => setFilters((f) => clearFilter(f, unpicked))}>
+              Select all
+            </button>
+          )}
+          <button type="button" className={unpicked ? 'btn' : 'btn primary'} onClick={reset}>
+            Reset filters
+          </button>
+        </div>
       </div>
     );
   } else if (view === 'charts') {
@@ -288,7 +308,7 @@ export function TablePanel() {
               onClick={() =>
                 withUndo(`Showing photos from ${r.noLocation ? 'no location' : r.ids.join(', ')}`, (s) => ({
                   ...s,
-                  filters: { ...s.filters, locations: [r.key], photoTag: 'all' },
+                  filters: { ...s.filters, locations: onlyLocations(model, [r.key]), photoTag: 'all' },
                   view: 'photos',
                 }))
               }
@@ -311,13 +331,13 @@ export function TablePanel() {
         cell={(c, r) => {
           if (c.id !== 'common') return undefined;
           const key = model.species[r.species].key;
-          const on = filters.speciesMode === 'only' && filters.species.length === 1 && filters.species[0] === key;
+          const on = soleSpecies(model, filters.species) === key;
           return (
             <button
               type="button"
               className="cellbtn nm"
               aria-pressed={on}
-              onClick={() => setFilters((f) => (on ? { ...f, species: [] } : { ...f, species: [key], speciesMode: 'only' }))}
+              onClick={() => setFilters((f) => toggleSpecies(model, f, key))}
             >
               {model.species[r.species].name}
             </button>
