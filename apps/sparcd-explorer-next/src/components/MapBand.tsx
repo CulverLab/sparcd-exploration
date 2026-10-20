@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, checkNoLocation, hexCenter, hexRing, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
+import { attachPinchZoom } from '@/lib/mapGestures';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
 import {
@@ -120,6 +121,13 @@ export function MapBand() {
   const boxRef = useRef<HTMLDivElement>(null);
   const clearRef = useRef<HTMLButtonElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
+  // Shown once, the first time a plain scroll passes over the map: null = not yet, true = showing, false = done.
+  const [scrollHint, setScrollHint] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (scrollHint !== true) return;
+    const t = window.setTimeout(() => setScrollHint(false), 1800);
+    return () => clearTimeout(t);
+  }, [scrollHint]);
   const hexLayers = useRef(new Map<string, HexLayer>());
   const siteLayers = useRef(new Map<number, L.CircleMarker>());
   const suppressClick = useRef(false);
@@ -133,22 +141,26 @@ export function MapBand() {
     const m = L.map(el, {
       zoomControl: false,
       attributionControl: false,
-      // Wheel and double-click zoom would hijack page scrolling and hex clicks; the buttons zoom.
+      // Plain wheel scrolls the page and double-click would fight hex clicks;
+      // pinch (and Ctrl/⌘ + wheel) zooms through attachPinchZoom below.
       scrollWheelZoom: false,
       doubleClickZoom: false,
       boxZoom: false,
       maxZoom: MAX_ZOOM,
       minZoom: 2,
-      zoomSnap: 0.5,
+      zoomSnap: 0.25,
     });
     L.control.zoom({ position: 'topright' }).addTo(m);
     m.on('moveend', () => {
       lastView = { key: fitKeyRef.current, center: m.getCenter(), zoom: m.getZoom() };
     });
+    m.on('zoomend', () => (el.dataset.zoom = String(m.getZoom())));
+    const detachPinch = attachPinchZoom(m, el, () => setScrollHint((shown) => (shown === null ? true : shown)));
     const resize = new ResizeObserver(() => m.invalidateSize());
     resize.observe(el);
     setMap(m);
     return () => {
+      detachPinch();
       resize.disconnect();
       m.remove();
       setMap(null);
@@ -447,6 +459,11 @@ export function MapBand() {
           </button>
         )}
         <div className="map-credit">Tiles · {credit}</div>
+        {scrollHint && (
+          <div className="map-hint" role="status">
+            Pinch, or use + and −, to zoom the map
+          </div>
+        )}
         {clearAt && !boxing && (
           <button
             ref={clearRef}

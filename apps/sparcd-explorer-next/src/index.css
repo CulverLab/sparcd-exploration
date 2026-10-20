@@ -895,6 +895,19 @@ path.st.sel {
   background: color-mix(in srgb, var(--panel) 85%, transparent);
   pointer-events: none;
 }
+.map-hint {
+  position: absolute;
+  z-index: 1002;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--panel);
+  background: color-mix(in srgb, var(--ink) 82%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
 .selclear.onmap,
 .selclear.onstrip {
   position: absolute;

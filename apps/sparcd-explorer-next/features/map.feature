@@ -76,6 +76,17 @@ Feature: The map
     And the locations filter reads "Locations: No location set"
     And I see the note "Showing photos with no location" with Undo
 
+  Scenario: Pinching over the map zooms the map, not the page
+    When I pinch to zoom in over the map
+    Then the map is zoomed in
+    And the browser did not zoom the page
+
+  Scenario: Scrolling past the map leaves it alone and says how to zoom
+    When I scroll over the map without pinching
+    Then the map is not zoomed
+    And the browser scrolled the page as usual
+    And a hint over the map reads "Pinch, or use + and −, to zoom the map"
+
   Scenario: The map keeps its view when a filter changes
     When I note where the hex holding "AB02" is
     And I filter species to "Bobcat"

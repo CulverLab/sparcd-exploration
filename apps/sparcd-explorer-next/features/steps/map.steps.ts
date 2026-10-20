@@ -5,6 +5,52 @@ import { Then, When, expect, tableRows } from './support/world';
 
 // --- Map ------------------------------------------------------------------------
 
+/** Sends one wheel event over the map's centre; true when the page was left to handle it. */
+async function wheelOverMap(page: Page, opts: { ctrlKey: boolean; deltaY: number }): Promise<boolean> {
+  const map = page.locator('.leafmap');
+  await expect(map).toHaveAttribute('data-zoom', /\d/);
+  await map.evaluate((el) => ((el as HTMLElement).dataset.zoomBefore = (el as HTMLElement).dataset.zoom));
+  return map.evaluate((el, o) => {
+    const r = el.getBoundingClientRect();
+    const e = new WheelEvent('wheel', { ...o, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
+    return el.dispatchEvent(e);
+  }, opts);
+}
+
+let pageHandledWheel = true;
+const zoomOf = (page: Page) =>
+  page.locator('.leafmap').evaluate((el) => ({ before: Number((el as HTMLElement).dataset.zoomBefore), now: Number((el as HTMLElement).dataset.zoom) }));
+
+When('I pinch to zoom in over the map', async ({ page }) => {
+  // A trackpad pinch arrives as a wheel event with ctrlKey set.
+  pageHandledWheel = await wheelOverMap(page, { ctrlKey: true, deltaY: -60 });
+});
+
+When('I scroll over the map without pinching', async ({ page }) => {
+  pageHandledWheel = await wheelOverMap(page, { ctrlKey: false, deltaY: 60 });
+});
+
+Then('the map is zoomed in', async ({ page }) => {
+  await expect.poll(async () => { const z = await zoomOf(page); return z.now - z.before; }).toBeGreaterThan(0);
+});
+
+Then('the map is not zoomed', async ({ page }) => {
+  const z = await zoomOf(page);
+  expect(z.now).toBe(z.before);
+});
+
+Then('the browser did not zoom the page', () => {
+  expect(pageHandledWheel, 'the pinch was kept from the browser').toBe(false);
+});
+
+Then('the browser scrolled the page as usual', () => {
+  expect(pageHandledWheel, 'the plain scroll was left to the browser').toBe(true);
+});
+
+Then('a hint over the map reads {string}', async ({ page }, text: string) => {
+  await expect(page.locator('.map-hint')).toHaveText(text);
+});
+
 const hexNote = (page: Page) => page.locator('.leaflet-tooltip.maptip');
 const mapClear = (page: Page) => page.getByRole('button', { name: 'Clear map selection' });
 
