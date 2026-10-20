@@ -1442,7 +1442,24 @@ export function Tag() {
       // in the panel header so it covers both Overview and Focus layouts (the
       // same panel renders in both) with one site.
       headerSlot: (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          data-testid="applied-species-drop-zone"
+          // Unlike a drop onto an image tile (always spatial — just that one
+          // image), this box has no single image of its own, so a drop here
+          // is selection-scoped like the keyboard/click-to-add path.
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(SPECIES_DRAG_TYPE)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={(e) => {
+            const tag = parseSpeciesDrag(e.dataTransfer.getData(SPECIES_DRAG_TYPE));
+            if (!tag) return;
+            e.preventDefault();
+            applyIncrement(tag);
+          }}
+        >
           <AppliedSpecies
             observations={observations}
             disabled={!current}

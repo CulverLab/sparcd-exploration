@@ -368,6 +368,18 @@ Feature: Assign species to images in an upload
     Then only the Overview image under the drop receives the species
 
   @H2
+  Scenario: Dropping a species on the applied-species strip tags the whole selection
+    Given several images are selected
+    When a species tile is dragged onto the applied-species strip
+    Then every selected image receives the dropped species
+
+  @H2
+  Scenario: Dropping a species on the applied-species strip with no selection tags the focused image
+    Given an image is focused
+    When a species tile is dragged onto the applied-species strip
+    Then that species is recorded on the focused image with a count of one
+
+  @H2
   Scenario: Dragging the Ghost tile onto an image replaces its species with Ghost
     Given the focused image already carries one species
     When the Ghost tile is dragged onto the image area in the Focus view
