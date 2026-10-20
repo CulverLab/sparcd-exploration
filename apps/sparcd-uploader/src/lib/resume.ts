@@ -422,6 +422,7 @@ export async function ensureBundle(
     collectionUuid: batch.collectionUuid,
     bucket: batch.targetBucket,
     uploaderSlug: batch.uploaderSlug,
+    uploaderUser: batch.uploaderUser,
     description: batch.description,
     requiredComments: batch.requiredComments,
     timeZone: batch.uploadTimeZone,

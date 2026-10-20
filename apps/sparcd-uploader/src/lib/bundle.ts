@@ -92,6 +92,7 @@ function observationRowsFor(
     preTags?: FlipObservation[];
     preTaggerUser?: string;
   },
+  uploaderUser: string | undefined,
   untagged: () => Observation[],
 ): Observation[] {
   const preTags = file.preTags ?? [];
@@ -113,7 +114,7 @@ function observationRowsFor(
       reviewEvents: o.reviewEvents,
       extra: parseTagMarkers(o.freeTags),
     }),
-    classifiedBy: (o.classifiedBy ?? file.preTaggerUser) || undefined,
+    classifiedBy: [o.classifiedBy, file.preTaggerUser, uploaderUser].find((identity) => identity?.trim()),
     classificationTimestamp: o.classificationTimestamp,
   }));
 }
@@ -222,6 +223,7 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
 }
 
 export type BuildInput = {
+  uploaderUser?: string;
   location: Location;
   collectionUuid: string;
   bucket: string;
@@ -287,6 +289,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
         preTags: it.preTags,
         preTaggerUser: it.preTaggerUser,
       },
+      input.uploaderUser,
       () => [
         {
           observationId: defaultObservationId(it.objectName, 0),
@@ -391,6 +394,7 @@ export type ResumeBundle = {
  * headed for instead of a new one.
  */
 export async function buildBundleFromRecords(input: {
+  uploaderUser?: string;
   location: Location;
   collectionUuid: string;
   bucket: string;
@@ -430,6 +434,7 @@ export async function buildBundleFromRecords(input: {
         preTags: f.preTags,
         preTaggerUser: f.preTaggerUser,
       },
+      input.uploaderUser,
       () => [
         {
           observationId: defaultObservationId(objectName, 0),

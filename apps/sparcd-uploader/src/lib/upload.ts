@@ -1409,7 +1409,7 @@ export function runStreamingUpload(
         queue,
         async () => {
           const files = finalFiles ?? build.files;
-          const bundle = await buildBundle({ ...build, files, now, naming });
+          const bundle = await buildBundle({ ...build, uploaderUser: params.uploaderUser, files, now, naming });
           if (persist) {
             const bundleRec: BundleRecord = {
               sessionId,

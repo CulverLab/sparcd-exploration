@@ -110,6 +110,45 @@ function build(
   return buildBundle(input);
 }
 
+describe('pre-upload identity fallback', () => {
+  it.each([
+    [undefined, undefined, 'Jane Doe'],
+    ['', '', 'Jane Doe'],
+    ['  ', '\t', 'Jane Doe'],
+    ['', 'batch tagger', 'batch tagger'],
+    ['original tagger', 'batch tagger', 'original tagger'],
+    [' original tagger ', '', ' original tagger '],
+  ])('uses attribution precedence for observation %j and batch %j', async (classifiedBy, preTaggerUser, expected) => {
+    const tag: FlipObservation = {
+      scientificName: 'Canis latrans', commonName: 'Coyote', count: 2,
+      requestedSpecies: '', freeTags: '', classifiedBy,
+      classificationTimestamp: '2024-01-11T00:00:00.000Z',
+      reviewEvents: [{ reviewedBy: 'reviewer', reviewedAt: '2024-01-12T00:00:00.000Z' }],
+    };
+    const input: BuildInput = {
+      location: SAN15, collectionUuid: UUID, bucket: `sparcd-${UUID}`,
+      uploaderSlug: 'jane_doe', uploaderUser: 'Jane Doe', description: '', timeZone: 'UTC',
+      now: new Date('2024-01-15T10:00:00.000Z'),
+      files: [ready('tagged.JPG', { preTags: [tag], preTaggerUser }), ready('untagged.JPG')],
+    };
+    const live = await buildBundle(input);
+    const resumed = await buildBundleFromRecords({
+      ...input, uploadPath: live.uploadPath, startedAt: input.now,
+      files: live.items.map((item) => ({
+        ...item, remoteKey: item.key,
+      })),
+    });
+    expect(resumed.observationsCsv).toBe(live.observationsCsv);
+    const [row, blank] = parseObservations(live.observationsCsv);
+    expect(row.classifiedBy).toBe(expected);
+    expect(row.count).toBe(2);
+    expect(row.classificationTimestamp).toBe(tag.classificationTimestamp);
+    expect(row.reviewEvents).toEqual(tag.reviewEvents);
+    expect(blank.scientificName).toBe('');
+    expect(blank.classifiedBy).toBeUndefined();
+  });
+});
+
 describe('uploader bundle is valid v016 Camtrap data', () => {
   it('writes one observations.csv row per file, species columns blank', async () => {
     const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })]);
