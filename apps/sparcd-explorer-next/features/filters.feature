@@ -101,6 +101,16 @@ Feature: Filter the photos in view
     And the dates filter reads "Dates: 2024"
     And the photo count reads "1 of 11 photos"
 
+  Scenario: Undo after a refresh puts back "only these", leaving a new location out
+    When I filter locations to "AB02"
+    And I press "Reset filters"
+    And a new upload arrives in "Alpha Basin"
+    And I check for new uploads
+    Then the photo count reads "12 photos"
+    When I press Undo
+    Then the locations filter reads "Locations: AB02"
+    And the photo count reads "3 of 12 photos"
+
   Scenario: When nothing matches, the table offers a big Reset
     When I filter species to "Coyote"
     And I pick the year 2025 in the dates filter

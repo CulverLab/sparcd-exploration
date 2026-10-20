@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, listKeys, only, onlyLocations, onlySpecies, type FilterState } from '../../src/data';
+import { NO_FILTERS, activeFilters, clearFilter, listKeys, only, onlyLocations, onlySpecies, resetFilters, type FilterState } from '../../src/data';
 import { filterButtons, filterWords, matchLegend, noneTicked, photoCountLabel } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
@@ -100,6 +100,38 @@ describe('list filter labels', () => {
     expect(locations(onlyLocations(wide, ['id:AA01', 'id:BB01', 'id:CC01']))).toBe('Locations: 3 of 7');
     expect(locations(onlyLocations(wide, []))).toBe('Locations: none');
     expect(labels({ locations: onlyLocations(both, ['none']) }, both)[2]).toBe('Locations: No location set');
+  });
+
+  it('say when a location has only some of its sites ticked', () => {
+    // AA01 at two sites; with IDs shown separately, one of them is unticked.
+    const c = collection('Two', 'ttt');
+    (
+      [
+        ['AA01', 'North', 12.5],
+        ['AA01', 'South', 12.6],
+        ['BB01', 'Wash', 13.5],
+        ['CC01', 'Flat', 14.5],
+        ['DD01', 'Dune', 15.5],
+        ['EE01', 'Mesa', 16.5],
+      ] as const
+    ).forEach(([id, name, lat], i) =>
+      c.upload(`u${i}`, { deployments: [deployment(id, name, lat, -100.25)], media: [media(`u${i}`, `${name}.jpg`, id, '2024-01-01T10:00:00')] }),
+    );
+    const two = modelOf(c);
+    const site = (name: string) => two.sites.find((s) => s.name === name)!.key;
+    const f = (...hidden: string[]): FilterState => ({ ...NO_FILTERS, locations: { hidden: hidden.map(site) } });
+    const button = (state: FilterState, separate = false) => filterButtons(two, state, 'm', separate)[1];
+
+    expect(button(f('North'), true).label).toBe('Locations: all but AA01');
+    expect(button(f('North'))).toMatchObject({ label: 'Locations: all but part of AA01', active: true });
+    expect(filterWords(two, f('North'), 'm')).toBe('Locations: all but part of AA01');
+    expect(button(f('North', 'Flat')).label).toBe('Locations: all but CC01, part of AA01');
+    expect(button(f('South', 'Wash', 'Flat', 'Dune')).label).toBe('Locations: EE01, part of AA01');
+    expect(button(f('North', 'Wash', 'Flat', 'Dune', 'Mesa')).label).toBe('Locations: part of AA01');
+    expect(noneTicked(two, f('North', 'Wash', 'Flat', 'Dune', 'Mesa'))).toBeNull();
+    // The × and Reset clear it.
+    expect(activeFilters(clearFilter(f('North'), 'locations'))).toEqual([]);
+    expect(activeFilters(resetFilters(f('North')).state)).toEqual([]);
   });
 
   it('follow the same rules for mountain ranges and collections', () => {

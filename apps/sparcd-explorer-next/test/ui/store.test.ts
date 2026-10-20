@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { S3Config } from '@sparcd/types';
-import { onlyLocations, type Registries } from '../../src/data';
-import { DEFAULT_SORTING, readLast, useStore } from '../../src/store';
-import { collection, collectionRef, deployment, media, observation } from '../support/fixtures';
+import {
+  applyFilters,
+  dataChecks,
+  loadJob,
+  onlyLocations,
+  onlySpecies,
+  photoSites,
+  type LoadedCollection,
+  type Registries,
+  type ThumbIo,
+} from '../../src/data';
+import { DEFAULT_SORTING, GONE_BATCH_MS, readLast, useStore } from '../../src/store';
+import { collection, collectionRef, deployment, fileNames, media, observation } from '../support/fixtures';
 
 vi.hoisted(() => {
   const data = new Map<string, string>();
@@ -137,6 +147,26 @@ describe('changing collections', () => {
     expect(useStore.getState().filters.area).toEqual(before.area);
   });
 
+  it('puts back what no longer applies onto the model shown when Undo is pressed, after a refresh', () => {
+    open(alpha, bravo);
+    const two = useStore.getState().model!;
+    useStore.getState().setFilters((f) => ({ ...f, locations: onlyLocations(two, ['id:AA01']) }));
+    useStore.getState().showChooser();
+    open(bravo);
+    expect(useStore.getState().toast?.message).toBe('Some filters no longer apply');
+    // A refresh brings Bravo a new location before Undo.
+    const grown = collection('Bravo', 'bbb')
+      .upload('u1', { deployments: [deployment('BB01', 'Ridge', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'BB01', '2024-01-01T10:00:00')] })
+      .upload('u2', { deployments: [deployment('BB02', 'Wash', 13.5, -101.25)], media: [media('u2', 'c.jpg', 'BB02', '2024-02-01T10:00:00')] })
+      .build();
+    useStore.getState().applyRefresh([grown], NONE);
+    useStore.getState().toast!.undo!();
+    const { model, filters } = useStore.getState();
+    // "Only AA01", which nothing here matches: BB02 stays out too.
+    expect(filters.locations.hidden.sort()).toEqual(photoSites(model!).map((s) => s.key).sort());
+    expect(applyFilters(model!, filters).photos).toEqual([]);
+  });
+
   it('says nothing when every filter still applies', () => {
     open(alpha);
     useStore.getState().setFilters((f) => ({ ...f, species: { hidden: [], hideUntagged: true } }));
@@ -169,6 +199,38 @@ describe('changing collections', () => {
   });
 });
 
+describe('Undo', () => {
+  const herd = (coyote: boolean): LoadedCollection => {
+    const c = collection('Herd', 'hhh').upload('u1', {
+      deployments: [deployment('HH01', 'Ridge', 12.5, -100.25)],
+      media: [media('u1', 'a.jpg', 'HH01', '2024-01-01T10:00:00'), media('u1', 'b.jpg', 'HH01', '2024-01-02T10:00:00')],
+      observations: [
+        observation('u1', 'a.jpg', 'HH01', '', { common: 'Bobcat', scientific: 'Lynx rufus' }),
+        observation('u1', 'b.jpg', 'HH01', '', { common: 'Deer', scientific: 'Odocoileus hemionus' }),
+      ],
+    });
+    if (coyote) {
+      c.upload('u2', {
+        deployments: [deployment('HH01', 'Ridge', 12.5, -100.25)],
+        media: [media('u2', 'c.jpg', 'HH01', '2024-02-01T10:00:00')],
+        observations: [observation('u2', 'c.jpg', 'HH01', '', { common: 'Coyote', scientific: 'Canis latrans' })],
+      });
+    }
+    return c.build();
+  };
+
+  it('puts back "only Bobcat" after a refresh adds a species, which stays out', () => {
+    const s = useStore.getState();
+    s.enterWorkspace(s.beginOpen(), [collectionRef('Herd', 'hhh')], [herd(false)], NONE);
+    s.setFilters((f) => ({ ...f, species: onlySpecies(useStore.getState().model!, ['Lynx rufus']) }));
+    s.resetFilters();
+    s.applyRefresh([herd(true)], NONE);
+    useStore.getState().toast!.undo!();
+    const { model, filters } = useStore.getState();
+    expect(fileNames(model!, applyFilters(model!, filters).photos)).toEqual(['a.jpg']);
+  });
+});
+
 describe('refresh', () => {
   it('rebuilds after every finished check, so new read problems and corrected names show', () => {
     open(alpha);
@@ -194,14 +256,89 @@ describe('refresh', () => {
 });
 
 describe('photo files missing from storage', () => {
+  const keyOf = () => `${alpha.ref.bucket}/${useStore.getState().model!.photos[0].key}`;
+  /** The folder a listing of the photo's file covers. */
+  const folderOf = () => keyOf().replace(/[^/]+$/, '');
+  const counted = () => applyFilters(useStore.getState().model!, useStore.getState().filters).total;
+  const io = (err: unknown): ThumbIo => ({
+    readHead: () => Promise.reject(err),
+    extract: async () => undefined,
+    presign: async (key) => `https://server.example.org/${key}?signed`,
+    preload: async () => {},
+    preloadVideo: async () => ({}) as HTMLVideoElement,
+    releaseVideo: () => {},
+    objectUrl: () => 'blob:thumb',
+    now: () => 0,
+  });
+  const read = (err: unknown) =>
+    loadJob(io(err), keyOf(), new AbortController().signal, (key) => useStore.getState().markGone(key)).catch(() => {});
+
   it('rebuild the model with those photos flagged, and only when the set changes', () => {
     open(alpha);
-    const key = `${alpha.ref.bucket}/${useStore.getState().model!.photos[0].key}`;
-    useStore.getState().applyMissing(new Set([key]));
+    const key = keyOf();
+    useStore.getState().applyFiles({ missing: new Set([key]), listed: [folderOf()], failed: 0 });
     const flagged = useStore.getState().model!;
     expect(flagged.photos[0].missing).toBe(true);
-    useStore.getState().applyMissing(new Set([key]));
+    useStore.getState().applyFiles({ missing: new Set([key]), listed: [folderOf()], failed: 0 });
     expect(useStore.getState().model).toBe(flagged);
+  });
+
+  it('say in Data checks how many uploads could not be listed, until a check lists them', () => {
+    open(alpha);
+    useStore.getState().applyFiles({ missing: new Set(), listed: [], failed: 1 });
+    const unchecked = () => dataChecks(useStore.getState().model!, useStore.getState().filesUnchecked).filter((c) => c.kind === 'unchecked-files');
+    expect(unchecked()).toEqual([{ kind: 'unchecked-files', uploads: 1 }]);
+    useStore.getState().applyFiles({ missing: new Set(), listed: [folderOf()], failed: 0 });
+    expect(unchecked()).toEqual([]);
+  });
+
+  it('found gone by a read (404) are left out of the counts like missing ones, once a burst settles', async () => {
+    vi.useFakeTimers();
+    try {
+      open(alpha);
+      expect(counted()).toBe(1);
+      await read(Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } }));
+      expect(useStore.getState().gone.has(keyOf())).toBe(true);
+      expect(counted()).toBe(1);
+      vi.advanceTimersByTime(GONE_BATCH_MS);
+      expect(useStore.getState().model!.photos[0].missing).toBe(true);
+      expect(counted()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never count a file gone on a refusal (403) or a network error', async () => {
+    vi.useFakeTimers();
+    try {
+      open(alpha);
+      await read(Object.assign(new Error('AccessDenied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }));
+      await read(new TypeError('Failed to fetch'));
+      vi.advanceTimersByTime(GONE_BATCH_MS);
+      expect(useStore.getState().gone.size).toBe(0);
+      expect(counted()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('found gone come back when a listing finds them, as after Refresh', () => {
+    vi.useFakeTimers();
+    try {
+      open(alpha);
+      useStore.getState().markGone(keyOf());
+      vi.advanceTimersByTime(GONE_BATCH_MS);
+      expect(counted()).toBe(0);
+      // A listing of another folder says nothing about it.
+      useStore.getState().applyFiles({ missing: new Set(), listed: [`${alpha.ref.bucket}/Collections/aaa/Uploads/u9/`], failed: 0 });
+      expect(useStore.getState().gone.size).toBe(1);
+      useStore.getState().applyFiles({ missing: new Set(), listed: [folderOf()], failed: 0 });
+      expect(useStore.getState().gone.size).toBe(0);
+      expect(useStore.getState().model!.photos[0].missing).toBe(false);
+      expect(counted()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('found gone while browsing are remembered for the session, and forgotten for another account', () => {

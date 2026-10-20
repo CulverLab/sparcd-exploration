@@ -40,7 +40,7 @@ export {
 } from './registries';
 export { LocationsShapeError, fetchLocations, parseLocations, registryKey, type RegistryLocation } from './locations';
 export { NoSettingsBucketError } from './settings';
-export { FOLDERS_IN_FLIGHT, checkPhotoFiles, missingKeys } from './files';
+export { FOLDERS_IN_FLIGHT, checkPhotoFiles, missingKeys, type FileCheck } from './files';
 export {
   NO_LOCATION_KEY,
   NO_LOCATION_NAME,

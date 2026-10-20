@@ -65,6 +65,10 @@ Then('I see {string}', async ({ page }, text: string) => {
   await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
 });
 
+Then('I no longer see {string}', async ({ page }, text: string) => {
+  await expect(page.getByText(text, { exact: false })).toHaveCount(0);
+});
+
 Then('I am still on the sign-in step', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Choose collections' })).toHaveCount(0);

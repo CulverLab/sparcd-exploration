@@ -37,22 +37,34 @@ export const LIST_NOUNS: Record<ListDimension, string> = {
   ranges: 'mountain ranges',
 };
 
-type Item = { label: string; ticked: boolean };
+/** A picker row: ticked, unticked, or `some` for a location with only some of its sites ticked. */
+type Item = { label: string; ticked: boolean | 'some' };
 
 /**
  * A list filter in words, or null when every item is ticked: the ticked items
  * when there are one or two ("Bobcat, Coyote"), else the unticked ones when
- * there are one or two ("all but Ghost"), else a count ("7 of 13"). `names`
+ * there are one or two ("all but Ghost"), else a count ("7 of 13"). A
+ * location partly ticked is named as such ("all but part of AA01"). `names`
  * says the words list what is ticked.
  */
 function listValue(items: Item[]): { text: string; names: boolean } | null {
-  const on = items.filter((i) => i.ticked).map((i) => i.label);
-  const off = items.filter((i) => !i.ticked).map((i) => i.label);
+  const on = items.filter((i) => i.ticked === true).map((i) => i.label);
+  const off = items.filter((i) => i.ticked === false).map((i) => i.label);
+  const some = items.filter((i) => i.ticked === 'some').map((i) => i.label);
+  const value = wholeValue(on, off);
+  if (!some.length) return value;
+  const partly = `part of ${some.length <= 2 ? some.join(', ') : `${some.length} locations`}`;
+  if (!value) return { text: `all but ${partly}`, names: false };
+  if (value.text === 'none') return { text: partly, names: true };
+  return { text: `${value.text}, ${partly}`, names: value.names };
+}
+
+function wholeValue(on: string[], off: string[]): { text: string; names: boolean } | null {
   if (!off.length) return null;
   if (!on.length) return { text: 'none', names: false };
   if (on.length <= 2) return { text: on.join(', '), names: true };
   if (off.length <= 2) return { text: `all but ${off.join(', ')}`, names: false };
-  return { text: `${on.length} of ${items.length}`, names: false };
+  return { text: `${on.length} of ${on.length + off.length}`, names: false };
 }
 
 /** Locations as the picker lists them: by location ID, or by site with IDs shown separately. */
@@ -61,9 +73,10 @@ function locationItems(model: Model, f: FilterState, separate: boolean): Item[] 
   const items = new Map<string, Item>();
   for (const s of photoSites(model)) {
     const key = locationKeyOf(s, separate);
-    const item = items.get(key) ?? { label: s.noLocation ? 'No location set' : s.locationId, ticked: false };
-    item.ticked ||= !hidden.has(s.key);
-    items.set(key, item);
+    const ticked = !hidden.has(s.key);
+    const item = items.get(key);
+    if (item) item.ticked = item.ticked === ticked ? ticked : 'some';
+    else items.set(key, { label: s.noLocation ? 'No location set' : s.locationId, ticked });
   }
   return [...items.values()];
 }

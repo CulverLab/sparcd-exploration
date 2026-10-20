@@ -223,21 +223,60 @@ export function carryList(
 }
 
 /**
+ * The Locations filter once the model changes, carried by what its picker
+ * lists: each site with IDs shown separately, else each location ID, whose
+ * choice then reaches all its sites here. A location with only some sites
+ * ticked counts as ticked and keeps those sites as they were.
+ */
+function carryLocations(before: Model, after: Model, hidden: string[], separate: boolean, strict: boolean) {
+  if (separate || !hidden.length) return carryList(listKeys(before, 'locations'), listKeys(after, 'locations'), hidden, strict);
+  const byLocation = (model: Model) => {
+    const sites = new Map<string, string[]>();
+    for (const s of photoSites(model)) {
+      const list = sites.get(s.groupKey);
+      if (list) list.push(s.key);
+      else sites.set(s.groupKey, [s.key]);
+    }
+    return sites;
+  };
+  const off = new Set(hidden);
+  const was = byLocation(before);
+  const unticked: string[] = [];
+  const partly = new Set<string>();
+  for (const [id, sites] of was) {
+    const n = sites.filter((k) => off.has(k)).length;
+    if (n === sites.length) unticked.push(id);
+    else if (n) partly.add(id);
+  }
+  const now = byLocation(after);
+  const carried = carryList([...was.keys()], [...now.keys()], unticked, strict);
+  const out = new Set(carried.hidden);
+  return {
+    hidden: [...now].flatMap(([id, sites]) => (out.has(id) ? sites : partly.has(id) ? sites.filter((k) => off.has(k)) : [])),
+    dropped: carried.dropped,
+  };
+}
+
+/**
  * The filters that still apply once the model changes: another set of
- * collections, or a refresh. List filters carry by `carryList`; map-area sites
- * no longer open drop; dates, elevation and the tagged switch carry as they
- * are. `dropped` says whether anything was let go. `strict` keeps what no
- * longer applies, matching nothing, for Undo.
+ * collections, or a refresh. List filters carry by `carryList`, locations by
+ * what their picker lists while IDs are grouped (`separate` off); map-area
+ * sites no longer open drop; dates, elevation and the tagged switch carry as
+ * they are. `dropped` says whether anything was let go. `strict` keeps what
+ * no longer applies, matching nothing, for Undo.
  */
 export function carryFilters(
   before: Model,
   after: Model,
   state: FilterState,
-  strict = false,
+  { separate = false, strict = false }: { separate?: boolean; strict?: boolean } = {},
 ): { state: FilterState; dropped: boolean } {
   let dropped = false;
   const carry = (dim: ListDimension): string[] => {
-    const next = carryList(listKeys(before, dim), listKeys(after, dim), state[dim].hidden, strict);
+    const next =
+      dim === 'locations'
+        ? carryLocations(before, after, state.locations.hidden, separate, strict)
+        : carryList(listKeys(before, dim), listKeys(after, dim), state[dim].hidden, strict);
     dropped ||= next.dropped;
     return next.hidden;
   };

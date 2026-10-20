@@ -25,7 +25,7 @@ import { useStore, type PhotoLayout, type TableView } from '@/store';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { DataTable } from './DataTable';
-import { PhotoGrid } from './PhotoGrid';
+import { PhotoGrid, useSteadyRows } from './PhotoGrid';
 import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
@@ -180,10 +180,13 @@ export function TablePanel() {
     () => (view === 'photos' ? sortRows(rows as PhotoRow[], cols as Col<PhotoRow>[], sorting.photos) : []),
     [view, rows, cols, sorting.photos],
   );
+  const grid = useSteadyRows(model, photoOrder);
   // The panel keeps the model it opened with, so a background refresh never swaps the photo under it.
   const [detail, setDetail] = useState<{ model: typeof model; order: number[]; index: number; from: HTMLElement | null } | null>(null);
-  const openDetail = (row: PhotoRow, from: HTMLElement | null) =>
-    setDetail({ model, order: photoOrder.map((r) => r.photo), index: photoOrder.indexOf(row), from });
+  const openDetail = (row: PhotoRow, from: HTMLElement | null) => {
+    const shown = tableView ? { model, rows: photoOrder } : grid;
+    setDetail({ model: shown.model, order: shown.rows.map((r) => r.photo), index: shown.rows.indexOf(row), from });
+  };
   const closeDetail = () => {
     detail?.from?.focus({ preventScroll: true });
     setDetail(null);
@@ -263,7 +266,7 @@ export function TablePanel() {
   } else if (!tableView) {
     body = (
       <>
-        <PhotoGrid model={model} rows={photoOrder} onOpen={openDetail} initialScroll={restore.current} />
+        <PhotoGrid model={grid.model} rows={grid.rows} onOpen={openDetail} initialScroll={restore.current} />
         <div className="tbl-foot">
           {photoOrder.length
             ? `All ${photoOrder.length.toLocaleString('en-US')} shown`

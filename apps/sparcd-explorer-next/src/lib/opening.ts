@@ -112,19 +112,20 @@ export function stopChecking(): void {
 /**
  * List the open uploads' folders and leave out the photos whose files aren't
  * there. Folders whose media.csv is unchanged since their last listing are
- * skipped unless `force`. Nothing waits on it, and a failed check changes nothing.
+ * skipped unless `force`. Nothing waits on it; a folder that fails to list
+ * keeps its last answer, and Data checks says so.
  */
 export async function checkFiles(force = false): Promise<void> {
-  const { config, loaded, setCheckingFiles, applyMissing } = useStore.getState();
+  const { config, loaded, setCheckingFiles, applyFiles } = useStore.getState();
   if (!config || !loaded.length) return;
   filesCheck?.abort();
   const controller = (filesCheck = new AbortController());
   setCheckingFiles(true);
   try {
-    const missing = await checkPhotoFiles(sourceFor(config), loaded, { signal: controller.signal, force });
-    if (useStore.getState().loaded === loaded) applyMissing(missing);
+    const check = await checkPhotoFiles(sourceFor(config), loaded, { signal: controller.signal, force });
+    if (useStore.getState().loaded === loaded) applyFiles(check);
   } catch {
-    // Cancelled, or storage refused: the counts stay as they are.
+    // Cancelled: the counts stay as they are.
   } finally {
     // A newer check that replaced this one keeps the status.
     if (filesCheck === controller) filesCheck = null;

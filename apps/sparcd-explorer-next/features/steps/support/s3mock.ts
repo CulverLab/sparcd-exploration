@@ -17,7 +17,11 @@ export class MockS3 {
   readonly buckets: string[] = [];
   private readonly objects = new Map<string, StoredObject>();
   private readonly reads = new Map<string, number>();
-  /** Keys whose GET (or prefix whose listing) answers with an S3 error. */
+  /**
+   * Keys whose GET (or prefix whose listing) answers with an S3 error. A
+   * prefix ending in `**` fails only its recursive listing, as the photo file
+   * check makes.
+   */
   readonly failures = new Map<string, { status: number; code: string }>();
   /** Milliseconds a key's GET or a prefix's listing waits before answering. */
   readonly delays = new Map<string, number>();
@@ -133,7 +137,8 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
     const key = isList ? (url.searchParams.get('prefix') ?? '') : decodeURIComponent(segments.slice(1).join('/'));
     const wait = s3.delays.get(key);
     if (wait) await new Promise((r) => setTimeout(r, wait));
-    const failure = s3.failures.get(key);
+    const recursive = isList && !url.searchParams.get('delimiter');
+    const failure = s3.failures.get(recursive ? `${key}**` : key);
     if (failure && request.method() !== 'HEAD') {
       await route.fulfill({ status: failure.status, headers: XML, body: errorXml(failure.code, `mock failure for ${key}`) });
       return;

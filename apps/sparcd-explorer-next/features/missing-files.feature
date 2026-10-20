@@ -38,3 +38,32 @@ Feature: Photos whose files aren't on the server
     When I open the photo taken at "2023-04-03 12:00:00"
     Then the panel says the file isn't on the server, naming "IMG0003.JPG"
     And the server was asked for "IMG0003.JPG" once
+    And the photo count reads "10 photos"
+
+  Scenario: A file found gone keeps its tile while the counts drop, and Refresh finds it again
+    Given I have opened "Alpha Basin"
+    And the photo files have been checked
+    When the file "IMG0003.JPG" of "Alpha Basin" is removed from the server
+    And I show the Photos grid
+    Then the tile taken at "2023-04-03 12:00:00" says "File not found"
+    And the photo count reads "10 photos"
+    And the grid still has 11 tiles
+    When that file is back on the server
+    And I check for new uploads
+    Then the tile taken at "2023-04-03 12:00:00" shows its embedded thumbnail
+    And the photo count reads "11 photos"
+
+  Scenario: An upload whose files can't be listed on Refresh keeps what its last listing found
+    Given "Alpha Basin" has an upload listing 2 photos whose files aren't on the server
+    And I have opened "Alpha Basin"
+    And the photo files have been checked
+    When the photo files of that upload can't be listed
+    And I check for new uploads
+    And I open Data checks
+    Then I see "Couldn't check whether the photo files in 1 upload are on the server."
+    And the photo count reads "11 photos"
+    When the photo files of that upload can be listed again
+    And I press "Try again" in Data checks
+    And I open Data checks
+    Then I no longer see "Couldn't check whether the photo files"
+    And I see "2 photos are listed in the upload data, but their files aren't on the server (1 upload)."

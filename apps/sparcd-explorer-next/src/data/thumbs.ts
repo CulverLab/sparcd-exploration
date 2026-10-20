@@ -100,11 +100,21 @@ export async function loadFrame(io: ThumbIo, key: string, signal: AbortSignal): 
 export const ORIGINAL_JOB = 'original:';
 export const FRAME_JOB = 'frame:';
 
-/** One queue job: a thumbnail by default, or the original or a first frame by its prefix. */
-export function loadJob(io: ThumbIo, job: string, signal: AbortSignal): Promise<Thumb> {
-  if (job.startsWith(ORIGINAL_JOB)) return loadOriginal(io, job.slice(ORIGINAL_JOB.length), signal);
-  if (job.startsWith(FRAME_JOB)) return loadFrame(io, job.slice(FRAME_JOB.length), signal);
-  return loadThumb(io, job, signal);
+/**
+ * One queue job: a thumbnail by default, or the original or a first frame by
+ * its prefix. `onGone` hears of a file the server answered 404 or NoSuchKey
+ * for, never of a refusal or a network error.
+ */
+export function loadJob(io: ThumbIo, job: string, signal: AbortSignal, onGone?: (key: string) => void): Promise<Thumb> {
+  const load = job.startsWith(ORIGINAL_JOB)
+    ? loadOriginal(io, job.slice(ORIGINAL_JOB.length), signal)
+    : job.startsWith(FRAME_JOB)
+      ? loadFrame(io, job.slice(FRAME_JOB.length), signal)
+      : loadThumb(io, job, signal);
+  return load.catch((err) => {
+    if (err instanceof FileNotFoundError) onGone?.(err.key);
+    throw err;
+  });
 }
 
 /** Thumbnails by key, least recently used first out. Object URLs are revoked as they leave. */

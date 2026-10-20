@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import type { Model, PhotoRow } from '@/data';
 import { frameJob, photoKey, useMissing, useThumb } from '@/lib/thumbs';
+import { useStore } from '@/store';
 
 // Tiles at least 150px wide (130px on phones), 3:2 pictures over a fixed caption.
 const GAP = 8;
@@ -58,6 +59,39 @@ function Tile({ model, row, priority, onOpen }: { model: Model; row: PhotoRow; p
       </span>
     </button>
   );
+}
+
+type Shown = { model: Model; rows: PhotoRow[] };
+
+/** Whether `rows` are `before.rows` less only photos found gone. */
+function lessOnlyGone(before: Shown, model: Model, rows: PhotoRow[], gone: ReadonlySet<string>): boolean {
+  if (!gone.size || rows.length >= before.rows.length) return false;
+  let j = 0;
+  for (const r of before.rows) {
+    const key = photoKey(before.model, r.photo);
+    if (j < rows.length && photoKey(model, rows[j].photo) === key) j++;
+    else if (!gone.has(key)) return false;
+  }
+  return j === rows.length;
+}
+
+/**
+ * The grid's rows and the model they index. When a rebuild leaves out photos
+ * found gone, their tiles stay, reading "File not found", until the rows
+ * change for another reason, so a missing file never shifts the grid; the
+ * counts leave them out at once.
+ */
+export function useSteadyRows(model: Model, rows: PhotoRow[]): Shown {
+  const gone = useStore((s) => s.gone);
+  const last = useRef<Shown>({ model, rows });
+  const shown = useMemo(() => {
+    const before = last.current;
+    return before.model !== model && lessOnlyGone(before, model, rows, gone) ? before : { model, rows };
+  }, [model, rows, gone]);
+  useLayoutEffect(() => {
+    last.current = shown;
+  }, [shown]);
+  return shown;
 }
 
 /**

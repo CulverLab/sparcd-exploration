@@ -18,6 +18,7 @@ export type SharedLocationCheck = {
 export type BadTimestampsCheck = { kind: 'bad-timestamps'; upload: number; photos: number[] };
 export type UnreadableCheck = { kind: 'unreadable'; collection: number; folder: string; file: string; message: string };
 export type MissingFilesCheck = { kind: 'missing-files'; photos: number; uploads: number };
+export type UncheckedFilesCheck = { kind: 'unchecked-files'; uploads: number };
 
 export type DataCheck =
   | NoLocationCheck
@@ -28,7 +29,8 @@ export type DataCheck =
   | SharedLocationCheck
   | BadTimestampsCheck
   | UnreadableCheck
-  | MissingFilesCheck;
+  | MissingFilesCheck
+  | UncheckedFilesCheck;
 
 /** Photos whose location is 0000, empty or missing: kept in every count, never on the map. */
 export function checkNoLocation(model: Model): NoLocationCheck[] {
@@ -149,11 +151,12 @@ export function checkMissingFiles(model: Model): MissingFilesCheck[] {
   return photos ? [{ kind: 'missing-files', photos, uploads: uploads.size }] : [];
 }
 
-/** Every check, the ones that change counts most first. */
-export function dataChecks(model: Model): DataCheck[] {
+/** Every check, the ones that change counts most first. `unchecked`: uploads whose files the last check couldn't list. */
+export function dataChecks(model: Model, unchecked = 0): DataCheck[] {
   return [
     ...checkNoLocation(model),
     ...checkMissingFiles(model),
+    ...(unchecked ? [{ kind: 'unchecked-files' as const, uploads: unchecked }] : []),
     ...checkUnreadable(model),
     ...checkHiddenUploads(model),
     ...checkSharedLocations(model),

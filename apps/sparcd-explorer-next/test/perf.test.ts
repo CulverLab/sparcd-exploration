@@ -140,7 +140,7 @@ describe('checking 70k photo files', () => {
       longest = Math.max(longest, now - last);
       last = now;
     }, 1);
-    const missing = await checkPhotoFiles({ client, db, account: 'perf' } as never, loaded as never);
+    const { missing } = await checkPhotoFiles({ client, db, account: 'perf' } as never, loaded as never);
     clearInterval(probe);
     expect(missing.size).toBe(Math.ceil(FILES / 30));
     expect(longest).toBeLessThan(BUDGET_MS / 2);

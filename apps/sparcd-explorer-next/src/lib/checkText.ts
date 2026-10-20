@@ -11,6 +11,7 @@ export type CheckAction = { label: string } & (
   | { kind: 'retry' }
   | { kind: 'list' }
   | { kind: 'missing-files' }
+  | { kind: 'retry-files' }
 );
 
 export type CheckLine = { text: string; action: CheckAction; details?: string[] };
@@ -50,6 +51,11 @@ export function describeCheck(model: Model, check: DataCheck): CheckLine {
         action: { label: one ? 'Show it' : 'Show them', kind: 'missing-files' },
       };
     }
+    case 'unchecked-files':
+      return {
+        text: `Couldn't check whether the photo files in ${check.uploads === 1 ? '1 upload' : `${fmtN(check.uploads)} uploads`} are on the server.`,
+        action: { label: 'Try again', kind: 'retry-files' },
+      };
     case 'unreadable': {
       const where = `upload ${stamp(check.folder)} of ${model.collections[check.collection].name}`;
       const why = check.message.replace(/\.$/, '');

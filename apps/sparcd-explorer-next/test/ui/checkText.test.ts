@@ -97,3 +97,16 @@ describe('the missing-files check', () => {
     expect(line(1).text).toBe("1 photo is listed in the upload data, but its file isn't on the server (1 upload).");
   });
 });
+
+describe('the check for uploads whose files could not be listed', () => {
+  it('says how many, with an action that tries again', () => {
+    const m = modelOf(collection('Gaps', 'gap'));
+    const line = (n: number) => describeCheck(m, dataChecks(m, n).find((c) => c.kind === 'unchecked-files')!);
+    expect(line(1)).toEqual({
+      text: "Couldn't check whether the photo files in 1 upload are on the server.",
+      action: { label: 'Try again', kind: 'retry-files' },
+    });
+    expect(line(3).text).toBe("Couldn't check whether the photo files in 3 uploads are on the server.");
+    expect(dataChecks(m).map((c) => c.kind)).not.toContain('unchecked-files');
+  });
+});

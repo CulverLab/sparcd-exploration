@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { S3Config } from '@sparcd/types';
 import {
   FRAME_JOB,
-  FileNotFoundError,
   HEAD_BYTES,
   ORIGINAL_JOB,
   THUMBS_KEPT,
@@ -126,12 +125,8 @@ export function thumbSession(): Session {
   return sessions.get(id, () => {
     const io = browserIo(state.config!);
     const cache = new ThumbCache(THUMBS_KEPT, (url) => URL.revokeObjectURL(url));
-    // A file found gone is marked so, and never asked for again this session.
-    const load = (job: string, signal: AbortSignal) =>
-      loadJob(io, job, signal).catch((err) => {
-        if (err instanceof FileNotFoundError) useStore.getState().markGone(err.key);
-        throw err;
-      });
+    // A file found gone is left out like a missing one, and never asked for again this session.
+    const load = (job: string, signal: AbortSignal) => loadJob(io, job, signal, (key) => useStore.getState().markGone(key));
     return { io, queue: new ThumbQueue(load, cache) };
   });
 }

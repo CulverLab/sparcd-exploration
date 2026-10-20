@@ -11,6 +11,7 @@ import {
   clearFilter,
   isFiltered,
   resetFilters,
+  type FileCheck,
   type FilterDimension,
   type FilterState,
   type LoadedCollection,
@@ -53,7 +54,12 @@ type State = {
   missingFiles: ReadonlySet<string>;
   /** The listing behind `missingFiles` is running. */
   checkingFiles: boolean;
-  /** Photo files a thumbnail read found gone this session, as `bucket/key`: never requested again. */
+  /** Uploads whose folder the last listing couldn't list. */
+  filesUnchecked: number;
+  /**
+   * Photo files a read found gone this session, as `bucket/key`: left out like
+   * `missingFiles` and never requested again, until a listing finds them.
+   */
   gone: ReadonlySet<string>;
   filters: FilterState;
   /** "Show each location ID separately", in Data checks. */
@@ -84,8 +90,9 @@ type State = {
   applyRefresh: (loaded: LoadedCollection[], registries: Registries) => void;
   setChecking: (checking: boolean, error?: string | null) => void;
   setCheckingFiles: (checking: boolean) => void;
-  /** Rebuild with these photo files missing, unless they are the ones already applied. */
-  applyMissing: (missing: ReadonlySet<string>) => void;
+  /** Take in a listing's answer, rebuilding when the photo files left out change. */
+  applyFiles: (check: FileCheck) => void;
+  /** A read found this photo file gone (404 or NoSuchKey). */
   markGone: (key: string) => void;
   setFilters: (change: (f: FilterState) => FilterState) => void;
   clearFilter: (dim: FilterDimension) => void;
@@ -143,6 +150,24 @@ function model(loaded: LoadedCollection[], registries: Registries, missing: Read
 
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((k) => b.has(k));
 
+/** The photo files left out: those the listing lacks and those reads found gone. */
+const leftOut = (s: Pick<State, 'missingFiles' | 'gone'>): ReadonlySet<string> =>
+  s.gone.size ? new Set([...s.missingFiles, ...s.gone]) : s.missingFiles;
+
+/** How long reads finding files gone are gathered, so a burst (a folder emptied since its listing) rebuilds once. */
+export const GONE_BATCH_MS = 100;
+let goneTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Rebuild with the photo files left out now. The filters carry over. */
+function rebuildFiles(): void {
+  clearTimeout(goneTimer);
+  goneTimer = undefined;
+  const s = useStore.getState();
+  if (!s.model) return;
+  const next = model(s.loaded, s.registries, leftOut(s));
+  useStore.setState({ model: next, filters: carryFilters(s.model, next, s.filters, { separate: s.separate }).state });
+}
+
 export const useStore = create<State>((set, get) => ({
   config: initial,
   account: initial ? accountKey(initial) : '',
@@ -157,6 +182,7 @@ export const useStore = create<State>((set, get) => ({
   checkError: null,
   missingFiles: NONE,
   checkingFiles: false,
+  filesUnchecked: 0,
   gone: NONE,
   filters: NO_FILTERS,
   separate: false,
@@ -189,6 +215,7 @@ export const useStore = create<State>((set, get) => ({
       loaded: [],
       model: null,
       missingFiles: NONE,
+      filesUnchecked: 0,
       gone: NONE,
       filters: NO_FILTERS,
       separate: false,
@@ -225,9 +252,9 @@ export const useStore = create<State>((set, get) => ({
     const { account, openGeneration, model: before, filters: previous, separate } = get();
     if (stamp.account !== account || stamp.generation !== openGeneration) return false;
     writeStored(lastKey(account), refs.map((r) => r.key));
-    const next = model(loaded, registries, get().missingFiles);
+    const next = model(loaded, registries, leftOut(get()));
     // Another set of collections keeps the filters that still apply.
-    const carried = before ? carryFilters(before, next, previous) : { state: NO_FILTERS, dropped: false };
+    const carried = before ? carryFilters(before, next, previous, { separate }) : { state: NO_FILTERS, dropped: false };
     set({
       screen: 'workspace',
       refs,
@@ -237,13 +264,15 @@ export const useStore = create<State>((set, get) => ({
       highlight: null,
       checkedAt: Math.min(...loaded.map((c) => c.checkedAt)),
       checkError: null,
+      filesUnchecked: 0,
       filters: carried.state,
       separate: before ? separate : false,
       toast: null,
     });
     if (carried.dropped) {
+      // Onto the model shown when Undo is pressed: a refresh since may have changed it.
       get().showToast('Some filters no longer apply', () => {
-        set({ filters: carryFilters(before!, next, previous, true).state });
+        set({ filters: carryFilters(before!, get().model!, previous, { separate, strict: true }).state });
         get().showToast('Filters restored');
       });
     }
@@ -255,15 +284,15 @@ export const useStore = create<State>((set, get) => ({
   // The filters carry over, so a new species or location doesn't slip into a
   // filter that showed only a few.
   applyRefresh: (loaded, registries) => {
-    const next = model(loaded, registries, get().missingFiles);
-    const { model: before, filters } = get();
+    const next = model(loaded, registries, leftOut(get()));
+    const { model: before, filters, separate } = get();
     set({
       loaded,
       registries,
       checkedAt: Date.now(),
       checkError: null,
       model: next,
-      filters: before ? carryFilters(before, next, filters).state : filters,
+      filters: before ? carryFilters(before, next, filters, { separate }).state : filters,
       highlight: null,
     });
   },
@@ -271,27 +300,38 @@ export const useStore = create<State>((set, get) => ({
   setChecking: (checking, error = null) => set({ checking, ...(error !== null ? { checkError: error } : {}) }),
   setCheckingFiles: (checkingFiles) => set({ checkingFiles }),
 
-  applyMissing: (missing) => {
-    const { model: before, loaded, registries, filters, missingFiles } = get();
-    if (sameSet(missing, missingFiles)) return;
-    if (!before) return set({ missingFiles: missing });
-    const next = model(loaded, registries, missing);
-    set({ missingFiles: missing, model: next, filters: carryFilters(before, next, filters).state });
+  applyFiles: ({ missing, listed, failed }) => {
+    const was = get();
+    // A file a read found gone that a listing finds again is back.
+    const back = new Set([...was.gone].filter((k) => !missing.has(k) && listed.some((folder) => k.startsWith(folder))));
+    const gone = back.size ? new Set([...was.gone].filter((k) => !back.has(k))) : was.gone;
+    set({ missingFiles: missing, gone, filesUnchecked: failed });
+    if (!sameSet(leftOut(get()), leftOut(was))) rebuildFiles();
   },
-  markGone: (key) => set({ gone: new Set([...get().gone, key]) }),
+  markGone: (key) => {
+    const { gone } = get();
+    if (gone.has(key)) return;
+    // The tile says so at once; the counts follow with the next rebuild.
+    set({ gone: new Set([...gone, key]) });
+    goneTimer ??= setTimeout(rebuildFiles, GONE_BATCH_MS);
+  },
 
   setFilters: (change) => set({ filters: change(get().filters) }),
   clearFilter: (dim) => set({ filters: clearFilter(get().filters, dim) }),
 
   withUndo: (message, change) => {
-    const { filters, separate, view } = get();
+    const { filters, separate, view, model: made } = get();
     const before: Snapshot = { filters, separate, view };
     const after = change(before);
     get().setView(after.view);
     set({ filters: after.filters, separate: after.separate });
     get().showToast(message, () => {
+      // A refresh since may have added items: the filters go back as their buttons named them.
+      const now = get().model;
+      const restored =
+        made && now && now !== made ? carryFilters(made, now, before.filters, { separate: before.separate, strict: true }).state : before.filters;
       get().setView(before.view);
-      set({ filters: before.filters, separate: before.separate });
+      set({ filters: restored, separate: before.separate });
       get().showToast('Filters restored');
     });
   },

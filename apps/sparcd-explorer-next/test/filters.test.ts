@@ -387,3 +387,49 @@ describe('carrying filters to another set of collections', () => {
     expect(carryList(['a'], ['a', 'b'], [])).toEqual({ hidden: [], dropped: false });
   });
 });
+
+describe('carrying the Locations filter by what its picker lists', () => {
+  // AA01 at three sites, BB01 at one; a refresh brings DD01.
+  const sites = (dd01: boolean) => {
+    const c = collection('G', 'ggg');
+    const at: [string, string, number][] = [
+      ['AA01', 'North', 12.5],
+      ['AA01', 'Middle', 12.6],
+      ['AA01', 'South', 12.7],
+      ['BB01', 'Wash', 13.5],
+      ...(dd01 ? [['DD01', 'Flat', 14.5] as [string, string, number]] : []),
+    ];
+    at.forEach(([id, name, lat], i) =>
+      c.upload(`u${i}`, { deployments: [deployment(id, name, lat, -100.25)], media: [media(`u${i}`, `${name}.jpg`, id, '2024-01-01T10:00:00')] }),
+    );
+    return modelOf(c);
+  };
+  const before = sites(false);
+  const after = sites(true);
+  const shown = (state: FilterState) => fileNames(after, filter(after, state).photos);
+
+  it('keeps "only AA01" as AA01 alone while IDs are grouped, however many sites it has', () => {
+    const { state, dropped } = carryFilters(before, after, { ...NO_FILTERS, locations: onlyLocations(before, ['id:AA01']) });
+    expect(dropped).toBe(false);
+    expect(shown(state)).toEqual(['Middle.jpg', 'North.jpg', 'South.jpg']);
+  });
+
+  it('carries by site with each location ID shown separately, as that picker lists them', () => {
+    // Three AA01 sites ticked and Wash unticked read "all but BB01": DD01 starts ticked.
+    const { state } = carryFilters(before, after, { ...NO_FILTERS, locations: onlyLocations(before, ['id:AA01']) }, { separate: true });
+    expect(shown(state)).toEqual(['Flat.jpg', 'Middle.jpg', 'North.jpg', 'South.jpg']);
+  });
+
+  it('keeps a partly ticked location as it was', () => {
+    const north = before.sites[siteNamed(before, 'North')].key;
+    expect(carryFilters(before, after, { ...NO_FILTERS, locations: { hidden: [north] } }).state.locations.hidden).toEqual([north]);
+  });
+
+  it('puts back "only AA01" for Undo though AA01 is gone, matching nothing', () => {
+    const bOnly = modelOf(
+      collection('G', 'ggg').upload('u9', { deployments: [deployment('BB01', 'Wash', 13.5, -100.25)], media: [media('u9', 'w.jpg', 'BB01', '')] }),
+    );
+    const { state } = carryFilters(before, bOnly, { ...NO_FILTERS, locations: onlyLocations(before, ['id:AA01']) }, { strict: true });
+    expect(filter(bOnly, state).photos).toEqual([]);
+  });
+});

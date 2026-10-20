@@ -40,7 +40,11 @@ describe('photo files media.csv lists but storage lacks', () => {
   it('are found by listing every visible upload folder, every page', async () => {
     const { s3, source, loaded } = await setup();
     s3.pageSize = 2;
-    expect(await checkPhotoFiles(source, loaded)).toEqual(new Set([`${REF.bucket}/${folderOf('u1')}b.jpg`]));
+    expect(await checkPhotoFiles(source, loaded)).toEqual({
+      missing: new Set([`${REF.bucket}/${folderOf('u1')}b.jpg`]),
+      listed: expect.arrayContaining([`${REF.bucket}/${folderOf('u1')}`, `${REF.bucket}/${folderOf('u2')}`]),
+      failed: 0,
+    });
     expect(s3.lists.sort()).toEqual([`${REF.bucket}/${folderOf('u1')}**`, `${REF.bucket}/${folderOf('u2')}**`]);
     expect(s3.gets).toEqual([]);
   });
@@ -49,7 +53,7 @@ describe('photo files media.csv lists but storage lacks', () => {
     const { s3, source, loaded } = await setup();
     await checkPhotoFiles(source, loaded);
     s3.resetCounts();
-    expect((await checkPhotoFiles(source, loaded)).size).toBe(1);
+    expect((await checkPhotoFiles(source, loaded)).missing.size).toBe(1);
     expect(s3.lists).toEqual([]);
   });
 
@@ -59,12 +63,12 @@ describe('photo files media.csv lists but storage lacks', () => {
     s3.put(REF.bucket, `${folderOf('u2')}media.csv`, serializeMedia([row('u2', 'c.jpg'), row('u2', 'd.jpg')]));
     const changed = [await syncCollection(source, REF)];
     s3.resetCounts();
-    expect((await checkPhotoFiles(source, changed)).size).toBe(2);
+    expect((await checkPhotoFiles(source, changed)).missing.size).toBe(2);
     expect(s3.lists).toEqual([`${REF.bucket}/${folderOf('u2')}**`]);
 
     s3.resetCounts();
     s3.put(REF.bucket, `${folderOf('u1')}b.jpg`, 'jpeg');
-    expect((await checkPhotoFiles(source, changed, { force: true })).size).toBe(1);
+    expect((await checkPhotoFiles(source, changed, { force: true })).missing.size).toBe(1);
     expect(s3.lists.sort()).toEqual([`${REF.bucket}/${folderOf('u1')}**`, `${REF.bucket}/${folderOf('u2')}**`]);
   });
 
@@ -80,10 +84,24 @@ describe('photo files media.csv lists but storage lacks', () => {
   it('count a folder that fails to list as complete, and list it again next time', async () => {
     const { s3, source, loaded } = await setup();
     s3.failures.set(`${REF.bucket}/${folderOf('u1')}`, Object.assign(new Error('AccessDenied'), { $metadata: { httpStatusCode: 403 } }));
-    expect((await checkPhotoFiles(source, loaded)).size).toBe(0);
+    expect(await checkPhotoFiles(source, loaded)).toEqual({ missing: new Set(), listed: [`${REF.bucket}/${folderOf('u2')}`], failed: 1 });
     s3.failures.clear();
     s3.resetCounts();
-    expect((await checkPhotoFiles(source, loaded)).size).toBe(1);
+    expect((await checkPhotoFiles(source, loaded)).missing.size).toBe(1);
+    expect(s3.lists).toEqual([`${REF.bucket}/${folderOf('u1')}**`]);
+  });
+
+  it("keep a folder's last answer when Refresh can't list it, and list it again next time", async () => {
+    const { s3, source, loaded } = await setup();
+    await checkPhotoFiles(source, loaded);
+    const missing = new Set([`${REF.bucket}/${folderOf('u1')}b.jpg`]);
+    for (const failure of [new TypeError('Failed to fetch'), Object.assign(new Error('AccessDenied'), { $metadata: { httpStatusCode: 403 } })]) {
+      s3.failures.set(`${REF.bucket}/${folderOf('u1')}`, failure);
+      expect(await checkPhotoFiles(source, loaded, { force: true })).toEqual({ missing, listed: [`${REF.bucket}/${folderOf('u2')}`], failed: 1 });
+    }
+    s3.failures.clear();
+    s3.resetCounts();
+    expect(await checkPhotoFiles(source, loaded)).toEqual({ missing, listed: [`${REF.bucket}/${folderOf('u1')}`], failed: 0 });
     expect(s3.lists).toEqual([`${REF.bucket}/${folderOf('u1')}**`]);
   });
 

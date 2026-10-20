@@ -372,6 +372,12 @@ Given(/^"(.*)" has an upload listing (\d+) photos whose files aren't on the serv
   const keys = upload.photos.map((p) => `${uploadPrefix(c, upload.stamp)}${p.file}`);
   for (const key of keys) s3.delete(bucketOf(c), key);
   scratch.missing = keys;
+  scratch.staleUpload = `${uploadPrefix(c, upload.stamp)}**`;
+});
+
+When(/^the photo files of that upload (can't|can) be listed(?: again)?$/, async ({ s3, scratch }, can: string) => {
+  if (can === 'can') s3.failures.delete(scratch.staleUpload as string);
+  else s3.failures.set(scratch.staleUpload as string, { status: 403, code: 'AccessDenied' });
 });
 
 Then('{int} tiles say {string}', async ({ page }, n: number, text: string) => {
@@ -389,10 +395,21 @@ Given('the photo files have been checked', async ({ page }) => {
   await expect(page.locator('.updated')).not.toContainText('Checking photo files');
 });
 
-When('the file {string} of {string} is removed from the server', async ({ s3 }, file: string, name: string) => {
+When('the file {string} of {string} is removed from the server', async ({ s3, scratch }, file: string, name: string) => {
   const c = COLLECTIONS[name] as typeof ALPHA;
   const upload = ALPHA_UPLOADS.find((u) => u.photos.some((p) => p.file === file))!;
-  s3.delete(bucketOf(c), `${uploadPrefix(c, upload.stamp)}${file}`);
+  const at = [bucketOf(c), `${uploadPrefix(c, upload.stamp)}${file}`] as const;
+  scratch.removed = { at, object: s3.get(...at) };
+  s3.delete(...at);
+});
+
+When('that file is back on the server', async ({ s3, scratch }) => {
+  const { at, object } = scratch.removed as { at: [string, string]; object: { body: Buffer; contentType: string } };
+  s3.put(...at, object.body, object.contentType);
+});
+
+Then('the grid still has {int} tiles', async ({ page }, n: number) => {
+  await expect(tiles(page)).toHaveCount(n);
 });
 
 Then('the tile taken at {string} says {string}', async ({ page }, time: string, text: string) => {
