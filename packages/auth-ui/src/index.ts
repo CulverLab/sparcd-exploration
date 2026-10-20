@@ -18,6 +18,15 @@ export type { PersistedConnection } from './session';
 export { loadSharedTheme, saveSharedTheme } from './theme';
 export type { Theme } from './theme';
 export {
+  loginIdentityPreferenceKey,
+  loadLoginIdentity,
+  loadLoginIdentityPreference,
+  saveLoginIdentity,
+  saveLoginIdentityDefault,
+  subscribeLoginIdentityChanges,
+} from './loginIdentity';
+export type { LoginIdentityChange, LoginIdentityPreference } from './loginIdentity';
+export {
   KEYBINDING_STORAGE_KEY,
   MAX_SPECIES_SOURCES,
   emptyRevisionedProfile,

@@ -79,6 +79,9 @@ export function Assign() {
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
   const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
+  const identityResolutionStatus = useStore((s) => s.identityResolutionStatus);
+  const identityResolutionError = useStore((s) => s.identityResolutionError);
+  const refreshUploaderIdentity = useStore((s) => s.refreshUploaderIdentity);
   const mountainRange = useStore((s) => s.mountainRange);
   const dateCollected = useStore((s) => s.dateCollected);
   const setMountainRange = useStore((s) => s.setMountainRange);
@@ -372,11 +375,32 @@ export function Assign() {
           onChange={(e) => setUploaderUser(e.target.value)}
           onBlur={ensureUploaderIdentity}
           placeholder="e.g. John Doe"
+          aria-describedby={identityResolutionStatus === 'error' ? 'assign-identity-resolution-error' : undefined}
+          aria-invalid={identityResolutionStatus === 'error' && !uploaderUser.trim()}
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
           Recorded with every upload you make.
         </p>
+        {identityResolutionStatus === 'loading' && (
+          <p role="status" aria-live="polite" className="font-body text-[12px] text-inkMute mt-1.5">
+            Checking the connected account's attribution name…
+          </p>
+        )}
+        {identityResolutionStatus === 'error' && (
+          <div id="assign-identity-resolution-error" role="alert" className="flex flex-wrap items-center gap-2 font-body text-[12px] text-warn mt-1.5">
+            <span>{identityResolutionError ?? 'The connected account name is unavailable.'} {uploaderUser.trim()
+              ? 'The saved identity remains available.'
+              : 'Enter a custom identity before continuing.'}</span>
+            <button
+              type="button"
+              onClick={() => void refreshUploaderIdentity()}
+              className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Retry account-name lookup
+            </button>
+          </div>
+        )}
       </section>
 
       <section>

@@ -4,6 +4,7 @@ import type { ProcessResponse } from '../src/lib/processPool';
 import type { FileValidation } from '../src/lib/validation';
 import type { NaiveDateTime } from '../src/lib/exifTime';
 import type { UploadPhase, UploadSnapshot } from '../src/lib/upload';
+import { loginIdentityPreferenceKey, saveLoginIdentityDefault } from '../../../packages/auth-ui/src/loginIdentity';
 
 const storage = () => {
   const m = new Map<string, string>();
@@ -11,6 +12,7 @@ const storage = () => {
     getItem: (k: string) => m.get(k) ?? null,
     setItem: (k: string, v: string) => void m.set(k, v),
     removeItem: (k: string) => void m.delete(k),
+    clear: () => m.clear(),
   };
 };
 (globalThis as any).window = Object.assign(globalThis, {
@@ -69,7 +71,19 @@ function snapshot(sessionId: string, phase: UploadPhase): UploadSnapshot {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(
+    '<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>',
+    { status: 404 },
+  )));
   useStore.setState({
+    s3Config: null,
+    uploaderUser: '',
+    identityPersistenceError: false,
+    identityUnsavedCustom: null,
+    identityResolutionStatus: 'idle',
+    identityResolutionError: null,
     files: [],
     validations: {},
     processing: false,
@@ -247,7 +261,6 @@ describe('store persistence', () => {
 
     expect(persisted).toEqual({
       elevationUnit: 'meters',
-      uploaderUser: 'Ada Lovelace',
       uploadDescription: 'Sky Island transect',
       uploadCommentDate: null,
       mountainRange: 'Santa Catalina Mountains',
@@ -260,6 +273,40 @@ describe('store persistence', () => {
       concurrencyMode: 'manual',
       uploadConcurrency: 16,
     });
+  });
+});
+
+describe('account-scoped uploader identity', () => {
+  const config = (accessKey: string) => ({
+    endpoint: 'http://localhost',
+    accessKey,
+    secretKey: 'test-secret',
+    region: 'us-east-1',
+    forcePathStyle: true,
+    secure: false,
+  });
+
+  it('loads each login identity on direct login and account replacement', async () => {
+    useStore.setState({ s3Config: null, uploaderUser: '' });
+    useStore.getState().connect(config('login-a'), false);
+    useStore.getState().setUploaderUser('Ada');
+    useStore.getState().connect(config('login-b'), false);
+    await vi.waitFor(() => expect(useStore.getState().uploaderUser).toBe('login-b'));
+
+    useStore.getState().setUploaderUser('Grace');
+    useStore.getState().connect(config('login-a'), false);
+    expect(useStore.getState().uploaderUser).toBe('Ada');
+    useStore.getState().connect(config('login-b'), false);
+    expect(useStore.getState().uploaderUser).toBe('Grace');
+  });
+
+  it('uses login identity in new state without persisting it in the tab session', () => {
+    useStore.setState({ s3Config: null, uploaderUser: '' });
+    useStore.getState().connect(config('login-a'), false);
+    useStore.getState().setUploaderUser('Ada');
+    const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
+    expect(persisted).not.toHaveProperty('uploaderUser');
+    expect(useStore.getState().uploaderUser).toBe('Ada');
   });
 });
 
@@ -291,13 +338,13 @@ describe('starting a new batch', () => {
     });
     const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
     expect(persisted).toMatchObject({
-      uploaderUser: 'Ada Lovelace',
       selectedBucket: null,
       selectedLocationId: null,
       requireCollectionSelection: true,
       uploadDescription: '',
       uploadTimeZone: '',
     });
+    expect(persisted).not.toHaveProperty('uploaderUser');
   });
 });
 
@@ -503,19 +550,75 @@ describe('upload comment preview date', () => {
 
 describe('connected identity fallback', () => {
   const config = { endpoint: 'http://localhost', accessKey: 'storage-user', secretKey: 'test-secret', region: 'us-east-1', forcePathStyle: true, secure: false };
-  it('fills empty and whitespace identities from the current account', () => {
+  it('fills empty and whitespace identities from the current account only after route absence is confirmed', async () => {
     for (const uploaderUser of ['', '   ']) {
       useStore.setState({ uploaderUser, s3Config: config });
       useStore.getState().ensureUploaderIdentity();
-      expect(useStore.getState().uploaderUser).toBe('storage-user');
+      await vi.waitFor(() => expect(useStore.getState().uploaderUser).toBe('storage-user'));
     }
   });
   it('preserves custom identity and leaves an offline blank unchanged', () => {
-    useStore.setState({ uploaderUser: 'Ada', s3Config: config });
+    useStore.setState({ s3Config: config, uploaderUser: '' });
+    useStore.getState().setUploaderUser('Ada');
     useStore.getState().ensureUploaderIdentity();
     expect(useStore.getState().uploaderUser).toBe('Ada');
     useStore.setState({ uploaderUser: '', s3Config: null });
     useStore.getState().ensureUploaderIdentity();
     expect(useStore.getState().uploaderUser).toBe('');
+  });
+
+  it('keeps a cached account name or custom value through lookup failures and leaves an unresolved login blank', async () => {
+    useStore.setState({ s3Config: config, connectionId: 81, uploaderUser: '', identityResolutionStatus: 'idle' });
+    saveLoginIdentityDefault('storage-user', 'Research Account', 'whoami');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      '<Error><Code>AccessDenied</Code><Message>Access denied</Message></Error>',
+      { status: 403 },
+    )));
+    await useStore.getState().refreshUploaderIdentity();
+    expect(useStore.getState()).toMatchObject({
+      uploaderUser: 'Research Account',
+      identityResolutionStatus: 'error',
+    });
+
+    useStore.getState().setUploaderUser('Custom Field Name');
+    await useStore.getState().refreshUploaderIdentity();
+    expect(useStore.getState().uploaderUser).toBe('Custom Field Name');
+
+    window.localStorage.clear();
+    useStore.setState({ uploaderUser: '', identityResolutionStatus: 'idle', s3Config: config, connectionId: 82 });
+    await useStore.getState().refreshUploaderIdentity();
+    expect(useStore.getState()).toMatchObject({ uploaderUser: '', identityResolutionStatus: 'error' });
+  });
+
+  it.each([200, 403])('preserves an unsaved custom name when a pending lookup completes with %s and when retry starts', async (status) => {
+    useStore.setState({ s3Config: config, connectionId: 84, uploaderUser: '' });
+    const write = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('storage full'); });
+    let respond!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const lookup = useStore.getState().refreshUploaderIdentity();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    useStore.getState().setUploaderUser('Unsaved Custom Name');
+    respond(new Response(status === 200 ? JSON.stringify({ id: 'person', name: 'Default Name' }) : 'denied', { status }));
+    await lookup;
+    expect(useStore.getState()).toMatchObject({ uploaderUser: 'Unsaved Custom Name', identityPersistenceError: true });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('denied', { status: 403 })));
+    const retry = useStore.getState().refreshUploaderIdentity();
+    expect(useStore.getState().uploaderUser).toBe('Unsaved Custom Name');
+    await retry;
+    expect(useStore.getState().uploaderUser).toBe('Unsaved Custom Name');
+    write.mockRestore();
+  });
+
+  it('refreshes the cached account-name default without affecting the login key', async () => {
+    useStore.setState({ s3Config: config, connectionId: 83, uploaderUser: 'Previous Name' });
+    saveLoginIdentityDefault('storage-user', 'Previous Name', 'whoami');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ id: 'person-123', name: 'Updated Name' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )));
+    await useStore.getState().refreshUploaderIdentity();
+    expect(useStore.getState()).toMatchObject({ uploaderUser: 'Updated Name', identityResolutionStatus: 'ready' });
+    expect(JSON.parse(window.localStorage.getItem(loginIdentityPreferenceKey('storage-user'))!).defaultIdentity).toBe('Updated Name');
   });
 });

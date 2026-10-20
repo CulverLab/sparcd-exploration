@@ -31,12 +31,21 @@ Feature: Describe a batch with its collection and a camera location
     # collection first" message in the code is unreachable.
 
   @unmapped
-  Scenario: An empty identity pauses Describe until blur restores the login default
+  Scenario: An empty identity pauses Describe until blur restores the account default
     Given the uploader identity is empty
     Then the Continue button is disabled
     And it states that an uploader identity must be set first
     When the blank Describe identity field loses focus
-    Then Describe restores the connected default identity
+    Then Describe restores the confirmed connected account default
+
+  @unmapped
+  Scenario: Clearing the uploader identity pauses Assign until blur restores the account default
+    Given the uploader identity is empty
+    Then the Continue button is disabled
+    And it states that an uploader identity must be set first
+    When the blank Assign identity field loses focus
+    Then Assign restores the confirmed connected account default
+    And the Continue button is enabled
 
   @unmapped
   Scenario: The collections offered are the ones the connection can actually read

@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { loginIdentityPreferenceKey } from '../../../../packages/auth-ui/src/loginIdentity';
 import type { Page } from '@playwright/test';
 import { Given, When, Then, expect } from './fixtures';
 import { ACCESS_KEY, SECRET_KEY, S3_ORIGIN, type App } from './app';
@@ -351,10 +352,29 @@ When('a connection is made', async ({ app }) => {
   await app.connect();
 });
 
-Then('the uploader identity defaults to the access key', async ({ app }) => {
+Then('the uploader identity defaults to the Access key after route absence is confirmed', async ({ app }) => {
   await app.gotoSection('Settings');
   await app.page.getByText('Defaults', { exact: true }).click();
   await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
+  expect(app.s3.whoamiRequests).toBeGreaterThan(0);
+  expect(app.s3.whoamiResponse.body).toContain('<Code>NoSuchKey</Code>');
+});
+
+When('a legacy session-wide uploader identity is present and the page reloads', async ({ app }) => {
+  await app.page.evaluate(() => {
+    sessionStorage.setItem('sparcd-uploader-session', JSON.stringify({
+      state: { uploaderUser: 'Legacy unscoped identity' },
+    }));
+  });
+  await app.reopen();
+  await app.gotoSection('Settings');
+});
+
+Then('the legacy session-wide uploader identity is removed', async ({ app }) => {
+  const persisted = await app.page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem('sparcd-uploader-session') ?? '{}'),
+  );
+  expect(persisted.state).not.toHaveProperty('uploaderUser');
 });
 
 Then('the header shows the access key only in its masked form', async ({ app }) => {
@@ -420,4 +440,119 @@ Then('the remember checkbox describes its public-computer warning', async ({ app
   await checkbox.focus();
   await expect(checkbox).toBeFocused();
   await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});
+
+Then('the connected login identity is available to the preserved batch', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(app.page.getByRole('heading', { name: 'Collection (required)', exact: true })).toBeVisible();
+  await expect(app.page.locator('#uploaderUser')).toHaveValue(ACCESS_KEY);
+});
+
+Given('the account-name endpoint returns {string} before login', async ({ app }, name: string) => {
+  app.s3.setWhoAmIResponse(200, JSON.stringify({ id: 'person-123', name }));
+});
+
+Given('the account-name endpoint rejects the login with AccessDenied', async ({ app }) => {
+  app.s3.setWhoAmIResponse(403, '<Error><Code>AccessDenied</Code><Message>Access denied</Message></Error>', 'application/xml');
+});
+
+Given('the account-name endpoint now returns {string}', async ({ app }, name: string) => {
+  app.s3.setWhoAmIResponse(200, JSON.stringify({ id: 'person-123', name }));
+});
+
+Then('the uploader identity defaults to {string}', async ({ app }, name: string) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(name);
+});
+
+Then('the account-name default is stored under the connected login', async ({ app }) => {
+  const record = await app.page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), loginIdentityPreferenceKey(ACCESS_KEY));
+  expect(record).toMatchObject({ version: 2, defaultIdentity: 'Research Account', defaultSource: 'whoami' });
+  expect(await app.page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('sparcd-login-identity-')))).toEqual([loginIdentityPreferenceKey(ACCESS_KEY)]);
+});
+
+When('the same connected session is restored', async ({ app }) => {
+  await app.reopen();
+});
+
+When('a second Uploader tab adopts the connection', async ({ app }) => {
+  app.notes.whoamiSecondTab = await app.openSecondTab();
+});
+
+Then('the second tab defaults to {string}', async ({ app }, name: string) => {
+  const second = app.notes.whoamiSecondTab as import('@playwright/test').Page;
+  await second.locator('nav[aria-label="Sections"]').getByRole('button', { name: 'Settings' }).click();
+  await second.getByText('Defaults', { exact: true }).click();
+  await expect(second.getByPlaceholder('e.g. John Doe')).toHaveValue(name);
+  await second.close();
+});
+
+Then('Settings shows the account-name error and no Access-key fallback', async ({ app }) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await expect(app.page.getByRole('alert')).toContainText(/AccessDenied/);
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveAccessibleDescription(/AccessDenied/);
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveAttribute('aria-invalid', 'true');
+  await expect(app.page.getByRole('button', { name: 'Retry account-name lookup' })).toBeVisible();
+  await expect(app.page.getByRole('alert')).not.toContainText(ACCESS_KEY);
+});
+
+When('the account-name lookup is retried', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Retry account-name lookup' }).click();
+});
+
+
+When('the account-name error leaves the identity unresolved', async ({ app }) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await expect(app.page.getByRole('alert')).toContainText(/AccessDenied/);
+});
+
+When('Assign is opened without a custom identity', async ({ app }) => {
+  await app.gotoSection('New upload');
+  await app.dropFolder(standardBatch());
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.chooseDeployment('Bear Canyon');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+});
+
+Then('continuing to upload is disabled because attribution is unresolved', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.continueButton()).toHaveAttribute('title', 'Set an uploader identity first');
+});
+
+When('the uploader enters custom identity {string}', async ({ app }, identity: string) => {
+  await app.page.getByPlaceholder('e.g. John Doe').first().fill(identity);
+});
+
+Then('continuing to upload is enabled with the custom identity', async ({ app }) => {
+  await expect(app.continueButton()).toBeEnabled();
+});
+
+
+When('a connection is made without remembering its login', async ({ app }) => {
+  await app.fillConnection();
+  await app.page.getByLabel('Remember endpoint & access key on this device').uncheck();
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+});
+
+When('this unremembered login disconnects', async ({ app }) => {
+  await app.disconnectFromHeader();
+  await expect(app.connectForm()).toBeVisible();
+});
+
+Then('the retained identity preference exposes no login ID', async ({ app }) => {
+  const records = await app.page.evaluate(() => Object.entries(localStorage)
+    .filter(([key]) => key.startsWith('sparcd-login-identity-')));
+  expect(records).toHaveLength(1);
+  expect(records[0][0]).toBe(loginIdentityPreferenceKey(ACCESS_KEY));
+  expect(JSON.stringify(records)).not.toContain(ACCESS_KEY);
+  expect(JSON.stringify(records)).not.toContain(SECRET_KEY);
 });

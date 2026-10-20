@@ -10,6 +10,7 @@ const testDir = defineBddConfig({
 });
 const port = Number(process.env.UPLOADER_TEST_PORT ?? 5311);
 const baseURL = `http://localhost:${port}`;
+const useSystemChrome = process.env.UPLOADER_USE_SYSTEM_CHROME === '1';
 
 export default defineConfig({
   testDir,
@@ -26,7 +27,10 @@ export default defineConfig({
     locale: 'en-US',
     trace: 'off',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [{
+    name: 'chromium',
+    use: { ...devices['Desktop Chrome'], ...(useSystemChrome ? { channel: 'chrome' as const } : {}) },
+  }],
   webServer: {
     command: `pnpm dev --port ${port} --strictPort`,
     url: `${baseURL}/sparcd-exploration/uploader/`,

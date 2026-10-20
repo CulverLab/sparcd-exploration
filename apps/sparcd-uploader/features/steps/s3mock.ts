@@ -57,6 +57,13 @@ export class S3Mock {
   heads: string[] = [];
   /** Every listing the app issued, as `bucket/prefix`. */
   lists: string[] = [];
+  whoamiRequests = 0;
+  whoamiResponse: { status: number; body: string; contentType: string } = {
+    status: 404,
+    body: '<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>',
+    contentType: 'application/xml',
+  };
+  whoamiDelayMs = 0;
 
   /** Buckets whose object reads fail with 403 (simulating IAM/CORS refusal). */
   unreadable = new Set<string>();
@@ -224,6 +231,10 @@ export class S3Mock {
     }<IsTruncated>false</IsTruncated>${contents.join('')}${cp}</ListBucketResult>`;
   }
 
+  setWhoAmIResponse(status: number, body: string, contentType = 'application/json'): void {
+    this.whoamiResponse = { status, body, contentType };
+  }
+
   async install(page: Page, origin: string): Promise<void> {
     const originRe = new RegExp(`^${origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`);
     await page.route(originRe, async (route) => {
@@ -234,6 +245,16 @@ export class S3Mock {
         return;
       }
       const url = new URL(req.url());
+      if (url.pathname === '/-/whoami') {
+        this.whoamiRequests++;
+        if (this.whoamiDelayMs) await new Promise((resolve) => setTimeout(resolve, this.whoamiDelayMs));
+        await route.fulfill({
+          status: this.whoamiResponse.status,
+          contentType: this.whoamiResponse.contentType,
+          body: this.whoamiResponse.body,
+        });
+        return;
+      }
       const path = decodeURIComponent(url.pathname).replace(/^\//, '');
       const slash = path.indexOf('/');
       const bucket = slash < 0 ? path : path.slice(0, slash);
