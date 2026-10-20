@@ -608,27 +608,25 @@ export function Tag() {
   const [selectedSpecies, setSelectedSpecies] = useState<string | null>(null);
 
   // Operations target the selection when one exists, else the focused image.
-  const targetsOf = (): TagTarget[] => {
+  const targetImagesOf = (): TagImage[] => {
     // With no selection the focused image is the target — unless a filter is
     // hiding it, in which case there is nothing on screen for the action to
     // land on and it must do nothing at all.
     const focusTargetable = !!current && (!imageFilterActive || visibleIndexSet.has(focus));
     const idx = selected.size
-      ? selectedForActions.sort((a, b) => a - b)
+      ? [...selectedForActions].sort((a, b) => a - b)
       : focusTargetable
         ? [focus]
         : [];
-    return idx
-      .map((i) => list[i])
-      .filter(Boolean)
-      .map((img) => ({
-        mediaPath: img.key,
-        deploymentId: img.deploymentId,
-        // Seed a fresh draft from the FULL canonical base set so a partial edit
-        // (adding one species, toggling questionable) keeps every existing one.
-        base: { observations: img.baseObservations },
-      }));
+    return idx.map((i) => list[i]).filter((img): img is TagImage => !!img);
   };
+  const targetOf = (img: TagImage): TagTarget => ({
+    mediaPath: img.key,
+    deploymentId: img.deploymentId,
+    // Partial edits seed the full canonical species set.
+    base: { observations: img.baseObservations },
+  });
+  const targetsOf = (): TagTarget[] => targetImagesOf().map(targetOf);
 
   // Move focus to the next image, clearing selection — mirrors the keyboard
   // handler's `focusMove`, scoped to this component's own focus/anchor/selected
@@ -1426,6 +1424,19 @@ export function Tag() {
 
   function speciesPanelProps() {
     const observations = eff?.observations ?? [];
+    // Clear Species is view-scoped rather than always selection-scoped: in
+    // Focus only one image is ever on screen, so it must only ever clear
+    // `current` — even if a multi-selection from the Overview is still sitting
+    // in state. In the Overview, it clears the whole selection like the other
+    // bulk actions (species-add, questionable toggle), via the shared
+    // selection-or-focus helper `targetsOf()`.
+    const detagImages: TagImage[] = view === 'focus'
+      ? (current ? [current] : [])
+      : targetImagesOf();
+    // Untagged targets need no draft; clearing a mixed selection must not
+    // manufacture unsaved no-op edits for its already-empty images.
+    const detagTargets = detagImages.filter((img) => speciesCountOf(img) > 0).map(targetOf);
+    const canDetag = detagTargets.length > 0;
     return {
       species: speciesList,
       onApply: apply,
@@ -1469,16 +1480,10 @@ export function Tag() {
             onRemove={(sci) =>
               current && removeSpeciesFn(ctx, current.key, current.deploymentId, currentBase, sci)
             }
-            onDetagAll={() =>
-              current &&
-              detagFn(ctx, [
-                {
-                  mediaPath: current.key,
-                  deploymentId: current.deploymentId,
-                  base: currentBase,
-                },
-              ])
-            }
+            onDetagAll={() => detagTargets.length && detagFn(ctx, detagTargets)}
+            canDetag={canDetag}
+            detagCount={detagImages.length}
+            detagSelection={view === 'overview' && selected.size > 0}
           />
           {current && (
             <button

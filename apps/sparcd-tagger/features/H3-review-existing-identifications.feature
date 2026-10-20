@@ -76,6 +76,45 @@ Feature: Review, correct and remove identifications that already exist
     Then every selected image is left with no species
 
   @H3
+  Scenario: Clearing identifications in Focus only affects the focused image
+    Given several images are selected
+    When Focus is entered
+    And identifications are cleared
+    Then only the focused image is left with no species
+    And the other selected images keep their species
+
+  @H3
+  Scenario Outline: An untagged focused image does not hide a tagged selection's Clear Species action
+    Given a tagged and an untagged image are selected with the untagged one focused in "<view>" Overview
+    Then Clear Species explains its two-image selection on hover and focus
+    When Clear Species is activated with "<key>"
+    Then only the selected tagged image is edited in "<view>" Overview
+
+    Examples:
+      | view | key   |
+      | grid | Enter |
+      | list | Space |
+
+  @H3
+  Scenario: Clear Species is unavailable when only untagged targets are selected
+    Given only an untagged image is selected while a tagged image is focused
+    Then Clear Species is absent and no image has a new draft
+
+  @H3
+  Scenario: A filtered selection cannot clear hidden images
+    Given several images are selected
+    When the selection is filtered to IMG003.JPG and cleared
+    Then the hidden selected images keep their original species
+
+  @H3
+  Scenario: A cleared selection survives Sync and reload without changing other images
+    Given several images are selected
+    And the unselected species rows are recorded
+    When identifications are cleared
+    And a live sync is run
+    Then the cleared selection is stored and restored without changing other images
+
+  @H3
   Scenario: An image can be flagged as questionable for a second opinion
     Given an image is focused
     When it is marked questionable
