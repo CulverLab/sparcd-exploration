@@ -53,6 +53,7 @@ type TaggerState = {
   timeFormat: TimeFormat; // display only, ditto
   distanceUnit: DistanceUnit; // not yet consumed — no location/elevation display exists
   autoAdvanceOnTag: boolean; // on by default — advances Focus after an assignment
+  sortSpeciesByRecent: boolean; // off by default — species list stays alphabetical by name
 
   connect: (config: S3Config, remember: boolean) => void;
   disconnect: () => void;
@@ -72,6 +73,7 @@ type TaggerState = {
   setTimeFormat: (value: TimeFormat) => void;
   setDistanceUnit: (value: DistanceUnit) => void;
   setAutoAdvanceOnTag: (value: boolean) => void;
+  setSortSpeciesByRecent: (value: boolean) => void;
 };
 
 // This tab's own session, if it has one — same tab, so a BrandSwitcher hop to
@@ -86,6 +88,7 @@ const initialSession = localBatchId ? null : loadSessionConnection();
 const LEGACY_THEME_KEY = 'sparcd-tagger-session';
 const DISPLAY_PREFERENCES_KEY = 'sparcd-tagger-display-preferences';
 const AUTO_ADVANCE_KEY = 'sparcd-tagger-auto-advance-on-tag';
+const SORT_SPECIES_BY_RECENT_KEY = 'sparcd-tagger-sort-species-by-recent';
 const LOCAL_BATCH_IDENTITY_KEY = 'sparcd-tagger-local-batch-identity';
 
 type DisplayPreferences = Pick<TaggerState, 'dateFormat' | 'timeFormat' | 'distanceUnit'>;
@@ -135,6 +138,30 @@ function saveAutoAdvance(value: boolean) {
     localStorage.setItem(AUTO_ADVANCE_KEY, String(value));
   } catch {
     // Storage can be unavailable or full; the in-memory choice still applies.
+  }
+}
+
+function loadSortSpeciesByRecent(): boolean {
+  try {
+    return localStorage.getItem(SORT_SPECIES_BY_RECENT_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveSortSpeciesByRecent(value: boolean) {
+  try {
+    localStorage.setItem(SORT_SPECIES_BY_RECENT_KEY, String(value));
+  } catch {
+    // Storage can be unavailable or full; the in-memory choice still applies.
+  }
+}
+
+function clearSortSpeciesByRecent() {
+  try {
+    localStorage.removeItem(SORT_SPECIES_BY_RECENT_KEY);
+  } catch {
+    // Disconnect still clears the active connection and in-memory preference.
   }
 }
 
@@ -227,6 +254,7 @@ export const useStore = create<TaggerState>()(
     burstThresholdSec: 60,
     ...initialDisplayPreferences,
     autoAdvanceOnTag: loadAutoAdvance(),
+    sortSpeciesByRecent: loadSortSpeciesByRecent(),
 
     connect: (config, remember) => {
       clearClientCache();
@@ -243,6 +271,7 @@ export const useStore = create<TaggerState>()(
       clearClientCache();
       clearSharedConnection();
       clearAutoAdvance();
+      clearSortSpeciesByRecent();
       clearLocalBatchIdentity();
       set((s) => ({
         s3Config: null,
@@ -252,6 +281,7 @@ export const useStore = create<TaggerState>()(
         selectedUploadPrefix: null,
         taggerUser: '',
         autoAdvanceOnTag: true,
+        sortSpeciesByRecent: false,
       }));
     },
     setSection: (section) => set({ section }),
@@ -307,6 +337,10 @@ export const useStore = create<TaggerState>()(
     setAutoAdvanceOnTag: (autoAdvanceOnTag) => {
       saveAutoAdvance(autoAdvanceOnTag);
       set({ autoAdvanceOnTag });
+    },
+    setSortSpeciesByRecent: (sortSpeciesByRecent) => {
+      saveSortSpeciesByRecent(sortSpeciesByRecent);
+      set({ sortSpeciesByRecent });
     },
   }),
 );

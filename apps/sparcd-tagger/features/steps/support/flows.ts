@@ -35,6 +35,12 @@ export const autoAdvanceCheckbox = (page: Page) =>
     .filter({ hasText: 'Move to the next image after assigning a species' })
     .locator('input[type="checkbox"]');
 
+export const sortSpeciesByRecentCheckbox = (page: Page) =>
+  page
+    .locator('label')
+    .filter({ hasText: 'Sort by latest species assigned' })
+    .locator('input[type="checkbox"]');
+
 export async function setSyncDryRun(page: Page, on: boolean): Promise<void> {
   const cb = syncDryRunCheckbox(page);
   if ((await cb.isChecked()) !== on) await cb.setChecked(on);

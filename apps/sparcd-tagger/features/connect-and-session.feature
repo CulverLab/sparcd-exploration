@@ -101,6 +101,12 @@ Feature: Connect the tagger to a collection store and manage the session
     And switching it on reveals a threshold between 5 and 600 seconds
 
   @unmapped
+  Scenario: Sorting the species list by latest assigned is off by default
+    Given the tagger is connected
+    When Settings is opened
+    Then "Sort by latest species assigned" is switched off
+
+  @unmapped
   Scenario: Disconnecting with unsynced edits asks before discarding them
     Given there are unsaved local edits in this browser
     When Disconnect is chosen in Settings

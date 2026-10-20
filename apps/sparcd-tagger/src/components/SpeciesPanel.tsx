@@ -1,8 +1,9 @@
-import { useMemo, type ReactNode, type RefObject } from 'react';
+import { useMemo, useState, type ReactNode, type RefObject } from 'react';
 import Fuse from 'fuse.js';
 import type { Species } from '../lib/species';
 import type { AppliedTag } from '../lib/drafts';
 import { encodeSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
+import { SpeciesHelp } from './SpeciesHelp';
 
 // The species selector. Persistent, scrollable, browsable — not only a
 // type-to-filter popover — because volunteers scan to recognize a species.
@@ -23,6 +24,7 @@ export type SpeciesPanelProps = {
   onClearKey: (scientificName: string) => void;
   keysUnsaved: boolean; // the last key-settings write to localStorage failed
   recent: string[]; // scientificNames, most-recent first
+  sortByRecent: boolean; // off → always alphabetical by common name; on → recent float to top
   appliedSet: Set<string>; // scientificNames applied on the focused image (✓ + add-only NO-OP)
   hasFocus: boolean; // an image is focused
   selectionCount: number; // >0 → applying a species hits the whole selection
@@ -35,6 +37,7 @@ export type SpeciesPanelProps = {
 
 export function SpeciesPanel(props: SpeciesPanelProps) {
   const { species, filter } = props;
+  const [showHelp, setShowHelp] = useState(false);
 
   const fuse = useMemo(
     () =>
@@ -47,8 +50,14 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
   );
 
   const ordered = useMemo(() => {
-    const base = filter.trim() ? fuse.search(filter.trim()).map((r) => r.item) : species;
-    if (!props.recent.length) return base;
+    // An active search ranks by text relevance regardless of the setting below
+    // — overriding what someone's actively typing to find with alphabetical
+    // order would fight the search, not help it.
+    if (filter.trim()) return fuse.search(filter.trim()).map((r) => r.item);
+    const base = props.sortByRecent
+      ? species
+      : [...species].sort((a, b) => a.commonName.localeCompare(b.commonName));
+    if (!props.sortByRecent || !props.recent.length) return base;
     const rank = new Map(props.recent.map((s, i) => [s, i]));
     // Stable float: recents to the top in recency order, everything else as-is.
     return [...base].sort((a, b) => {
@@ -56,7 +65,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
       const rb = rank.has(b.scientificName) ? rank.get(b.scientificName)! : Infinity;
       return ra - rb;
     });
-  }, [species, filter, fuse, props.recent]);
+  }, [species, filter, fuse, props.recent, props.sortByRecent]);
 
   const trimmed = filter.trim();
   const exact = species.some(
@@ -88,8 +97,20 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
         />
         {props.headerSlot}
         {props.hasFocus && (
-          <p className="text-[11px] font-body tracking-[0.12em] uppercase text-inkSoft">Available species</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-body tracking-[0.12em] uppercase text-inkSoft">Available species</p>
+            <button
+              type="button"
+              onClick={() => setShowHelp(true)}
+              className="shrink-0 min-w-11 min-h-11 md:min-w-5 md:min-h-5 grid place-items-center text-[13px] text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+              title="About the species list"
+              aria-label="About the species list"
+            >
+              ⓘ
+            </button>
+          </div>
         )}
+        {showHelp && <SpeciesHelp onClose={() => setShowHelp(false)} />}
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">

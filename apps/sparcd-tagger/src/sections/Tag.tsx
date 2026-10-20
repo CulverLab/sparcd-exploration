@@ -89,6 +89,7 @@ export function Tag() {
   const burstGroupingEnabled = useStore((s) => s.burstGroupingEnabled);
   const burstThreshold = useStore((s) => s.burstThresholdSec);
   const autoAdvanceOnTag = useStore((s) => s.autoAdvanceOnTag);
+  const sortSpeciesByRecent = useStore((s) => s.sortSpeciesByRecent);
   const pendingSnapshots = useStore((s) => s.pendingSnapshots);
   const clearPendingSnapshots = useStore((s) => s.clearPendingSnapshots);
 
@@ -1406,6 +1407,7 @@ export function Tag() {
       onClearKey: clearKey,
       keysUnsaved,
       recent,
+      sortByRecent: sortSpeciesByRecent,
       appliedSet: new Set(observations.map((o) => o.scientificName)),
       hasFocus: !!current,
       selectionCount: selected.size,

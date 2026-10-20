@@ -32,6 +32,13 @@ Feature: Assign species to images in an upload
     Then the species list is headed "Available species"
 
   @H2
+  Scenario: The species list's info control explains how to use it, and dismisses normally
+    Given an image is focused
+    When the species list's info control is used
+    Then a popup explains how to use the species list
+    And it can be dismissed with Escape, its close control, or a click outside
+
+  @H2
   Scenario: Clicking a species tile highlights it without identifying an image
     Given an image is focused
     When a species tile is selected
@@ -77,8 +84,14 @@ Feature: Assign species to images in an upload
     And applying it records that free text against the image alongside the identification
 
   @H2
-  Scenario: Species used recently are easier to reach
-    Given several species have been applied during this session
+  Scenario: The species list stays alphabetical by common name by default
+    Then the species list is ordered alphabetically by common name
+    And applying a species does not reorder the list
+
+  @H2
+  Scenario: Sorting by latest assigned can be turned on in Settings
+    Given species sorting by recent is switched on in Settings
+    And several species have been applied during this session
     Then those species are listed first, most recently used first
     And their key bindings are unchanged by that reordering
 

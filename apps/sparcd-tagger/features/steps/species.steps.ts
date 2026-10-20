@@ -23,7 +23,9 @@ import {
   ghostRow,
   positionReadout,
   listRow,
+  openSettings,
 } from './support/world';
+import { sortSpeciesByRecentCheckbox } from './support/flows';
 import {
   BUCKET,
   BUCKET_B,
@@ -88,6 +90,35 @@ Then(
 
 Then('the species list is headed "Available species"', async ({ page }) => {
   await expect(page.getByText('Available species', { exact: true })).toBeVisible();
+});
+
+// --- Species list info popup --------------------------------------------------
+
+const speciesHelp = (page: Page) =>
+  page.locator('div[role="dialog"][aria-label="Using the species list"]');
+
+When("the species list's info control is used", async ({ page }) => {
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await expect(speciesHelp(page)).toBeVisible();
+});
+
+Then('a popup explains how to use the species list', async ({ page }) => {
+  await expect(speciesHelp(page).getByRole('heading', { name: 'Using the species list' })).toBeVisible();
+  await expect(speciesHelp(page).getByText('Applying a species')).toBeVisible();
+  await expect(speciesHelp(page).getByText('Keyboard keys')).toBeVisible();
+});
+
+Then('it can be dismissed with Escape, its close control, or a click outside', async ({ page }) => {
+  await page.keyboard.press('Escape');
+  await expect(speciesHelp(page)).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await speciesHelp(page).getByRole('button', { name: 'Close' }).click();
+  await expect(speciesHelp(page)).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await speciesHelp(page).click({ position: { x: 4, y: 4 } });
+  await expect(speciesHelp(page)).toHaveCount(0);
 });
 
 Then('each species shows its reference image where one exists', async ({ page }) => {
@@ -291,6 +322,28 @@ Then(
     expect(Array.isArray(drafts)).toBe(true);
   },
 );
+
+// --- Species order -----------------------------------------------------------
+
+Then('the species list is ordered alphabetically by common name', async ({ page }) => {
+  const names = await page.locator('div.group span.italic').allTextContents();
+  const vocabOrder = names.filter((n) => VOCAB.some((v) => v.scientific === n) || n === 'Casper');
+  expect(vocabOrder).toEqual(['Canis latrans', 'Casper', 'Pecari tajacu', 'Puma concolor', 'Odocoileus hemionus']);
+});
+
+Then('applying a species does not reorder the list', async ({ page }) => {
+  await focusFrame(page, 'IMG002.JPG');
+  await speciesApply(page, 'Pecari tajacu').click();
+  const names = await page.locator('div.group span.italic').allTextContents();
+  const vocabOrder = names.filter((n) => VOCAB.some((v) => v.scientific === n) || n === 'Casper');
+  expect(vocabOrder).toEqual(['Canis latrans', 'Casper', 'Pecari tajacu', 'Puma concolor', 'Odocoileus hemionus']);
+});
+
+Given('species sorting by recent is switched on in Settings', async ({ page }) => {
+  await openSettings(page);
+  await sortSpeciesByRecentCheckbox(page).check();
+  await sectionTab(page, 'Tag').click();
+});
 
 // --- Recents ----------------------------------------------------------------
 

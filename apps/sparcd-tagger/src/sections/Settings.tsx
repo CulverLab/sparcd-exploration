@@ -31,6 +31,8 @@ export function Settings() {
   const setDistanceUnit = useStore((s) => s.setDistanceUnit);
   const autoAdvance = useStore((s) => s.autoAdvanceOnTag);
   const setAutoAdvance = useStore((s) => s.setAutoAdvanceOnTag);
+  const sortSpeciesByRecent = useStore((s) => s.sortSpeciesByRecent);
+  const setSortSpeciesByRecent = useStore((s) => s.setSortSpeciesByRecent);
   const cfg = useStore((s) => s.s3Config);
   const disconnect = useStore((s) => s.disconnect);
   const setSection = useStore((s) => s.setSection);
@@ -147,6 +149,23 @@ export function Settings() {
         <p className="mt-1.5 text-[13px] text-inkMute font-body">
           On by default. When on, an assignment advances the focused image in the current list
           order. An assignment across a selection still advances Focus only once.
+        </p>
+      </section>
+
+      <section>
+        <span className={kicker}>Species order</span>
+        <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
+          <input
+            type="checkbox"
+            className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+            checked={sortSpeciesByRecent}
+            onChange={(e) => setSortSpeciesByRecent(e.target.checked)}
+          />
+          Sort by latest species assigned
+        </label>
+        <p className="mt-1.5 text-[13px] text-inkMute font-body">
+          Off by default — the species list stays sorted alphabetically by common name. Turn it
+          on to float recently assigned species to the top instead.
         </p>
       </section>
 
