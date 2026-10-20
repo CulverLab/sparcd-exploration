@@ -300,7 +300,7 @@ function ListCell({
     `Species: ${species}`,
     ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
     ...(edited ? ['Unsaved edit'] : []),
-    ...(eff.questionable ? ['Questionable'] : []),
+    ...(eff.questionable ? ['Needs expert opinion'] : []),
   ].join('; ');
   return (
     <button
@@ -386,7 +386,7 @@ function ListCell({
           />
         )}
         {eff.questionable && (
-          <span className="text-[11px] text-warn" title="questionable" aria-label="Questionable">
+          <span className="text-[11px] text-warn" title="Needs expert opinion" aria-label="Needs expert opinion">
             ?
           </span>
         )}
@@ -475,7 +475,7 @@ function GridCell({
           <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" title="unsaved edit" />
         )}
         {eff.questionable && (
-          <span className="text-[11px] text-warn shrink-0" title="questionable">
+          <span className="text-[11px] text-warn shrink-0" title="Needs expert opinion" aria-label="Needs expert opinion">
             ?
           </span>
         )}

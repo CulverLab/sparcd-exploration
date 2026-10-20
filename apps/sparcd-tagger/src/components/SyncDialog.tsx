@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Deployment } from '@sparcd/camtrap';
-import { correctedTimestamp } from '@sparcd/camtrap';
 import { useStore } from '../store';
 import { useDraftStore, type UploadCtx } from '../lib/drafts';
 import { performSync } from '../lib/syncRunner';
 import { useCollections } from '../lib/queries';
-import type { SyncResult } from '../lib/sync';
+import type { DiffSummary, SyncResult } from '../lib/sync';
 import type { TagImage } from '../lib/workspace';
 import type { DraftRecord } from '../lib/db';
 
@@ -52,7 +51,6 @@ export function SyncDialog({
   const uploadName = uploadNameOf(ctx.uploadPrefix);
   const markUploadSynced = useDraftStore((s) => s.markUploadSynced);
   const setTimeOffset = useDraftStore((s) => s.setTimeOffset);
-  const timeOffset = useDraftStore((s) => s.timeOffset);
   const setPendingLocation = useDraftStore((s) => s.setPendingLocation);
   const discardUpload = useDraftStore((s) => s.discardUpload);
   const queryClient = useQueryClient();
@@ -87,22 +85,17 @@ export function SyncDialog({
    * those written timestamps; clearing it sooner briefly renders the old
    * canonical time while the query is still being committed.
    */
-  const waitForCanonicalTimes = async (mediaIds: string[]) => {
-    if (!mediaIds.length) return;
-    const expected = new Map(
-      images
-        .filter((image) => mediaIds.includes(image.key))
-        .map((image) => [
-          image.key,
-          correctedTimestamp(image.baseTimestamp, timeOffset, drafts[image.key]?.timeOverride ?? null, timeZone),
-        ]),
-    );
+  const waitForCanonicalTimes = async (timestamps: Record<string, string>) => {
+    // A resumed journal writes its original values, which may differ from the
+    // user's newer draft. Wait for the receipt, never the current draft's time.
+    const expected = new Map(Object.entries(timestamps));
     if (!expected.size) return;
     const queryKey = ['tagImages', connectionId, collectionKey, ctx.uploadPrefix] as const;
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const fresh = queryClient.getQueryData<TagImage[]>(queryKey);
-      if (fresh && [...expected].every(([key, timestamp]) => fresh.find((image) => image.key === key)?.baseTimestamp === timestamp)) return;
+      const freshTimes = new Map(fresh?.map((image) => [image.key, image.baseTimestamp]));
+      if (fresh && [...expected].every(([key, timestamp]) => freshTimes.get(key) === timestamp)) return;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     throw new Error('The refreshed tagger data did not include the written capture times.');
@@ -154,11 +147,11 @@ export function SyncDialog({
             { queryKey: ['tagImages', connectionId], type: 'active' },
             { throwOnError: true },
           );
-          await waitForCanonicalTimes(r.syncedMediaIds ?? []);
+          await waitForCanonicalTimes(r.receipt?.mediaTimestamps ?? {});
           await queryClient.invalidateQueries({ queryKey: ['currentDeployment', connectionId] });
-          // Clear dirty only on the drafts actually written — questionable-only
-          // drafts (no canonical target) stay surfaced as unsaved.
-          await markUploadSynced(ctx, r.syncedMediaIds ?? []);
+          // Clear dirty only after canonical media/observations have refreshed;
+          // status-only edits now have a media.csv target too.
+          await markUploadSynced(ctx, r.receipt);
         } finally {
           // The offset/location were baked into the canonical files (performSync
           // cleared them in Dexie); reset the in-memory mirrors too so the
@@ -350,17 +343,7 @@ function LocationChangeNote({ pendingLocation }: { pendingLocation: Deployment }
   );
 }
 
-function SummaryGrid({
-  summary,
-}: {
-  summary: {
-    additions: number;
-    modifications: number;
-    removals: number;
-    timeCorrections: number;
-    confirmations: number;
-  };
-}) {
+function SummaryGrid({ summary }: { summary: DiffSummary }) {
   const cells: [string, number][] = [
     ['Added', summary.additions],
     ['Changed', summary.modifications],
@@ -368,7 +351,7 @@ function SummaryGrid({
     ['Time-corrected', summary.timeCorrections],
     ['Confirmed', summary.confirmations],
   ];
-  return (
+  return <>
     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
       {cells.map(([label, n]) => (
         <div key={label} className="border border-rule px-2 py-1.5 text-center">
@@ -377,7 +360,12 @@ function SummaryGrid({
         </div>
       ))}
     </div>
-  );
+    {(summary.expertMarked > 0 || summary.expertCleared > 0) && (
+      <p className="text-[13px] font-mono text-inkSoft">
+        Need expert: {summary.expertMarked} marked, {summary.expertCleared} cleared
+      </p>
+    )}
+  </>;
 }
 
 function Backdrop({ children, onClose }: { children: React.ReactNode; onClose?: () => void }) {

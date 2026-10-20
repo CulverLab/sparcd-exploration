@@ -52,7 +52,8 @@ export function describeDiscardChanges(
       });
     }
   }
-  if (draft.questionable) changes.push({ kind: 'questionable', label: 'Marked questionable' });
+  if (draft.questionable !== !!draft.baseQuestionable)
+    changes.push({ kind: 'questionable', label: draft.questionable ? 'Marked Need expert' : 'Cleared Need expert' });
   if (draft.timeOverride && draft.timeOverride !== restoredTimestamp) {
     changes.push({ kind: 'timestamp', label: `Timestamp changed to ${draft.timeOverride}` });
   }

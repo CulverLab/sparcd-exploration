@@ -26,7 +26,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
       { keys: ['Enter'], action: 'Add top filter match (add-only)' },
       { keys: ['key'], action: 'Add the species bound to that key' },
       { keys: ['✕'], action: 'Chip ✕ removes one; Clear Species clears all' },
-      { keys: ['⇧Space'], action: 'Mark questionable' },
+      { keys: ['⇧Space'], action: 'Toggle Need expert' },
     ],
   },
   {

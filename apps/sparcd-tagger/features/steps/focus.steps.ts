@@ -831,7 +831,7 @@ Then('Tab wraps between the Focus viewer and the adjustment panel', async ({ pag
   await page.keyboard.press('Shift+Tab');
   await expect(saturation).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(focusDialog.getByRole('button', { name: "Toggle needing an expert's opinion" })).toBeFocused();
   await adjustToggle(page).click();
   await expect(brightness).toBeFocused();
   await expect(focusDialog).toBeVisible();

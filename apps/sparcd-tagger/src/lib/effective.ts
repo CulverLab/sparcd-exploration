@@ -35,9 +35,13 @@ export function effectiveOf(img: TagImage, draft: DraftRecord | undefined): Effe
   // by a prior sync) carries no pending intent, so defer to the canonical base
   // — otherwise a stale clean draft would shadow a later remote change.
   if (draft && draft.dirty)
-    return { observations: draft.observations, questionable: draft.questionable, source: 'draft' };
-  if (img.baseObservations.length)
-    return { observations: img.baseObservations, questionable: false, source: 'base' };
+    return {
+      observations: draft.observations,
+      questionable: draft.questionable !== !!draft.baseQuestionable ? draft.questionable : !!img.baseQuestionable,
+      source: 'draft',
+    };
+  if (img.baseObservations.length || img.baseQuestionable)
+    return { observations: img.baseObservations, questionable: !!img.baseQuestionable, source: 'base' };
   return { observations: [], questionable: false, source: 'none' };
 }
 

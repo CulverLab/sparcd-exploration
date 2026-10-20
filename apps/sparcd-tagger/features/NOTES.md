@@ -76,12 +76,9 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 
 ## Ambiguities and things a reviewer should decide
 
-1. **The questionable flag never leaves the browser.** It is stored in local
-   drafts, shown as a marker, and toggled per image or across a selection —
-   but the sync writes only observations and capture times, so it is never
-   published. Its drafts also stay listed as "unsaved" after a sync, because
-   only the drafts actually written are cleared. Is a local-only flag the
-   intent, or should it become part of the canonical record?
+1. **Need expert is shared after Sync.** The local draft previews a per-image
+   change; Sync writes `[NEED_EXPERT:true]` in `media.csv` comments, and clearing
+   removes that marker. Status-only edits leave observations unchanged.
 2. **Review provenance is separate from original attribution.** H3-6 covers
    repeatable review markers and their preservation through sync and local
    handoff; the canonical contract is documented in issue #371.

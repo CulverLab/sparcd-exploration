@@ -283,7 +283,7 @@ Then('row numbers and the old species indicator are absent', async ({ page }) =>
 Then('meaningful edit and questionable markers remain accessible', async ({ page }) => {
   const markers = listRow(page, 'IMG002.JPG').locator('[data-column="markers"]');
   await expect(markers.getByLabel('Unsaved edit')).toBeVisible();
-  await expect(markers.getByLabel('Questionable')).toBeVisible();
+  await expect(markers.getByLabel('Needs expert opinion')).toBeVisible();
   await expect(markers.locator('[title]')).toHaveCount(2);
 });
 
@@ -413,7 +413,7 @@ Then('Tab wraps within the Focus viewer at both boundaries', async ({ page }) =>
   const last = focusable.last();
   await last.focus();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(first).toBeFocused();
   await first.focus();
   await page.keyboard.press('Shift+Tab');
   await expect(last).toBeFocused();

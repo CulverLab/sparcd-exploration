@@ -9,6 +9,8 @@
 
 import { create } from 'zustand';
 import { shiftTimestamp, type Deployment } from '@sparcd/camtrap';
+import { draftRevisionOf } from './draftRevision';
+import type { SyncReceipt } from './syncJournal';
 import {
   db,
   draftId,
@@ -37,7 +39,7 @@ export type UploadCtx = { bucket: string; uploadPrefix: string };
 /** The canonical base observation set for an image, used to seed a brand-new
  *  draft. Seeding from the FULL base set is the core of the multi-species fix:
  *  editing one species of a multi-species image preserves every other. */
-export type BaseSeed = { observations: DraftObservation[] };
+export type BaseSeed = { observations: DraftObservation[]; questionable?: boolean };
 
 /** One image a batch operation targets: its media path + deployment, plus the
  *  optional canonical base set. The base seeds a *freshly created* draft so a
@@ -250,10 +252,9 @@ type DraftState = {
   /** Flush every pending debounced Dexie write now (manual Cmd/Ctrl+S confirm). */
   flushSaves: () => Promise<void>;
   discardUpload: (ctx: UploadCtx) => Promise<void>;
-  /** Clear `dirty` on the drafts that were just synced (they now match the new
-   *  base). Drafts not in the sync — e.g. a questionable-only flag, which has no
-   *  canonical target — are left dirty so they stay surfaced as unsaved. */
-  markUploadSynced: (ctx: UploadCtx, mediaPaths: string[]) => Promise<void>;
+  /** Acknowledge matching submitted revisions; preserve newer edits after retry. */
+  markUploadSynced: (ctx: UploadCtx, receipt: SyncReceipt | undefined) => Promise<void>;
+  markUploadPendingSync: (ctx: UploadCtx, revisions: Record<string, string>) => Promise<void>;
 };
 
 // Per-record debounce so a burst of keystrokes coalesces into one Dexie write.
@@ -297,7 +298,8 @@ export function blankDraft(
     mediaPath,
     deploymentId,
     observations: base ? base.observations.map((o) => ({ ...o })) : [],
-    questionable: false,
+    questionable: !!base?.questionable,
+    baseQuestionable: !!base?.questionable,
     timeOverride: null,
     lastEdited: '',
     dirty: false,
@@ -312,15 +314,20 @@ export const useDraftStore = create<DraftState>((set, get) => {
   const mutateMany = (
     ctx: UploadCtx,
     targets: TagTarget[],
-    patch: Partial<DraftRecord> | ((prev: DraftRecord) => Partial<DraftRecord>),
+    patch: Partial<DraftRecord> | ((prev: DraftRecord, base?: BaseSeed) => Partial<DraftRecord>),
+    resolveDirty?: (next: DraftRecord, base?: BaseSeed) => boolean,
   ): void => {
     if (!targets.length) return;
     const now = new Date().toISOString();
     const updates: Record<string, DraftRecord> = {};
     const cur = get().drafts;
     for (const { mediaPath, deploymentId, base } of targets) {
-      const prev = cur[mediaPath] ?? blankDraft(ctx, mediaPath, deploymentId, base);
-      const p = typeof patch === 'function' ? patch(prev) : patch;
+      // A clean draft has no pending intent. Seed from the latest canonical
+      // state so a later remote status/species change is not overwritten.
+      const existing = cur[mediaPath];
+      const prev = existing?.dirty || !base ? existing ?? blankDraft(ctx, mediaPath, deploymentId, base)
+        : blankDraft(ctx, mediaPath, deploymentId, base);
+      const p = typeof patch === 'function' ? patch(prev, base) : patch;
       const next: DraftRecord = {
         ...prev,
         deploymentId: deploymentId || prev.deploymentId,
@@ -328,6 +335,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
         lastEdited: now,
         dirty: true,
       };
+      if (resolveDirty) next.dirty = resolveDirty(next, base);
       updates[mediaPath] = next;
       scheduleSave(next);
     }
@@ -461,7 +469,16 @@ export const useDraftStore = create<DraftState>((set, get) => {
       mutateMany(ctx, [{ mediaPath, deploymentId, base }], { timeOverride: iso }),
 
     setQuestionableMany: (ctx, targets, value) =>
-      mutateMany(ctx, targets, { questionable: value }),
+      mutateMany(ctx, targets, (prev, base) => ({
+        questionable: value,
+        baseQuestionable: base?.questionable ?? prev.baseQuestionable,
+      }), (next, base) => !base ||
+        !!next.pendingSync ||
+        next.questionable !== !!base.questionable ||
+        next.timeOverride !== null ||
+        !!next.confirmedSpecies?.length ||
+        !!next.removedSpecies?.length ||
+        JSON.stringify(next.observations) !== JSON.stringify(base.observations)),
 
     applyTimeOffsetToSelection: (ctx, targets, delta, timeZone) => {
       // Precompute the new absolute override per image (delta on top of the
@@ -538,23 +555,49 @@ export const useDraftStore = create<DraftState>((set, get) => {
       }
     },
 
-    markUploadSynced: async (ctx, mediaPaths) => {
-      void ctx;
-      if (!mediaPaths.length) return;
+    markUploadPendingSync: async (ctx, revisions) => {
       const next = { ...get().drafts };
       const changed: DraftRecord[] = [];
-      for (const path of mediaPaths) {
+      for (const path of Object.keys(revisions)) {
         const rec = next[path];
-        if (!rec?.dirty) continue;
+        if (!rec || rec.bucket !== ctx.bucket || rec.uploadPrefix !== ctx.uploadPrefix || rec.pendingSync) continue;
+        const timer = pending.get(rec.id);
+        if (timer) clearTimeout(timer);
+        pending.delete(rec.id);
+        const submitted = { ...rec, pendingSync: true };
+        next[path] = submitted;
+        changed.push(submitted);
+      }
+      if (changed.length) {
+        set({ drafts: next });
+        await db.drafts.bulkPut(changed);
+      }
+    },
+
+    markUploadSynced: async (ctx, receipt) => {
+      // Legacy journals cannot prove which revision was written. Keep their
+      // drafts pending rather than acknowledging unrelated current edits.
+      if (!receipt) return;
+      const next = { ...get().drafts };
+      const changed: DraftRecord[] = [];
+      for (const [path, submitted] of Object.entries(receipt.draftRevisions)) {
+        const rec = next[path];
+        if (!rec || rec.bucket !== ctx.bucket || rec.uploadPrefix !== ctx.uploadPrefix) continue;
+        const matches = draftRevisionOf(rec) === submitted;
+        if (matches && !rec.dirty) continue;
+        const publishedStatus = receipt.needExpert[path];
+        if (!matches && publishedStatus === undefined) continue;
         // Drop any debounced write for this record — we rewrite it clean now.
         const timer = pending.get(rec.id);
         if (timer) {
           clearTimeout(timer);
           pending.delete(rec.id);
         }
-        const clean = {
+        const acknowledged: DraftRecord = matches ? {
           ...rec,
           dirty: false,
+          pendingSync: undefined,
+          baseQuestionable: rec.questionable,
           confirmedSpecies: undefined,
           removedSpecies: undefined,
           // Review events are now in the canonical observations.csv. Remove
@@ -563,9 +606,17 @@ export const useDraftStore = create<DraftState>((set, get) => {
             ...observation,
             reviewEvents: undefined,
           })),
+        } : {
+          ...rec,
+          pendingSync: undefined,
+          // The old operation completed, but a newer draft still owns its
+          // intended status/species/time. Rebase only the published status so
+          // a reversal before retry remains a pending clear after reload.
+          baseQuestionable: publishedStatus,
+          dirty: rec.dirty || rec.questionable !== publishedStatus,
         };
-        next[path] = clean;
-        changed.push(clean);
+        next[path] = acknowledged;
+        changed.push(acknowledged);
       }
       if (changed.length) {
         set({ drafts: next });
