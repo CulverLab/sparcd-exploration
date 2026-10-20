@@ -246,25 +246,14 @@ function Row(p: RowProps) {
         )}
       </button>
 
-      {/* Actions sit before the key badge so the badge stays anchored to the
-          right edge — the hover-only buttons reserve space even when hidden, so
-          ordering them last would shove the badge left and break alignment. */}
+      {/* Keep the Add button and key badge in fixed trailing slots. The optional
+          key controls can grow to their left without shifting the Add button
+          from row to row. */}
       <div className="flex items-center gap-1.5 shrink-0">
         {p.capturing ? (
           <span className="text-[11px] font-mono text-accent animate-pulse">press a key…</span>
         ) : (
           <>
-            {p.onSelect && (
-              <button
-                onClick={p.onApply}
-                disabled={p.disabled}
-                className="inline-flex items-center justify-center min-w-11 min-h-11 md:min-w-7 md:min-h-7 text-base font-mono text-accent hover:bg-paperHover disabled:text-inkMute disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
-                title={p.applied ? `${p.common} already applied` : `Apply ${p.common}`}
-                aria-label={p.applied ? `${p.common} already applied` : `Apply ${p.common}`}
-              >
-                +
-              </button>
-            )}
             {p.onStartCapture && (
               <button
                 onClick={p.onStartCapture}
@@ -284,18 +273,31 @@ function Row(p: RowProps) {
                 ✕
               </button>
             )}
-            {p.badge && (
-              <kbd
-                className={`px-1.5 h-5 min-w-5 grid place-items-center border text-[11px] font-mono uppercase ${
-                  p.badgeConflict
-                    ? 'border-inkMute text-inkMute line-through'
-                    : 'border-ink text-ink'
-                }`}
-                title={p.badgeConflict ?? undefined}
+            {p.onSelect && (
+              <button
+                onClick={p.onApply}
+                disabled={p.disabled}
+                className="inline-flex w-11 h-11 md:w-7 md:h-7 shrink-0 items-center justify-center text-base font-mono text-accent hover:bg-paperHover disabled:text-inkMute disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+                title={p.applied ? `${p.common} already applied` : `Apply ${p.common}`}
+                aria-label={p.applied ? `${p.common} already applied` : `Apply ${p.common}`}
               >
-                {p.badge}
-              </kbd>
+                +
+              </button>
             )}
+            <span className="inline-flex w-8 shrink-0 justify-center">
+              {p.badge && (
+                <kbd
+                  className={`px-1.5 h-5 min-w-5 grid place-items-center border text-[11px] font-mono uppercase ${
+                    p.badgeConflict
+                      ? 'border-inkMute text-inkMute line-through'
+                      : 'border-ink text-ink'
+                  }`}
+                  title={p.badgeConflict ?? undefined}
+                >
+                  {p.badge}
+                </kbd>
+              )}
+            </span>
             {p.badge && p.badgeConflict && <span className="sr-only">{p.badgeConflict}</span>}
           </>
         )}

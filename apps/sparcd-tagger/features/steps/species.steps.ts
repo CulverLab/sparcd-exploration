@@ -91,6 +91,54 @@ Then('the species list is headed "Available species"', async ({ page }) => {
   await expect(page.getByText('Available species', { exact: true })).toBeVisible();
 });
 
+Then('the Add controls align in Overview, Focus and narrow layouts', async ({ page }) => {
+  const javelinaAdd = speciesApply(page, 'Pecari tajacu');
+  const muleDeerAdd = speciesApply(page, 'Odocoileus hemionus');
+
+  const expectAligned = async () => {
+    // Mule Deer has the vocabulary D key; Javelina has no key. Their optional
+    // key actions and badges must not shift the shared Add-control column.
+    await expect(speciesBadge(page, 'Odocoileus hemionus')).toHaveText('D');
+    await expect(speciesAssignKey(page, 'Pecari tajacu')).toBeVisible();
+    await expect(speciesClearKey(page, 'Odocoileus hemionus')).toBeVisible();
+    const addControls = page
+      .getByTestId('species-panel')
+      .locator('button[title^="Apply "], button[title$="already applied"]');
+    const boxes = await addControls.evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { x: rect.x, width: rect.width, height: rect.height };
+      }),
+    );
+    expect(boxes.length).toBeGreaterThanOrEqual(4);
+    for (const box of boxes) {
+      expect(Math.abs(box.x - boxes[0].x)).toBeLessThanOrEqual(1);
+    }
+    const javelinaBox = await javelinaAdd.boundingBox();
+    const muleDeerBox = await muleDeerAdd.boundingBox();
+    expect(javelinaBox).not.toBeNull();
+    expect(muleDeerBox).not.toBeNull();
+    expect(Math.abs(javelinaBox!.x - muleDeerBox!.x)).toBeLessThanOrEqual(1);
+  };
+
+  await expectAligned();
+  await expect(javelinaAdd).toHaveAccessibleName('Apply Javelina');
+  await expect(javelinaAdd).toHaveAttribute('title', 'Apply Javelina');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectAligned();
+
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await enterFocusView(page);
+  await expectAligned();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectAligned();
+  const touchTarget = await javelinaAdd.boundingBox();
+  expect(touchTarget?.width).toBeGreaterThanOrEqual(44);
+  expect(touchTarget?.height).toBeGreaterThanOrEqual(44);
+});
+
 Then('each species shows its reference image where one exists', async ({ page }) => {
   for (const s of VOCAB) {
     await expect(speciesRow(page, s.scientific).locator('img')).toHaveAttribute(

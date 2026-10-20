@@ -32,6 +32,11 @@ Feature: Assign species to images in an upload
     Then the species list is headed "Available species"
 
   @H2
+  Scenario: Species Add controls stay aligned when rows have different key controls
+    Given an image is focused
+    Then the Add controls align in Overview, Focus and narrow layouts
+
+  @H2
   Scenario: Clicking a species tile highlights it without identifying an image
     Given an image is focused
     When a species tile is selected
