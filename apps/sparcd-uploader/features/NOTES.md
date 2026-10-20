@@ -49,9 +49,9 @@ Coverage notes for the as-built uploader feature files.
   publishes as observation rows in the same upload. Until then the tags live in
   the hand-off record, which is swept only after 30 days without being opened
   or tagged, so a batch can wait weeks for a connection. An untagged batch is still
-  accepted and recorded as carrying no species. Attribution (the tagger's
-  identity travelling with the tags) is recorded on the hand-off record but is
-  **not written into the published data** — that criterion stays unmet.
+  accepted and recorded as carrying no species. The tagger's identity travels
+  with the identifications and is written to `observations.csv` in the
+  `classified_by` column.
 - **F3** (announce new data) — only the negative criterion is met: a failed or
   abandoned upload publishes no metadata, so nothing sees it. There is no
   notification mechanism.

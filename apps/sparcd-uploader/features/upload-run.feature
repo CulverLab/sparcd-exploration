@@ -44,7 +44,7 @@ Feature: Upload and publish a batch
     And nothing is written to storage
     And the run is not recorded in History
 
-  @A1
+  @unmapped
   Scenario: The title-bar pill shows dry-run during blob processing and after completion
     Given some files are still being examined
     When the operator opts into a dry run
@@ -145,7 +145,7 @@ Feature: Upload and publish a batch
     # The uploader has no tagging surface at all; every upload it makes is
     # untagged by construction.
 
-  @A1
+  @unmapped
   Scenario: Two untagged files with the same name in different subfolders get distinct observation IDs
     Given a batch contains two files with the same filename under different subfolders
     When a batch is published
