@@ -32,6 +32,16 @@ Feature: Assign species to images in an upload
     Then the species list is headed "Available species"
 
   @H2
+  Scenario: The species list's info control explains how to use it, and dismisses normally
+    Given an image is focused
+    And a species keyboard shortcut is configured
+    When the species list's info control is used
+    Then a popup explains how to use the species list
+    And clicking inside the popup does not dismiss it
+    And the popup blocks species and navigation shortcuts
+    And it can be dismissed with Escape, its close control, or a click outside
+
+  @H2
   Scenario: Clicking a species tile highlights it without identifying an image
     Given an image is focused
     When a species tile is selected

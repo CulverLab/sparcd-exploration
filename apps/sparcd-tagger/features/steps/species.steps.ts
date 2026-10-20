@@ -91,6 +91,68 @@ Then('the species list is headed "Available species"', async ({ page }) => {
   await expect(page.getByText('Available species', { exact: true })).toBeVisible();
 });
 
+// --- Species list info popup --------------------------------------------------
+
+const speciesHelp = (page: Page) =>
+  page.locator('div[role="dialog"][aria-label="Using the species list"]');
+
+When("the species list's info control is used", async ({ page }) => {
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await expect(speciesHelp(page)).toBeVisible();
+});
+
+Then('a popup explains how to use the species list', async ({ page }) => {
+  const dialog = speciesHelp(page);
+  await expect(dialog.getByRole('heading', { name: 'Using the species list' })).toBeVisible();
+  await expect(dialog).toContainText('Each row is one species');
+  await expect(dialog.getByRole('heading', { name: 'Applying a species' })).toBeVisible();
+  await expect(dialog).toContainText('Click + to add it to the focused image');
+  await expect(dialog).toContainText('Press its assigned key');
+  await expect(dialog).toContainText('Drag it onto an image to add it there');
+  await expect(dialog).toContainText('Type to filter the visible list');
+  await expect(dialog).toContainText('Enter adds the first species in the original list');
+  await expect(dialog).toContainText('A ✓ means that species is already on the focused image');
+  await expect(dialog.getByRole('heading', { name: 'Reference photos' })).toBeVisible();
+  await expect(dialog).toContainText('Use the ⊕ control beside a thumbnail');
+  await expect(dialog.getByRole('heading', { name: 'Keyboard keys' })).toBeVisible();
+  await expect(dialog).toContainText('Hover (or focus) a row to assign or change its key');
+  await expect(dialog).toContainText('A struck-through key means another species is already using it');
+  await expect(dialog.getByRole('heading', { name: 'Recently used' })).toBeVisible();
+  await expect(dialog).toContainText("Species you've applied recently float to the top of the list");
+});
+
+Given('a species keyboard shortcut is configured', async ({ page }) => {
+  await speciesAssignKey(page, 'Pecari tajacu').click();
+  await page.keyboard.press('v');
+  await expect(speciesBadge(page, 'Pecari tajacu')).toHaveText('V');
+});
+
+Then('clicking inside the popup does not dismiss it', async ({ page }) => {
+  const dialog = speciesHelp(page);
+  await dialog.getByRole('heading', { name: 'Applying a species' }).click();
+  await expect(dialog).toBeVisible();
+});
+
+Then('the popup blocks species and navigation shortcuts', async ({ page }) => {
+  await page.keyboard.press('v');
+  await page.keyboard.press('ArrowRight');
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAttribute('aria-current', 'true');
+  await expect.poll(async () => draftSpecies(page, 'IMG002.JPG')).toEqual([]);
+});
+
+Then('it can be dismissed with Escape, its close control, or a click outside', async ({ page }) => {
+  await page.keyboard.press('Escape');
+  await expect(speciesHelp(page)).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await speciesHelp(page).getByRole('button', { name: 'Close' }).click();
+  await expect(speciesHelp(page)).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'About the species list' }).click();
+  await speciesHelp(page).click({ position: { x: 4, y: 4 } });
+  await expect(speciesHelp(page)).toHaveCount(0);
+});
+
 Then('each species shows its reference image where one exists', async ({ page }) => {
   for (const s of VOCAB) {
     await expect(speciesRow(page, s.scientific).locator('img')).toHaveAttribute(

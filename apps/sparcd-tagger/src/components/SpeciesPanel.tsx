@@ -3,6 +3,7 @@ import Fuse from 'fuse.js';
 import type { Species } from '../lib/species';
 import type { AppliedTag } from '../lib/drafts';
 import { encodeSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
+import { SpeciesHelp } from './SpeciesHelp';
 
 // The species selector. Persistent, scrollable, browsable — not only a
 // type-to-filter popover — because volunteers scan to recognize a species.
@@ -12,6 +13,9 @@ import { encodeSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
 
 export type SpeciesPanelProps = {
   species: Species[];
+  showHelp: boolean;
+  onHelpOpen: () => void;
+  onHelpClose: () => void;
   onApply: (tag: AppliedTag) => void; // add-only; count omitted defaults to 1
   filter: string;
   onFilterChange: (v: string) => void;
@@ -88,8 +92,20 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
         />
         {props.headerSlot}
         {props.hasFocus && (
-          <p className="text-[11px] font-body tracking-[0.12em] uppercase text-inkSoft">Available species</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-body tracking-[0.12em] uppercase text-inkSoft">Available species</p>
+            <button
+              type="button"
+              onClick={props.onHelpOpen}
+              className="shrink-0 min-w-11 min-h-11 md:min-w-5 md:min-h-5 grid place-items-center text-[13px] text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+              title="About the species list"
+              aria-label="About the species list"
+            >
+              ⓘ
+            </button>
+          </div>
         )}
+        {props.showHelp && <SpeciesHelp onClose={props.onHelpClose} />}
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
