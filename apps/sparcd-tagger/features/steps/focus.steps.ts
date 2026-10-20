@@ -370,6 +370,42 @@ Then('the fullscreen viewer is closed', async ({ page }) => {
   await expect(lightbox(page)).toHaveCount(0);
 });
 
+Then(
+  'the Focus view shows Has species and Questionable badges for the focused image',
+  async ({ page }) => {
+    const pane = page.getByTestId('focus-drop-zone');
+    await expect(pane.getByLabel('Has species', { exact: false })).toBeVisible();
+    await expect(pane.getByLabel('Questionable', { exact: true })).toBeVisible();
+  },
+);
+
+When('Focus is resized to a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the status badges do not overlap the Adjust or image-navigation controls', async ({ page }) => {
+  const badges = await page.getByTestId('focus-image-status-badges').boundingBox();
+  const adjust = await page.getByRole('button', { name: /^Adjust/ }).boundingBox();
+  expect(badges).not.toBeNull();
+  expect(adjust).not.toBeNull();
+  const intersects = (a: NonNullable<typeof badges>, b: NonNullable<typeof adjust>) =>
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+  expect(intersects(badges!, adjust!)).toBe(false);
+  for (const name of ['Previous image', 'Next image']) {
+    const control = page.getByRole('button', { name, exact: true });
+    if (await control.count()) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(intersects(badges!, box!)).toBe(false);
+    }
+  }
+});
+
+Then('no status badges are shown in the fullscreen viewer', async ({ page }) => {
+  await expect(lightbox(page).getByLabel('Has species', { exact: false })).toHaveCount(0);
+  await expect(lightbox(page).getByLabel('Questionable', { exact: true })).toHaveCount(0);
+});
+
 Then('it fills the window over a dimmed background', async ({ page }) => {
   const box = (await lightbox(page).boundingBox())!;
   const viewport = page.viewportSize()!;

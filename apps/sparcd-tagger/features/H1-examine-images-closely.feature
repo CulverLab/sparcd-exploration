@@ -62,6 +62,15 @@ Feature: Examine an image closely enough to catch every species
     When Escape is pressed in the fullscreen viewer
     Then the fullscreen viewer is closed
 
+  @H1
+  Scenario: Image status badges appear in regular Focus but not in fullscreen
+    When it is marked questionable
+    Then the Focus view shows Has species and Questionable badges for the focused image
+    When Focus is resized to a narrow screen
+    Then the status badges do not overlap the Adjust or image-navigation controls
+    When the image is opened fullscreen
+    Then no status badges are shown in the fullscreen viewer
+
   @H1 @H1-5
   Scenario: Moving to another image starts it fitted to the pane
     Given the current image is zoomed in and panned

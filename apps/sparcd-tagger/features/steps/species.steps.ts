@@ -230,6 +230,21 @@ Then('applying a real species afterwards removes the Ghost label', async ({ page
   await expect(gridCell(page, 'IMG001.JPG')).not.toContainText('Ghost');
 });
 
+Then('{string} shows no Has species badge', async ({ page }, fileName: string) => {
+  await expect(gridCell(page, fileName)).not.toHaveAccessibleName(/Has species/);
+});
+
+Then('the Ghost-classified image shows a Has species badge', async ({ page }) => {
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAccessibleName(/Has species/);
+});
+
+When('an unclassified image is classified as Ghost', async ({ page }) => {
+  await focusFrame(page, 'IMG002.JPG');
+  await ghostRow(page)
+    .locator('button[title^="Apply"], button[title$="already applied"]')
+    .click();
+});
+
 // --- Filtering --------------------------------------------------------------
 
 When('text is typed into the species filter', async ({ page }) => {
