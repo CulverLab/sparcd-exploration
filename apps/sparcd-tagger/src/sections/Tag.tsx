@@ -48,6 +48,7 @@ import { effectiveOf } from '../lib/effective';
 import { focusLocationLabel } from '../lib/focusLocation';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
+import { formatFocusPosition } from '../lib/focusPosition';
 import { EMPTY_IMAGE_FILTER, matchesImageFilter, type ImageFilter } from '../lib/imageFilter';
 import { parseSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
 import {
@@ -782,6 +783,11 @@ export function Tag() {
     if (target != null) gotoImage(target);
   };
 
+  const filteredFocusPosition = imageFilterActive ? visibleIndices.indexOf(focus) : focus;
+  const focusPositionCount = imageFilterActive ? visibleIndices.length : list.length;
+  const focusPosition = filteredFocusPosition + 1;
+  const focusPositionValid = !!current && focusPosition > 0 && focusPosition <= focusPositionCount;
+  const focusPositionLabel = formatFocusPosition(focusPosition, focusPositionCount, imageFilterActive);
   const previousIndex = imageFilterActive ? nextVisibleIndex(visibleIndices, focus, -1) : focus > 0 ? focus - 1 : undefined;
   const nextIndex = imageFilterActive ? nextVisibleIndex(visibleIndices, focus, 1) : focus < list.length - 1 ? focus + 1 : undefined;
   const canGoPrevious = previousIndex != null;
@@ -1292,37 +1298,37 @@ export function Tag() {
           aria-modal="true"
           aria-label="Focus image viewer"
         >
-          <div className="shrink-0 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 border-b border-rule bg-panel px-3 py-1 sm:flex sm:justify-between">
-            <div className="col-span-2 min-w-0 text-[13px] font-mono text-ink truncate sm:flex-1">
+          <div className="shrink-0 grid grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 border-b border-rule bg-panel px-3 py-1">
+            <div className="col-span-2 min-w-0 text-[13px] font-mono text-ink truncate lg:col-span-1" title={current?.fileName}>
               Focus{current ? ` · ${current.fileName}` : ''}
             </div>
-            {locationLabel && (
-              <span
-                className="col-start-1 row-start-2 min-w-0 max-w-full truncate font-mono text-[10px] text-inkSoft sm:shrink-0 sm:max-w-[42vw]"
-                aria-label={`Location: ${locationLabel}`}
-                title={`Location: ${locationLabel}`}
-              >
-                {locationLabel}
-              </span>
+            {focusPositionValid && (
+              <div role="progressbar" aria-label="Image position" aria-valuemin={1}
+                aria-valuenow={focusPosition} aria-valuemax={focusPositionCount} aria-valuetext={focusPositionLabel}
+                className="col-span-2 row-start-3 justify-self-center w-[min(70vw,260px)] min-w-0 lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:w-[min(26vw,260px)] text-center font-mono text-[11px] text-inkSoft">
+                <span aria-hidden="true" className="block whitespace-nowrap">{focusPositionLabel}</span>
+                <span aria-hidden="true" className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-rule">
+                  <span className="block h-full bg-accent" style={{ width: `${focusPosition / focusPositionCount * 100}%` }} />
+                </span>
+              </div>
             )}
-            {current?.timestampSource === 'exif-modify' && (
-              <span
-                className="col-start-2 row-start-2 shrink-0 whitespace-nowrap font-body text-[10px] font-[600] tracking-[0.08em] uppercase text-inkSoft border border-rule px-1"
-                title="Read from EXIF ModifyDate. This can be metadata-edit time rather than the camera capture time."
-              >
-                EXIF Modified
-              </span>
-            )}
-            <button
-              ref={focusCloseRef}
-              type="button"
-              onClick={closeFocus}
-              className="col-start-3 row-start-1 row-span-2 shrink-0 min-h-11 min-w-11 grid place-items-center border border-rule text-[20px] leading-none text-inkSoft hover:border-ink hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              aria-label="Close Focus"
-              title="Close Focus (Escape)"
-            >
-              ×
-            </button>
+            <div className="col-span-2 row-start-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 flex w-full min-w-0 items-center justify-end gap-2">
+              {locationLabel && (
+                <span className="min-w-0 max-w-[35vw] truncate font-mono text-[10px] text-inkSoft"
+                  aria-label={`Location: ${locationLabel}`} title={`Location: ${locationLabel}`}>
+                  {locationLabel}
+                </span>
+              )}
+              {current?.timestampSource === 'exif-modify' && (
+                <span className="shrink-0 font-body text-[10px] font-[600] tracking-[0.08em] uppercase text-inkSoft border border-rule px-1"
+                  title="Read from EXIF ModifyDate. This can be metadata-edit time rather than the camera capture time.">
+                  EXIF Modified
+                </span>
+              )}
+              <button ref={focusCloseRef} type="button" onClick={closeFocus}
+                className="shrink-0 min-h-11 min-w-11 grid place-items-center border border-rule text-[20px] leading-none text-inkSoft hover:border-ink hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                aria-label="Close Focus" title="Close Focus (Escape)">×</button>
+            </div>
           </div>
           <div className="flex-1 min-h-0">
             <ResizableSplit
