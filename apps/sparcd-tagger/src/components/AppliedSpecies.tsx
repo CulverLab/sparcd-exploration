@@ -15,6 +15,10 @@ export type AppliedSpeciesProps = {
   onSetCount: (scientificName: string, count: number) => void;
   onRemove: (scientificName: string) => void;
   onDetagAll: () => void;
+  // Focus has a dedicated species column with room to spare, so it skips the
+  // summary-and-expand toggle entirely and always lists every applied species
+  // — capped to a few rows with a scrollbar rather than growing unbounded.
+  alwaysExpanded?: boolean;
 };
 
 function labelOf(o: DraftObservation): string {
@@ -33,11 +37,54 @@ function reviewStateLabel(o: DraftObservation): string {
   return reviewLabel(o) ?? 'Reviewed';
 }
 
+function ChipList({
+  obs,
+  onSetCount,
+  onRemove,
+}: {
+  obs: DraftObservation[];
+  onSetCount: AppliedSpeciesProps['onSetCount'];
+  onRemove: AppliedSpeciesProps['onRemove'];
+}) {
+  return (
+    <>
+      {obs.map((o) => (
+        <Chip
+          key={o.scientificName}
+          obs={o}
+          onSetCount={(n) => onSetCount(o.scientificName, n)}
+          onRemove={() => onRemove(o.scientificName)}
+        />
+      ))}
+    </>
+  );
+}
+
 export function AppliedSpecies(props: AppliedSpeciesProps) {
   const [expanded, setExpanded] = useState(false);
   const obs = props.observations;
 
   if (props.disabled || obs.length === 0) return null;
+
+  if (props.alwaysExpanded) {
+    return (
+      <div className="flex flex-col gap-1.5 w-full">
+        <div
+          data-testid="applied-species-list"
+          className="flex flex-wrap items-start gap-1.5 max-h-24 overflow-y-auto"
+        >
+          <ChipList obs={obs} onSetCount={props.onSetCount} onRemove={props.onRemove} />
+        </div>
+        <button
+          onClick={props.onDetagAll}
+          className="self-start text-[11px] font-mono text-inkMute hover:text-warn underline decoration-dotted focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+          title="Remove all species from this image"
+        >
+          Clear Species
+        </button>
+      </div>
+    );
+  }
 
   const multi = obs.length > 1;
   // Collapsed multi-species summary: first chip + "+N more".
@@ -72,14 +119,7 @@ export function AppliedSpecies(props: AppliedSpeciesProps) {
         </button>
       ) : null}
       {(!multi || expanded) ? (
-        obs.map((o) => (
-          <Chip
-            key={o.scientificName}
-            obs={o}
-            onSetCount={(n) => props.onSetCount(o.scientificName, n)}
-            onRemove={() => props.onRemove(o.scientificName)}
-          />
-        ))
+        <ChipList obs={obs} onSetCount={props.onSetCount} onRemove={props.onRemove} />
       ) : null}
 
       <button

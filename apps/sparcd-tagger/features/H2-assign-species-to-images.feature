@@ -333,6 +333,18 @@ Feature: Assign species to images in an upload
     And Escape, the close control or a click outside dismisses it
 
   @H2
+  Scenario: Focus lists every applied species without a summary toggle to expand
+    Given the focused image carries several species
+    When Focus is entered
+    Then every applied species is listed in Focus with no summary control to expand
+
+  @H2
+  Scenario: A long species list in Focus scrolls instead of growing the panel
+    Given the focused image carries four species
+    When Focus is entered
+    Then the applied species list in Focus scrolls within a fixed height
+
+  @H2
   Scenario: An upload with nothing to tag offers no species panel at all
     Given an upload whose canonical media list has no images is opened
     Then the workspace states that the upload has no taggable images

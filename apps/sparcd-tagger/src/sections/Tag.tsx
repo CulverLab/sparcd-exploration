@@ -1280,7 +1280,7 @@ export function Tag() {
                 )}
               </div>
             </div>
-            <SpeciesPanel {...speciesPanelProps()} />
+            <SpeciesPanel {...speciesPanelProps('overview')} />
           </div>
         ) : null}
       </div>
@@ -1340,7 +1340,7 @@ export function Tag() {
                   onDropSpecies={(tag) => applyIncrementAt(focus, tag)}
                 />
               }
-              second={<SpeciesPanel {...speciesPanelProps()} />}
+              second={<SpeciesPanel {...speciesPanelProps('focus')} />}
             />
           </div>
         </div>,
@@ -1401,7 +1401,7 @@ export function Tag() {
     </div>
   );
 
-  function speciesPanelProps() {
+  function speciesPanelProps(view: 'overview' | 'focus') {
     const observations = eff?.observations ?? [];
     return {
       species: speciesList,
@@ -1442,6 +1442,10 @@ export function Tag() {
           <AppliedSpecies
             observations={observations}
             disabled={!current}
+            // Focus has its own dedicated species column with room to spare, so
+            // it always lists every applied species instead of collapsing
+            // behind the Overview strip's summary-and-expand toggle (#559).
+            alwaysExpanded={view === 'focus'}
             onSetCount={(sci, n) =>
               current && setSpeciesCountFn(
                 ctx,
