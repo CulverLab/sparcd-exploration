@@ -448,7 +448,7 @@ export function TablePanel() {
   }
 
   return (
-    <section id="table" className="tablepanel panel" aria-label="Table">
+    <section id="table" className="tablepanel panel" aria-label="Table" aria-busy={updating}>
       {/* One line that stays under the filter bar while the table scrolls. */}
       <div className="tbl-head">
         <div className="tbl-tools">

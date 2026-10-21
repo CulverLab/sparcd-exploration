@@ -135,7 +135,7 @@ export {
 } from './coords';
 export { HEX_SIZE_DEG, hexCenter, hexGrid, hexOf, hexRing, hexSizeFor, siteHexes, type HexGrid, type SiteHexes } from './hex';
 export { isNoLocation, mountainRange, normalizeLocationId } from './locationIds';
-export { dayNumber, formatTimestamp24, parseLocalTimestamp, type LocalTime } from './time';
+export { dayNumber, formatTimestamp24, localTimeKey, parseLocalTimestamp, type LocalTime } from './time';
 export {
   HEAD_BYTES,
   IMAGES_IN_FLIGHT,

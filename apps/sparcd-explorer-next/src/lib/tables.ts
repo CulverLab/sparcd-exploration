@@ -8,6 +8,7 @@ import {
   checkNearDuplicateIds,
   elevationIn,
   formatDegrees,
+  localTimeKey,
   reduceDegrees,
   shownPosition,
   type LocationRow,
@@ -181,31 +182,9 @@ export function photoTimeRanks(model: Model): Uint32Array {
   return ranks;
 }
 
-/**
- * `2024-03-05 14:07:09` as one number that sorts as the text does: digits
- * padded to the second, then 0 for a date alone, 1 for minutes and 2 for
- * seconds, as a shorter text sorts first. Null for any other text. A stored
- * timestamp works as is: its `T` reads as the space and anything after the
- * seconds is left out, as `formatTimestamp24` shows it.
- */
+/** A photo timestamp's sort key: the shared camera-clock parser's, so sorting and filtering agree on what is a date. */
 export function timeKey(time: string): number | null {
-  const len = Math.min(time.length, 19);
-  if (len !== 10 && len !== 16 && len !== 19) return null;
-  let key = 0;
-  for (let i = 0; i < len; i++) {
-    const c = time.charCodeAt(i);
-    if (i === 10) {
-      if (c !== 32 && c !== 84) return null;
-      continue;
-    }
-    const sep = i === 4 || i === 7 ? 45 : i === 13 || i === 16 ? 58 : 0;
-    if (sep) {
-      if (c !== sep) return null;
-    } else if (c < 48 || c > 57) return null;
-    else key = key * 10 + c - 48;
-  }
-  const digits = len === 10 ? 8 : len === 16 ? 12 : 14;
-  return key * 10 ** (14 - digits) * 3 + (len === 10 ? 0 : len === 16 ? 1 : 2);
+  return localTimeKey(time);
 }
 
 /**

@@ -40,7 +40,7 @@ const layout = (name: string) => ({ selector: '[aria-label="Layout"] button', te
 const header = (name: string) => ({ selector: '#table th button', text: name });
 const has = (selector: string) => `!!document.querySelector(${JSON.stringify(selector)})`;
 const sortedBy = (name: string, dir: string) =>
-  `[...document.querySelectorAll('#table th[aria-sort="${dir}"]')].some((th) => th.textContent.startsWith(${JSON.stringify(name)})) && ${has('#table tbody tr[data-index]')}`;
+  `[...document.querySelectorAll('#table th[aria-sort="${dir}"]')].some((th) => th.textContent.startsWith(${JSON.stringify(name)})) && ${has('#table tbody tr[data-index]')} && document.querySelector('#table')?.getAttribute('aria-busy') !== 'true'`;
 const LIST = `!!document.querySelector('#table thead')?.textContent.includes('Date and time') && ${has('#table tbody tr[data-index]')}`;
 
 const STEPS: [string, { selector: string; text: string }, string][] = [

@@ -67,6 +67,12 @@ describe('the sort, fast at any size', () => {
     expect(byKey).toEqual(byText);
     expect(timeKey('2024-03-05T14:07:09.250-07:00')).toBe(timeKey('2024-03-05 14:07:09'));
     expect([timeKey('05/03/2024'), timeKey(''), timeKey('2024-3-5')]).toEqual([null, null, null]);
+    // Minute precision, with or without an offset, is a time like any other.
+    expect(timeKey('2024-03-05T14:07Z')).toBe(timeKey('2024-03-05 14:07'));
+    expect(timeKey('2024-03-05T14:07-07:00')).toBe(timeKey('2024-03-05 14:07'));
+    expect(timeKey('2024-03-05T14:07Z')!).toBeGreaterThan(timeKey('2023-12-31 23:59:59')!);
+    // Out-of-range fields are not a time.
+    expect([timeKey('2024-99-99T99:99:99'), timeKey('2024-02-30'), timeKey('2024-03-05T24:00:00')]).toEqual([null, null, null]);
   });
 
   it('ranks every photo by time once, and the Photos table sorts by it, text that isn\'t a time with the empty ones', () => {

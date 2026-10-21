@@ -185,7 +185,8 @@ const QUICK: Record<string, [string, string, string]> = {
   'sorting the List by Species': [
     '#table th button',
     'Species',
-    `[...document.querySelectorAll('#table th[aria-sort="ascending"]')].some((th) => th.textContent.startsWith('Species'))`,
+    // The header sorts at once; the rows follow when the deferred table catches up (aria-busy clears).
+    `[...document.querySelectorAll('#table th[aria-sort="ascending"]')].some((th) => th.textContent.startsWith('Species')) && document.querySelector('#table')?.getAttribute('aria-busy') !== 'true'`,
   ],
 };
 
