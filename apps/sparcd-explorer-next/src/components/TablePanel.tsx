@@ -14,7 +14,7 @@ import {
 } from '@/data';
 import { activityByLocation } from '@/lib/activity';
 import { LIST_NOUNS, matchLegend, noneTicked } from '@/lib/filterLabels';
-import { barFill, monthAxis, monthLabel, yearTicks, type MonthAxis, type MonthCounts } from '@/lib/months';
+import { axisTicks, barFill, monthAxis, monthLabel, type AxisTick, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
 import { saveBlob } from '@/lib/download';
@@ -30,15 +30,25 @@ import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
 
-function ActivityHead({ axis }: { axis: MonthAxis }) {
+/** The Activity header: year labels thinned to fit, reporting the strip width it has. */
+function ActivityHead({ ticks, onWidth }: { ticks: AxisTick[]; onWidth: (width: number) => void }) {
+  const axisRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = axisRef.current!;
+    const measure = () => onWidth(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onWidth]);
   return (
     <span className="axhead">
       <span>Activity</span>
-      <span className="yaxis" aria-hidden="true">
-        {yearTicks(axis).map((t) => (
-          <Fragment key={t.year}>
-            <i style={{ left: `${t.at * 100}%` }} />
-            <span style={t.at > 0.84 ? { right: 0, paddingLeft: 0 } : { left: `${t.at * 100}%` }}>{t.year}</span>
+      <span ref={axisRef} className="yaxis" aria-hidden="true">
+        {ticks.map((t) => (
+          <Fragment key={t.month}>
+            <i style={{ left: t.x }} />
+            <span style={t.anchor === 'end' ? { right: 0, paddingLeft: 0 } : { left: t.x }}>{t.year}</span>
           </Fragment>
         ))}
       </span>
@@ -55,6 +65,7 @@ function activityLine(r: LocationRow): string {
 
 function ActivityCell({
   axis,
+  ticks,
   row,
   months,
   max,
@@ -62,6 +73,8 @@ function ActivityCell({
   onTip,
 }: {
   axis: MonthAxis;
+  /** Year lines drawn where the header labels them. */
+  ticks: AxisTick[];
   row: LocationRow;
   months?: MonthCounts;
   max: number;
@@ -109,8 +122,8 @@ function ActivityCell({
             </g>
           );
         })}
-        {yearTicks(axis)
-          .filter((t) => t.month !== axis.first)
+        {ticks
+          .filter((t) => t.month !== axis.first && t.month % 12 === 0)
           .map((t) => (
             <line key={t.month} className="yr" x1={t.month - axis.first} x2={t.month - axis.first} y2={H} />
           ))}
@@ -168,6 +181,8 @@ export function TablePanel() {
   }, [view, model, result, grouping, filters.photoTag]);
   const flags = useMemo(() => locationFlagger(model), [model]);
   const axis = useMemo(() => monthAxis(model), [model]);
+  const [sparkW, setSparkW] = useState(200);
+  const ticks = useMemo(() => (axis ? axisTicks(axis, sparkW) : []), [axis, sparkW]);
   // The Activity column is camera effort; a species filter's photos sit inside it.
   const activityLegend = matchLegend(model, filters, false);
   const activity = useMemo(
@@ -284,11 +299,11 @@ export function TablePanel() {
         rowKey={(r) => r.key}
         rowClass={(r) => (flags(r).length ? 'flag' : undefined)}
         onRowHover={(r) => setHighlight(r && !r.noLocation ? r.sites : null)}
-        head={(c) => (c.id === 'activity' && axis ? <ActivityHead axis={axis} /> : undefined)}
+        head={(c) => (c.id === 'activity' && axis ? <ActivityHead ticks={ticks} onWidth={setSparkW} /> : undefined)}
         cell={(c, r) => {
           if (c.id === 'activity') {
             return axis ? (
-              <ActivityCell axis={axis} row={r} months={activity.byKey.get(r.key)} max={activity.max} legend={activityLegend} onTip={setTip} />
+              <ActivityCell axis={axis} ticks={ticks} row={r} months={activity.byKey.get(r.key)} max={activity.max} legend={activityLegend} onTip={setTip} />
             ) : (
               '—'
             );

@@ -75,13 +75,33 @@ export function monthPasses(f: FilterState, m: number, range: [number, number] |
   return !range || (m >= range[0] && m <= range[1]);
 }
 
-/** Where the year labels go: the axis's first month and every January after it. */
-export function yearTicks(axis: MonthAxis): { month: number; year: number; at: number }[] {
-  const ticks: { month: number; year: number; at: number }[] = [];
-  for (let m = axis.first; m < axis.first + axis.count; m++) {
-    if (m === axis.first || m % 12 === 0) ticks.push({ month: m, year: yearOf(m), at: (m - axis.first) / axis.count });
+/** A year label on an axis: its month, `x` px from the axis start, and its text starting there or ending at the axis end. */
+export type AxisTick = { month: number; year: number; x: number; anchor: 'start' | 'end' };
+
+/** The least room, in px, from one year label's start to the next. */
+export const TICK_GAP = 36;
+
+/**
+ * Year labels that fit an axis `width` px wide, at least `gap` px apart: the
+ * first month and every January if they fit, else every 2nd or 5th year,
+ * else only the first year and the last ("2013 … 2026"). The first label
+ * always stays; a January that would crowd it goes, and a label too near the
+ * end ends at the end.
+ */
+export function axisTicks(axis: MonthAxis, width: number, gap = TICK_GAP): AxisTick[] {
+  const last = axis.first + axis.count - 1;
+  const tick = (month: number, x: number): AxisTick => ({ month, year: yearOf(month), x, anchor: x + gap > width ? 'end' : 'start' });
+  const first = tick(axis.first, 0);
+  const left = (t: AxisTick) => (t.anchor === 'end' ? width - gap : t.x);
+  for (const step of [1, 2, 5]) {
+    const ticks = [first];
+    for (let y = yearOf(axis.first) + 1; y <= yearOf(last); y++) {
+      const x = ((y * 12 - axis.first) / axis.count) * width;
+      if (y % step === 0 && x >= gap) ticks.push(tick(y * 12, x));
+    }
+    if (ticks.every((t, i) => i === 0 || left(t) >= left(ticks[i - 1]) + gap)) return ticks;
   }
-  return ticks;
+  return yearOf(last) === yearOf(axis.first) || width < 2 * gap ? [first] : [first, { month: last, year: yearOf(last), x: width, anchor: 'end' }];
 }
 
 /** How dark a month's bar is, from 0.25 for the quietest to 1 for the busiest. */

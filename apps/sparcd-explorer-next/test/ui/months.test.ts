@@ -10,7 +10,8 @@ import {
   monthLabel,
   monthShade,
   monthsToDates,
-  yearTicks,
+  axisTicks,
+  type MonthAxis,
 } from '../../src/lib/months';
 import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
 
@@ -43,12 +44,63 @@ describe('the shared month axis', () => {
     expect(monthLabel(NOV_2023 + 2)).toBe('Jan 2024');
   });
 
-  it('puts year labels at the first month and every January', () => {
-    expect(yearTicks(monthAxis(model)!).map((t) => [t.year, t.at])).toEqual([
-      [2023, 0],
-      [2024, 2 / 16],
-      [2025, 14 / 16],
+  it('puts year labels at the first month and every January when they fit', () => {
+    expect(axisTicks(monthAxis(model)!, 640).map((t) => [t.year, t.x, t.anchor])).toEqual([
+      [2023, 0, 'start'],
+      [2024, 80, 'start'],
+      [2025, 560, 'start'],
     ]);
+  });
+});
+
+describe('year labels that fit the width', () => {
+  // Jan 2013 to Dec 2026: 14 years.
+  const years14: MonthAxis = { first: 2013 * 12, count: 168 };
+  const years = (axis: MonthAxis, width: number) => axisTicks(axis, width).map((t) => t.year);
+  const starts = (axis: MonthAxis, width: number) =>
+    axisTicks(axis, width).map((t) => (t.anchor === 'end' ? width - 36 : t.x));
+
+  it('labels every year when each gets 36 px', () => {
+    expect(years(years14, 14 * 40)).toEqual([2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]);
+  });
+
+  it('labels every second year when every year would crowd', () => {
+    expect(years(years14, 14 * 30)).toEqual([2013, 2016, 2018, 2020, 2022, 2024, 2026]);
+  });
+
+  it('labels every fifth year when every second would crowd', () => {
+    expect(years(years14, 200)).toEqual([2013, 2020, 2025]);
+  });
+
+  it('falls back to the first year and the last, the last ending at the axis end', () => {
+    const forty: MonthAxis = { first: 1986 * 12 + 3, count: 40 * 12 };
+    expect(axisTicks(forty, 150)).toEqual([
+      { month: forty.first, year: 1986, x: 0, anchor: 'start' },
+      { month: forty.first + forty.count - 1, year: 2026, x: 150, anchor: 'end' },
+    ]);
+  });
+
+  it('keeps the first label and drops a January that would crowd it', () => {
+    // Nov 2023 to Feb 2025 at 200 px: Jan 2024 sits 25 px in.
+    expect(years(monthAxis(model)!, 200)).toEqual([2023, 2025]);
+  });
+
+  it('ends a label too near the axis end at the end', () => {
+    expect(axisTicks(years14, 200).at(-1)).toMatchObject({ year: 2025, anchor: 'end' });
+  });
+
+  it('shows one label for a single year, or when two would not fit', () => {
+    expect(years({ first: 2024 * 12 + 2, count: 6 }, 300)).toEqual([2024]);
+    expect(years(years14, 60)).toEqual([2013]);
+  });
+
+  it('never puts two labels closer than 36 px, at any width', () => {
+    for (const axis of [years14, monthAxis(model)!, { first: 1990 * 12 + 7, count: 400 }]) {
+      for (let width = 60; width <= 1400; width += 37) {
+        const xs = starts(axis, width);
+        xs.slice(1).forEach((x, i) => expect(x - xs[i]).toBeGreaterThanOrEqual(36));
+      }
+    }
   });
 });
 

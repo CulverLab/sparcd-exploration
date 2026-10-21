@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Po
 import { applyFilters, clearFilter, photosForTag } from '@/data';
 import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
-import { barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates, yearTicks } from '@/lib/months';
+import { axisTicks, barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { Tip, type TipAt } from './Tip';
@@ -279,13 +279,12 @@ export function EffortStrip() {
             <rect className="cursor" x={xOf(at) - 1} y={TOP - 4} width={Math.max(3, cw) + 2} height={BASE - TOP + 6} />
           )}
           <line className="axis" x1={X0} x2={W} y1={BASE + 0.5} y2={BASE + 0.5} />
-          {yearTicks(axis).map((t) => {
-            const x = Math.round(xOf(t.month)) + 0.5;
-            const fits = x + 34 <= W;
+          {axisTicks(axis, W - X0 - 4).map((t) => {
+            const x = Math.round(X0 + t.x) + 0.5;
             return (
               <g key={t.month}>
                 <line className="axis" x1={x} x2={x} y1={BASE} y2={BASE + 7} />
-                <text className="year" x={fits ? x + 3 : W - 1} y={BASE + 17} textAnchor={fits ? 'start' : 'end'}>
+                <text className="year" x={t.anchor === 'start' ? x + 3 : W - 1} y={BASE + 17} textAnchor={t.anchor}>
                   {t.year}
                 </text>
               </g>
