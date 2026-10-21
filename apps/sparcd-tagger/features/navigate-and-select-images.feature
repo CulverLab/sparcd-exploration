@@ -54,6 +54,34 @@ Feature: Move through an upload and choose which images an action applies to
     Then only IMG005.JPG remains in the Overview
 
   @unmapped
+  Scenario: The Tag state filter can isolate questionable or not-questionable images
+    Given it is marked questionable
+    When the image filter limits Tag state to Questionable only
+    Then only "IMG001.JPG" remains in the Overview
+    When the image filter limits Tag state to Not questionable only
+    Then IMG001.JPG is absent from the Overview
+
+  @unmapped
+  Scenario: An unclassified questionable image exposes only the Questionable status to assistive technology
+    Given image "IMG002.JPG" is focused
+    When it is marked questionable
+    Then the focused tile is named Questionable and not Has species
+
+  @unmapped
+  Scenario: Grid tile announcements include species and review status
+    Given image "IMG004.JPG" is focused
+    Then the focused tile announces its species and review status
+
+  @unmapped
+  Scenario: Image status badges appear on both grid tiles and list rows
+    When it is marked questionable
+    Then its grid tile shows Has species and Questionable badges
+    When the Overview is switched to the list view
+    Then its list row shows Has species and Questionable badges
+    When the Overview is resized to a narrow screen
+    Then the list badges follow the filename and fit inside their row
+
+  @unmapped
   Scenario: Filtering clears a selection with no visible images
     Given several images are selected
     When the image filter limits capture time to 2024-01-11 06 and untagged images

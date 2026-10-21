@@ -281,11 +281,13 @@ When('it is marked questionable', async ({ page }) => {
 
 Then("the image's tile carries a questionable marker", async ({ page }) => {
   await expect(gridCell(page, 'IMG002.JPG').locator('[title="questionable"]')).toBeVisible();
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAccessibleName(/Questionable/);
 });
 
 Then('the marker can be toggled off again', async ({ page }) => {
   await page.keyboard.press('Shift+Space');
   await expect(gridCell(page, 'IMG002.JPG').locator('[title="questionable"]')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG002.JPG')).not.toHaveAccessibleName(/Questionable/);
 });
 
 Then('a selection of images can be marked in one action', async ({ page }) => {

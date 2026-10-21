@@ -33,6 +33,7 @@ import { ImageAdjustments } from '../components/ImageAdjustments';
 import { PawTrail } from '../components/Paw';
 import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
+import { ImageStatusBadges } from '../components/ImageStatusBadges';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
 import {
@@ -44,7 +45,7 @@ import {
   nextVisibleIndex,
   nearestVisibleIndex,
 } from '../lib/selection';
-import { effectiveOf } from '../lib/effective';
+import { effectiveOf, hasSpecies } from '../lib/effective';
 import { focusLocationLabel } from '../lib/focusLocation';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
@@ -400,14 +401,18 @@ export function Tag() {
   const [showImageFilter, setShowImageFilter] = useState(false);
   const imageFilterButtonRef = useRef<HTMLButtonElement>(null);
   const imageFilterTextRef = useRef<HTMLInputElement>(null);
-  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => matchesImageFilter(
-    {
-      fileName: image.fileName,
-      timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
-      observations: effectiveOf(image, draft).observations,
-    },
-    imageFilter,
-  );
+  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => {
+    const effective = effectiveOf(image, draft);
+    return matchesImageFilter(
+      {
+        fileName: image.fileName,
+        timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
+        observations: effective.observations,
+        questionable: effective.questionable,
+      },
+      imageFilter,
+    );
+  };
   const visibleIndices = useMemo(
     () => list.flatMap((image, index) => matchesCurrentFilter(image, drafts[image.key]) ? [index] : []),
     [captureTimeZone, drafts, imageFilter, list, timeOffset],
@@ -1144,6 +1149,8 @@ export function Tag() {
                   <option value="all">All images</option>
                   <option value="tagged">Tagged only</option>
                   <option value="untagged">Untagged only</option>
+                  <option value="questionable">Questionable only</option>
+                  <option value="not-questionable">Not questionable only</option>
                 </select>
               </label>
               <fieldset>
@@ -1331,6 +1338,8 @@ export function Tag() {
               first={
                 <FocusPane
                   current={current}
+                  questionable={!!eff?.questionable}
+                  hasSpecies={!!eff && hasSpecies(eff)}
                   onPrev={() => gotoFilteredImage(-1)}
                   onNext={() => gotoFilteredImage(1)}
                   canPrev={canGoPrevious}
@@ -1494,6 +1503,8 @@ export function Tag() {
 // --- Focus view (single-image detail) ---------------------------------------
 function FocusPane({
   current,
+  questionable,
+  hasSpecies,
   onPrev,
   onNext,
   canPrev,
@@ -1503,6 +1514,8 @@ function FocusPane({
   onDropSpecies,
 }: {
   current: TagImage | undefined;
+  questionable: boolean;
+  hasSpecies: boolean;
   onPrev: () => void;
   onNext: () => void;
   canPrev: boolean;
@@ -1625,6 +1638,7 @@ function FocusPane({
             alt={current.fileName}
             isVideo={isVideo}
             filter={filter}
+            statusBadges={<ImageStatusBadges hasSpecies={hasSpecies} questionable={questionable} presentation="focus" />}
             adjust={adjustPanel}
           />
         )}
@@ -1735,12 +1749,14 @@ function FocusImage({
   alt,
   isVideo,
   filter,
+  statusBadges,
   adjust,
 }: {
   objectKey: string;
   alt: string;
   isVideo: boolean;
   filter?: string;
+  statusBadges?: React.ReactNode;
   adjust?: React.ReactNode;
 }) {
   const { url, isError, markLoaded } = useMediaUrl(objectKey, 'high');
@@ -1776,6 +1792,7 @@ function FocusImage({
             src={url}
             alt={alt}
             resetKey={objectKey}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             onError={onMediaError}
           />
@@ -1785,6 +1802,7 @@ function FocusImage({
             alt={alt}
             resetKey={objectKey}
             filter={filter}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             adjust={adjust}
           />
@@ -1810,27 +1828,34 @@ function FocusVideo({
   src,
   alt,
   resetKey,
+  statusBadges,
   onLoaded,
   onError,
 }: {
   src: string;
   alt: string;
   resetKey: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   onError: () => void;
 }) {
+  const { paneRef, fitted, onImageLoad } = useFittedZoom(src);
   return (
-    <video
-      key={resetKey}
-      src={src}
-      aria-label={alt}
-      controls
-      playsInline
-      preload="metadata"
-      onLoadedData={onLoaded}
-      onError={onError}
-      className="w-full h-full object-contain"
-    />
+    <div ref={paneRef} className="absolute inset-4">
+      <video
+        key={resetKey}
+        src={src}
+        aria-label={alt}
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={onImageLoad}
+        onLoadedData={onLoaded}
+        onError={onError}
+        className="w-full h-full object-contain"
+      />
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
+    </div>
   );
 }
 
@@ -1873,11 +1898,33 @@ function useFittedZoom(src: string) {
     const zoom = zoomRef.current;
     if (fitted && zoom) zoom.centerView(1, 0);
   }, [pane?.w, pane?.h, fitted?.width, fitted?.height]);
-  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setLoaded({ src, w: img.naturalWidth, h: img.naturalHeight });
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
+    const media = e.currentTarget;
+    setLoaded({
+      src,
+      w: 'naturalWidth' in media ? media.naturalWidth : media.videoWidth,
+      h: 'naturalHeight' in media ? media.naturalHeight : media.videoHeight,
+    });
   };
   return { paneRef, zoomRef, fitted, onImageLoad };
+}
+
+// Keep badges at the fitted picture's corners, including letterboxed media,
+// without scaling them with zoom or copying them into the image-only Lightbox.
+function FittedStatusOverlay({ fitted, children }: {
+  fitted: { width: number; height: number } | undefined;
+  children: React.ReactNode;
+}) {
+  if (!fitted || !children) return null;
+  return (
+    <div
+      data-testid="focus-image-status-badges"
+      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+      style={fitted}
+    >
+      {children}
+    </div>
+  );
 }
 
 function ZoomableImage({
@@ -1885,6 +1932,7 @@ function ZoomableImage({
   alt,
   resetKey,
   filter,
+  statusBadges,
   onLoaded,
   adjust,
 }: {
@@ -1892,6 +1940,7 @@ function ZoomableImage({
   alt: string;
   resetKey: string;
   filter?: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   adjust?: React.ReactNode;
 }) {
@@ -1941,6 +1990,7 @@ function ZoomableImage({
           </>
         )}
       </TransformWrapper>
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
       {expanded && <Lightbox src={src} alt={alt} filter={filter} onClose={() => setExpanded(false)} />}
     </div>
   );
