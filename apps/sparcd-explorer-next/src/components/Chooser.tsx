@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { CollectionRef } from '@sparcd/s3-safe';
 import { discoverCollections } from '@/data';
 import { checkFiles, checkForUploads, openSelection, sourceFor, type Progress } from '@/lib/opening';
+import { matching, pickAll, unpickAll } from '@/lib/picks';
 import { readLast, useStore } from '@/store';
 import { Stepper } from './Stepper';
 import { OpeningPanel } from './OpeningPanel';
@@ -51,8 +52,8 @@ export function Chooser() {
     .map((key) => all.find((c) => c.key === key))
     .filter((c) => c !== undefined);
   const canContinue = picked.length === 0 && last.length > 0 && last.every((c) => c.cached);
-  const q = search.trim().toLowerCase();
-  const shown = all.filter((c) => !q || nameOf(c).toLowerCase().includes(q));
+  const shown = matching(all, search, nameOf);
+  const shownKeys = shown.map((c) => c.key);
 
   async function open(refs: CollectionRef[]) {
     if (resumeWorkspace(refs)) return;
@@ -155,6 +156,25 @@ export function Chooser() {
                 />
               </>
             )}
+            <div className="-mb-3 flex items-center gap-3 text-[12px]">
+              <div className="flex-1" />
+              <button
+                type="button"
+                className="linkbtn"
+                disabled={shownKeys.every((k) => picks.includes(k))}
+                onClick={() => setPicks(pickAll(picks, shownKeys))}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="linkbtn"
+                disabled={!shownKeys.some((k) => picks.includes(k))}
+                onClick={() => setPicks(unpickAll(picks, shownKeys))}
+              >
+                Clear all
+              </button>
+            </div>
             <ul className="m-0 list-none border-t border-rule p-0" aria-label="Collections">
               {shown.map((c, i) => (
                 <li key={c.key}>

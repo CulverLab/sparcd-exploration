@@ -46,3 +46,30 @@ Feature: Sign in and choose collections
     Given I am signed in
     When I sign out
     Then I see step 1 "Sign in" of the three steps
+
+  @preview-1
+  Scenario: Select all and Clear all pick every collection at once
+    Given I am signed in
+    When I press "Select all" above the collections
+    Then every collection is ticked
+    And the open button reads "Open 3 collections together"
+    When I press "Clear all" above the collections
+    Then no collection is ticked
+    And the open button reads "Pick a collection" and is disabled
+
+  @preview-1
+  Scenario: With a search, Select all and Clear all act on the matches only
+    Given there are 9 more collections called "Delta Ridge"
+    And I am signed in
+    And I tick "Alpha Basin"
+    When I search the collections for "delta"
+    And I press "Select all" above the collections
+    Then the open button reads "Open 10 collections together"
+    When I search the collections for "ridge 1"
+    And I press "Clear all" above the collections
+    Then the open button reads "Open 9 collections together"
+    When I clear the search
+    Then "Alpha Basin" is ticked
+    And "Bravo Flats" is not ticked
+    And "Delta Ridge 1" is not ticked
+    And "Delta Ridge 2" is ticked
