@@ -5,6 +5,7 @@ import { discoverCollections } from '@/data';
 import { checkFiles, checkForUploads, openSelection, sourceFor, type Progress } from '@/lib/opening';
 import { matching, pickAll, unpickAll } from '@/lib/picks';
 import { readLast, useStore } from '@/store';
+import { SelClear } from './SelClear';
 import { Stepper } from './Stepper';
 import { OpeningPanel } from './OpeningPanel';
 
@@ -203,18 +204,14 @@ export function Chooser() {
               )}
             </ul>
             <div className="choose-foot">
-              <button
-                type="button"
-                className="selclear"
+              <SelClear
                 style={{ visibility: picked.length ? 'visible' : 'hidden' }}
-                aria-label="Clear picked collections"
+                label="Clear picked collections"
                 onClick={() => {
                   setPicks([]);
                   firstBox.current?.focus();
                 }}
-              >
-                <b aria-hidden="true">×</b>Clear
-              </button>
+              />
               <button type="button" className="btn primary bigbtn" disabled={!picked.length} onClick={() => void open(picked)}>
                 {picked.length === 0
                   ? 'Pick a collection'

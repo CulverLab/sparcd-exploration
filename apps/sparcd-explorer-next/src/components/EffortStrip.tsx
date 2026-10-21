@@ -5,6 +5,7 @@ import { fmtN } from '@/lib/format';
 import { axisTicks, barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
+import { SelClear } from './SelClear';
 import { Tip, type TipAt } from './Tip';
 
 // Geometry of the strip, in pixels: a left gutter for the scale, bars between
@@ -292,16 +293,13 @@ export function EffortStrip() {
           })}
         </svg>
         {bracketEnd !== null && (
-          <button
+          <SelClear
             ref={clearRef}
-            type="button"
-            className="selclear onstrip"
+            className="onstrip"
             style={{ left: 10 + Math.min(Math.max(bracketEnd - clearW, X0), W - clearW), top: 1 }}
-            aria-label="Clear dates"
+            label="Clear dates"
             onClick={clearDates}
-          >
-            <b aria-hidden="true">×</b>Clear
-          </button>
+          />
         )}
       </div>
       <Tip at={tip} />

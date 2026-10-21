@@ -28,6 +28,7 @@ import { useStore } from '@/store';
 import { useShowTarget } from './DataChecks';
 import { InView } from './InView';
 import { Seg } from './Popover';
+import { SelClear } from './SelClear';
 
 const BASEMAP_KEY = 'sparcd-explorer-basemap';
 const MAX_ZOOM = 16;
@@ -460,16 +461,7 @@ export function MapBand() {
           </div>
         )}
         {clearAt && !boxing && (
-          <button
-            ref={clearRef}
-            type="button"
-            className="selclear onmap"
-            style={clearAt}
-            aria-label="Clear map selection"
-            onClick={clearSelection}
-          >
-            <b aria-hidden="true">×</b>Clear
-          </button>
+          <SelClear ref={clearRef} className="onmap" style={clearAt} label="Clear map selection" onClick={clearSelection} />
         )}
         {boxing && (
           <div

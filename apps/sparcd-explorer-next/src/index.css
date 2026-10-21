@@ -1092,8 +1092,24 @@ path.st.sel {
   font: 11.5px 'JetBrains Mono', monospace;
   color: var(--inkSoft);
 }
+.bchead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.selclear.inline {
+  min-height: 24px;
+  padding: 0 9px 0 7px;
+}
 .bc tr.on td {
   background: var(--accentSoft);
+}
+.bc tr.on td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.bc tr.on .linkbtn {
+  font-weight: 600;
 }
 .strip {
   position: relative;

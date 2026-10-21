@@ -16,6 +16,8 @@ import {
   soleSpecies,
   tick,
   tickSpecies,
+  soleCollection,
+  toggleCollection,
   toggleSpecies,
   type FilterState,
 } from '../src/data';
@@ -249,6 +251,15 @@ describe('the list pickers', () => {
     expect(cleared).toEqual({ hidden: matching, hideUntagged: false });
     const some = tickSpecies(onlySpecies(model, ['Strigiformes']), matching, false, true);
     expect(some).toEqual({ hidden: [], hideUntagged: true });
+  });
+
+  it('a By collection row shows that collection alone, and lets it go on a second click', () => {
+    const one = toggleCollection(model, NO_FILTERS, 'sparcd-bbb::bbb');
+    expect(files(one)).toEqual(['c1.jpg']);
+    expect(soleCollection(model, one.collections)).toBe('sparcd-bbb::bbb');
+    expect(toggleCollection(model, one, 'sparcd-aaa::aaa').collections).toEqual({ hidden: ['sparcd-bbb::bbb'] });
+    expect(toggleCollection(model, one, 'sparcd-bbb::bbb').collections).toEqual(NO_FILTERS.collections);
+    expect(soleCollection(model, NO_FILTERS.collections)).toBeNull();
   });
 
   it('a species bar or row shows that species alone, and lets it go on a second click', () => {

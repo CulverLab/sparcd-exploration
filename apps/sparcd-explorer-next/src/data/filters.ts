@@ -193,6 +193,21 @@ export function toggleSpecies(model: Model, f: FilterState, key: string): Filter
   return { ...f, species: soleSpecies(model, f.species) === key ? ALL_SPECIES : onlySpecies(model, [key]) };
 }
 
+/** The one collection the Collections filter keeps, or null when it keeps more or none. */
+export function soleCollection(model: Model, f: ListFilter): string | null {
+  if (f.hidden.length !== model.collections.length - 1) return null;
+  const off = new Set(f.hidden);
+  return model.collections.find((c) => !off.has(c.key))?.key ?? null;
+}
+
+/** A collection alone, as a By collection row picks it, or every collection again when it already was. */
+export function toggleCollection(model: Model, f: FilterState, key: string): FilterState {
+  return {
+    ...f,
+    collections: soleCollection(model, f.collections) === key ? NO_FILTERS.collections : only(listKeys(model, 'collections'), [key]),
+  };
+}
+
 /**
  * The list filter that still applies once the items change (other collections,
  * or a refresh). It keeps the side its button named: the ticked items when

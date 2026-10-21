@@ -86,3 +86,20 @@ Feature: Open collections
     And the locations filter reads "Locations"
     When I press Undo
     Then the locations filter reads "Locations: none"
+
+  @preview-2
+  Scenario: A collection picked in By collection is cleared right there, and the list stays put
+    Given I am signed in
+    And I open "Alpha Basin" and "Bravo Flats" together
+    And I note where By collection is
+    Then there is no "× Clear" by the collections
+    When I pick "Bravo Flats" in By collection
+    Then "Bravo Flats" is highlighted in By collection
+    And By collection lists "Alpha Basin" then "Bravo Flats"
+    And "× Clear" shows at the right end of the "By collection" line
+    And By collection has not moved
+    And the photo count reads "3 of 14 photos"
+    When I press "× Clear" by the collections
+    Then no row is highlighted in By collection
+    And there is no "× Clear" by the collections
+    And the photo count reads "14 photos"

@@ -5,6 +5,8 @@ import { ALPHA, addUpload, putCollection } from './support/data';
 import { Given, Then, When, expect } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
+const byCollection = (page: Page) => page.getByRole('region', { name: 'In view' }).locator('table.bc');
+const byCollectionClear = (page: Page) => page.getByRole('button', { name: 'Clear collection selection' });
 
 // --- #1 Select all and Clear all in the chooser ----------------------------------
 
@@ -38,6 +40,51 @@ Then('no collection is ticked', async ({ page }) => {
 
 Then('{string} is not ticked', async ({ page }, name: string) => {
   await expect(collectionList(page).locator('label').filter({ hasText: name }).getByRole('checkbox')).not.toBeChecked();
+});
+
+// --- #2 Clearing a collection picked in By collection ----------------------------
+
+When('I pick {string} in By collection', async ({ page }, name: string) => {
+  await byCollection(page).getByRole('button', { name, exact: true }).click();
+});
+
+Then('By collection lists {string} then {string}', async ({ page }, a: string, b: string) => {
+  await expect(byCollection(page).locator('tbody tr td:first-child')).toHaveText([a, b]);
+});
+
+Then('{string} is highlighted in By collection', async ({ page }, name: string) => {
+  const row = byCollection(page).locator('tbody tr', { hasText: name });
+  await expect(row).toHaveClass(/\bon\b/);
+  await expect(row.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
+});
+
+Then('no row is highlighted in By collection', async ({ page }) => {
+  await expect(byCollection(page).locator('tbody tr.on')).toHaveCount(0);
+});
+
+Then('"× Clear" shows at the right end of the "By collection" line', async ({ page }) => {
+  const clear = byCollectionClear(page);
+  await expect(clear).toBeVisible();
+  await expect(clear).toHaveText('×Clear');
+  const line = (await page.locator('.bchead').boundingBox())!;
+  const box = (await clear.boundingBox())!;
+  expect(Math.abs(box.x + box.width - (line.x + line.width))).toBeLessThan(2);
+});
+
+Then('there is no "× Clear" by the collections', async ({ page }) => {
+  await expect(byCollectionClear(page)).toBeHidden();
+});
+
+When('I press "× Clear" by the collections', async ({ page }) => {
+  await byCollectionClear(page).click();
+});
+
+When('I note where By collection is', async ({ page, scratch }) => {
+  scratch.byCollection = await byCollection(page).boundingBox();
+});
+
+Then('By collection has not moved', async ({ page, scratch }) => {
+  expect(await byCollection(page).boundingBox()).toEqual(scratch.byCollection);
 });
 
 // --- #4 Year labels that never pile up -------------------------------------------

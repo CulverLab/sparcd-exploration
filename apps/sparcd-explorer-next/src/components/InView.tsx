@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
-import { NO_FILTERS, applyFilters, listKeys, only, soleSpecies, summarize, toggleSpecies } from '@/data';
+import { useMemo, useRef } from 'react';
+import { NO_FILTERS, applyFilters, soleSpecies, summarize, toggleCollection, toggleSpecies } from '@/data';
 import { fmtN } from '@/lib/format';
 import { ACTIVE_DAYS_HELP } from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { DataChecksPanel, useDataChecks } from './DataChecks';
 import { usePopover } from './Popover';
+import { SelClear } from './SelClear';
 import { useCollectionCounts } from './pickers/CollectionsPicker';
 
 function Stat({ k, children, wide, title }: { k: React.ReactNode; children: React.ReactNode; wide?: boolean; title?: string }) {
@@ -22,14 +23,24 @@ function ByCollection() {
   const setFilters = useStore((s) => s.setFilters);
   const counts = useCollectionCounts();
   const { hidden } = filters.collections;
-  const ticked = model.collections.filter((c) => !hidden.includes(c.key));
-  const sole = hidden.length && ticked.length === 1 ? ticked[0].key : null;
-  const pick = (key: string) =>
-    setFilters((f) => ({ ...f, collections: sole === key ? NO_FILTERS.collections : only(listKeys(model, 'collections'), [key]) }));
+  const list = useRef<HTMLTableElement>(null);
   return (
     <div>
-      <h3 className="label mb-1">By collection</h3>
-      <table className="bc">
+      <div className="bchead">
+        <h3 className="label">By collection</h3>
+        <div className="flex-1" />
+        {/* Kept in place while hidden, so the list never moves when it shows. */}
+        <SelClear
+          className="inline"
+          style={{ visibility: hidden.length ? 'visible' : 'hidden' }}
+          label="Clear collection selection"
+          onClick={() => {
+            list.current?.querySelector('button')?.focus({ preventScroll: true });
+            setFilters((f) => ({ ...f, collections: NO_FILTERS.collections }));
+          }}
+        />
+      </div>
+      <table ref={list} className="bc">
         <thead>
           <tr>
             <th>Collection</th>
@@ -43,7 +54,7 @@ function ByCollection() {
             return (
               <tr key={c.key} className={on ? 'on' : undefined}>
                 <td>
-                  <button type="button" className="linkbtn text-left text-[12px]" aria-pressed={on} onClick={() => pick(c.key)}>
+                  <button type="button" className="linkbtn text-left text-[12px]" aria-pressed={on} onClick={() => setFilters((f) => toggleCollection(model, f, c.key))}>
                     {c.name}
                   </button>
                 </td>
