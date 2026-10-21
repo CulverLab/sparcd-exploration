@@ -51,3 +51,12 @@ Feature: Tables of locations, species and photos
     Then the first row is "AB01"
     When I sort by "Photos" again
     Then the first row is "AB03"
+
+  @preview-6
+  Scenario: A location's flags say what they mean, and open their data check
+    Then the "moved" flag of "AB01" explains "This location has 2 positions in the data, so the camera was probably moved."
+    And the "similar ID" flag of "AB03" explains "AB-03 and AB03 look like the same location."
+    When I press the "moved" flag of "AB01"
+    Then Data checks opens on "AB01 sits at 2 positions, so the camera probably moved."
+    When I press Escape
+    Then focus is back on the "moved" flag of "AB01"

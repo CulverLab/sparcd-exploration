@@ -19,6 +19,7 @@ import {
   type TableOrder,
 } from '@/data';
 import type { Sorting, TableView } from '@/store';
+import { andList, checkKey } from './checkText';
 import { loadPrefs, shownColumns } from './columnPrefs';
 import { fmtN, formatElevation, formatPosition, type Display } from './format';
 
@@ -229,16 +230,28 @@ export function photoColumns({ model, display }: TableContext): Col<PhotoRow>[] 
   ];
 }
 
-/** Short warnings shown after a location's name, from the data checks. */
-export function locationFlagger(model: Model): (row: LocationRow) => string[] {
-  const moved = new Set(checkMoved(model).map((m) => m.locationId));
-  const similar = new Set(checkNearDuplicateIds(model).flatMap((c) => c.ids));
+/** A short warning after a location's name: its word, what it means in plain words, and the data check it comes from. */
+export type Flag = { label: string; tip: string; check: string };
+
+/** The warnings shown after a location's name, from the data checks. */
+export function locationFlagger(model: Model): (row: LocationRow) => Flag[] {
+  const moved = new Map(checkMoved(model).map((m) => [m.locationId, m]));
+  const similar = new Map(checkNearDuplicateIds(model).flatMap((c) => c.ids.map((id) => [id, c] as const)));
   return (row) => {
-    const flags: string[] = [];
-    if (row.noLocation) flags.push('no location');
-    if (row.ids.some((id) => moved.has(id))) flags.push('moved');
-    if (row.ids.some((id) => similar.has(id))) flags.push('similar ID');
-    if (row.collections.length > 1) flags.push(`in ${row.collections.length} collections`);
+    const flags: Flag[] = [];
+    if (row.noLocation) {
+      flags.push({ label: 'no location', tip: "These photos have no location ID (0000), so they can't go on the map.", check: 'no-location' });
+    }
+    const m = row.ids.map((id) => moved.get(id)).find(Boolean);
+    if (m) {
+      flags.push({
+        label: 'moved',
+        tip: `This location has ${m.pairs} positions in the data, so the camera was probably moved.`,
+        check: checkKey(m)!,
+      });
+    }
+    const s = row.ids.map((id) => similar.get(id)).find(Boolean);
+    if (s) flags.push({ label: 'similar ID', tip: `${andList(s.ids)} look like the same location.`, check: checkKey(s)! });
     return flags;
   };
 }

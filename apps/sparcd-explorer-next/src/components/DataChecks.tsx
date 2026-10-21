@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { dataChecks, onlyLocations, resetFilters } from '@/data';
 import { describeCheck, type CheckTarget } from '@/lib/checkText';
 import { clockNote } from '@/lib/openingText';
@@ -42,8 +42,26 @@ export function useShowMissing() {
   };
 }
 
-export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLElement>; onClose: (refocus: boolean) => void }) {
+export function DataChecksPanel({
+  anchor,
+  onClose,
+  focus,
+}: {
+  anchor: RefObject<HTMLElement>;
+  onClose: (refocus: boolean) => void;
+  /** The check to land on, by its key, as a location's flag asks. */
+  focus?: string;
+}) {
   const checks = useDataChecks();
+  const focused = useRef<HTMLLIElement>(null);
+  // After the panel's own first focus: the check asked for, its action in reach.
+  useEffect(() => {
+    const li = focused.current;
+    if (!li) return;
+    const box = li.closest<HTMLElement>('.pop');
+    if (box) box.scrollTop = Math.max(0, li.offsetTop - box.clientHeight / 3);
+    li.querySelector('button')?.focus({ preventScroll: true });
+  }, []);
   const separate = useStore((s) => s.separate);
   const setSeparate = useStore((s) => s.setSeparate);
   const missing = useStore((s) => s.filters.missing);
@@ -60,7 +78,7 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
         {checks.length ? (
           <ul className="dqlist">
             {checks.map((c, i) => (
-              <li key={i}>
+              <li key={i} ref={c.key && c.key === focus ? focused : undefined} className={c.key && c.key === focus ? 'focus' : undefined}>
                 <span>{c.text}</span>
                 {listed === i && c.details && <span className="mono text-[11.5px]">{c.details.join(', ')}</span>}
                 <button

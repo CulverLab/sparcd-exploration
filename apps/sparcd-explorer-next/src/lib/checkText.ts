@@ -14,9 +14,24 @@ export type CheckAction = { label: string } & (
   | { kind: 'retry-files' }
 );
 
-export type CheckLine = { text: string; action: CheckAction; details?: string[] };
+/** One check as one sentence and one action. `key` names it for a location's flag to open it. */
+export type CheckLine = { text: string; action: CheckAction; details?: string[]; key?: string };
 
-const andList = (items: string[]) =>
+/** What names a check for the flags in the Locations table; null for checks no flag points at. */
+export function checkKey(check: DataCheck): string | null {
+  switch (check.kind) {
+    case 'no-location':
+      return 'no-location';
+    case 'moved':
+      return `moved:${check.locationId}`;
+    case 'near-duplicate-ids':
+      return `similar:${check.ids.join('|')}`;
+    default:
+      return null;
+  }
+}
+
+export const andList = (items: string[]) =>
   items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 
 const stamp = (folder: string) => folder.replace(/\/$/, '').split('/').pop() ?? folder;
@@ -25,6 +40,12 @@ const span = (first: string | null, last: string | null) =>
   first && last ? `${monthName(first)} to ${monthName(last)}` : 'no dated photos';
 
 export function describeCheck(model: Model, check: DataCheck): CheckLine {
+  const key = checkKey(check);
+  const line = sentence(model, check);
+  return key ? { ...line, key } : line;
+}
+
+function sentence(model: Model, check: DataCheck): CheckLine {
   switch (check.kind) {
     case 'no-location': {
       const years = check.years.length ? ` from ${andList(check.years.map(String))}` : '';

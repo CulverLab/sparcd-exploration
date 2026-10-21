@@ -156,3 +156,13 @@ Feature: Open collections
     And I press "Retry failed"
     Then the header names "Alpha Basin + 1 more"
     And the photo count reads "14 photos"
+
+  @preview-6
+  Scenario: A location in two collections names them in its Collection cell, not in a flag
+    Given I am signed in
+    And I open "Alpha Basin" and "Bravo Flats" together
+    Then the header names "Alpha Basin + 1 more"
+    And no flag reads "collections"
+    And the Collection of "AB01" reads "2 collections", naming "Alpha Basin, Bravo Flats"
+    When I tap the Collection of "AB01"
+    Then a small list shows "Alpha Basin" and "Bravo Flats"

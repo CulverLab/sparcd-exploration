@@ -38,7 +38,7 @@ export function LocationsPicker() {
           title: (
             <>
               <span className="mono">{ids}</span> {r.noLocation ? 'No location set' : r.name}
-              {r.flags.length > 0 && <span className="text-warn"> · {r.flags.join(', ')}</span>}
+              {r.flags.length > 0 && <span className="text-warn"> · {r.flags.map((f) => f.label).join(', ')}</span>}
             </>
           ),
           find: `${r.ids.join('\n')}\n${r.noLocation ? 'no location set' : r.name}`.toLowerCase(),

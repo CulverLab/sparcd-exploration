@@ -19,11 +19,21 @@ import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/colu
 import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
 import { saveBlob } from '@/lib/download';
 import { fmtN, plural } from '@/lib/format';
-import { locationColumns, locationFlagger, photoColumns, sortRows, speciesColumns, type Col, type TableContext } from '@/lib/tables';
+import {
+  locationColumns,
+  locationFlagger,
+  photoColumns,
+  sortRows,
+  speciesColumns,
+  type Col,
+  type Flag,
+  type TableContext,
+} from '@/lib/tables';
 import { useView } from '@/lib/useView';
 import { useStore, type PhotoLayout, type TableView } from '@/store';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
+import { CollectionsCell, FlagTags } from './LocationCells';
 import { DataTable } from './DataTable';
 import { PhotoGrid, useSteadyRows } from './PhotoGrid';
 import { Seg, usePopover } from './Popover';
@@ -180,6 +190,14 @@ export function TablePanel() {
     return locationRows(model, result, grouping);
   }, [view, model, result, grouping, filters.photoTag]);
   const flags = useMemo(() => locationFlagger(model), [model]);
+  // A location's flag opens Data checks beside it, on its own check.
+  const flagAnchor = useRef<HTMLElement | null>(null);
+  const [flagCheck, setFlagCheck] = useState<{ check: string; n: number } | null>(null);
+  const openCheck = (flag: Flag, from: HTMLElement) => {
+    const again = flagCheck?.check === flag.check && flagAnchor.current === from;
+    flagAnchor.current = from;
+    setFlagCheck(again ? null : { check: flag.check, n: (flagCheck?.n ?? 0) + 1 });
+  };
   const axis = useMemo(() => monthAxis(model), [model]);
   const [sparkW, setSparkW] = useState(200);
   const ticks = useMemo(() => (axis ? axisTicks(axis, sparkW) : []), [axis, sparkW]);
@@ -308,12 +326,14 @@ export function TablePanel() {
               '—'
             );
           }
+          if (c.id === 'coll' && r.collections.length > 1) {
+            return <CollectionsCell names={r.collections.map((i) => model.collections[i].name)} />;
+          }
           if (c.id !== 'name') return undefined;
-          const f = flags(r);
           return (
             <>
               <span className="nm">{r.noLocation ? 'No location set' : r.name || '—'}</span>
-              {f.length > 0 && <span className="tag">{f.join(' · ')}</span>}
+              <FlagTags flags={flags(r)} onOpen={openCheck} />
             </>
           );
         }}
@@ -467,6 +487,17 @@ export function TablePanel() {
         </div>
       )}
       <div className="tbl-wrap">{body}</div>
+      {flagCheck && (
+        <DataChecksPanel
+          key={flagCheck.n}
+          anchor={flagAnchor}
+          focus={flagCheck.check}
+          onClose={(refocus) => {
+            setFlagCheck(null);
+            if (refocus) flagAnchor.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
       <Tip at={tip} />
       {detail && view === 'photos' && (
         <Suspense fallback={null}>

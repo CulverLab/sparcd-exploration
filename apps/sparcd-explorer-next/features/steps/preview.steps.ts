@@ -2,7 +2,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
-import { Given, Then, When, expect } from './support/world';
+import { Given, Then, When, columnLabels, expect, popover, tableRows } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
 const byCollection = (page: Page) => page.getByRole('region', { name: 'In view' }).locator('table.bc');
@@ -148,4 +148,54 @@ Then('the Activity year labels start at {string} and none touch', async ({ page 
 
 Then('the effort strip year labels start at {string} and none touch', async ({ page }, first: string) => {
   await expectApart(page.locator('svg.effort text.year'), first);
+});
+
+// --- #6 Location flags that explain themselves ----------------------------------
+
+const locationRow = (page: Page, id: string) => tableRows(page).filter({ has: page.locator('td', { hasText: new RegExp(`^${id}$`) }) });
+const flag = (page: Page, label: string, id: string) => locationRow(page, id).getByRole('button', { name: label, exact: true });
+
+async function collectionCell(page: Page, id: string): Promise<Locator> {
+  const index = (await columnLabels(page)).indexOf('Collection');
+  expect(index).toBeGreaterThanOrEqual(0);
+  return locationRow(page, id).locator('td').nth(index);
+}
+
+Then('the {string} flag of {string} explains {string}', async ({ page }, label: string, id: string, tip: string) => {
+  const button = flag(page, label, id);
+  await expect(button).toHaveAttribute('title', tip);
+  await expect(button).toHaveAccessibleDescription(tip);
+});
+
+When('I press the {string} flag of {string}', async ({ page }, label: string, id: string) => {
+  await flag(page, label, id).click();
+});
+
+Then('Data checks opens on {string}', async ({ page }, text: string) => {
+  const item = popover(page, 'Data checks').locator('.dqlist li.focus');
+  await expect(item).toContainText(text);
+  await expect(item.getByRole('button')).toBeFocused();
+});
+
+Then('focus is back on the {string} flag of {string}', async ({ page }, label: string, id: string) => {
+  await expect(flag(page, label, id)).toBeFocused();
+});
+
+Then('no flag reads {string}', async ({ page }, text: string) => {
+  await expect(page.locator('#table .tag', { hasText: text })).toHaveCount(0);
+});
+
+Then('the Collection of {string} reads {string}, naming {string}', async ({ page }, id: string, text: string, names: string) => {
+  const button = (await collectionCell(page, id)).getByRole('button');
+  await expect(button).toHaveText(text);
+  await expect(button).toHaveAttribute('title', names);
+  await expect(button).toHaveAccessibleDescription(names);
+});
+
+When('I tap the Collection of {string}', async ({ page }, id: string) => {
+  await (await collectionCell(page, id)).getByRole('button').click();
+});
+
+Then('a small list shows {string} and {string}', async ({ page }, a: string, b: string) => {
+  await expect(popover(page, 'Collections here').locator('li')).toHaveText([a, b]);
 });
