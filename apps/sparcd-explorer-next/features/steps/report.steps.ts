@@ -21,9 +21,12 @@ When('I open the report', async ({ page }) => {
   });
   // A pointer click where the button is: Playwright's own click would first
   // scroll the sticky header's "natural" place into view, moving the page.
-  const box = (await page.getByRole('button', { name: 'Report', exact: true }).boundingBox())!;
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(report(page)).toBeVisible();
+  // Measured again on a retry: the header can still be settling as the workspace opens.
+  await expect(async () => {
+    const box = (await page.getByRole('button', { name: 'Report', exact: true }).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(report(page)).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 10_000 });
 });
 
 When('I close the report', async ({ page }) => {
