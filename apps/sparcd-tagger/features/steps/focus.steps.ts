@@ -11,6 +11,8 @@ import {
   openWorkspace,
   selectCollection,
   sectionTab,
+  expectOverviewView,
+  closeFocusView,
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
 import { makePng } from './support/png';
@@ -212,7 +214,7 @@ Given("the species panel's divider has been dragged to a new width", async ({ pa
 
 When('Focus is closed and reopened', async ({ page }) => {
   await page.getByRole('button', { name: 'Close Focus' }).click();
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expectOverviewView(page);
   await focusFrame(page, 'IMG001.JPG');
   await enterFocusView(page);
 });
@@ -292,7 +294,7 @@ Given('the focused video is waiting for its first frame', async ({ page, s3 }) =
   const focus = page.getByRole('dialog', { name: 'Focus image viewer' });
   if (await focus.count()) await page.getByRole('button', { name: 'Close Focus' }).click();
   await sectionTab(page, 'Tag').click();
-  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await closeFocusView(page);
   s3.delay(mediaKey(PREFIX_A, 'VID001.MP4'), 10_000);
   await focusFrame(page, 'VID001.MP4');
   await enterFocusViewForVideo(page);
@@ -336,7 +338,7 @@ Given('a video thumbnail is waiting for its first frame', async ({ page, s3 }) =
   s3.delay(mediaKey(PREFIX_A, 'VID001.MP4'), 10_000);
   await page.reload();
   await openWorkspace(page);
-  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await closeFocusView(page);
   await expect(page.locator('button[title="VID001.MP4"] video')).toBeVisible();
 });
 
@@ -778,13 +780,13 @@ Given('the focused item is a video clip', async ({ page }) => {
   const focus = page.getByRole('dialog', { name: 'Focus image viewer' });
   if (await focus.count()) await page.getByRole('button', { name: 'Close Focus' }).click();
   await sectionTab(page, 'Tag').click();
-  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await closeFocusView(page);
   await focusFrame(page, 'VID001.MP4');
   await enterFocusViewForVideo(page);
 });
 
 async function enterFocusViewForVideo(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.locator('video[controls]')).toBeVisible();
 }
 
@@ -824,7 +826,7 @@ const adjustToggle = (page: Page): Locator =>
 Given('the focused item is a still image', async ({ page }) => {
   if (await page.getByRole('button', { name: 'Close Focus' }).count()) {
     await page.getByRole('button', { name: 'Close Focus' }).click();
-    await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expectOverviewView(page);
   }
   await focusFrame(page, 'IMG001.JPG');
   await enterFocusView(page);
@@ -1166,7 +1168,7 @@ Then('the adjustments have reset to neutral', async ({ page }) => {
 
 Then('leaving the Focus view returns the adjustments to neutral', async ({ page }) => {
   await page.getByRole('button', { name: 'Close Focus' }).click();
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expectOverviewView(page);
   await focusFrame(page, 'IMG002.JPG');
   await enterFocusView(page);
   await expect(page.locator('.react-transform-component img')).toBeVisible();

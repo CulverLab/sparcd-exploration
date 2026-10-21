@@ -114,8 +114,9 @@ Given('a ModifyDate-only batch has been scanned', async ({ app }) => {
 });
 
 Then('the real Tagger labels the timestamp as EXIF Modified', async ({ app }) => {
-  await app.page.locator('button[title="MODIFIED.JPG"]').click();
-  await app.page.getByRole('button', { name: 'Focus', exact: true }).click();
+  const image = app.page.locator('button[title="MODIFIED.JPG"]');
+  await image.focus();
+  await image.press('Enter');
   await expect(app.page.getByText('EXIF Modified', { exact: true })).toBeVisible();
 });
 

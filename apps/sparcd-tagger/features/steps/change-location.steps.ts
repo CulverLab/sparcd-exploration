@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { Given, When, Then, expect, enterFocusView, sectionTab } from './support/world';
+import { Given, When, Then, expect, enterFocusView, expectOverviewView, sectionTab } from './support/world';
 import { BUCKET, PREFIX_A, LOCATION_NAME, NEW_LOCATION_NAME, NEW_LOCATION_ID, SAME_ID_LOCATION_NAME } from './support/data';
 import { openSyncDialog, runLiveSync, writeStore, makeLocalEdit, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
 
@@ -132,7 +132,7 @@ When('the sync is run live', async ({ page }) => {
 });
 
 Then("every image's deployment is the new location", async ({ page, s3 }) => {
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
+  await expectOverviewView(page);
   expect(s3.text(BUCKET, `${PREFIX_A}deployments.csv`)).toContain(NEW_LOCATION_ID);
 });
 

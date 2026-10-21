@@ -12,6 +12,7 @@ import {
   speciesApply,
   sectionTab,
   enterFocusView,
+  expectOverviewView,
   selectCollection,
   openUpload,
 } from './support/world';
@@ -250,18 +251,18 @@ Then('the image is left with no species', async ({ page }) => {
 
 Then('it reads as untagged again', async ({ page }) => {
   await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
+  await expectOverviewView(page);
 });
 
 Then('the Clear Species control is unavailable on an image that has none', async ({ page }) => {
   await expect(focusClearSpecies(page)).toHaveCount(0);
   await gridCell(page, 'IMG004.JPG').click();
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(focusClearSpecies(page)).toBeEnabled();
 });
 
 When('identifications are cleared', async ({ page }) => {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await focusClearSpecies(page).click();
 });
 
@@ -270,7 +271,7 @@ Then('every selected image is left with no species', async ({ page }) => {
     await expect.poll(async () => draftSpecies(page, f)).toEqual([]);
   }
   await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
+  await expectOverviewView(page);
 });
 
 // --- Questionable -----------------------------------------------------------

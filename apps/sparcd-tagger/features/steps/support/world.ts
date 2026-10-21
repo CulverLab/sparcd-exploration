@@ -89,6 +89,12 @@ export const gridCell = (page: Page, fileName: string): Locator =>
 export const listRow = (page: Page, fileName: string): Locator =>
   page.locator('button').filter({ has: page.locator(`span[title="${fileName}"]`) });
 
+export const overviewImage = (page: Page, fileName: string): Locator =>
+  page.locator(`[data-testid="overview-image"][data-image-name="${fileName}"]`);
+
+export const selectedOverviewImages = (page: Page): Locator =>
+  page.locator('[data-testid="overview-image"][aria-pressed="true"]');
+
 /** Grid tile titles in rendered order. */
 export async function tileOrder(page: Page): Promise<string[]> {
   return page
@@ -100,7 +106,7 @@ export const focusedTile = (page: Page): Locator =>
   page.locator('button[aria-current="true"][title]');
 
 export const selectedTiles = (page: Page): Locator =>
-  page.locator('button[title].ring-2');
+  page.locator('[data-testid="overview-image"][aria-pressed="true"]');
 
 /** Position readout in the Tag toolbar: "3 / 6" or "2 selected". */
 export const positionReadout = (page: Page): Locator =>
@@ -170,6 +176,22 @@ export async function focusFrame(page: Page, fileName: string): Promise<void> {
 }
 
 export async function enterFocusView(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Focus image viewer' });
+  if (await dialog.count()) return;
+  const opener = page.locator('[data-testid="overview-image"][aria-current="true"]');
+  await expect(opener).toBeVisible();
+  await opener.focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+}
+
+export async function closeFocusView(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Focus image viewer' });
+  if (await dialog.count()) await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
+  await expect(page.getByTestId('overview-view')).toBeVisible();
+}
+
+export async function expectOverviewView(page: Page): Promise<void> {
+  await expect(page.getByTestId('overview-view')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
 }

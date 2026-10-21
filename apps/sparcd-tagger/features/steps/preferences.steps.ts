@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { Given, When, Then, expect, sectionTab, listRow, openSettings, selectCollection, openUpload } from './support/world';
+import { Given, When, Then, expect, sectionTab, listRow, openSettings, selectCollection, openUpload, enterFocusView } from './support/world';
 import { LOCATION_NAME } from './support/data';
 import { settingsRadio } from './support/flows';
 
@@ -39,7 +39,7 @@ Given('distance units are switched to feet in Settings', async ({ page }) => {
 });
 
 When('the enlarged Focus view is opened', async ({ page }) => {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
 });
 

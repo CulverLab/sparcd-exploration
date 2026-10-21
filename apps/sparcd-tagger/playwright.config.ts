@@ -36,6 +36,7 @@ export default defineConfig({
   },
   use: {
     baseURL: origin,
+    ...(process.env.SPARCD_USE_SYSTEM_CHROME === '1' ? { channel: 'chrome' as const } : {}),
     headless: true,
     viewport: { width: 1440, height: 950 },
     trace: 'off',

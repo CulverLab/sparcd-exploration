@@ -11,6 +11,7 @@ import {
   speciesApply,
   sectionTab,
   uploadRow,
+  enterFocusView,
 } from './support/world';
 import {
   BUCKET,
@@ -464,7 +465,7 @@ Then('the workspace reloads the upload from the newly stored files', async ({ pa
   const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
   const shifted = media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!;
   expect(shifted.timestamp).toBe('2024-01-10T09:00:00.000-07:00');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toContainText('IMG001.JPG');
 });
 
@@ -523,7 +524,7 @@ async function focusShownTime(page: Page): Promise<string> {
 
 Given('Focus is showing an image with a shifted capture time', async ({ page }) => {
   await focusFrame(page, 'IMG001.JPG');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect.poll(async () => focusShownTime(page)).toBe('2024-01-10 09:00');
 });
 
@@ -619,7 +620,7 @@ Then('Focus shows the stored capture time with no whole-upload shift in effect',
 
 When('the estimated timestamp is corrected', async ({ page }) => {
   await focusFrame(page, 'IMG002.JPG');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await page.getByRole('button', { name: 'Adjust time' }).click();
   await page.getByLabel('Corrected timestamp for this image').fill('2024-01-10 09:15:00');
   await page.getByRole('button', { name: 'Set', exact: true }).click();
@@ -642,7 +643,7 @@ Then('the reloaded Focus view identifies it as entered by hand', async ({ page }
   await page.reload();
   await openWorkspace(page);
   await focusFrame(page, 'IMG002.JPG');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.getByText('entered by hand')).toBeVisible();
 });
 

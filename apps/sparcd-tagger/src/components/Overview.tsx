@@ -151,7 +151,11 @@ export function Overview({
   }, [focus, rowOfImage, virtualizer]);
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto min-h-0 bg-panel">
+    <div
+      ref={parentRef}
+      data-testid="overview-scroll"
+      className="h-full overflow-y-auto min-h-0 bg-panel"
+    >
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const item = flat[vi.index];
@@ -221,10 +225,101 @@ function modsOf(e: React.MouseEvent): PickMods {
   return { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey };
 }
 
-// Two quick Cmd/Shift-clicks are selection gestures, not a request to drill —
-// drilling would wipe the selection and yank the view to focus.
-function plainDrill(e: React.MouseEvent, onDrill: (i: number) => void, index: number): void {
-  if (!e.shiftKey && !e.metaKey && !e.ctrlKey) onDrill(index);
+// Modifier-clicks are selection gestures, not a request to open Focus.
+function plainDrill(
+  e: React.MouseEvent<HTMLButtonElement>,
+  onDrill: (i: number, opener?: HTMLElement) => void,
+  index: number,
+): void {
+  if (!e.shiftKey && !e.metaKey && !e.ctrlKey) onDrill(index, e.currentTarget);
+}
+
+const TOUCH_DOUBLE_TAP_MS = 320;
+const TOUCH_DOUBLE_TAP_DISTANCE = 28;
+const TOUCH_MOVE_CANCELLATION_DISTANCE = 12;
+
+type TouchTap = { x: number; y: number; at: number };
+let previousTouchTap: (TouchTap & { imageKey: string }) | null = null;
+
+/** Recognize two deliberate taps on the same virtualized image cell. A scroll,
+ *  pinch, pointer cancellation, or tap on another cell cannot complete a pair. */
+function useTouchDoubleTap(
+  onDrill: ((index: number, opener?: HTMLElement) => void) | undefined,
+  index: number,
+  imageKey: string,
+) {
+  const activeTap = useRef<{ pointerId: number; x: number; y: number; at: number } | null>(null);
+  const suppressClick = useRef(false);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'touch') {
+      previousTouchTap = null;
+      activeTap.current = null;
+      return;
+    }
+    if (!event.isPrimary) {
+      previousTouchTap = null;
+      activeTap.current = null;
+      return;
+    }
+    if (previousTouchTap && previousTouchTap.imageKey !== imageKey) previousTouchTap = null;
+    activeTap.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      at: performance.now(),
+    };
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = activeTap.current;
+    if (event.pointerType !== 'touch' || !active || active.pointerId !== event.pointerId) return;
+    if (
+      Math.hypot(event.clientX - active.x, event.clientY - active.y) >
+      TOUCH_MOVE_CANCELLATION_DISTANCE
+    ) {
+      activeTap.current = null;
+      previousTouchTap = null;
+    }
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = activeTap.current;
+    if (event.pointerType !== 'touch' || !active || active.pointerId !== event.pointerId) return;
+    activeTap.current = null;
+    const now = performance.now();
+    if (now - active.at > 250) {
+      previousTouchTap = null;
+      return;
+    }
+    const prior = previousTouchTap;
+    const closeInTime = prior !== null && now - prior.at <= TOUCH_DOUBLE_TAP_MS;
+    const sameImage = prior !== null && prior.imageKey === imageKey;
+    const closeInSpace =
+      sameImage &&
+      Math.hypot(event.clientX - prior.x, event.clientY - prior.y) <= TOUCH_DOUBLE_TAP_DISTANCE;
+    if (onDrill && closeInTime && closeInSpace) {
+      previousTouchTap = null;
+      suppressClick.current = true;
+      onDrill(index, event.currentTarget);
+      return;
+    }
+    previousTouchTap = { x: event.clientX, y: event.clientY, at: now, imageKey };
+  };
+
+  const onPointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'touch') return;
+    activeTap.current = null;
+    previousTouchTap = null;
+  };
+
+  const shouldSuppressClick = () => {
+    if (!suppressClick.current) return false;
+    suppressClick.current = false;
+    return true;
+  };
+
+  return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, shouldSuppressClick };
 }
 
 function BurstBand({
@@ -276,7 +371,7 @@ function ListCell({
   active: boolean;
   selected: boolean;
   onPick: (i: number, mods: PickMods) => void;
-  onDrill?: (i: number) => void;
+  onDrill?: (i: number, opener?: HTMLElement) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
   narrow?: boolean;
   timeZone?: string;
@@ -292,6 +387,7 @@ function ListCell({
   const timestampDisplay = timestamp ? formatDateTime(timestamp, dateFormat, timeFormat) : null;
   const edited = isEditedFromBase(eff);
   const reviewLabel = reviewSummaryLabel(eff.observations);
+  const touchTap = useTouchDoubleTap(onDrill, index, img.key);
   const rowLabel = [
     `Filename: ${img.fileName}`,
     ...(!narrow
@@ -305,11 +401,27 @@ function ListCell({
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
-      onClick={(e) => onPick(index, modsOf(e))}
+      data-testid="overview-image"
+      data-image-index={index}
+      data-image-name={img.fileName}
+      onPointerDown={touchTap.onPointerDown}
+      onPointerMove={touchTap.onPointerMove}
+      onPointerUp={touchTap.onPointerUp}
+      onPointerCancel={touchTap.onPointerCancel}
+      onClick={(e) => {
+        if (touchTap.shouldSuppressClick()) return;
+        if (e.detail > 1 && !e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+        if (onDrill && e.detail === 0) {
+          onDrill(index, e.currentTarget);
+          return;
+        }
+        onPick(index, modsOf(e));
+      }}
       onDoubleClick={onDrill ? (e) => plainDrill(e, onDrill, index) : undefined}
       aria-current={active ? 'true' : undefined}
+      aria-pressed={selected}
       aria-label={rowLabel}
-      className={`w-full h-full flex items-center gap-2 px-2.5 overflow-hidden text-left border-b border-ruleSoft border-l-2 ${
+      className={`touch-manipulation w-full h-full flex items-center gap-2 px-2.5 overflow-hidden text-left border-b border-ruleSoft border-l-2 ${
         selected
           ? 'border-l-accent bg-mark'
           : active
@@ -391,20 +503,6 @@ function ListCell({
           </span>
         )}
       </span>
-      {onDrill && (
-        <span
-          role="button"
-          tabIndex={-1}
-          aria-label="Open in focus view"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDrill(index);
-          }}
-          className="hidden [@media(hover:none)]:flex items-center justify-center shrink-0 min-h-11 min-w-11 text-inkMute text-base"
-        >
-          ›
-        </span>
-      )}
     </button>
   );
 }
@@ -423,20 +521,45 @@ function GridCell({
   active: boolean;
   selected: boolean;
   onPick: (i: number, mods: PickMods) => void;
-  onDrill?: (i: number) => void;
+  onDrill?: (i: number, opener?: HTMLElement) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const eff = effectiveOf(img, draft);
   const reviewLabel = reviewSummaryLabel(eff.observations);
+  const species = summarize(eff.observations) || 'untagged';
+  const touchTap = useTouchDoubleTap(onDrill, index, img.key);
+  const imageLabel = [
+    `Filename: ${img.fileName}`,
+    `Species: ${species}`,
+    ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
+    ...(eff.questionable ? ['Questionable'] : []),
+  ].join('; ');
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
-      onClick={(e) => onPick(index, modsOf(e))}
+      data-testid="overview-image"
+      data-image-index={index}
+      data-image-name={img.fileName}
+      onPointerDown={touchTap.onPointerDown}
+      onPointerMove={touchTap.onPointerMove}
+      onPointerUp={touchTap.onPointerUp}
+      onPointerCancel={touchTap.onPointerCancel}
+      onClick={(e) => {
+        if (touchTap.shouldSuppressClick()) return;
+        if (e.detail > 1 && !e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+        if (onDrill && e.detail === 0) {
+          onDrill(index, e.currentTarget);
+          return;
+        }
+        onPick(index, modsOf(e));
+      }}
       onDoubleClick={onDrill ? (e) => plainDrill(e, onDrill, index) : undefined}
       aria-current={active ? 'true' : undefined}
+      aria-pressed={selected}
+      aria-label={imageLabel}
       title={img.fileName}
-      className={`group relative flex flex-col text-left border p-1 ${
+      className={`group relative flex flex-col text-left border p-1 touch-manipulation ${
         selected
           ? 'border-accent ring-2 ring-inset ring-accent bg-mark'
           : active
@@ -453,20 +576,6 @@ function GridCell({
         {isVideoImage(img) && (
           <span className="absolute top-1 left-1 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
             VIDEO
-          </span>
-        )}
-        {onDrill && (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label="Open in focus view"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDrill(index);
-            }}
-            className="hidden [@media(hover:none)]:flex absolute top-1 right-1 items-center justify-center min-h-11 min-w-11 bg-panel/80 border border-rule text-inkMute text-base"
-          >
-            ›
           </span>
         )}
       </span>

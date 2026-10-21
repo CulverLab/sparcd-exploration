@@ -12,6 +12,8 @@ import {
   positionReadout,
   openUpload,
   selectCollection,
+  enterFocusView,
+  expectOverviewView,
 } from './support/world';
 import { BUCKET, PREFIX_A, PREFIX_E, MEDIA_A, mediaCsv } from './support/data';
 import {
@@ -43,7 +45,7 @@ async function bump(modal: ReturnType<typeof uploadShiftModal>, label: string, t
 }
 
 async function openFocus(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
 }
 
@@ -144,7 +146,7 @@ When('the shift is cleared', async ({ page }) => {
 
 Then('the images show their original capture times again', async ({ page }) => {
   await expect(page.getByText(/clock \+/)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Focus', exact: true })).toBeVisible();
+  await expectOverviewView(page);
 });
 
 /** Reasons stay hidden in the layout but are available to keyboard and pointer users. */
@@ -155,7 +157,7 @@ async function expectDisabledHint(page: Page, button: Locator, label: string, re
   await expect(button).toHaveCSS('cursor', 'not-allowed');
   const target = page.getByRole('group', { name: `${label} unavailable`, exact: true });
   await expect(target).toHaveAccessibleDescription(reason);
-  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  await page.getByRole('button', { name: '▦ Grid' }).focus();
   const tooltip = page.getByRole('tooltip');
   await expect(tooltip).toHaveCount(0);
   for (let i = 0; i < 20 && !(await target.evaluate(node => node === document.activeElement)); i++) await page.keyboard.press('Tab');
@@ -169,7 +171,7 @@ async function expectDisabledHint(page: Page, button: Locator, label: string, re
   await page.keyboard.press('Escape');
   await expect(tooltip).toHaveCount(0);
   await expect(target).toBeFocused();
-  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  await page.getByRole('button', { name: '▦ Grid' }).focus();
   await target.hover(); await expect(tooltip).toHaveText(reason);
   await page.keyboard.press('Escape'); await expect(tooltip).toHaveCount(0);
   await page.mouse.move(0, 0); await target.hover(); await expect(tooltip).toHaveText(reason);
@@ -427,7 +429,7 @@ Then(
     await expect(page.getByText('image override')).toHaveCount(0);
     await expect.poll(async () => shownTime(page)).toBe('2024-01-10 08:00');
     // With an upload offset in effect the frame falls back to that instead.
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await closeFocus(page);
     await timeShiftButton(page).click();
     await bump(uploadShiftModal(page), 'Hour', 3);
     await uploadShiftModal(page).getByRole('button', { name: /^Apply to all/ }).click();
@@ -543,7 +545,7 @@ Then('the standing shift is cleared afterwards', async ({ page }) => {
 Then(
   'the images show their now-corrected stored times without a further shift',
   async ({ page, s3 }) => {
-    await expect(page.getByRole('button', { name: 'Focus', exact: true })).toBeVisible();
+    await expectOverviewView(page);
     const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
     expect(media.find((m) => m.mediaId.endsWith('IMG001.JPG'))!.timestamp).toBe(
       '2024-01-10T09:00:00.000-07:00',
@@ -592,7 +594,7 @@ Then('disabled time-shift hints are touch-readable and stay within a narrow view
     const bounds = (await tooltip.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(390); expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await page.getByRole('button', { name: '▦ Grid' }).click();
     await expect(tooltip).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
   } finally { await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false }); await cdp.detach(); }

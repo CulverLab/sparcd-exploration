@@ -15,6 +15,7 @@ import {
   speciesRow,
   speciesApply,
   focusFrame,
+  enterFocusView,
 } from './support/world';
 import {
   BUCKET,
@@ -797,7 +798,7 @@ When('the affected upload is opened for tagging in {string}', async ({ page }, v
   await openUpload(page);
   if (view === 'Focus') {
     await focusFrame(page, 'IMG002.JPG');
-    await page.getByRole('button', { name: 'Focus', exact: true }).click();
+    await enterFocusView(page);
   }
 });
 Then('the species panel explains a load failure rather than an empty list', async ({ page }) => {

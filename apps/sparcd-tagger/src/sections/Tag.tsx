@@ -169,20 +169,35 @@ export function Tag() {
   const focusPreviousHistoryRef = useRef<{ state: unknown; title: string; url: string } | null>(null);
   const focusCloseRef = useRef<HTMLButtonElement>(null);
   const focusOpenerRef = useRef<HTMLElement | null>(null);
-  const focusOpenerIdentityRef = useRef<{ title: string | null; testId: string | null; label: string | null; text: string } | null>(null);
+  const focusOpenerIdentityRef = useRef<{
+    imageName: string | null;
+    title: string | null;
+    testId: string | null;
+    label: string | null;
+    text: string;
+  } | null>(null);
   const restoreFocusRef = useRef(false);
-  const enterFocus = () => {
+  const overviewScrollPositionRef = useRef<{ outer: number; inner: number } | null>(null);
+  const enterFocus = (opener?: HTMLElement) => {
     if (view === 'focus') return;
-    const active = document.activeElement;
+    const overview = document.querySelector<HTMLElement>('[data-testid="overview-view"]');
+    const scrollArea = document.querySelector<HTMLElement>('[data-testid="overview-scroll"]');
+    overviewScrollPositionRef.current = {
+      outer: overview?.scrollTop ?? 0,
+      inner: scrollArea?.scrollTop ?? 0,
+    };
+    const active = opener ?? document.activeElement;
     focusOpenerRef.current = active instanceof HTMLElement ? active : null;
-    focusOpenerIdentityRef.current = active instanceof HTMLElement
-      ? {
-          title: active.getAttribute('title'),
-          testId: active.getAttribute('data-testid'),
-          label: active.getAttribute('aria-label'),
-          text: active.textContent?.trim() ?? '',
-        }
-      : null;
+    focusOpenerIdentityRef.current =
+      active instanceof HTMLElement
+        ? {
+            imageName: active.getAttribute('data-image-name'),
+            title: active.getAttribute('title'),
+            testId: active.getAttribute('data-testid'),
+            label: active.getAttribute('aria-label'),
+            text: active.textContent?.trim() ?? '',
+          }
+        : null;
     focusPreviousHistoryRef.current = {
       state: window.history.state,
       title: document.title,
@@ -223,6 +238,17 @@ export function Tag() {
     focusHistoryRef.current = false;
     focusPreviousHistoryRef.current = null;
   }, []);
+  useLayoutEffect(() => {
+    if (view !== 'overview' || !overviewScrollPositionRef.current) return;
+    const position = overviewScrollPositionRef.current;
+    overviewScrollPositionRef.current = null;
+    requestAnimationFrame(() => {
+      const overview = document.querySelector<HTMLElement>('[data-testid="overview-view"]');
+      const scrollArea = document.querySelector<HTMLElement>('[data-testid="overview-scroll"]');
+      if (overview) overview.scrollTop = position.outer;
+      if (scrollArea) scrollArea.scrollTop = position.inner;
+    });
+  }, [view]);
   useEffect(() => {
     if (view === 'focus' || !restoreFocusRef.current) return;
     restoreFocusRef.current = false;
@@ -233,13 +259,17 @@ export function Tag() {
       }
       const identity = focusOpenerIdentityRef.current;
       if (!identity) return;
-      const replacement = Array.from(document.querySelectorAll<HTMLElement>('button'))
-        .find((button) =>
-          (identity.title && button.getAttribute('title') === identity.title) ||
-          (identity.testId && button.getAttribute('data-testid') === identity.testId) ||
-          (identity.label && button.getAttribute('aria-label') === identity.label) ||
-          (identity.text && button.textContent?.trim() === identity.text),
-        );
+      const buttons = Array.from(document.querySelectorAll<HTMLElement>('button'));
+      const findBy = (attribute: string, value: string | null) =>
+        value ? buttons.find((button) => button.getAttribute(attribute) === value) : undefined;
+      const replacement =
+        findBy('data-image-name', identity.imageName) ??
+        findBy('title', identity.title) ??
+        findBy('aria-label', identity.label) ??
+        (identity.text
+          ? buttons.find((button) => button.textContent?.trim() === identity.text)
+          : undefined) ??
+        findBy('data-testid', identity.testId);
       replacement?.focus();
     });
   }, [view]);
@@ -760,11 +790,10 @@ export function Tag() {
     setAnchor(start);
   };
 
-  const drill = (i: number) => {
+  const drill = (i: number, opener?: HTMLElement) => {
     setFocus(i);
-    setSelected(new Set());
     setAnchor(i);
-    enterFocus();
+    enterFocus(opener);
   };
 
   // Focus navigation buttons and keyboard arrows share this path: clamp to the
@@ -904,16 +933,8 @@ export function Tag() {
           {collectionName} / {uploadName}
         </div>
       )}
-      {/* Workspace toolbar: mode + view switches, position, selection, save */}
+      {/* Workspace toolbar: view controls, position, selection, save */}
       <div className="shrink-0 min-h-10 border-b border-rule bg-panel flex flex-wrap items-center gap-3 gap-y-2 px-3">
-        <Segmented
-          value={view}
-          onChange={(v) => (v === 'focus' ? enterFocus() : closeFocus())}
-          options={[
-            { value: 'overview', label: 'Overview' },
-            { value: 'focus', label: 'Focus' },
-          ]}
-        />
         {view === 'overview' && (
           <Segmented
             value={overviewKind}
@@ -1255,7 +1276,7 @@ export function Tag() {
 
       <div className="flex-1 min-h-0">
         {view === 'overview' ? (
-          <div className="h-full grid grid-cols-1 lg:grid-cols-[1fr_340px] min-h-0 overflow-y-auto lg:overflow-visible">
+          <div data-testid="overview-view" className="h-full grid grid-cols-1 lg:grid-cols-[1fr_340px] min-h-0 overflow-y-auto lg:overflow-visible">
             <div className="flex flex-col min-h-[60svh] lg:min-h-0">
               <SortBar field={sortField} dir={sortDir} onSort={handleSort} />
               <div className="flex-1 min-h-0">
@@ -2269,6 +2290,16 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   // mid-sync would create a draft edit the sync then silently clears.
   if (s.isModalOpen()) return;
 
+  // Image tiles are native buttons: let Enter and Space produce their native
+  // click so the handler opens the image the user actually focused. The
+  // workspace-level shortcuts below are for the Overview itself. Shift+Space
+  // remains the existing questionable-image shortcut.
+  if (
+    (e.key === 'Enter' || (e.key === ' ' && !e.shiftKey)) &&
+    e.target instanceof HTMLButtonElement &&
+    e.target.matches('[data-testid="overview-image"]')
+  ) return;
+
   // Cheatsheet modal swallows everything but its own toggle / dismiss.
   if (s.showCheatsheet) {
     if (e.key === '?' || e.key === 'Escape') {
@@ -2444,9 +2475,24 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
     case ' ':
       e.preventDefault();
       if (e.shiftKey) {
-        const targets = s.targetsOf();
-        if (!targets.length || !current) return;
-        const anchorDraft = s.drafts[current.key];
+        const focusedTile = e.target instanceof HTMLButtonElement &&
+          e.target.matches('[data-testid="overview-image"]');
+        const focusedTileIndex = focusedTile ? Number(e.target.dataset.imageIndex) : NaN;
+        const focusedTileImage = Number.isInteger(focusedTileIndex)
+          ? s.list[focusedTileIndex]
+          : undefined;
+        const targets = s.selected.size
+          ? s.targetsOf()
+          : focusedTileImage
+            ? [{
+                mediaPath: focusedTileImage.key,
+                deploymentId: focusedTileImage.deploymentId,
+                base: { observations: focusedTileImage.baseObservations },
+              }]
+            : s.targetsOf();
+        const anchorImage = focusedTileImage ?? current;
+        if (!targets.length || !anchorImage) return;
+        const anchorDraft = s.drafts[anchorImage.key];
         s.setQuestionableMany(s.ctx, targets, !anchorDraft?.questionable);
         return;
       }

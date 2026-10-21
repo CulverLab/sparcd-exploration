@@ -13,11 +13,18 @@ import {
   speciesFilter,
   imageSearch,
   speciesRow,
+  speciesApply,
   focusFrame,
+  overviewImage,
+  selectedOverviewImages,
   enterFocusView,
+  expectOverviewView,
+  closeFocusView,
+  openWorkspace,
 } from './support/world';
-import { COLLECTION_NAME, STAMP_A } from './support/data';
-import { readStore } from './support/flows';
+import { COLLECTION_NAME, STAMP_A, BUCKET, PREFIX_A } from './support/data';
+import { readStore, runLiveSync } from './support/flows';
+import { parseObservations } from '@sparcd/camtrap';
 
 const TOUCH = { width: 900, height: 860 };
 const DESKTOP = { width: 1440, height: 950 };
@@ -134,7 +141,7 @@ When('the image filter limits Focus to the 2024-01-11 06 images', async ({ page 
   await page.getByLabel('Capture day').fill('11');
   await page.getByLabel('Capture hour').fill('06');
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
 });
 
 When('the next filtered image key is pressed in Focus', async ({ page }) => {
@@ -206,7 +213,7 @@ Then('the workspace shows the position of the focused image within the upload', 
 });
 
 Then('the Focus view keeps the species picker beside the enlarged image', async ({ page }) => {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.locator('.react-transform-component img')).toBeVisible();
   await expect(page.locator('[data-testid="species-panel"]')).toBeVisible();
   await expect(listRow(page, 'IMG001.JPG')).toHaveCount(0);
@@ -221,7 +228,7 @@ Given('an image has meaningful review markers', async ({ page }) => {
 });
 
 When('the detailed Overview list is opened', async ({ page }) => {
-  await page.getByRole('button', { name: 'Overview', exact: true }).click();
+  await closeFocusView(page);
   await page.getByRole('button', { name: '☰ List' }).click();
   await expect(listRow(page, 'IMG002.JPG')).toBeVisible();
 });
@@ -305,7 +312,7 @@ Then('a narrow Overview keeps filenames visible in its compact rows', async ({ p
 });
 
 Then('the Focus strip keeps filename and species but omits the detail columns', async ({ page }) => {
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toContainText('IMG002.JPG');
   await expect(page.locator('[data-testid="species-panel"]')).toBeVisible();
   await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
@@ -348,10 +355,7 @@ Then('any selection is cleared by the move', async ({ page }) => {
 });
 
 Given('the Overview is shown', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expectOverviewView(page);
 });
 
 Given('the workspace has a browser history entry', async ({ page }) => {
@@ -361,6 +365,340 @@ Given('the workspace has a browser history entry', async ({ page }) => {
 When('the focused image is opened', async ({ page }) => {
   await gridCell(page, 'IMG003.JPG').click();
   await page.keyboard.press('Enter');
+});
+
+Given('the Overview is set to the {string} layout', async ({ page }, layout: string) => {
+  await closeFocusView(page);
+  const grid = page.getByRole('button', { name: '▦ Grid' });
+  const list = page.getByRole('button', { name: '☰ List' });
+  await (layout === 'list' ? list : grid).click();
+  await expect(layout === 'list' ? listRow(page, 'IMG001.JPG') : gridCell(page, 'IMG001.JPG')).toBeVisible();
+});
+
+Given('IMG003.JPG is {string} in the current selection', async ({ page }, status: string) => {
+  await overviewImage(page, 'IMG001.JPG').click();
+  await overviewImage(page, status === 'selected' ? 'IMG003.JPG' : 'IMG002.JPG').click({
+    modifiers: ['ControlOrMeta'],
+  });
+  await expect(overviewImage(page, 'IMG003.JPG')).toHaveAttribute(
+    'aria-pressed',
+    status === 'selected' ? 'true' : 'false',
+  );
+});
+
+When('IMG003.JPG is opened by mouse double-click', async ({ page }) => {
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.scrollIntoViewIfNeeded();
+  await page.locator('html').evaluate((root) => {
+    root.setAttribute(
+      'data-focus-entry-inner-scroll',
+      String(document.querySelector<HTMLElement>('[data-testid="overview-scroll"]')?.scrollTop ?? 0),
+    );
+    root.setAttribute(
+      'data-focus-entry-outer-scroll',
+      String(document.querySelector<HTMLElement>('[data-testid="overview-view"]')?.scrollTop ?? 0),
+    );
+  });
+  await target.dblclick();
+});
+
+When('IMG005.JPG is opened by mouse double-click', async ({ page }) => {
+  const target = overviewImage(page, 'IMG005.JPG');
+  await target.scrollIntoViewIfNeeded();
+  await page.locator('html').evaluate((root) => {
+    root.setAttribute(
+      'data-focus-entry-inner-scroll',
+      String(document.querySelector<HTMLElement>('[data-testid="overview-scroll"]')?.scrollTop ?? 0),
+    );
+    root.setAttribute(
+      'data-focus-entry-outer-scroll',
+      String(document.querySelector<HTMLElement>('[data-testid="overview-view"]')?.scrollTop ?? 0),
+    );
+  });
+  await target.dblclick();
+});
+
+When('IMG003.JPG is opened by touch double-tap', async ({ page }) => {
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.scrollIntoViewIfNeeded();
+  const box = (await target.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    for (let tap = 0; tap < 2; tap++) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ id: 1, x, y, radiusX: 2, radiusY: 2, force: 1 }],
+      });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      if (tap === 0) await page.waitForTimeout(90);
+    }
+  } finally {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp.detach();
+  }
+});
+
+When('IMG003.JPG is tapped once by touch', async ({ page }) => {
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.scrollIntoViewIfNeeded();
+  const box = (await target.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ id: 1, x: box.x + box.width / 2, y: box.y + box.height / 2, radiusX: 2, radiusY: 2, force: 1 }],
+    });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp.detach();
+  }
+});
+
+Then(
+  'Focus shows IMG003.JPG and the selection reflects one plain activation before and after {string}',
+  async ({ page }, dismissal: string) => {
+    await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
+    await expect(page.locator('.react-transform-component img')).toHaveAttribute(
+      'alt',
+      'IMG003.JPG',
+    );
+    // An unmodified single activation clears the existing multi-selection. The
+    // second click/tap and Focus entry must not apply that rule a second time.
+    await expect(positionReadout(page)).toHaveText('3 / 6');
+    if (dismissal === 'Close') {
+      await closeFocusView(page);
+    } else if (dismissal === 'Escape') {
+      await page.keyboard.press('Escape');
+      await expectOverviewView(page);
+    } else {
+      await page.goBack();
+      await expectOverviewView(page);
+    }
+    await expect(selectedOverviewImages(page)).toHaveCount(0);
+    await expect(overviewImage(page, 'IMG003.JPG')).toBeFocused();
+  },
+);
+
+Given('IMG001.JPG and IMG002.JPG are selected', async ({ page }) => {
+  await overviewImage(page, 'IMG001.JPG').click();
+  await overviewImage(page, 'IMG002.JPG').click({ modifiers: ['ControlOrMeta'] });
+  await expect(selectedOverviewImages(page)).toHaveCount(2);
+});
+
+When('IMG001.JPG is activated semantically', async ({ page }) => {
+  const target = overviewImage(page, 'IMG001.JPG');
+  await expect(target).toHaveRole('button');
+  await expect(target).toHaveAccessibleName(/Filename: IMG001\.JPG/);
+  await target.focus();
+  await target.evaluate((element) => {
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+  });
+});
+
+Then('Focus shows IMG001.JPG without changing selection through dismissal', async ({ page }) => {
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
+  await expect(page.locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG001.JPG');
+  await expect(positionReadout(page)).toHaveText('2 selected');
+  await closeFocusView(page);
+  await expect(selectedOverviewImages(page)).toHaveCount(2);
+});
+
+Then(
+  'IMG003.JPG is focused in Overview, one plain activation is applied, and Focus stays closed',
+  async ({ page }) => {
+    await expectOverviewView(page);
+    await expect(overviewImage(page, 'IMG003.JPG')).toHaveAttribute('aria-current', 'true');
+    await expect(positionReadout(page)).toHaveText('3 / 6');
+    await expect(selectedOverviewImages(page)).toHaveCount(0);
+  },
+);
+
+Then('the Overview and Focus mode buttons are absent', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Focus', exact: true })).toHaveCount(0);
+});
+
+Then('the Grid and List controls are available', async ({ page }) => {
+  await expect(page.getByRole('button', { name: '▦ Grid' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '☰ List' })).toBeVisible();
+});
+
+When('IMG003.JPG receives keyboard focus and {string} is pressed', async ({ page }, key: string) => {
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.focus();
+  await page.keyboard.press(key);
+});
+
+When('IMG003.JPG is control-clicked twice', async ({ page }) => {
+  await overviewImage(page, 'IMG001.JPG').click();
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.dblclick({ modifiers: ['ControlOrMeta'] });
+});
+
+Then('IMG003.JPG is deselected and Focus stays closed', async ({ page }) => {
+  await expectOverviewView(page);
+  await expect(selectedOverviewImages(page)).toHaveCount(1);
+  await expect(overviewImage(page, 'IMG001.JPG')).toHaveAttribute('aria-pressed', 'true');
+  await expect(overviewImage(page, 'IMG003.JPG')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
+});
+
+Then('the Overview remains open and IMG003.JPG is marked questionable', async ({ page }) => {
+  await expectOverviewView(page);
+  const image = overviewImage(page, 'IMG003.JPG');
+  await expect(image.locator('[title="questionable"]')).toBeVisible();
+  await expect(image).toHaveAccessibleName(/Species: Ghost/);
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
+});
+
+Then('its existing species survive marking and sync', async ({ page, s3 }) => {
+  const savedSpecies = () => parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`))
+    .filter(entry => entry.mediaId === `${PREFIX_A}IMG003.JPG`);
+  const original = savedSpecies();
+  const image = overviewImage(page, 'IMG003.JPG');
+  await expect(image).toHaveAccessibleName(/Species: Ghost/);
+  await page.keyboard.press('Control+s');
+  const draft = (await readStore(page, 'drafts') as { mediaPath: string; observations: { scientificName: string; count: number }[] }[])
+    .find(entry => entry.mediaPath === `${PREFIX_A}IMG003.JPG`)!;
+  expect(draft.observations).toMatchObject([{ scientificName: 'Casper', count: 1 }]);
+  // Questionable is local-only on this branch. Save another image's edit to
+  // exercise canonical publication without changing this image's species.
+  await overviewImage(page, 'IMG001.JPG').click();
+  await speciesApply(page, 'Canis latrans').click();
+  await runLiveSync(page);
+  expect(savedSpecies()).toEqual(original);
+  await page.reload();
+  await openWorkspace(page);
+  await expect(overviewImage(page, 'IMG003.JPG')).toHaveAccessibleName(/Species: Ghost/);
+});
+
+When('the image filter matches IMG003.JPG', async ({ page }) => {
+  await page.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByLabel('Match text').fill('IMG003.JPG');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Filter 1/6' })).toBeVisible();
+});
+
+Then('the List layout and IMG003.JPG filter remain active', async ({ page }) => {
+  await expect(page.getByRole('button', { name: '☰ List' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Filter 1/6' })).toBeVisible();
+  await expect(overviewImage(page, 'IMG003.JPG')).toBeVisible();
+  await expect(overviewImage(page, 'IMG001.JPG')).toHaveCount(0);
+});
+
+Given('the Overview scroll region is short', async ({ page }) => {
+  const overview = page.getByTestId('overview-view');
+  await overview.evaluate((element) => {
+    const stableParent = element.parentElement!;
+    stableParent.style.height = '210px';
+    stableParent.style.flex = 'none';
+  });
+  const scrollArea = page.getByTestId('overview-scroll');
+  expect(await scrollArea.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await scrollArea.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event('scroll'));
+  });
+  await expect(overviewImage(page, 'IMG005.JPG')).toBeVisible();
+});
+
+Then('the IMG005.JPG opener has focus again', async ({ page }) => {
+  await expect(overviewImage(page, 'IMG005.JPG')).toBeFocused();
+});
+
+Then('the Overview scroll position is restored', async ({ page }) => {
+  const expectedInner = Number(await page.locator('html').getAttribute('data-focus-entry-inner-scroll'));
+  const expectedOuter = Number(await page.locator('html').getAttribute('data-focus-entry-outer-scroll'));
+  await expect.poll(() => page.getByTestId('overview-scroll').evaluate((element) => element.scrollTop)).toBe(expectedInner);
+  await expect.poll(() => page.getByTestId('overview-view').evaluate((element) => element.scrollTop)).toBe(expectedOuter);
+});
+
+Then('Focus shows IMG003.JPG', async ({ page }) => {
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
+  await expect(page.locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG003.JPG');
+});
+
+Then('Focus shows IMG005.JPG', async ({ page }) => {
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toBeVisible();
+  await expect(page.locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG005.JPG');
+});
+
+When('Focus is closed with Escape', async ({ page }) => {
+  await page.keyboard.press('Escape');
+});
+
+When('a touch starts on IMG003.JPG and moves before release', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const target = overviewImage(page, 'IMG003.JPG');
+  const scrollArea = page.getByTestId('overview-scroll');
+  await scrollArea.evaluate((element) => { element.style.height = '100px'; });
+  await target.scrollIntoViewIfNeeded();
+  const startingScroll = await scrollArea.evaluate((element) => {
+    const max = element.scrollHeight - element.clientHeight;
+    if (max < 3) return null;
+    element.scrollTop = Math.floor(max / 2);
+    return { top: element.scrollTop, max };
+  });
+  expect(startingScroll).not.toBeNull();
+  const { top, max } = startingScroll!;
+  expect(top).toBeGreaterThan(0);
+  expect(top).toBeLessThan(max);
+  const box = (await target.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  expect((await scrollArea.boundingBox())!.y).toBeLessThan(y);
+  expect(y).toBeLessThan((await scrollArea.boundingBox())!.y + (await scrollArea.boundingBox())!.height);
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ id: 1, x, y }],
+    });
+    // Cross the touch slop and continue moving before release, allowing the
+    // browser to scroll rather than treating the gesture as a single tap.
+    for (let distance = 10; distance <= 50; distance += 10) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ id: 1, x, y: y - distance }],
+      });
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect.poll(() => scrollArea.evaluate((element) => element.scrollTop)).toBeGreaterThan(top);
+  } finally {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp.detach();
+  }
+});
+
+When('IMG003.JPG is held by touch before release', async ({ page }) => {
+  const target = overviewImage(page, 'IMG003.JPG');
+  await target.scrollIntoViewIfNeeded();
+  const box = (await target.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ id: 1, x: box.x + box.width / 2, y: box.y + box.height / 2, radiusX: 2, radiusY: 2, force: 1 }],
+    });
+    await page.waitForTimeout(400);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp.detach();
+  }
+});
+
+Then('the Overview stays open and IMG003.JPG is not opened in Focus', async ({ page }) => {
+  await expectOverviewView(page);
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
 });
 
 When('the bound species key is pressed in Focus', async ({ page }) => {
@@ -391,15 +729,11 @@ When('the browser Back button is pressed', async ({ page }) => {
 });
 
 Then('the Focus viewer is closed and the Overview is shown', async ({ page }) => {
-  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expectOverviewView(page);
 });
 
 Then('the image opener has focus again', async ({ page }) => {
-  await expect(gridCell(page, 'IMG003.JPG')).toBeFocused();
+  await expect(overviewImage(page, 'IMG003.JPG')).toBeFocused();
 });
 
 Then('Tab wraps within the Focus viewer at both boundaries', async ({ page }) => {
@@ -499,11 +833,7 @@ Then('on-screen previous and next controls move between images there at every vi
   }
   await page.setViewportSize(DESKTOP);
   await page.getByRole('button', { name: 'Close Focus' }).click();
-  await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expectOverviewView(page);
 });
 
 // --- Sorting ----------------------------------------------------------------
@@ -849,7 +1179,7 @@ Then(
 
 Given('a video is being played or scrubbed', async ({ page }) => {
   await focusFrame(page, 'VID001.MP4');
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
+  await enterFocusView(page);
   await expect(page.locator('video[controls]')).toBeVisible();
   const video = page.locator('video[controls]');
   await video.focus();
@@ -873,7 +1203,7 @@ Then('its own playback keys work and no tagging keystroke fires', async ({ page 
 Then(
   'while the sync, snapshots or time-shift dialog is open no image behind it is tagged or navigated',
   async ({ page }) => {
-    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await closeFocusView(page);
     await focusFrame(page, 'IMG002.JPG');
     const position = await positionReadout(page).textContent();
 
