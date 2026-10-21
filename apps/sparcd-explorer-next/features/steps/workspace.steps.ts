@@ -16,6 +16,7 @@ import {
   photoCount,
   popover,
   resetButton,
+  settled,
   tableRows,
   viewButton,
 } from './support/world';
@@ -350,6 +351,7 @@ Then('the Easting and Northing of {string} read {string} and {string}', async ({
 
 When(/^I sort by "(.*)"(?: again)?$/, async ({ page }, label: string) => {
   await page.locator('#table thead').getByRole('button', { name: new RegExp(`^${label}`) }).click();
+  await settled(page);
 });
 
 Then('the first row is {string}', async ({ page }, id: string) => {

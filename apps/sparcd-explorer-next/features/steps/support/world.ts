@@ -68,8 +68,17 @@ export const viewButton = (page: Page, name: string): Locator =>
   page.getByRole('group', { name: 'Show' }).getByRole('button', { name, exact: true });
 export const popover = (page: Page, name: string): Locator => page.getByRole('dialog', { name });
 
+/**
+ * The table has caught up with the last click. It follows a view switch, a
+ * sort or a filter in a background render, and says "Updating…" until then.
+ */
+export async function settled(page: Page): Promise<void> {
+  await expect(page.locator('.fright .updating')).toHaveCount(0);
+}
+
 /** Column labels in order: each header's first text, as written (headers are uppercased by CSS). */
 export async function columnLabels(page: Page): Promise<string[]> {
+  await settled(page);
   const labels = await headerCells(page).evaluateAll((cells) =>
     cells.map((th) => {
       const walker = document.createTreeWalker(th, NodeFilter.SHOW_TEXT, (n) =>

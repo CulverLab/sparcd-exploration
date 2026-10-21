@@ -2,7 +2,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 import { ALPHA, ALPHA_UPLOADS, BRAVO, CHARLIE, addUpload, bucketOf, putCollection, uploadPrefix, type Upload } from './support/data';
-import { Given, Then, When, expect, tableRows, viewButton, type Scratch } from './support/world';
+import { Given, Then, When, expect, settled, tableRows, viewButton, type Scratch } from './support/world';
 
 // --- Grid ------------------------------------------------------------------------
 
@@ -199,6 +199,7 @@ When('I open the photo taken at {string}', async ({ page }, time: string) => {
 });
 
 When('I open the row taken at {string} from the keyboard', async ({ page }, time: string) => {
+  await settled(page);
   const row = tableRows(page).filter({ has: page.locator('td', { hasText: time }) });
   await row.getByRole('button', { name: 'View' }).focus();
   await page.keyboard.press('Enter');

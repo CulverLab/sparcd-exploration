@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { applyFilters, clearFilter, photosForTag } from '@/data';
+import { activeFilters, applyFilters, clearFilter, photosForTag } from '@/data';
 import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
 import { axisTicks, barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
@@ -23,7 +23,7 @@ const BASE = 82;
  * Space picks.
  */
 export function EffortStrip() {
-  const { model, filters } = useView();
+  const { model, filters, result } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const tagShown = useStore((s) => s.view === 'photos');
   const legend = matchLegend(model, filters, tagShown);
@@ -48,10 +48,15 @@ export function EffortStrip() {
   }, []);
 
   const axis = useMemo(() => monthAxis(model), [model]);
-  const counts = useMemo(() => {
-    const r = applyFilters(model, clearFilter(filters, 'dates'));
-    return countByMonth(model, r.effort, legend ? photosForTag(model, r.photos, tagShown ? filters.photoTag : 'all') : []);
-  }, [model, filters, legend, tagShown]);
+  // Without a Dates filter that is the page's own result; with one, the strip's own.
+  const dated = activeFilters(filters).includes('dates');
+  const effort = useMemo(() => (dated ? applyFilters(model, clearFilter(filters, 'dates')) : result), [dated, model, filters, result]);
+  // Switching to Photos changes what the inner bars show only under the Tagged switch.
+  const inner = legend ? (tagShown ? filters.photoTag : 'all') : null;
+  const counts = useMemo(
+    () => countByMonth(model, effort.effort, inner ? photosForTag(model, effort.photos, inner) : []),
+    [model, effort, inner],
+  );
   const max = Math.max(1, ...[...counts.values()].map((c) => c[0]));
   const range = axis && datesToMonths(filters.dateFrom, filters.dateTo, axis);
 

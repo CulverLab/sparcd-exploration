@@ -1,6 +1,7 @@
 // Steps for the preview feedback (Juli4nG/sparcd-explorer-preview#1–#7).
 
 import type { Locator, Page } from '@playwright/test';
+import { putBulkCollections } from './support/bulk';
 import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
 import { Given, Then, When, columnLabels, expect, popover, tableRows, viewButton } from './support/world';
 
@@ -148,6 +149,49 @@ Then('the Activity year labels start at {string} and none touch', async ({ page 
 
 Then('the effort strip year labels start at {string} and none touch', async ({ page }, first: string) => {
   await expectApart(page.locator('svg.effort text.year'), first);
+});
+
+// --- #5 Photos stays quick with many photos open --------------------------------
+
+Given(/^there are (\d+) more collections of ([\d,]+) photos each$/, async ({ s3 }, collections: string, photos: string) => {
+  const n = Number(photos.replace(/,/g, ''));
+  putBulkCollections(s3, Number(collections), Math.ceil(n / 2000), Math.min(n, 2000));
+});
+
+When('I open every collection', async ({ page }) => {
+  await page.getByRole('button', { name: 'Select all', exact: true }).click();
+  await page.locator('.choose-foot .bigbtn').click();
+  await page.locator('#sticky-top').waitFor({ timeout: 40_000 });
+});
+
+/** Milliseconds from a click on the `selector` match starting with `text` until `ready` holds. */
+function timeClick(page: Page, selector: string, text: string, ready: string): Promise<number> {
+  return page.evaluate(
+    async ({ selector, text, ready }) => {
+      const isReady = new Function(`return ${ready}`) as () => boolean;
+      const target = [...document.querySelectorAll<HTMLElement>(selector)].find((el) => el.textContent?.trim().startsWith(text))!;
+      const t0 = performance.now();
+      target.click();
+      while (!isReady()) await new Promise((r) => requestAnimationFrame(r));
+      return performance.now() - t0;
+    },
+    { selector, text, ready },
+  );
+}
+
+const QUICK: Record<string, [string, string, string]> = {
+  'showing the Photos grid': ['[aria-label="Show"] button', 'Photos', "!!document.querySelector('.gallery .tile')"],
+  'switching to the List': ['[aria-label="Layout"] button', 'List', "!!document.querySelector('#table thead')?.textContent.includes('Date and time')"],
+  'sorting the List by Species': [
+    '#table th button',
+    'Species',
+    `[...document.querySelectorAll('#table th[aria-sort="ascending"]')].some((th) => th.textContent.startsWith('Species'))`,
+  ],
+};
+
+Then(/^(showing the Photos grid|switching to the List|sorting the List by Species) takes under a second$/, async ({ page }, what: string) => {
+  const [selector, text, ready] = QUICK[what];
+  expect(await timeClick(page, selector, text, ready)).toBeLessThan(1000);
 });
 
 // --- #6 Location flags that explain themselves ----------------------------------

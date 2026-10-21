@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { photoTimeRanks } from '@/lib/tables';
+import { useStore } from '@/store';
 import { EffortStrip } from './EffortStrip';
 import { MapBand } from './MapBand';
 import { FilterBar } from './FilterBar';
@@ -18,6 +20,16 @@ export function Workspace() {
     return () => observer.disconnect();
   }, []);
   useEffect(preloadLater, []);
+  // The photos' time order, ranked while the page is idle, so the first
+  // switch to Photos doesn't wait for it.
+  const model = useStore((s) => s.model);
+  useEffect(() => {
+    if (!model) return;
+    const idle = window.requestIdleCallback ?? ((run: () => void) => setTimeout(run, 300));
+    const cancel = window.cancelIdleCallback ?? clearTimeout;
+    const id = idle(() => photoTimeRanks(model));
+    return () => cancel(id);
+  }, [model]);
   return (
     <>
       <div ref={sticky} id="sticky-top" className="stickytop">

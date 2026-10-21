@@ -8,8 +8,11 @@ import {
   soleSpecies,
   speciesRows,
   toggleSpecies,
+  type FilterResult,
   type LocationRow,
+  type Model,
   type PhotoRow,
+  type PhotoTag,
   type SpeciesRow,
 } from '@/data';
 import { activityByLocation } from '@/lib/activity';
@@ -29,7 +32,7 @@ import {
   type Flag,
   type TableContext,
 } from '@/lib/tables';
-import { useView } from '@/lib/useView';
+import { useTableView } from '@/lib/useTableView';
 import { useStore, type PhotoLayout, type TableView } from '@/store';
 import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
@@ -40,7 +43,18 @@ import { Seg, usePopover } from './Popover';
 import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
 
-/** The Activity header: year labels thinned to fit, reporting the strip width it has. */
+const NO_PHOTOS: PhotoRow[] = [];
+
+// The Photos rows last built: switching back to Photos rebuilds nothing, and
+// their order, cached by `sortRows`, stays too.
+let photoCache: { model: Model; result: FilterResult; tag: PhotoTag; rows: PhotoRow[] } | null = null;
+function photoRowsOf(model: Model, result: FilterResult, tag: PhotoTag): PhotoRow[] {
+  if (photoCache?.model !== model || photoCache.result !== result || photoCache.tag !== tag) {
+    photoCache = { model, result, tag, rows: photoRows(model, photosForTag(model, result.photos, tag), result.detections) };
+  }
+  return photoCache.rows;
+}
+
 const VIEW_NAMES = { locations: 'Locations', species: 'Species', photos: 'Photos', charts: 'Charts' } as const;
 
 /** The Activity header: year labels thinned to fit, reporting the strip width it has. */
@@ -159,10 +173,10 @@ function useColumnPrefs(view: TableView, defs: Col<never>[]) {
 }
 
 export function TablePanel() {
-  const { model, filters, result, grouping, multi, active } = useView();
-  const view = useStore((s) => s.view);
+  // Controls follow `now`; the rows follow `shown`, a moment later.
+  const { now, shown: table, updating } = useTableView();
+  const { model, filters, result, grouping, multi, active, view, layout, sorting } = table;
   const setView = useStore((s) => s.setView);
-  const layout = useStore((s) => s.photoLayout);
   const setLayout = useStore((s) => s.setPhotoLayout);
   const setFilters = useStore((s) => s.setFilters);
   const display = useStore((s) => s.display);
@@ -172,7 +186,6 @@ export function TablePanel() {
   const back = useStore((s) => s.back);
   const goBack = useStore((s) => s.goBack);
   const checks = usePopover();
-  const sorting = useStore((s) => s.sorting);
   const setSorting = useStore((s) => s.setSorting);
   const [tip, setTip] = useState<TipAt | null>(null);
   const setHighlight = useStore((s) => s.setHighlight);
@@ -192,9 +205,14 @@ export function TablePanel() {
 
   const rows = useMemo(() => {
     if (view === 'species') return speciesRows(model, result, grouping);
-    if (view === 'photos') return photoRows(model, photosForTag(model, result.photos, filters.photoTag), result.detections);
+    if (view === 'photos') return photoRowsOf(model, result, filters.photoTag);
     return locationRows(model, result, grouping);
   }, [view, model, result, grouping, filters.photoTag]);
+  // Every table walks one order: the one its header sorts by.
+  const ordered = useMemo(
+    () => (view === 'charts' ? [] : sortRows(rows as never[], cols, sorting[view])),
+    [view, rows, cols, sorting],
+  );
   const flags = useMemo(() => locationFlagger(model), [model]);
   // A location's flag opens Data checks beside it, on its own check.
   const flagAnchor = useRef<HTMLElement | null>(null);
@@ -215,10 +233,7 @@ export function TablePanel() {
   );
 
   // Grid, List and the detail view walk one order: the List's sort.
-  const photoOrder = useMemo(
-    () => (view === 'photos' ? sortRows(rows as PhotoRow[], cols as Col<PhotoRow>[], sorting.photos) : []),
-    [view, rows, cols, sorting.photos],
-  );
+  const photoOrder = (view === 'photos' ? ordered : NO_PHOTOS) as PhotoRow[];
   const grid = useSteadyRows(model, photoOrder);
   // The panel keeps the model it opened with, so a background refresh never swaps the photo under it.
   const [detail, setDetail] = useState<{ model: typeof model; order: number[]; index: number; from: HTMLElement | null } | null>(null);
@@ -246,7 +261,7 @@ export function TablePanel() {
     return panel.getBoundingClientRect().top + scrollY + panel.clientTop - (document.getElementById('sticky-top')?.offsetHeight ?? 0);
   };
   const switchLayout = (next: PhotoLayout) => {
-    if (next === layout) return;
+    if (next === now.layout) return;
     const top = tableTop();
     offsets.current[layout] = Math.max(0, scrollY - top);
     const was = offsets.current[next];
@@ -255,13 +270,14 @@ export function TablePanel() {
   };
   useLayoutEffect(() => {
     const to = restore.current;
-    if (to === null) return;
+    // Once the table has caught up with the click.
+    if (to === null || updating) return;
     restore.current = null;
     scrollTo(0, to);
     // Once more after the new rows have measured themselves and settled.
     const frame = requestAnimationFrame(() => scrollTo(0, to));
     return () => cancelAnimationFrame(frame);
-  }, [layout, returned]);
+  }, [layout, returned, updating]);
   const backHere = () => {
     restore.current = back!.scroll;
     setReturned((n) => n + 1);
@@ -280,10 +296,9 @@ export function TablePanel() {
   // The file lists the rows in the table's order.
   const exportCsv = () => {
     const csvCols = csvColumns(defs, shown, display);
-    const sorted = view === 'photos' ? photoOrder : sortRows(rows as never[], cols, sorting[view as TableView]);
     saveBlob(
       csvFileName(model.collections.map((c) => c.name), view, new Date()),
-      new Blob([toCsv(csvCols, sorted as never[])], { type: 'text/csv;charset=utf-8' }),
+      new Blob([toCsv(csvCols, ordered)], { type: 'text/csv;charset=utf-8' }),
     );
   };
 
@@ -327,8 +342,8 @@ export function TablePanel() {
     body = (
       <DataTable<LocationRow>
         cols={cols as Col<LocationRow>[]}
-        rows={rows as LocationRow[]}
-        sorting={sorting.locations}
+        rows={ordered as LocationRow[]}
+        sorting={now.sorting.locations}
         onSorting={(s) => setSorting('locations', s)}
         rowKey={(r) => r.key}
         rowClass={(r) => (flags(r).length ? 'flag' : undefined)}
@@ -386,8 +401,8 @@ export function TablePanel() {
     body = (
       <DataTable<SpeciesRow>
         cols={cols as Col<SpeciesRow>[]}
-        rows={rows as SpeciesRow[]}
-        sorting={sorting.species}
+        rows={ordered as SpeciesRow[]}
+        sorting={now.sorting.species}
         onSorting={(s) => setSorting('species', s)}
         rowKey={(r) => model.species[r.species].key}
         cell={(c, r) => {
@@ -412,8 +427,8 @@ export function TablePanel() {
     body = (
       <DataTable<PhotoRow>
         cols={cols as Col<PhotoRow>[]}
-        rows={rows as PhotoRow[]}
-        sorting={sorting.photos}
+        rows={photoOrder}
+        sorting={now.sorting.photos}
         onSorting={(s) => setSorting('photos', s)}
         rowKey={(r) => String(r.photo)}
         initialScroll={restore.current}
@@ -445,7 +460,7 @@ export function TablePanel() {
           <Seg
             className="seg view-seg"
             label="Show"
-            value={view}
+            value={now.view}
             options={[
               ['locations', 'Locations'],
               ['species', 'Species'],
@@ -454,11 +469,11 @@ export function TablePanel() {
             ]}
             onChange={setView}
           />
-          {view === 'photos' && (
+          {now.view === 'photos' && (
             <>
               <Seg
                 label="Layout"
-                value={layout}
+                value={now.layout}
                 options={[
                   ['grid', 'Grid'],
                   ['list', 'List'],
@@ -467,7 +482,7 @@ export function TablePanel() {
               />
               <Seg
                 label="Tagged"
-                value={filters.photoTag}
+                value={now.filters.photoTag}
                 options={[
                   ['tagged', 'Tagged'],
                   ['untagged', 'Untagged'],
@@ -475,10 +490,10 @@ export function TablePanel() {
                 ]}
                 onChange={setPhotoTag}
               />
-              {layout === 'grid' && (
+              {now.layout === 'grid' && (
                 <Seg<'new' | 'old' | ''>
                   label="Order"
-                  value={sorting.photos[0]?.id === 'time' ? (sorting.photos[0].desc ? 'new' : 'old') : ''}
+                  value={now.sorting.photos[0]?.id === 'time' ? (now.sorting.photos[0].desc ? 'new' : 'old') : ''}
                   options={[
                     ['new', 'Newest first'],
                     ['old', 'Oldest first'],

@@ -1,5 +1,6 @@
 import type { FilterDimension } from '@/data';
 import { filterButtons, photoCountLabel, type FilterButton } from '@/lib/filterLabels';
+import { useTableView } from '@/lib/useTableView';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { Popover, usePopover } from './Popover';
@@ -63,6 +64,7 @@ export function FilterBar() {
   const { model, filters, result, active, grouping } = useView();
   const unit = useStore((s) => s.display.elevation);
   const reset = useStore((s) => s.resetFilters);
+  const { updating } = useTableView();
   return (
     <div className="filterbar">
       <div className="fbtns" role="group" aria-label="Filters">
@@ -71,6 +73,11 @@ export function FilterBar() {
         ))}
       </div>
       <div className="fright">
+        {updating && (
+          <span className="updating" role="status">
+            Updating…
+          </span>
+        )}
         <span className="result" aria-live="polite">
           {photoCountLabel(result.photos.length, result.total, active)}
         </span>

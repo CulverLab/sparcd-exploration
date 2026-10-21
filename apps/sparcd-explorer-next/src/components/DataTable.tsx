@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef, type SortingState } from '@tanstack/react-table';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
-import { cellText, sortRows, type Cell, type Col } from '@/lib/tables';
+import { cellText, type Cell, type Col } from '@/lib/tables';
 
 export type DataTableProps<R> = {
   cols: Col<R>[];
+  /** The rows in the order `sorting` gives them (`sortRows`). */
   rows: R[];
   sorting: SortingState;
   onSorting: (s: SortingState) => void;
@@ -24,6 +25,8 @@ export type DataTableProps<R> = {
   initialScroll?: number | null;
   empty: string;
 };
+
+const NO_ROWS: unknown[] = [];
 
 /**
  * Every table: sortable headers that stay under the sticky filter bar while
@@ -54,18 +57,17 @@ export function DataTable<R>({
       })),
     [cols],
   );
-  const data = useMemo(() => sortRows(rows, cols, sorting), [rows, cols, sorting]);
+  // The table library draws the headers and their sort state only: a row
+  // model of its own cost seconds at 500,000 photos, and the rows come sorted.
   const table = useReactTable({
-    data,
+    data: NO_ROWS as R[],
     columns,
     state: { sorting },
     onSortingChange: (u) => onSorting(typeof u === 'function' ? u(sorting) : u),
     enableSortingRemoval: false,
     manualSorting: true,
     getCoreRowModel: getCoreRowModel(),
-    getRowId: rowKey,
   });
-  const sorted = table.getRowModel().rows;
   const colById = useMemo(() => new Map(cols.map((c) => [c.id, c])), [cols]);
 
   const tableRef = useRef<HTMLTableElement>(null);
@@ -76,7 +78,7 @@ export function DataTable<R>({
     if (Math.abs(top - margin) > 1) setMargin(top);
   });
   const virtualizer = useWindowVirtualizer({
-    count: sorted.length,
+    count: rows.length,
     estimateSize: () => 34,
     overscan: 12,
     scrollMargin: margin,
@@ -156,12 +158,11 @@ export function DataTable<R>({
             </tr>
           )}
           {items.map((item) => {
-            const row = sorted[item.index];
-            const r = row.original;
+            const r = rows[item.index];
             const extra = rowClass?.(r);
             return (
               <tr
-                key={row.id}
+                key={rowKey(r)}
                 data-index={item.index}
                 ref={virtualizer.measureElement}
                 className={onRowClick ? [extra, 'click'].filter(Boolean).join(' ') : extra}
@@ -192,7 +193,7 @@ export function DataTable<R>({
           )}
         </tbody>
       </table>
-      <div className="tbl-foot">{sorted.length ? `All ${sorted.length.toLocaleString('en-US')} shown` : empty}</div>
+      <div className="tbl-foot">{rows.length ? `All ${rows.length.toLocaleString('en-US')} shown` : empty}</div>
     </>
   );
 }

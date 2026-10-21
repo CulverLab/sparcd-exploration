@@ -252,18 +252,26 @@ export type PhotoRow = {
 
 /** One row per photo, its species joined. `detections` limits the species to those in view. */
 export function photoRows(model: Model, photos: number[], detections?: number[]): PhotoRow[] {
-  const shown = detections && new Set(detections);
+  // Built for hundreds of thousands of photos: a mark per detection rather
+  // than a set, and no set per row for the one or two species most photos have.
+  let shown: Uint8Array | null = null;
+  if (detections) {
+    shown = new Uint8Array(model.detections.length);
+    for (const d of detections) shown[d] = 1;
+  }
+  const collections = model.collections.map((c) => c.name);
   return photos.map((i) => {
     const p = model.photos[i];
     const site = model.sites[p.site];
-    const names = new Set<string>();
-    const scientific = new Set<string>();
+    const names: string[] = [];
+    const scientific: string[] = [];
     let count = 0;
     for (const d of p.detections) {
-      if (shown && !shown.has(d)) continue;
+      if (shown && !shown[d]) continue;
       const det = model.detections[d];
-      names.add(model.species[det.species].name);
-      if (model.species[det.species].scientificName) scientific.add(model.species[det.species].scientificName);
+      const sp = model.species[det.species];
+      if (!names.includes(sp.name)) names.push(sp.name);
+      if (sp.scientificName && !scientific.includes(sp.scientificName)) scientific.push(sp.scientificName);
       count += det.count;
     }
     return {
@@ -271,12 +279,12 @@ export function photoRows(model: Model, photos: number[], detections?: number[])
       fileName: p.fileName,
       time: formatTimestamp24(p.timestamp),
       date: p.date,
-      species: [...names].join(', '),
-      scientificNames: [...scientific].join(', '),
+      species: names.join(', '),
+      scientificNames: scientific.join(', '),
       count,
       locationId: site.locationId,
       locationName: site.name,
-      collection: model.collections[p.collection].name,
+      collection: collections[p.collection],
       tagged: p.tagged,
       video: p.video,
     };

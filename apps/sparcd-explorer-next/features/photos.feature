@@ -132,3 +132,13 @@ Feature: Photos grid and detail
     When I press "Close"
     Then the photo panel is closed
     And focus is back on the "View" button of the row taken at "2024-01-10 05:00:00"
+
+  @preview-5
+  Scenario: Photos stays quick with many collections open
+    Given there are 10 more collections of 10,000 photos each
+    And I am signed in
+    When I open every collection
+    Then the photo count reads "100,017 photos"
+    And showing the Photos grid takes under a second
+    And switching to the List takes under a second
+    And sorting the List by Species takes under a second

@@ -1,5 +1,6 @@
-// applyFilters must stay under 100 ms for 200k images. On a slow CI runner,
-// raise the budget with PERF_FACTOR (e.g. PERF_FACTOR=3).
+// applyFilters must stay under 100 ms for 200k images, and the Photos view's
+// rows and sorts stay quick at 500k. On a slow CI runner, raise the budgets
+// with PERF_FACTOR (e.g. PERF_FACTOR=3).
 
 import { describe, expect, it } from 'vitest';
 import type { Media, NullableDeployment, Observation } from '@sparcd/camtrap';
@@ -11,11 +12,14 @@ import {
   listKeys,
   missingKeys,
   only,
+  photoRows,
   onlyLocations,
   onlySpecies,
   type FilterState,
   type LoadedCollection,
 } from '../src/data';
+import { photoColumns, photoTimeRanks, sortRows } from '../src/lib/tables';
+import { bigModel } from './support/bigModel';
 import { collectionRef } from './support/fixtures';
 
 const PHOTOS = 200_000;
@@ -144,5 +148,41 @@ describe('checking 70k photo files', () => {
     clearInterval(probe);
     expect(missing.size).toBe(Math.ceil(FILES / 30));
     expect(longest).toBeLessThan(BUDGET_MS / 2);
+  });
+});
+
+// Opening Photos with 50 collections froze the browser: sorting 500,000 rows
+// by date took 24 s, as each comparison built a collator. Rows are now built
+// once per filter result, and sorted by ranks, dealt in one pass.
+describe('the Photos view with 500,000 photos in 50 collections', () => {
+  const model = bigModel(50, 10_000);
+  const result = applyFilters(model, NO_FILTERS);
+  const cols = photoColumns({
+    model,
+    display: { coords: 'latlon', precision: { method: 'round', digits: 3 }, elevation: 'm' },
+    totalDetections: result.detections.length,
+  });
+  const rows = photoRows(model, result.photos, result.detections);
+  const best = (fn: () => void) => Math.min(...Array.from({ length: 3 }, () => timed(fn)));
+
+  it('builds one row per photo with its species', () => {
+    expect(rows).toHaveLength(500_000);
+    expect(best(() => photoRows(model, result.photos, result.detections))).toBeLessThan(4 * BUDGET_MS);
+  });
+
+  it('ranks the photos by time once per model', () => {
+    const t = timed(() => photoTimeRanks(model));
+    expect(t).toBeLessThan(6 * BUDGET_MS);
+  });
+
+  it.each([
+    ['Date and time', 'time', 1],
+    ['Species', 'species', 2],
+    ['Collection', 'coll', 2],
+    ['Location', 'location', 2],
+  ])('sorts by %s under the budget', (_, id, budget) => {
+    photoTimeRanks(model);
+    // A fresh copy each time: a sort is kept per set of rows.
+    for (const desc of [true, false]) expect(best(() => sortRows([...rows], cols, [{ id, desc }]))).toBeLessThan(budget * BUDGET_MS);
   });
 });
