@@ -241,6 +241,10 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     }
 
     if (!sameOrigin) return route.fallback();
+    if (url.pathname === '/-/whoami') {
+      await route.fulfill({ status: 404, headers: XML, body: errorXml('NoSuchKey', 'No account-name route') });
+      return;
+    }
 
     const segments = url.pathname.split('/').filter(Boolean);
     const auth = request.headers()['authorization'] ?? '';

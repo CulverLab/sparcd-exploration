@@ -7,14 +7,13 @@ const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase tex
 const input =
   'w-full bg-paper border border-rule px-3 py-2 text-[14px] font-mono text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2';
 
-function maskedIdentity(value: string): string {
-  if (value.length <= 6) return '••••••';
-  return `${value.slice(0, 3)}…${value.slice(-3)}`;
-}
-
-// Connected sessions derive attribution from the storage account username.
-// Local-batch mode has no S3 connection, so it keeps the handoff identity here.
 export function Settings() {
+  const identityPersistenceError = useStore((s) => s.identityPersistenceError);
+  const identityResolutionStatus = useStore((s) => s.identityResolutionStatus);
+  const identityResolutionError = useStore((s) => s.identityResolutionError);
+  const beginTaggerIdentityEdit = useStore((s) => s.beginTaggerIdentityEdit);
+  const ensureTaggerIdentity = useStore((s) => s.ensureTaggerIdentity);
+  const refreshTaggerIdentity = useStore((s) => s.refreshTaggerIdentity);
   const taggerUser = useStore((s) => s.taggerUser);
   const setTaggerUser = useStore((s) => s.setTaggerUser);
   const dryRun = useStore((s) => s.dryRun);
@@ -57,80 +56,35 @@ export function Settings() {
     <div className="max-w-[560px] mx-auto p-8 space-y-8">
       <section>
         <label htmlFor="user" className={kicker}>
-          {cfg ? 'Connected account' : 'Local batch identity'}
+          {cfg ? 'Tagger Identity' : 'Local batch identity'}
         </label>
         <input
           id="user"
           className={input}
-          placeholder={cfg ? 'Connected storage username' : 'e.g. jgonzalez'}
-          value={cfg ? maskedIdentity(taggerUser) : taggerUser}
-          onChange={(e) => {
-            if (!cfg) setTaggerUser(e.target.value);
-          }}
-          readOnly={!!cfg}
+          placeholder="e.g. jgonzalez"
+          value={taggerUser}
+          onChange={(e) => setTaggerUser(e.target.value)}
+          onFocus={beginTaggerIdentityEdit}
+          onBlur={() => { if (cfg) ensureTaggerIdentity(); }}
+          aria-describedby="tagger-identity-help tagger-identity-status"
+          aria-invalid={!!cfg && identityResolutionStatus === 'error' && !taggerUser.trim()}
           autoComplete="off"
           spellCheck={false}
         />
-        <p className="mt-1.5 text-[13px] text-inkMute font-body">
+        <p id="tagger-identity-help" className="mt-1.5 text-[13px] text-inkMute font-body">
           {cfg
-            ? 'Derived from the username used to connect to storage. It stamps identification attribution, audit snapshots, and edit comments.'
-            : 'Local batches have no storage connection, so enter the handoff identity before returning tags to the Uploader.'}
+            ? 'Shared with Uploader for this login. Used for new identifications and review events. Clearing the custom name restores the resolved account name when you leave this field.'
+            : 'Optional attribution for this local batch. You can return to Uploader with Done even when identity is blank.'}
         </p>
-      </section>
-
-      <section>
-        <span className={kicker}>Sync default</span>
-        <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
-          <input
-            type="checkbox"
-            className="w-5 h-5 md:w-4 md:h-4 accent-accent"
-            checked={dryRun}
-            onChange={(e) => setDryRun(e.target.checked)}
-          />
-          Dry-run (log writes, change nothing)
-        </label>
-        <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Off by default. Turn it on to preview canonical writes without changing anything. This
-          preference applies to both syncs and snapshot restores.
-        </p>
-      </section>
-
-      <section>
-        <span className={kicker}>Burst grouping</span>
-        <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
-          <input
-            type="checkbox"
-            className="w-5 h-5 md:w-4 md:h-4 accent-accent"
-            checked={burstOn}
-            onChange={(e) => setBurstOn(e.target.checked)}
-          />
-          Group rapid sequences into bursts
-        </label>
-        <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Off by default — our cameras shoot no bursts, so the Overview stays a flat strip. Turn it
-          on for cameras that fire sequences and the strip gains burst bands plus whole-burst
-          selection.
-        </p>
-        {burstOn && (
-          <div className="mt-4 pl-6 border-l border-ruleSoft">
-            <label htmlFor="burst" className={kicker}>
-              Threshold — {burst}s
-            </label>
-            <input
-              id="burst"
-              type="range"
-              min={5}
-              max={600}
-              step={5}
-              value={burst}
-              onChange={(e) => setBurst(Number(e.target.value))}
-              className="w-full accent-accent"
-            />
-            <p className="mt-1.5 text-[13px] text-inkMute font-body">
-              Images within this window on one camera group into a burst.
-            </p>
-          </div>
-        )}
+        <div id="tagger-identity-status">
+          {cfg && identityPersistenceError && <p role="alert" className="text-[13px] text-warn">This identity could not be saved in this browser. It remains usable in this session but may reset on reload.</p>}
+          {cfg && identityResolutionStatus === 'loading' && <p role="status" className="text-[13px] text-inkSoft">Checking the connected account’s attribution name…</p>}
+          {cfg && identityResolutionError && <div role="alert" className="text-[13px] text-warn">
+            <p>{identityResolutionError}</p>
+            <p>{taggerUser.trim() ? 'Your current identity remains available.' : 'Enter a custom identity or retry before making attributed changes.'}</p>
+            <button type="button" onClick={() => void refreshTaggerIdentity()} className="min-h-11 underline">Retry account-name lookup</button>
+          </div>}
+        </div>
       </section>
 
       <section>
@@ -150,105 +104,167 @@ export function Settings() {
         </p>
       </section>
 
-      <section className="border-t border-ruleSoft pt-6">
-        <span className={kicker}>Date format</span>
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-          {(
-            [
-              { value: 'long', label: 'Month Day Year' },
-              { value: 'short', label: 'Month Day Short Year' },
-              { value: 'numeric', label: 'Numeric date' },
-              { value: 'iso-local', label: 'ISO local date' },
-            ] as const
-          ).map((opt) => (
-            <label
-              key={opt.value}
-              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
-            >
-              <input
-                type="radio"
-                name="dateFormat"
-                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
-                checked={dateFormat === opt.value}
-                onChange={() => setDateFormat(opt.value)}
-              />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-      </section>
+      <div role="group" aria-label="Display preferences" className="border-t border-ruleSoft pt-6 space-y-8">
+        <section>
+          <span className={kicker}>Date format</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            {(
+              [
+                { value: 'long', label: 'Month Day Year' },
+                { value: 'short', label: 'Month Day Short Year' },
+                { value: 'numeric', label: 'Numeric date' },
+                { value: 'iso-local', label: 'ISO local date' },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+              >
+                <input
+                  type="radio"
+                  name="dateFormat"
+                  className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                  checked={dateFormat === opt.value}
+                  onChange={() => setDateFormat(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </section>
 
-      <section>
-        <span className={kicker}>Time format</span>
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-          {(
-            [
-              { value: '24h', label: '24-hour' },
-              { value: '24h-seconds', label: '24-hour with seconds' },
-              { value: '12h', label: '12-hour (AM/PM)' },
-              { value: '12h-seconds', label: '12-hour with seconds (AM/PM)' },
-            ] as const
-          ).map((opt) => (
-            <label
-              key={opt.value}
-              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
-            >
-              <input
-                type="radio"
-                name="timeFormat"
-                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
-                checked={timeFormat === opt.value}
-                onChange={() => setTimeFormat(opt.value)}
-              />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-      </section>
+        <section>
+          <span className={kicker}>Time format</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            {(
+              [
+                { value: '24h', label: '24-hour' },
+                { value: '24h-seconds', label: '24-hour with seconds' },
+                { value: '12h', label: '12-hour (AM/PM)' },
+                { value: '12h-seconds', label: '12-hour with seconds (AM/PM)' },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+              >
+                <input
+                  type="radio"
+                  name="timeFormat"
+                  className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                  checked={timeFormat === opt.value}
+                  onChange={() => setTimeFormat(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </section>
 
-      <section>
-        <span className={kicker}>Distance units</span>
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-          {(
-            [
-              { value: 'meters', label: 'Meters' },
-              { value: 'feet', label: 'Feet' },
-            ] as const
-          ).map((opt) => (
-            <label
-              key={opt.value}
-              className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
-            >
+        <section>
+          <span className={kicker}>Distance units</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            {(
+              [
+                { value: 'meters', label: 'Meters' },
+                { value: 'feet', label: 'Feet' },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-2 min-h-11 md:min-h-0 font-body text-[14px] text-ink"
+              >
+                <input
+                  type="radio"
+                  name="distanceUnit"
+                  className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+                  checked={distanceUnit === opt.value}
+                  onChange={() => setDistanceUnit(opt.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[13px] text-inkMute font-body">
+            Sets the unit emphasized when a location's elevation is shown.
+          </p>
+        </section>
+
+      </div>
+
+      <div role="group" aria-label="Sync and burst preferences" className="border-t border-ruleSoft pt-6 space-y-8">
+        <section>
+          <span className={kicker}>Sync default</span>
+          <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
+            <input
+              type="checkbox"
+              className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+              checked={dryRun}
+              onChange={(e) => setDryRun(e.target.checked)}
+            />
+            Dry-run (log writes, change nothing)
+          </label>
+          <p className="mt-1.5 text-[13px] text-inkMute font-body">
+            Off by default. Turn it on to preview canonical writes without changing anything. This
+            preference applies to both syncs and snapshot restores.
+          </p>
+        </section>
+
+        <section>
+          <span className={kicker}>Burst grouping</span>
+          <label className="flex items-center gap-2.5 min-h-11 md:min-h-0 font-body text-[14px] text-ink">
+            <input
+              type="checkbox"
+              className="w-5 h-5 md:w-4 md:h-4 accent-accent"
+              checked={burstOn}
+              onChange={(e) => setBurstOn(e.target.checked)}
+            />
+            Group rapid sequences into bursts
+          </label>
+          <p className="mt-1.5 text-[13px] text-inkMute font-body">
+            Off by default — our cameras shoot no bursts, so the Overview stays a flat strip. Turn it
+            on for cameras that fire sequences and the strip gains burst bands plus whole-burst
+            selection.
+          </p>
+          {burstOn && (
+            <div className="mt-4 pl-6 border-l border-ruleSoft">
+              <label htmlFor="burst" className={kicker}>
+                Threshold — {burst}s
+              </label>
               <input
-                type="radio"
-                name="distanceUnit"
-                className="w-5 h-5 md:w-4 md:h-4 accent-accent"
-                checked={distanceUnit === opt.value}
-                onChange={() => setDistanceUnit(opt.value)}
+                id="burst"
+                type="range"
+                min={5}
+                max={600}
+                step={5}
+                value={burst}
+                onChange={(e) => setBurst(Number(e.target.value))}
+                className="w-full accent-accent"
               />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-        <p className="mt-1.5 text-[13px] text-inkMute font-body">
-          Sets the unit emphasized when a location's elevation is shown.
-        </p>
-      </section>
+              <p className="mt-1.5 text-[13px] text-inkMute font-body">
+                Images within this window on one camera group into a burst.
+              </p>
+            </div>
+          )}
+        </section>
+
+      </div>
 
       <section className="border-t border-ruleSoft pt-6">
         <span className={kicker}>Connection</span>
         {cfg ? (
           <>
             <p className="text-[13px] font-mono text-inkSoft break-all">{cfg.endpoint}</p>
+            <p className="text-[13px] text-inkSoft">Access key: <span aria-label="Connected Access key" className="font-mono">{cfg.accessKey.length <= 6 ? '••••••' : `${cfg.accessKey.slice(0, 3)}…${cfg.accessKey.slice(-3)}`}</span></p>
             <button
+              aria-describedby="disconnect-help"
               onClick={() => void logout()}
               className="mt-3 inline-flex items-center min-h-11 md:min-h-0 text-[14px] border border-ink px-3 py-2.5 md:py-1.5 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               Disconnect
             </button>
-            <p className="mt-2 text-[13px] text-inkMute font-body">
-              Clears this browser's local drafts and settings so the next person connects to a clean
-              app.
+            <p id="disconnect-help" className="mt-2 text-[13px] text-inkMute font-body">
+              Clears this browser's local Tagger data and logs you out. Remembered connection details remain. Disconnect before leaving a shared or public computer.
             </p>
           </>
         ) : (

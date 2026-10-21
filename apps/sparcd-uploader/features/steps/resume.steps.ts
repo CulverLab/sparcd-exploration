@@ -11,6 +11,7 @@ import {
 } from './helpers';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
+const LOGIN_B = 'AKIATESTKEY0002';
 const METADATA_NAMES = ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json', 'UploadComplete.json'];
 
 const metadataPuts = (app: App) =>
@@ -248,6 +249,17 @@ Given('an open upload is listed in History', async ({ app }) => {
   await producePartialRun(app);
   await app.gotoSection('History');
   await expect(app.page.getByRole('button', { name: 'Resume' })).toBeVisible();
+});
+
+When('the connected login changes to Login B', async ({ app }) => {
+  await app.disconnectFromHeader();
+  await expect(app.connectForm()).toBeVisible();
+  await app.fillConnection({ accessKey: LOGIN_B });
+  await app.page.getByLabel('Remember endpoint & access key on this device').check();
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+  await app.gotoSection('Settings');
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(LOGIN_B);
 });
 
 Given('an interrupted upload has a matching UploadMeta publication already stored', async ({ app }) => {

@@ -24,7 +24,7 @@ export default defineConfig({
   webServer: {
     // Use the installed Vite binary directly so the browser harness does not
     // trigger Corepack's package-manager resolution before starting the app.
-    command: `./node_modules/.bin/vite --port ${port} --strictPort`,
+    command: `./node_modules/.bin/vite --config vite.bdd.config.ts --port ${port} --strictPort`,
     url: `${origin}/sparcd-exploration/tagger/`,
     reuseExistingServer: false,
     timeout: 120_000,

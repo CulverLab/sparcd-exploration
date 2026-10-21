@@ -8,6 +8,7 @@
 // editing one image never re-renders the whole strip.
 
 import { create } from 'zustand';
+import { attributionAvailable, connectedAttribution } from './attribution';
 import { shiftTimestamp, type Deployment } from '@sparcd/camtrap';
 import {
   db,
@@ -314,7 +315,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
     targets: TagTarget[],
     patch: Partial<DraftRecord> | ((prev: DraftRecord) => Partial<DraftRecord>),
   ): void => {
-    if (!targets.length) return;
+    if (!targets.length || !attributionAvailable()) return;
     const now = new Date().toISOString();
     const updates: Record<string, DraftRecord> = {};
     const cur = get().drafts;
@@ -365,7 +366,9 @@ export const useDraftStore = create<DraftState>((set, get) => {
       });
     },
 
-    addSpecies: (ctx, targets, tag) =>
+    addSpecies: (ctx, targets, tag) => {
+      const actor = connectedAttribution();
+      if (actor) tag = { ...tag, classifiedBy: actor, classificationTimestamp: new Date().toISOString() };
       mutateMany(ctx, targets, (prev) => {
         const alreadyPresent = prev.observations.some((o) => o.scientificName === tag.scientificName);
         const wasCanonical = targets.some((target) =>
@@ -385,9 +388,12 @@ export const useDraftStore = create<DraftState>((set, get) => {
           confirmedSpecies,
           removedSpecies,
         };
-      }),
+      });
+    },
 
-    incrementSpecies: (ctx, targets, tag) =>
+    incrementSpecies: (ctx, targets, tag) => {
+      const actor = connectedAttribution();
+      if (actor) tag = { ...tag, classifiedBy: actor, classificationTimestamp: new Date().toISOString() };
       mutateMany(ctx, targets, (prev) => {
         const wasPresent = prev.observations.some((o) => o.scientificName === tag.scientificName);
         const wasCanonical = targets.some((target) =>
@@ -404,7 +410,8 @@ export const useDraftStore = create<DraftState>((set, get) => {
             : prev.confirmedSpecies,
           removedSpecies: (prev.removedSpecies ?? []).filter((name) => name !== tag.scientificName),
         };
-      }),
+      });
+    },
 
     removeSpecies: (ctx, mediaPath, deploymentId, base, sci) =>
       mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
@@ -419,7 +426,9 @@ export const useDraftStore = create<DraftState>((set, get) => {
         };
       }),
 
-    setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count, classifiedBy, classificationTimestamp) =>
+    setSpeciesCount: (ctx, mediaPath, deploymentId, base, sci, count, classifiedBy, classificationTimestamp) => {
+      const actor = connectedAttribution();
+      if (actor) { classifiedBy = actor; classificationTimestamp = new Date().toISOString(); }
       mutateMany(ctx, [{ mediaPath, deploymentId, base }], (prev) => {
         const wasCanonical = base?.observations.some((o) => o.scientificName === sci) ?? false;
         return {
@@ -430,7 +439,8 @@ export const useDraftStore = create<DraftState>((set, get) => {
             ? [...new Set([...(prev.confirmedSpecies ?? []), sci])]
             : prev.confirmedSpecies,
         };
-      }),
+      });
+    },
 
     detag: (ctx, targets) => mutateMany(ctx, targets, (prev) => {
       const canonical = targets.find((target) => target.mediaPath === prev.mediaPath)?.base?.observations ?? [];
@@ -445,6 +455,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
     }),
 
     setTimeOffset: (ctx, offset) => {
+      if (!attributionAvailable()) return;
       // Optimistic Zustand update (hot path) + durable Dexie mirror. Unlike a
       // draft, the offset lives on the `uploads` record, so it never shows in
       // `dirtyCount` — the active-offset indicator (ClockChip) is its signal.
@@ -453,6 +464,7 @@ export const useDraftStore = create<DraftState>((set, get) => {
     },
 
     setPendingLocation: async (ctx, location) => {
+      if (!attributionAvailable()) return;
       set({ pendingLocation: location });
       await setUploadPendingLocation(ctx.bucket, ctx.uploadPrefix, location);
     },

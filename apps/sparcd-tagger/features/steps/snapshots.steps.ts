@@ -91,7 +91,7 @@ Then(
 
 When('a snapshot is chosen for restore', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);
   await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -126,7 +126,7 @@ Then(
     await sectionTab(page, 'Settings').click();
     await settingsDryRunCheckbox(page).check();
     await expect(settingsDryRunCheckbox(page)).toBeChecked();
-    await expect(page.locator('#user')).toHaveValue('tes…key');
+    await expect(page.locator('#user')).toHaveValue('testkey');
     await sectionTab(page, 'Tag').click();
     await openSnapshots(page);
     await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -140,7 +140,7 @@ Then(
 
 When('a snapshot is restored', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);
   await snapshotItems(page).first().getByRole('button', { name: 'Restore…' }).click();
@@ -188,7 +188,7 @@ Then("only then are the snapshot's versions written back in place", async ({ s3 
 
 Given('the stored files changed since the restore was previewed', async ({ page, s3 }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await settingsDryRunCheckbox(page).uncheck();
   await sectionTab(page, 'Tag').click();
   await openSnapshots(page);

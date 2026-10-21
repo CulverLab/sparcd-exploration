@@ -4,6 +4,7 @@
 // state so the next sync starts clean. The UI keeps the result and drives the
 // store/query side-effects (it owns those React handles).
 
+import { requireAttribution, IDENTITY_REQUIRED } from './attribution';
 import type { S3Config } from '@sparcd/types';
 import { buildSyncPlan, runSync, runRestore, type SyncResult } from './sync';
 import { makeSyncIO, loadCanonicalState, loadSnapshotBodies } from './s3';
@@ -36,6 +37,8 @@ export type SyncArgs = {
  * writes. On a successful live write it re-grounds on the new canonical state.
  */
 export async function performSync(args: SyncArgs): Promise<SyncResult> {
+  requireAttribution();
+  if (!args.user.trim()) throw new Error(IDENTITY_REQUIRED);
   const { cfg, bucket, uploadPrefix, user, images, drafts, dryRun, timeZone } = args;
 
   // The workspace grounds on load; ground here too as a fallback so a sync is
@@ -112,6 +115,8 @@ export type RestoreArgs = {
  * be finished before a new write begins).
  */
 export async function performRestore(args: RestoreArgs): Promise<SyncResult> {
+  requireAttribution();
+  if (!args.user.trim()) throw new Error(IDENTITY_REQUIRED);
   const { cfg, bucket, uploadPrefix, user, snapshotPrefix, dryRun } = args;
 
   const bodies = await loadSnapshotBodies(cfg, bucket, snapshotPrefix);

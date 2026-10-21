@@ -27,7 +27,7 @@ Given('several images are selected', async ({ page }) => {
 
 Given('the connected account is ready for attribution', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
 });

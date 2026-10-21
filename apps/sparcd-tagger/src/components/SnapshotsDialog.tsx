@@ -239,7 +239,7 @@ function RestorePane({
 
         {!user && !error && (
           <p className="text-warn font-mono text-[13px] border border-warn px-3 py-2">
-            Connect with a storage username first — it supplies the attribution and fresh audit snapshot path.
+            Enter a Tagger identity in Settings or retry the account-name lookup before syncing or restoring.
           </p>
         )}
 

@@ -218,18 +218,21 @@ Then('Browse, History and Settings remain available', async ({ page }) => {
 // --- Identity ---------------------------------------------------------------
 
 Then('Settings shows the connected storage username', async ({ page }) => {
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
 });
 
 Then('Settings shows connected storage username {string}', async ({ page }, username: string) => {
   await openSettings(page);
-  const displayed = username.length <= 6 ? '••••••' : `${username.slice(0, 3)}…${username.slice(-3)}`;
-  await expect(page.locator('#user')).toHaveValue(displayed);
+  await expect(page.locator('#user')).toHaveValue(username);
   await sectionTab(page, 'Tag').click();
 });
 
-Then('the connected identity cannot be edited', async ({ page }) => {
-  await expect(page.locator('#user')).toHaveAttribute('readonly', '');
+Then('the connected identity can be edited independently of credentials', async ({ page }) => {
+  await expect(page.locator('#user')).toBeEditable();
+  await page.locator('#user').fill('Researcher Name');
+  await page.locator('#user').blur();
+  await expect(page.locator('#user')).toHaveValue('Researcher Name');
+  await expect(page.getByLabel('Connected Access key')).toHaveText('tes…key');
 });
 
 When('the tagger is opened in a second tab of the same browser', async ({ context, s3, scratch }) => {
@@ -281,7 +284,7 @@ Then(
   async ({ page, s3 }) => {
     await expect(settingsDryRunCheckbox(page)).not.toBeChecked();
     // An identity is required before the dialog will run anything at all.
-    await expect(page.locator('#user')).toHaveValue('tes…key');
+    await expect(page.locator('#user')).toHaveValue('testkey');
     await sectionTab(page, 'Browse').click();
     await collectionButton(page, COLLECTION_NAME).click();
     await openWorkspaceFromBrowse(page);

@@ -73,7 +73,7 @@ Feature: Connect the tagger to a collection store and manage the session
     Given the tagger is connected
     When Settings is opened
     Then Settings shows the connected storage username
-    And the connected identity cannot be edited
+    And the connected identity can be edited independently of credentials
 
   @H2 @H2-3
   Scenario: A connected-account change updates future attribution

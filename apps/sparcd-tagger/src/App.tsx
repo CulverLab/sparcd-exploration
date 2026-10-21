@@ -22,6 +22,8 @@ const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: d
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const section = useStore((s) => s.section);
+  const ensureTaggerIdentity = useStore((s) => s.ensureTaggerIdentity);
+  useEffect(() => { if (!localBatchId) ensureTaggerIdentity(); }, [ensureTaggerIdentity]);
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
   const selectedUploadPrefix = useStore((s) => s.selectedUploadPrefix);

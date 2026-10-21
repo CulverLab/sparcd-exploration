@@ -223,6 +223,8 @@ Then('the species panel keeps the width that was chosen', async ({ page, scratch
 });
 
 When("the species panel's divider is dragged shorter", async ({ page, scratch }) => {
+  // The media-query event commits the vertical layout after viewport resizing.
+  await expect(page.getByRole('separator')).toHaveAttribute('aria-orientation', 'horizontal');
   scratch.speciesSizeBefore = (await page.getByTestId('focus-species-pane').boundingBox())!.height;
   scratch.canvasSizeBefore = (await page.getByTestId('focus-drop-zone').boundingBox())!.height;
   await dragDivider(page, 0, 80);
