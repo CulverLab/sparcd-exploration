@@ -62,11 +62,11 @@ When('I sign in as {string}', async ({ page }, name: string) => {
 });
 
 Then('I see {string}', async ({ page }, text: string) => {
-  await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
+  await expect(page.getByText(text, { exact: false }).filter({ visible: true }).first()).toBeVisible();
 });
 
 Then('I no longer see {string}', async ({ page }, text: string) => {
-  await expect(page.getByText(text, { exact: false })).toHaveCount(0);
+  await expect(page.getByText(text, { exact: false }).filter({ visible: true })).toHaveCount(0);
 });
 
 Then('I am still on the sign-in step', async ({ page }) => {
