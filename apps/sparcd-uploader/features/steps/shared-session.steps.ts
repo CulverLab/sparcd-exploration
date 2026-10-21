@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import type { Page, Request } from '@playwright/test';
 import { Given, When, Then, expect } from './fixtures';
 import { APP_PATH, S3_ORIGIN, ACCESS_KEY, SECRET_KEY } from './app';
-import { COLLECTION_A_NAME } from './fixtures-data';
+import { BUCKET_A, COLLECTION_A_NAME } from './fixtures-data';
 
 const DENIED = 'https://denied.sparcd.test';
 const SESSION_MODULE = fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url));
@@ -33,18 +33,33 @@ Given('the Uploader connection was corrected after a refused endpoint with Remem
     });
   });
   await app.open();
-  await app.page.route(`${DENIED}/**`, (route) => route.fulfill({
-    status: 403, contentType: 'application/xml',
-    body: '<Error><Code>AccessDenied</Code><Message>Access denied</Message></Error>',
-  }));
+  await app.page.route(`${DENIED}/**`, (route) => {
+    const url = new URL(route.request().url());
+    // The connect-time probe checks ListBuckets. Let it return a collection
+    // bucket, then refuse its collection marker read to model credentials that
+    // can list buckets but cannot read the app's data.
+    if (route.request().method() === 'GET' && url.pathname === '/') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/xml',
+        body: `<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>test</ID><DisplayName>test</DisplayName></Owner><Buckets><Bucket><Name>${BUCKET_A}</Name><CreationDate>2026-01-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>`,
+      });
+    }
+    return route.fulfill({
+      status: 403,
+      contentType: 'application/xml',
+      body: '<Error><Code>AccessDenied</Code><Message>Access denied</Message></Error>',
+    });
+  });
   await app.connect({ endpoint: DENIED, accessKey: 'OLD_ACCOUNT', secretKey: 'old-session-secret' });
   const old = await app.page.evaluate(() => ({
     ...JSON.parse(localStorage.getItem('sparcd-connection-revision')!), type: 'connect',
     config: JSON.parse(sessionStorage.getItem('sparcd-connection-tab')!),
   }));
   const refusal = app.page.waitForResponse((r) => r.url().startsWith(DENIED) && r.status() === 403);
-  await app.gotoSection('History');
+  await switchTool(app.page, 'Tagger');
   await refusal;
+  await switchTool(app.page, 'Uploader');
   const sibling = await app.page.context().newPage();
   await sibling.route('**/stale-session-sibling', (route) => route.fulfill({
     contentType: 'text/html', body: '<title>Delayed sibling replies</title>',

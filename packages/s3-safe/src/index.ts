@@ -34,10 +34,11 @@ import {
   CompleteMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { S3Config } from '@sparcd/types';
+import type { ConnectionProbeResult, S3Config } from '@sparcd/types';
 
 export type { S3Config } from '@sparcd/types';
 export { detectBackendDefaults } from '@sparcd/types';
+export type { ConnectionProbeResult } from '@sparcd/types';
 
 export type ObjectInfo = {
   key: string;
@@ -271,6 +272,59 @@ export function translateReadError(err: unknown, what: string): Error {
     details,
     err,
   );
+}
+
+const CONNECTION_TEST_TIMEOUT_MS = 8_000;
+
+/**
+ * A read-only connectivity/credential check for the Connect screen (#589):
+ * list buckets and translate the result into a `ConnectionProbeResult`, so
+ * the caller never sees a raw SDK error or the secret key. Used only at
+ * login time — builds and discards its own client, independent of any
+ * `SafeS3Client` the app keeps around after connecting.
+ *
+ * `AccessDenied` is reported as `'probe-denied'`, not `'credentials-rejected'`:
+ * S3 rejects a bad access key or signature at the authentication layer
+ * before any permission check ever runs, so only `InvalidAccessKeyId` and
+ * `SignatureDoesNotMatch` reliably mean the credentials themselves are
+ * wrong. `AccessDenied` here only means this account lacks permission to
+ * list buckets — it proves nothing about whether the credentials are valid.
+ */
+export async function testConnection(
+  cfg: S3Config,
+  opts: { signal?: AbortSignal } = {},
+): Promise<ConnectionProbeResult> {
+  if (opts.signal?.aborted) return { ok: false, category: 'interrupted' };
+  const client = new SafeS3Client(cfg, ['*']);
+  const ctl = new AbortController();
+  const onAbort = () => ctl.abort();
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
+  if (opts.signal?.aborted) onAbort();
+  const timer = setTimeout(() => ctl.abort(), CONNECTION_TEST_TIMEOUT_MS);
+  try {
+    if (ctl.signal.aborted) return { ok: false, category: 'interrupted' };
+    await client.listBuckets({ signal: ctl.signal });
+    return { ok: true };
+  } catch (err) {
+    if (ctl.signal.aborted) return { ok: false, category: 'interrupted' };
+    const { code, status } = readErrorDetails(err);
+    if (code === 'InvalidAccessKeyId' || code === 'SignatureDoesNotMatch') {
+      return { ok: false, category: 'credentials-rejected' };
+    }
+    if (code === 'RequestTimeTooSkewed') {
+      return { ok: false, category: 'clock-skew' };
+    }
+    if (code === 'AccessDenied' || status === 403) {
+      return { ok: false, category: 'probe-denied' };
+    }
+    if (status === undefined) {
+      return { ok: false, category: 'unreachable' };
+    }
+    return { ok: false, category: 'unexpected', detail: code ?? String(status) };
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 export type WriteStreamResult = { etag?: string };

@@ -30,6 +30,72 @@ Feature: Connect the tagger to a collection store and manage the session
     And any of them can be overridden before connecting
 
   @unmapped
+  Scenario: A remembered connection's backend details are not carried over to a different endpoint
+    Given a successful connection was made earlier in this browser
+    When the tab is closed and the tagger is opened in a new one
+    And a different endpoint is entered and the field is left
+    Then the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over
+    # #596 — secure/forcePathStyle/region used to be remembered forever once
+    # set, regardless of what endpoint was later typed.
+
+  @unmapped
+  Scenario: Connecting tests the credentials against the server before accepting them
+    Given the connection screen is shown
+    When valid-looking credentials are submitted
+    Then the credentials are checked against the server before the workspace opens
+
+  @unmapped
+  Scenario: An unreachable endpoint is reported, not silently accepted
+    Given the connection screen is shown
+    And the storage endpoint cannot be reached
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the endpoint could not be reached
+    And the workspace does not open
+
+  @unmapped
+  Scenario: Rejected credentials are reported, not silently accepted
+    Given the connection screen is shown
+    And the server will reject these credentials
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the credentials were rejected
+    And the workspace does not open
+
+  @unmapped
+  Scenario: A permission-denied check is distinguished from rejected credentials
+    Given the connection screen is shown
+    And the server denies the credential check itself
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the check could not confirm the credentials
+    And the workspace does not open
+    # #589 — AccessDenied on this read-only probe proves only that the
+    # account lacks permission to list buckets, never that the credentials
+    # themselves are wrong.
+
+  @unmapped
+  Scenario: A clock-skew rejection explains itself
+    Given the connection screen is shown
+    And the server reports this computer's clock is skewed
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message about the computer's clock
+    And the workspace does not open
+
+  @unmapped
+  Scenario: An interrupted check can be retried
+    Given the connection screen is shown
+    And the credential check hangs instead of responding
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the check was interrupted
+    And the form is available to try again
+    # Waits out the probe's own ~8s timeout for real.
+
+  @unmapped
+  Scenario: The credential check is skipped entirely while offline
+    Given the connection screen is shown
+    And the browser is offline
+    When valid-looking credentials are submitted
+    Then the workspace opens without any credential check
+
+  @unmapped
   Scenario: Reloading the page keeps the connection
     Given a successful connection was made earlier in this browser
     When the tagger is opened again in a new page load

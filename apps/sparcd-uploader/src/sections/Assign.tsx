@@ -2,6 +2,7 @@ import { InfoTooltip } from '../components/InfoTooltip';
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Connection, OfflineBanner, loadPersistedConnection, useOnline } from '@sparcd/auth-ui';
+import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from '../store';
 import { Spinner } from '../components/Spinner';
 import { useLocations } from '../lib/useLocations';
@@ -247,6 +248,7 @@ export function Assign() {
           toolName="Uploader"
           initialConfig={connectPrefill}
           onConnect={connect}
+          onTestConnection={(config, signal) => testConnection(config, { signal })}
           embedded
         />
         <button

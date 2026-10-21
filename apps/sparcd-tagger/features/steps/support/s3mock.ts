@@ -41,6 +41,16 @@ export class MockS3 {
   /** When set, the next canonical replace answers with this failure mode. */
   replaceMode: 'ok' | 'unsupported' = 'ok';
 
+  /** Makes the connect-time credential probe's ListBuckets call (#589) fail,
+   *  hang, or fail at the network level instead of succeeding — unset by
+   *  default, since every other scenario's `connect()` relies on it
+   *  succeeding. */
+  listBucketsFailure?: { status: number; code: string };
+  listBucketsHangs = false;
+  listBucketsAborts = false;
+  /** Every ListBuckets request this mock has answered, success or failure. */
+  listBucketsCalls = 0;
+
   /** Deterministic GET gate for asserting a pending UI before releasing data. */
   readonly heldGets = new Map<string, Promise<void>>();
   holdGet(key: string): () => void {
@@ -250,6 +260,23 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     if (!isListBuckets && !s3.buckets.includes(bucket)) return route.fallback();
 
     if (isListBuckets) {
+      s3.listBucketsCalls++;
+      if (s3.listBucketsAborts) {
+        await route.abort('connectionrefused');
+        return;
+      }
+      if (s3.listBucketsHangs) {
+        await new Promise<void>(() => {}); // the probe's own client-side timeout wins
+        return;
+      }
+      if (s3.listBucketsFailure) {
+        await route.fulfill({
+          status: s3.listBucketsFailure.status,
+          headers: XML,
+          body: errorXml(s3.listBucketsFailure.code, s3.listBucketsFailure.code),
+        });
+        return;
+      }
       await route.fulfill({ status: 200, headers: XML, body: listBucketsXml(s3.buckets) });
       return;
     }

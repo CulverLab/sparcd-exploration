@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
+import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from './store';
 import { Chrome } from './components/Chrome';
 import { Browse } from './sections/Browse';
@@ -53,7 +54,12 @@ export function App() {
 
   if (!s3Config) {
     return (
-      <Connection toolName="Tagger" initialConfig={connectPrefill} onConnect={connect} />
+      <Connection
+        toolName="Tagger"
+        initialConfig={connectPrefill}
+        onConnect={connect}
+        onTestConnection={(config, signal) => testConnection(config, { signal })}
+      />
     );
   }
 

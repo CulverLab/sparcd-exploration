@@ -677,6 +677,10 @@ Then('a pinned number defaults to 8', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  // Connecting now awaits a credential probe (#589) before the workspace
+  // appears — dropFolder's DOM evaluate has no actionability auto-wait of
+  // its own, unlike a Locator click, so it needs this explicit beat.
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.walkToUploadStep();

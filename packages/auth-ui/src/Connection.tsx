@@ -1,5 +1,5 @@
-import { useId, useMemo, useState } from 'react';
-import { detectBackendDefaults, type S3Config } from '@sparcd/types';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { detectBackendDefaults, type ConnectionProbeResult, type S3Config } from '@sparcd/types';
 import { BrandSwitcher } from './BrandSwitcher';
 import { OfflineBanner } from './OfflineBanner';
 import { useOnline } from './useOnline';
@@ -15,6 +15,11 @@ export type ConnectionProps = {
   /** `remember` reflects the "Remember me" checkbox at submit time — the
    *  caller decides what to persist (never the secret key) based on it. */
   onConnect: (config: S3Config, remember: boolean) => void;
+  /** When provided and the browser is online, a read-only connectivity/
+   *  credential check runs before `onConnect` — see `testConnection` in
+   *  `@sparcd/s3-safe` (#589). Skipped entirely while offline, preserving
+   *  today's optimistic-accept behavior for deferred/offline login. */
+  onTestConnection?: (config: S3Config, signal?: AbortSignal) => Promise<ConnectionProbeResult>;
   /** When provided, offers a secondary "Login later" action so a caller can
    *  let someone proceed without a connection until one is actually needed. */
   onSkip?: () => void;
@@ -40,6 +45,7 @@ export function Connection({
   toolName,
   initialConfig,
   onConnect,
+  onTestConnection,
   onSkip,
   embedded,
 }: ConnectionProps) {
@@ -59,6 +65,11 @@ export function Connection({
     initialConfig?.forcePathStyle,
   );
   const [secureOverride, setSecureOverride] = useState<boolean | undefined>(initialConfig?.secure);
+  // What `endpoint` was the last time the overrides above were resolved
+  // against it (see syncOverridesToEndpoint). Starts equal to the prefilled
+  // endpoint so a remembered override still applies until the endpoint is
+  // actually touched.
+  const [lastSyncedEndpoint, setLastSyncedEndpoint] = useState(initialConfig?.endpoint ?? '');
 
   const inferred = useMemo(() => detectBackendDefaults(endpoint || 'localhost'), [endpoint]);
   const region = regionOverride ?? inferred.region;
@@ -72,20 +83,134 @@ export function Connection({
   const online = useOnline();
   const canConnect = endpoint.trim() && accessKey.trim() && secretKey.trim();
 
-  function submit(e: React.FormEvent) {
+  // The page itself may be served over HTTPS (GitHub Pages, etc.) even when
+  // the configured endpoint resolves to plain HTTP — browsers block that as
+  // mixed content before any request leaves, with nothing for the app to
+  // catch or translate into an error. Checked eagerly, not on failure.
+  const pageIsSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const explicitEndpointScheme = endpoint.trim().match(/^https?:\/\//i)?.[0]?.toLowerCase();
+  const endpointIsSecure = explicitEndpointScheme
+    ? explicitEndpointScheme === 'https://'
+    : secure;
+  const showMixedContentWarning = online && pageIsSecure && !endpointIsSecure;
+
+  // Set while `onTestConnection` is awaited. The whole form is disabled for
+  // the duration (not just the Connect button) — that alone rules out a
+  // second submission landing while the first is still in flight, so no
+  // stale result can ever apply to values the user has since changed.
+  const [pending, setPending] = useState(false);
+  const [probeFailure, setProbeFailure] = useState<Extract<ConnectionProbeResult, { ok: false }> | null>(
+    null,
+  );
+  // StrictMode double-invokes effects in dev (mount → cleanup → mount), so
+  // the ref has to be re-armed on mount too, not just cleared on unmount —
+  // otherwise that first synthetic cleanup leaves it permanently false.
+  const mountedRef = useRef(true);
+  const probeControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      probeControllerRef.current?.abort();
+    };
+  }, []);
+
+  function probeFailureMessage(result: Extract<ConnectionProbeResult, { ok: false }>): string {
+    switch (result.category) {
+      case 'unreachable':
+        return `Couldn't reach ${endpoint.trim() || 'the endpoint'}. Check the address, then try again.`;
+      case 'credentials-rejected':
+        return 'The server rejected this access key and secret key. Check them and try again.';
+      case 'probe-denied':
+        return (
+          "Unable to confirm your credentials. The server denied this check, which needs " +
+          "bucket-listing permission. Confirm your credentials, or ask an administrator to " +
+          "check your account's permissions and check bucket permissions."
+        );
+      case 'clock-skew':
+        return (
+          "Please make sure your computer's time is correct — an incorrect clock prevents " +
+          'server requests from being successful. Fix it, then try logging in again.'
+        );
+      case 'interrupted':
+        return 'Unable to check your credentials — the request was interrupted. Try logging in again.';
+      case 'unexpected':
+        return (
+          `Something went wrong talking to the server${result.detail ? ` (${result.detail})` : ''}. ` +
+          'Try again, and contact an administrator if it keeps happening.'
+        );
+    }
+  }
+
+  // A remembered secure/path-style/region override only means anything for
+  // the endpoint it was saved for (#596) — otherwise it silently outlives
+  // the endpoint it came from, e.g. a stale local-MinIO "secure: false"
+  // surviving a later connection to a real HTTPS endpoint. Resolved here
+  // against the current endpoint, and only called on blur and at submit —
+  // never on every keystroke, so Advanced's fields don't flicker mid-edit.
+  // Returns the resolved values directly rather than relying on the state
+  // setters below having landed by the time the caller reads them.
+  function syncOverridesToEndpoint() {
+    const trimmed = endpoint.trim();
+    if (trimmed === lastSyncedEndpoint) {
+      return { region: regionOverride, forcePathStyle: pathStyleOverride, secure: secureOverride };
+    }
+    setLastSyncedEndpoint(trimmed);
+    const resolved =
+      trimmed === (initialConfig?.endpoint ?? '')
+        ? {
+            region: initialConfig?.region,
+            forcePathStyle: initialConfig?.forcePathStyle,
+            secure: initialConfig?.secure,
+          }
+        : { region: undefined, forcePathStyle: undefined, secure: undefined };
+    setRegionOverride(resolved.region);
+    setPathStyleOverride(resolved.forcePathStyle);
+    setSecureOverride(resolved.secure);
+    return resolved;
+  }
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canConnect) return;
-    onConnect(
-      {
-        endpoint: endpoint.trim(),
-        region,
-        accessKey: accessKey.trim(),
-        secretKey: secretKey.trim(),
-        forcePathStyle,
-        secure,
-      },
-      remember,
-    );
+    if (!canConnect || pending) return;
+    const resolved = syncOverridesToEndpoint();
+    const config: S3Config = {
+      endpoint: endpoint.trim(),
+      region: resolved.region ?? inferred.region,
+      accessKey: accessKey.trim(),
+      secretKey: secretKey.trim(),
+      forcePathStyle: resolved.forcePathStyle ?? inferred.forcePathStyle,
+      secure: resolved.secure ?? inferred.secure,
+    };
+
+    // Offline: skip the probe entirely and keep today's optimistic accept —
+    // this is purely additive for the online case.
+    if (!online || !onTestConnection) {
+      onConnect(config, remember);
+      return;
+    }
+
+    setProbeFailure(null);
+    setPending(true);
+    const controller = new AbortController();
+    probeControllerRef.current = controller;
+    let result: ConnectionProbeResult;
+    try {
+      result = await onTestConnection(config, controller.signal);
+    } catch {
+      result = controller.signal.aborted
+        ? { ok: false, category: 'interrupted' }
+        : { ok: false, category: 'unexpected' };
+    } finally {
+      if (probeControllerRef.current === controller) probeControllerRef.current = null;
+      if (mountedRef.current) setPending(false);
+    }
+    if (!mountedRef.current) return;
+    if (result.ok) {
+      onConnect(config, remember);
+    } else {
+      setProbeFailure(result);
+    }
   }
 
   return (
@@ -109,8 +234,27 @@ export function Connection({
           Connect to an S3-compatible endpoint to begin.
         </p>
 
-        <div className="mb-4">
+        <div className="mb-4 space-y-2">
           <OfflineBanner message="You're offline — connecting needs a network connection." />
+          {showMixedContentWarning && (
+            <div
+              role="status"
+              data-testid="mixed-content-warning"
+              className="border border-warn/40 bg-paper px-3 py-2.5 font-body text-[13px] text-warn"
+            >
+              This page is loaded over HTTPS, so connecting to a plain HTTP endpoint will be
+              blocked by the browser. Check the endpoint's scheme under Advanced.
+            </div>
+          )}
+          {probeFailure && (
+            <div
+              role="alert"
+              data-testid="connection-probe-failure"
+              className="border border-warn/40 bg-paper px-3 py-2.5 font-body text-[13px] text-warn"
+            >
+              {probeFailureMessage(probeFailure)}
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -125,8 +269,10 @@ export function Connection({
               placeholder="host[:port] or https://host"
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
+              onBlur={() => syncOverridesToEndpoint()}
               autoComplete="url"
               spellCheck={false}
+              disabled={pending}
             />
           </div>
           <div>
@@ -141,6 +287,7 @@ export function Connection({
               onChange={(e) => setAccessKey(e.target.value)}
               autoComplete="username"
               spellCheck={false}
+              disabled={pending}
             />
           </div>
           <div>
@@ -155,6 +302,7 @@ export function Connection({
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}
               autoComplete="current-password"
+              disabled={pending}
             />
           </div>
           <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
@@ -164,6 +312,7 @@ export function Connection({
               checked={remember}
               aria-describedby={rememberHelpId}
               onChange={(e) => setRemember(e.target.checked)}
+              disabled={pending}
             />
             Remember endpoint &amp; access key on this device
           </label>
@@ -196,6 +345,7 @@ export function Connection({
                 value={region}
                 onChange={(e) => setRegionOverride(e.target.value)}
                 spellCheck={false}
+                disabled={pending}
               />
             </div>
             <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
@@ -204,6 +354,7 @@ export function Connection({
                 className="w-4 h-4 accent-accent"
                 checked={forcePathStyle}
                 onChange={(e) => setPathStyleOverride(e.target.checked)}
+                disabled={pending}
               />
               Force path-style addressing (MinIO)
             </label>
@@ -213,6 +364,7 @@ export function Connection({
                 className="w-4 h-4 accent-accent"
                 checked={secure}
                 onChange={(e) => setSecureOverride(e.target.checked)}
+                disabled={pending}
               />
               Secure (HTTPS)
             </label>
@@ -221,18 +373,19 @@ export function Connection({
 
         <button
           type="submit"
-          disabled={!canConnect}
+          disabled={!canConnect || pending}
           title={!online ? "You're offline" : undefined}
           className="mt-7 w-full bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          Connect
+          {pending ? 'Connecting…' : 'Connect'}
         </button>
 
         {onSkip && (
           <button
             type="button"
             onClick={onSkip}
-            className="mt-3 w-full text-[13px] font-body text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule"
+            disabled={pending}
+            className="mt-3 w-full text-[13px] font-body text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Login later
           </button>

@@ -58,6 +58,21 @@ export class S3Mock {
   /** Every listing the app issued, as `bucket/prefix`. */
   lists: string[] = [];
 
+  /** Makes the connect-time credential probe's ListBuckets call (#589) fail
+   *  with this error instead of succeeding. Unset by default — every other
+   *  scenario's `connect()` relies on ListBuckets always succeeding. */
+  listBucketsError?: S3Error;
+  /** Makes ListBuckets hang instead of responding, so the probe's own
+   *  client-side timeout is what ends the request. */
+  listBucketsHang = false;
+  /** Makes ListBuckets fail at the network level — no HTTP response at all,
+   *  the same shape a DNS failure, connection refusal or CORS/mixed-content
+   *  block produces. */
+  listBucketsAbort = false;
+  /** Every ListBuckets request this mock has answered, success or failure —
+   *  lets a scenario assert the probe did (or, while offline, did not) run. */
+  listBucketsCalls = 0;
+
   /** Buckets whose object reads fail with 403 (simulating IAM/CORS refusal). */
   unreadable = new Set<string>();
   /** Object keys (`bucket/key`) whose GET/HEAD fails with 403. */
@@ -257,6 +272,19 @@ export class S3Mock {
 
       // ListBuckets — the only request against the endpoint root.
       if (bucket === '') {
+        this.listBucketsCalls++;
+        if (this.listBucketsAbort) {
+          await route.abort('connectionrefused');
+          return;
+        }
+        if (this.listBucketsHang) {
+          await new Promise<void>(() => {}); // the probe's own client-side timeout wins
+          return;
+        }
+        if (this.listBucketsError) {
+          await fail(this.listBucketsError);
+          return;
+        }
         await route.fulfill({ status: 200, contentType: 'application/xml', body: this.listBuckets() });
         return;
       }

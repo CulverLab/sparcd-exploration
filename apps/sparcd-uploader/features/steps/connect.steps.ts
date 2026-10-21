@@ -171,6 +171,105 @@ Then('the uploader stays on the connection screen until the secret is re-entered
   await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
 });
 
+When('a different endpoint is entered and the field is left', async ({ app }) => {
+  await app.page.fill('#endpoint', AWS_ENDPOINT);
+  await app.page.locator('#endpoint').blur();
+});
+
+Then(
+  'the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over',
+  async ({ app }) => {
+    await app.page.getByRole('button', { name: '+ Advanced' }).click();
+    // S3_ORIGIN (the remembered connection) is plain-http MinIO-shaped:
+    // secure: false, forcePathStyle: true, region: us-east-1 — the opposite
+    // of AWS_ENDPOINT's own inferred values on every one of the three.
+    await expect(app.page.locator('#region')).toHaveValue('us-west-2');
+    await expect(app.page.getByLabel('Force path-style addressing (MinIO)')).not.toBeChecked();
+    await expect(app.page.getByLabel('Secure (HTTPS)')).toBeChecked();
+  },
+);
+
+// --- Credential probe (#589) ------------------------------------------------
+
+When('valid-looking credentials are submitted', async ({ app }) => {
+  await app.fillConnection();
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+});
+
+Then(
+  'the credentials are checked against the server before the workspace opens',
+  async ({ app }) => {
+    await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+    expect(app.s3.listBucketsCalls).toBeGreaterThan(0);
+  },
+);
+
+Given('the storage endpoint cannot be reached', async ({ app }) => {
+  app.s3.listBucketsAbort = true;
+});
+
+Given('the server will reject these credentials', async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'InvalidAccessKeyId', message: 'Invalid access key' };
+});
+
+Given('the server denies the credential check itself', async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'AccessDenied', message: 'Access Denied' };
+});
+
+Given("the server reports this computer's clock is skewed", async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'RequestTimeTooSkewed', message: 'Clock skew' };
+});
+
+Given('the credential check hangs instead of responding', async ({ app }) => {
+  app.s3.listBucketsHang = true;
+});
+
+Then('connecting is refused with a message that the endpoint could not be reached', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText("Couldn't reach");
+});
+
+Then('connecting is refused with a message that the credentials were rejected', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    'rejected this access key and secret key',
+  );
+});
+
+Then(
+  'connecting is refused with a message that the check could not confirm the credentials',
+  async ({ app }) => {
+    await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+      'Unable to confirm your credentials',
+    );
+  },
+);
+
+Then("connecting is refused with a message about the computer's clock", async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    "computer's time is correct",
+  );
+});
+
+Then('connecting is refused with a message that the check was interrupted', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    'request was interrupted',
+  );
+});
+
+Then('the workspace does not open', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toHaveCount(0);
+  await expect(app.connectForm()).toBeVisible();
+});
+
+Then('the form is available to try again', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
+  await expect(app.page.locator('#endpoint')).toBeEnabled();
+});
+
+Then('the workspace opens without any credential check', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+  expect(app.s3.listBucketsCalls).toBe(0);
+});
+
 Given("one tab of a SPARC'd tool is already connected in this browser", async ({ app }) => {
   await app.connect();
 });

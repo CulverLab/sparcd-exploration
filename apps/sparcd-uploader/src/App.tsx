@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
+import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from './store';
 import './lib/streamingBridge';
 import { Chrome } from './components/Chrome';
@@ -153,6 +154,7 @@ export function App() {
         toolName="Uploader"
         initialConfig={connectPrefill}
         onConnect={connect}
+        onTestConnection={(config, signal) => testConnection(config, { signal })}
         onSkip={() => setLoginDeferred(true)}
       />
     );
