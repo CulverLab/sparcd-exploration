@@ -18,6 +18,7 @@ import {
   type DraftRecord,
 } from './db';
 import type { TagImage } from './workspace';
+import { useDraftStore } from './drafts';
 
 export type SyncArgs = {
   cfg: S3Config;
@@ -55,7 +56,12 @@ export async function performSync(args: SyncArgs): Promise<SyncResult> {
   const resumeJournal = await loadSyncJournal(bucket, uploadPrefix);
 
   const io = makeSyncIO(cfg, bucket, uploadPrefix, {
-    save: saveSyncJournal,
+    save: async (journal) => {
+      await saveSyncJournal(journal);
+      await useDraftStore.getState().markUploadPendingSync(
+        { bucket, uploadPrefix }, journal.receipt?.draftRevisions ?? {},
+      );
+    },
     clear: () => clearSyncJournal(bucket, uploadPrefix),
   });
 

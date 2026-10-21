@@ -538,6 +538,38 @@ Then('the fullscreen viewer is closed', async ({ page }) => {
   await expect(lightbox(page)).toHaveCount(0);
 });
 
+Then(
+  'the Focus view shows Has species and Questionable badges for the focused image',
+  async ({ page }) => {
+    const pane = page.getByTestId('focus-drop-zone');
+    await expect(pane.getByLabel('Has species', { exact: false })).toBeVisible();
+    await expect(pane.getByLabel('Needs expert opinion', { exact: true })).toBeVisible();
+  },
+);
+
+When('Focus is resized to a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the status badges do not overlap the Adjust or image-navigation controls', async ({ page }) => {
+  const badges = page.getByTestId('focus-image-status-badges').locator('[role="img"]');
+  await expect(badges).toHaveCount(2);
+  for (const badge of await badges.all()) {
+    const box = (await badge.boundingBox())!;
+    for (const name of [/^Adjust/, /^Previous image$/, /^Next image$/]) {
+      const control = page.getByRole('button', { name });
+      if (!await control.count()) continue;
+      const c = (await control.boundingBox())!;
+      expect(box.x < c.x + c.width && box.x + box.width > c.x && box.y < c.y + c.height && box.y + box.height > c.y).toBe(false);
+    }
+  }
+});
+
+Then('no status badges are shown in the fullscreen viewer', async ({ page }) => {
+  await expect(lightbox(page).getByLabel('Has species', { exact: false })).toHaveCount(0);
+  await expect(lightbox(page).getByLabel('Needs expert opinion', { exact: true })).toHaveCount(0);
+});
+
 Then('it fills the window over a dimmed background', async ({ page }) => {
   const box = (await lightbox(page).boundingBox())!;
   const viewport = page.viewportSize()!;
@@ -1040,7 +1072,7 @@ Then('Tab wraps between the Focus viewer and the adjustment panel', async ({ pag
   await page.keyboard.press('Shift+Tab');
   await expect(keepValues).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(focusDialog.getByRole('button', { name: "Toggle needing an expert's opinion" })).toBeFocused();
   await adjustToggle(page).click();
   await expect(brightness).toBeFocused();
   await expect(focusDialog).toBeVisible();

@@ -481,6 +481,7 @@ export type ReviewEvent = { reviewedBy: string; reviewedAt: string };
 
 /** Reserved prefixes for v0. Unknown prefixes are tolerated and preserved. */
 export const TIMESTAMP_PREFIX = 'TIMESTAMP';
+export const NEED_EXPERT_PREFIX = 'NEED_EXPERT';
 export function buildMediaComments(input: { timestampSource?: TimestampSource }): string {
   return input.timestampSource ? serializeTagMarkers([{ prefix: TIMESTAMP_PREFIX, value: input.timestampSource }]) : '';
 }
@@ -488,6 +489,11 @@ export function buildMediaComments(input: { timestampSource?: TimestampSource })
 export function timestampSourceFromComments(comments: string): TimestampSource | null {
   const value = parseTagMarkers(comments).find((m) => m.prefix === TIMESTAMP_PREFIX)?.value;
   return value === 'manual' || value === 'spread' || value === 'interpolated' || value === 'offset' || value === 'file-modified' || value === 'exif-modify' ? value : null;
+}
+
+/** A missing marker is the legacy/inactive state. */
+export function needExpertFromComments(comments: string): boolean {
+  return parseTagMarkers(comments).some((marker) => marker.prefix === NEED_EXPERT_PREFIX && marker.value === 'true');
 }
 
 export const COMMONNAME_PREFIX = 'COMMONNAME';
@@ -612,6 +618,7 @@ export type MediaEdit = {
   deploymentId: string;
   timestamp: string; // ISO stamped on new observation rows
   mediaTimestamp?: string; // if set, overwrite media.csv col 4 for this image
+  needExpert?: boolean; // when set, update the per-image marker in media.csv col 10
   /** When a flagged capture time is corrected, replace its source marker in col 10. */
   timestampSource?: TimestampSource;
   /** Species explicitly removed in this edit; written once on the replacement row. */
@@ -679,22 +686,30 @@ function buildBlankObservationRow(edit: MediaEdit, observationId: string): strin
  * text or markers; every un-edited row is preserved.
  */
 export function mergeMedia(canonicalMediaCsv: string, edits: MediaEdit[]): string {
-  const changes = new Map<string, { timestamp: string; source?: TimestampSource }>();
+  const changes = new Map<string, { timestamp?: string; source?: TimestampSource; needExpert?: boolean }>();
   for (const e of edits) {
-    if (e.mediaTimestamp !== undefined)
-      changes.set(e.mediaId, { timestamp: e.mediaTimestamp, source: e.timestampSource });
+    if (e.mediaTimestamp !== undefined || e.needExpert !== undefined)
+      changes.set(e.mediaId, {
+        ...changes.get(e.mediaId),
+        ...(e.mediaTimestamp !== undefined ? { timestamp: e.mediaTimestamp, source: e.timestampSource } : {}),
+        ...(e.needExpert !== undefined ? { needExpert: e.needExpert } : {}),
+      });
   }
   if (changes.size === 0) return canonicalMediaCsv;
   const rows = parseCsvRows(canonicalMediaCsv);
   for (const row of rows) {
     const change = changes.get(row[MEDIA_COL.mediaId]);
     if (!change) continue;
-    row[MEDIA_COL.timestamp] = change.timestamp;
+    if (change.timestamp !== undefined) row[MEDIA_COL.timestamp] = change.timestamp;
     if (change.source) {
       row[MEDIA_COL.comments] = (row[MEDIA_COL.comments] ?? '').replace(
         /\[TIMESTAMP:[^\]]*\]/g,
         `[TIMESTAMP:${change.source}]`,
       );
+    }
+    if (change.needExpert !== undefined) {
+      const withoutStatus = (row[MEDIA_COL.comments] ?? '').replace(/\[NEED_EXPERT:[^\]]*\]/g, '');
+      row[MEDIA_COL.comments] = change.needExpert ? `${withoutStatus}[NEED_EXPERT:true]` : withoutStatus;
     }
   }
   return serializeCsvRows(rows);
@@ -718,6 +733,7 @@ export function mergeObservations(
   edits: MediaEdit[],
   opts: MergeObservationsOptions = {},
 ): string {
+  if (edits.length === 0) return canonicalObsCsv;
   const genId = opts.observationId ?? defaultObservationId;
   const editByMedia = new Map(edits.map((e) => [e.mediaId, e]));
   const rows = parseCsvRows(canonicalObsCsv);

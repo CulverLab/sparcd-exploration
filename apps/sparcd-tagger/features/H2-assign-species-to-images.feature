@@ -65,6 +65,12 @@ Feature: Assign species to images in an upload
     And applying a real species afterwards removes the Ghost label
 
   @H2
+  Scenario: An explicit no-species classification counts as Has species like a real identification
+    Then "IMG002.JPG" shows no Has species badge
+    When an unclassified image is classified as Ghost
+    Then the Ghost-classified image shows a Has species badge
+
+  @H2
   Scenario: The species list can be narrowed by typing
     When text is typed into the species filter
     Then the list narrows to species matching that text by common or scientific name

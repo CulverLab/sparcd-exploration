@@ -30,6 +30,7 @@ import {
   parseCsvRows,
   serializeCsvRows,
   rebaseCaptureTimestamp,
+  needExpertFromComments,
   MEDIA_COL,
   OBS_COL,
   type MediaEdit,
@@ -41,6 +42,7 @@ import tzlookup from 'tz-lookup';
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 import { sha256Hex } from './hash';
+import { draftRevisionOf } from './draftRevision';
 import {
   ROLE_ORDER,
   planResume,
@@ -49,6 +51,7 @@ import {
   type SyncJournal,
   type JournalObject,
   type RemoteState,
+  type SyncReceipt,
 } from './syncJournal';
 
 // --- Canonical state -------------------------------------------------------
@@ -79,13 +82,19 @@ export type DiffSummary = {
   removals: number; // tagged → detagged
   timeCorrections: number; // images whose capture time changes
   confirmations: number; // species/count unchanged, but explicitly re-reviewed (#368)
+  expertMarked: number;
+  expertCleared: number;
 };
 
 export type SyncPlan = {
+  /** Submitted dirty draft contents, used only to acknowledge matching edits. */
+  draftRevisions?: Record<string, string>;
   /** Images whose observation rows change — drive `mergeObservations` + the delta. */
   tagEdits: MediaEdit[];
   /** Images whose `media.csv` col-4 timestamp changes but whose tags don't. */
   timeEdits: MediaEdit[];
+  /** Per-image Need expert marker changes in media.csv, independent of species. */
+  statusEdits: MediaEdit[];
   /** A whole-upload location correction — the wrong camera location was
    *  recorded. Rewrites `deployments.csv` to this single row and every media/
    *  observation row's deployment id to `locationEdit.deploymentId`. */
@@ -124,8 +133,8 @@ function mergeReviewEvents(base: ReviewEvent[] = [], draft: ReviewEvent[] = []):
 /**
  * Diff the loaded drafts against the canonical base into the edits the merge
  * helpers consume. A draft whose observation multiset equals its base produces
- * no tag edit (re-applying the same species, or a questionable-only toggle, is
- * not a canonical change). The full observation array flows through, so a
+ * no tag edit (re-applying the same species is not a canonical change).
+ * Need expert changes are independent media edits. The full observation array flows through, so a
  * multi-species image is never collapsed to one row.
  */
 export function buildSyncPlan(
@@ -138,12 +147,15 @@ export function buildSyncPlan(
 ): SyncPlan {
   const tagEdits: MediaEdit[] = [];
   const timeEdits: MediaEdit[] = [];
+  const statusEdits: MediaEdit[] = [];
   const summary: DiffSummary = {
     additions: 0,
     modifications: 0,
     removals: 0,
     timeCorrections: 0,
     confirmations: 0,
+    expertMarked: 0,
+    expertCleared: 0,
   };
 
   for (const img of images) {
@@ -159,6 +171,18 @@ export function buildSyncPlan(
 
     const corrected = correctedTimestamp(img.baseTimestamp, offset, d?.timeOverride ?? null, timeZone);
     const timeChanged = !!img.baseTimestamp && corrected !== img.baseTimestamp;
+    const statusChanged = !!d && d.questionable !== !!d.baseQuestionable;
+    if (statusChanged) {
+      statusEdits.push({
+        mediaId: img.key,
+        deploymentId,
+        timestamp: corrected,
+        needExpert: d.questionable,
+        observations: [],
+      });
+      if (d.questionable) summary.expertMarked++;
+      else summary.expertCleared++;
+    }
     // A Tagger correction replaces an uploader estimate with a user-provided
     // time. Keep the marker so downstream readers still know the camera did
     // not supply it, but make its source accurately say "manual".
@@ -304,11 +328,16 @@ export function buildSyncPlan(
     }
   }
 
-  return { tagEdits, timeEdits, locationEdit: pendingLocation, summary };
+  const draftRevisions = Object.fromEntries(
+    [...new Set([...tagEdits, ...timeEdits, ...statusEdits].map((edit) => edit.mediaId))]
+      .filter((id) => drafts[id]?.dirty)
+      .map((id) => [id, draftRevisionOf(drafts[id])]),
+  );
+  return { tagEdits, timeEdits, statusEdits, draftRevisions, locationEdit: pendingLocation, summary };
 }
 
 export function planIsEmpty(plan: SyncPlan): boolean {
-  return plan.tagEdits.length === 0 && plan.timeEdits.length === 0 && plan.locationEdit === null;
+  return plan.tagEdits.length === 0 && plan.timeEdits.length === 0 && plan.statusEdits.length === 0 && plan.locationEdit === null;
 }
 
 // --- Snapshot stamp --------------------------------------------------------
@@ -375,10 +404,9 @@ export type SyncResult =
       status: 'synced';
       summary: DiffSummary;
       newETags: Partial<Record<CanonicalRole, string>>;
-      /** The media IDs written to canonical, so the caller can clear exactly
-       *  those drafts. Absent on a journal resume (the journal carries bodies,
-       *  not per-image edits). */
+      /** Written IDs; cleanup additionally requires a matching receipt revision. */
       syncedMediaIds?: string[];
+      receipt?: SyncReceipt;
     }
   | { status: 'conflict'; role: CanonicalRole; reason: string }
   | { status: 'unsupported'; message: string };
@@ -480,7 +508,7 @@ async function buildWrites(
   editStamp: string,
   uploadPrefix: string,
 ): Promise<PreparedWrite[]> {
-  const allMediaEdits = [...plan.tagEdits, ...plan.timeEdits];
+  const allMediaEdits = [...plan.tagEdits, ...plan.timeEdits, ...plan.statusEdits];
   let mediaBody = mergeMedia(current.media.text, allMediaEdits);
   let observationsBody = mergeObservations(current.observations.text, plan.tagEdits, {
     observationId: (mediaId, i) => `${mediaId.slice(uploadPrefix.length)}:${i}`,
@@ -587,6 +615,8 @@ const EMPTY_SUMMARY: DiffSummary = {
   removals: 0,
   timeCorrections: 0,
   confirmations: 0,
+  expertMarked: 0,
+  expertCleared: 0,
 };
 
 /**
@@ -657,7 +687,7 @@ async function tryResume(
     if (dryRun)
       return { status: 'dry-run', summary: EMPTY_SUMMARY, snapshotPrefix: journal.snapshotPrefix, writes: [] };
     await io.clearJournal();
-    return { status: 'synced', summary: EMPTY_SUMMARY, newETags: collectNewETags(journal) };
+    return { status: 'synced', summary: EMPTY_SUMMARY, newETags: collectNewETags(journal), syncedMediaIds: journal.syncedMediaIds, receipt: journal.receipt };
   }
   if (dryRun) {
     // A dry-run never writes — describe the pending objects a real resume would.
@@ -671,7 +701,8 @@ async function tryResume(
         .map((o) => ({ role: o.role, key: o.key, bytes: byteLen(o.body), baseETag: o.baseETag })),
     };
   }
-  return writePending(io, journal, decision.fromIndex);
+  const result = await writePending(io, journal, decision.fromIndex);
+  return result.status === 'synced' ? { ...result, syncedMediaIds: journal.syncedMediaIds, receipt: journal.receipt } : result;
 }
 
 type CommitCtx = {
@@ -682,6 +713,8 @@ type CommitCtx = {
   writes: PreparedWrite[];
   editStamp: string;
   snapshotPrefix: string;
+  syncedMediaIds?: string[];
+  receipt?: SyncReceipt;
 };
 
 /**
@@ -714,6 +747,8 @@ async function commitWrites(io: SyncIO, c: CommitCtx, summary: DiffSummary): Pro
     snapshotPrefix: activePrefix,
     user: c.user,
     startedAt: io.now().toISOString(),
+    syncedMediaIds: c.syncedMediaIds,
+    receipt: c.receipt,
     objects: c.writes.map<JournalObject>((w) => ({
       role: w.role,
       key: key(c.uploadPrefix, w.role),
@@ -756,6 +791,15 @@ export async function runSync(params: SyncParams, io: SyncIO): Promise<SyncResul
 
   const editStamp = javaEditStamp(io.now());
   const writes = await buildWrites(current, plan, user, editStamp, uploadPrefix);
+  const syncedMediaIds = [...new Set([...plan.tagEdits, ...plan.timeEdits, ...plan.statusEdits].map((edit) => edit.mediaId))];
+  const syncedIds = new Set(syncedMediaIds);
+  const mediaRows = parseCsvRows(writes.find((write) => write.role === 'media')?.body ?? current.media.text)
+    .filter((row) => syncedIds.has(row[MEDIA_COL.mediaId]));
+  const receipt: SyncReceipt = {
+    draftRevisions: plan.draftRevisions ?? {},
+    mediaTimestamps: Object.fromEntries(mediaRows.map((row) => [row[MEDIA_COL.mediaId], row[MEDIA_COL.timestamp]])),
+    needExpert: Object.fromEntries(mediaRows.map((row) => [row[MEDIA_COL.mediaId], needExpertFromComments(row[MEDIA_COL.comments] ?? '')])),
+  };
   const snapshotPrefix = snapshotPrefixOf(uploadPrefix, user, snapshotStamp(io.now()));
 
   if (dryRun) {
@@ -774,12 +818,11 @@ export async function runSync(params: SyncParams, io: SyncIO): Promise<SyncResul
 
   const result = await commitWrites(
     io,
-    { bucket, uploadPrefix, user, current, writes, editStamp, snapshotPrefix },
+    { bucket, uploadPrefix, user, current, writes, editStamp, snapshotPrefix, syncedMediaIds, receipt },
     plan.summary,
   );
   if (result.status === 'synced') {
-    const syncedMediaIds = [...plan.tagEdits, ...plan.timeEdits].map((e) => e.mediaId);
-    return { ...result, syncedMediaIds };
+    return { ...result, syncedMediaIds, receipt };
   }
   return result;
 }

@@ -175,10 +175,10 @@ Feature: Publish local identifications back to the collection
     Then the header sync explanation is available on hover and keyboard focus
 
   @unmapped
-  Scenario: A completed sync does not claim questionable-only edits were saved
+  Scenario: A completed sync saves shared Need expert edits along with species
     Given a different image has only a questionable edit
     When the sync is run
-    Then the completed-sync explanation leaves questionable-only edits visibly unsaved
+    Then the completed-sync explanation includes saved shared Need expert edits
 
   @unmapped
   Scenario: The workspace reports its sync state at a glance

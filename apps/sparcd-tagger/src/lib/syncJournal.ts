@@ -33,7 +33,17 @@ export type SyncJournal = {
   snapshotPrefix: string; // where the pre-write snapshot landed
   user: string;
   startedAt: string; // ISO
+  /** Drafts included in this sync; optional for journals written before this field existed. */
+  syncedMediaIds?: string[];
+  receipt?: SyncReceipt;
   objects: JournalObject[]; // in ROLE_ORDER
+};
+
+/** Exact submitted drafts and the canonical media values written by this operation. */
+export type SyncReceipt = {
+  draftRevisions: Record<string, string>;
+  mediaTimestamps: Record<string, string>;
+  needExpert: Record<string, boolean>;
 };
 
 /** The freshly re-loaded remote state for one canonical file. */

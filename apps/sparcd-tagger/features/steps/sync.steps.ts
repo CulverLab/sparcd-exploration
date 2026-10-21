@@ -811,11 +811,11 @@ Then('the header sync explanation is available on hover and keyboard focus', asy
 Given('a different image has only a questionable edit', async ({ page }) => {
   await focusFrame(page, 'IMG005.JPG');
   await page.keyboard.press('Shift+Space');
-  await expect(gridCell(page, 'IMG005.JPG').locator('[title="questionable"]')).toBeVisible();
+  await expect(gridCell(page, 'IMG005.JPG').locator('[title="Needs expert opinion"]')).toBeVisible();
   await waitForDirtyDrafts(page, 2);
 });
 
-Then('the completed-sync explanation leaves questionable-only edits visibly unsaved', async ({ page, s3 }) => {
+Then('the completed-sync explanation includes saved shared Need expert edits', async ({ page, s3 }) => {
   await waitForSyncDialogClosed(page);
   const pill = statePill(page);
   await expect(pill).toHaveAttribute('aria-label', 'Sync status: synced');
@@ -826,8 +826,10 @@ Then('the completed-sync explanation leaves questionable-only edits visibly unsa
   const pending = async () => (await readStore(page, 'drafts') as {
     mediaPath: string; dirty: boolean; questionable: boolean;
   }[]).filter((draft) => draft.dirty).map((draft) => ({ file: draft.mediaPath.split('/').pop(), questionable: draft.questionable }));
-  await expect.poll(pending).toEqual([{ file: 'IMG005.JPG', questionable: true }]);
-  await expect(gridCell(page, 'IMG005.JPG').locator('[title="questionable"]')).toBeVisible();
+  await expect.poll(pending).toEqual([]);
+  expect(parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`)).find(media =>
+    media.mediaId.endsWith('IMG005.JPG'))?.comments).toContain('[NEED_EXPERT:true]');
+  await expect(gridCell(page, 'IMG005.JPG').locator('[title="Needs expert opinion"]')).toBeVisible();
   expect(parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).some(
     (observation) => observation.mediaId.endsWith('IMG002.JPG') && observation.scientificName === 'Canis latrans',
   )).toBe(true);

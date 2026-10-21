@@ -1,7 +1,7 @@
 import type { DraftObservation } from './db';
 
 export type ImageFilterScope = 'all' | 'filename' | 'species' | 'date';
-export type TaggedFilter = 'all' | 'tagged' | 'untagged';
+export type TaggedFilter = 'all' | 'tagged' | 'untagged' | 'questionable' | 'not-questionable';
 
 export type ImageFilter = {
   text: string;
@@ -29,6 +29,7 @@ export type FilterableImage = {
   fileName: string;
   timestamp: string;
   observations: DraftObservation[];
+  questionable: boolean;
 };
 
 const lower = (value: string) => value.toLocaleLowerCase();
@@ -51,6 +52,8 @@ export function matchesImageFilter(image: FilterableImage, filter: ImageFilter):
   const tagged = image.observations.length > 0;
   if (filter.tagged === 'tagged' && !tagged) return false;
   if (filter.tagged === 'untagged' && tagged) return false;
+  if (filter.tagged === 'questionable' && !image.questionable) return false;
+  if (filter.tagged === 'not-questionable' && image.questionable) return false;
 
   const date = dateParts(image.timestamp);
   const requestedDateParts = {

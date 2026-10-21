@@ -12,6 +12,7 @@ import {
   correctedFromFromComments,
   removedSpeciesFromComments,
   timestampSourceFromComments,
+  needExpertFromComments,
   type Observation,
   type TimestampSource,
 } from '@sparcd/camtrap';
@@ -32,6 +33,7 @@ export type TagImage = {
   /** Where col 4 came from when the camera wrote no time — the uploader's
    *  `[TIMESTAMP:…]` marker in media col 10. Absent for a camera-written time. */
   timestampSource?: TimestampSource;
+  baseQuestionable?: boolean; // canonical [NEED_EXPERT:true] marker in media col 10
   baseObservations: DraftObservation[]; // ALL canonical observation rows, in CSV order
   /** Species already recorded as removed on this image's rows ([REMOVED:…]). */
   baseRemovedSpecies?: string[];
@@ -76,6 +78,7 @@ export function buildTagImages(bundle: CanonicalBundle): TagImage[] {
       deploymentId: m.deploymentId,
       baseTimestamp: m.timestamp,
       timestampSource: timestampSourceFromComments(m.comments ?? '') ?? undefined,
+      baseQuestionable: needExpertFromComments(m.comments ?? ''),
       baseRemovedSpecies: [...new Set((obsByMedia.get(m.mediaId) ?? []).flatMap((o) => removedSpeciesFromComments(o.tags)))],
       baseObservations: (obsByMedia.get(m.mediaId) ?? []).filter((o) => o.observationType === 'animal').map((o) => ({
         scientificName: o.scientificName,

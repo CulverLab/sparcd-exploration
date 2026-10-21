@@ -46,6 +46,12 @@ export interface DraftRecord {
   /** Species explicitly removed since the last sync. */
   removedSpecies?: string[];
   questionable: boolean;
+  /** Canonical status when this draft began; distinguishes a status edit from a species-only draft. */
+  baseQuestionable?: boolean;
+  /** Explicit status intent, including a reversal while a sync is pending. */
+  questionableEdited?: boolean;
+  /** A journal may still publish this image's submitted state; reversals remain pending. */
+  pendingSync?: boolean;
   timeOverride: string | null; // per-image corrected ISO timestamp; null when unset
 
   lastEdited: string; // ISO

@@ -19,6 +19,7 @@ import { DisabledActionHint } from '../components/DisabledActionHint';
 import { SpeciesPanel } from '../components/SpeciesPanel';
 import { ResizableSplit } from '../components/ResizableSplit';
 import { AppliedSpecies } from '../components/AppliedSpecies';
+import { NeedExpertToggle } from '../components/NeedExpertToggle';
 import { Cheatsheet } from '../components/Cheatsheet';
 import { SyncDialog } from '../components/SyncDialog';
 import { SnapshotsDialog } from '../components/SnapshotsDialog';
@@ -33,6 +34,7 @@ import { ImageAdjustments } from '../components/ImageAdjustments';
 import { PawTrail } from '../components/Paw';
 import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
+import { ImageStatusBadges } from '../components/ImageStatusBadges';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
 import {
@@ -44,7 +46,7 @@ import {
   nextVisibleIndex,
   nearestVisibleIndex,
 } from '../lib/selection';
-import { effectiveOf } from '../lib/effective';
+import { effectiveOf, hasSpecies } from '../lib/effective';
 import { focusLocationLabel } from '../lib/focusLocation';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
@@ -400,14 +402,18 @@ export function Tag() {
   const [showImageFilter, setShowImageFilter] = useState(false);
   const imageFilterButtonRef = useRef<HTMLButtonElement>(null);
   const imageFilterTextRef = useRef<HTMLInputElement>(null);
-  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => matchesImageFilter(
-    {
-      fileName: image.fileName,
-      timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
-      observations: effectiveOf(image, draft).observations,
-    },
-    imageFilter,
-  );
+  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => {
+    const effective = effectiveOf(image, draft);
+    return matchesImageFilter(
+      {
+        fileName: image.fileName,
+        timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
+        observations: effective.observations,
+        questionable: effective.questionable,
+      },
+      imageFilter,
+    );
+  };
   const visibleIndices = useMemo(
     () => list.flatMap((image, index) => matchesCurrentFilter(image, drafts[image.key]) ? [index] : []),
     [captureTimeZone, drafts, imageFilter, list, timeOffset],
@@ -630,7 +636,7 @@ export function Tag() {
         deploymentId: img.deploymentId,
         // Seed a fresh draft from the FULL canonical base set so a partial edit
         // (adding one species, toggling questionable) keeps every existing one.
-        base: { observations: img.baseObservations },
+        base: { observations: img.baseObservations, questionable: img.baseQuestionable },
       }));
   };
 
@@ -691,7 +697,7 @@ export function Tag() {
         {
           mediaPath: image.key,
           deploymentId: image.deploymentId,
-          base: { observations: image.baseObservations },
+          base: { observations: image.baseObservations, questionable: image.baseQuestionable },
         },
       ],
       { ...tag, classifiedBy: taggerUser.trim() || undefined, classificationTimestamp: new Date().toISOString() },
@@ -721,7 +727,7 @@ export function Tag() {
         .map((img) => ({
           mediaPath: img.key,
           deploymentId: img.deploymentId,
-          base: { observations: img.baseObservations },
+          base: { observations: img.baseObservations, questionable: img.baseQuestionable },
           currentCorrected: correctedTimestamp(
             img.baseTimestamp,
             timeOffset,
@@ -793,8 +799,27 @@ export function Tag() {
     ? nextVisibleIndex(visibleIndices, nextIndex, 1) != null
     : nextIndex < list.length - 1);
 
-  // On-screen questionable toggle mirrors Shift+Space: act on the selection
-  // (or the focused image), flipping off the focused image's current state.
+  // The compact controls and Shift+Space share the same selection semantics.
+  const toggleNeedExpert = () => {
+    if (!current) return;
+    const targets = targetsOf();
+    if (targets.length) setQuestionableManyFn(ctx, targets, !effectiveOf(current, drafts[current.key]).questionable);
+  };
+  const selectedExpertStates = selectedForActions
+    .map((index) => list[index]).filter((image): image is TagImage => !!image)
+    .map((image) => effectiveOf(image, drafts[image.key]).questionable);
+  const expertPressed: boolean | 'mixed' = selectedExpertStates.length &&
+    selectedExpertStates.some((value) => value !== selectedExpertStates[0])
+    ? 'mixed'
+    : selectedExpertStates[0] ?? (current ? effectiveOf(current, drafts[current.key]).questionable : false);
+  const expertToggle = (align: 'left' | 'right') => <NeedExpertToggle
+    pressed={expertPressed}
+    disabled={!current}
+    onClick={toggleNeedExpert}
+    selectionCount={selectedExpertStates.length}
+    nextState={current ? !effectiveOf(current, drafts[current.key]).questionable : undefined}
+    align={align}
+  />;
   // --- Global key handler: attached once, reads the latest state via a ref so
   // it never re-binds per render (plan perf requirement). ----------------------
   const stateRef = useRef<HandlerState>(null!);
@@ -886,7 +911,7 @@ export function Tag() {
 
   const draft = current ? drafts[current.key] : undefined;
   const eff = current ? effectiveOf(current, draft) : null;
-  const currentBase = current ? { observations: current.baseObservations } : undefined;
+  const currentBase = current ? { observations: current.baseObservations, questionable: current.baseQuestionable } : undefined;
   const nDirty = dirtyCount(drafts);
   const discardDetails = discardSummaries.map(
     (summary) =>
@@ -924,6 +949,7 @@ export function Tag() {
             ]}
           />
         )}
+        {view === 'overview' && expertToggle('left')}
 
         <span className="text-[12px] font-mono text-inkSoft">
           {selected.size > 0 ? (
@@ -1144,6 +1170,8 @@ export function Tag() {
                   <option value="all">All images</option>
                   <option value="tagged">Tagged only</option>
                   <option value="untagged">Untagged only</option>
+                  <option value="questionable">Questionable only</option>
+                  <option value="not-questionable">Not questionable only</option>
                 </select>
               </label>
               <fieldset>
@@ -1313,6 +1341,7 @@ export function Tag() {
                 EXIF Modified
               </span>
             )}
+            {expertToggle('right')}
             <button
               ref={focusCloseRef}
               type="button"
@@ -1331,6 +1360,8 @@ export function Tag() {
               first={
                 <FocusPane
                   current={current}
+                  questionable={!!eff?.questionable}
+                  hasSpecies={!!eff && hasSpecies(eff)}
                   onPrev={() => gotoFilteredImage(-1)}
                   onNext={() => gotoFilteredImage(1)}
                   canPrev={canGoPrevious}
@@ -1426,9 +1457,7 @@ export function Tag() {
       hasFocus: !!current,
       selectionCount: selected.size,
       disabled: !current,
-      // The compact applied-species strip edits the focused image only. Mounted
-      // in the panel header so it covers both Overview and Focus layouts (the
-      // same panel renders in both) with one site.
+      // The applied-species strip edits the focused image only.
       headerSlot: (
         <div className="flex flex-wrap items-center gap-1.5">
           {speciesCountPrefix && selected.size <= 1 && (
@@ -1468,23 +1497,6 @@ export function Tag() {
               ])
             }
           />
-          {current && (
-            <button
-              type="button"
-              aria-pressed={!!eff?.questionable}
-              aria-label={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
-              title={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
-              onClick={() => {
-                const targets = targetsOf();
-                if (targets.length) setQuestionableManyFn(ctx, targets, !eff?.questionable);
-              }}
-              className={`min-h-11 border px-2 text-[11px] font-mono focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                eff?.questionable ? 'border-warn text-warn' : 'border-rule text-inkMute hover:text-ink'
-              }`}
-            >
-              {eff?.questionable ? 'Questionable' : 'Mark questionable'}
-            </button>
-          )}
         </div>
       ),
     };
@@ -1494,6 +1506,8 @@ export function Tag() {
 // --- Focus view (single-image detail) ---------------------------------------
 function FocusPane({
   current,
+  questionable,
+  hasSpecies,
   onPrev,
   onNext,
   canPrev,
@@ -1503,6 +1517,8 @@ function FocusPane({
   onDropSpecies,
 }: {
   current: TagImage | undefined;
+  questionable: boolean;
+  hasSpecies: boolean;
   onPrev: () => void;
   onNext: () => void;
   canPrev: boolean;
@@ -1625,6 +1641,7 @@ function FocusPane({
             alt={current.fileName}
             isVideo={isVideo}
             filter={filter}
+            statusBadges={<ImageStatusBadges hasSpecies={hasSpecies} questionable={questionable} presentation="focus" />}
             adjust={adjustPanel}
           />
         )}
@@ -1735,12 +1752,14 @@ function FocusImage({
   alt,
   isVideo,
   filter,
+  statusBadges,
   adjust,
 }: {
   objectKey: string;
   alt: string;
   isVideo: boolean;
   filter?: string;
+  statusBadges?: React.ReactNode;
   adjust?: React.ReactNode;
 }) {
   const { url, isError, markLoaded } = useMediaUrl(objectKey, 'high');
@@ -1776,6 +1795,7 @@ function FocusImage({
             src={url}
             alt={alt}
             resetKey={objectKey}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             onError={onMediaError}
           />
@@ -1785,6 +1805,7 @@ function FocusImage({
             alt={alt}
             resetKey={objectKey}
             filter={filter}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             adjust={adjust}
           />
@@ -1810,27 +1831,34 @@ function FocusVideo({
   src,
   alt,
   resetKey,
+  statusBadges,
   onLoaded,
   onError,
 }: {
   src: string;
   alt: string;
   resetKey: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   onError: () => void;
 }) {
+  const { paneRef, fitted, onImageLoad } = useFittedZoom(src);
   return (
-    <video
-      key={resetKey}
-      src={src}
-      aria-label={alt}
-      controls
-      playsInline
-      preload="metadata"
-      onLoadedData={onLoaded}
-      onError={onError}
-      className="w-full h-full object-contain"
-    />
+    <div ref={paneRef} className="absolute inset-4">
+      <video
+        key={resetKey}
+        src={src}
+        aria-label={alt}
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={onImageLoad}
+        onLoadedData={onLoaded}
+        onError={onError}
+        className="w-full h-full object-contain"
+      />
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
+    </div>
   );
 }
 
@@ -1873,11 +1901,39 @@ function useFittedZoom(src: string) {
     const zoom = zoomRef.current;
     if (fitted && zoom) zoom.centerView(1, 0);
   }, [pane?.w, pane?.h, fitted?.width, fitted?.height]);
-  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setLoaded({ src, w: img.naturalWidth, h: img.naturalHeight });
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
+    const media = e.currentTarget;
+    setLoaded({
+      src,
+      w: 'naturalWidth' in media ? media.naturalWidth : media.videoWidth,
+      h: 'naturalHeight' in media ? media.naturalHeight : media.videoHeight,
+    });
   };
   return { paneRef, zoomRef, fitted, onImageLoad };
+}
+
+// Keep badges at the fitted picture's corners, including letterboxed media,
+// without scaling them with zoom or copying them into the image-only Lightbox.
+function FittedStatusOverlay({ fitted, children }: {
+  fitted: { width: number; height: number } | undefined;
+  children: React.ReactNode;
+}) {
+  if (!fitted || !children) return null;
+  // On very short panoramas, keep the expert badge left of the 44px Next
+  // target while retaining its upper-right position within the picture.
+  const statusStyle = {
+    ...fitted,
+    '--expert-badge-inset': fitted.height < 88 ? '3rem' : '0.25rem',
+  } as React.CSSProperties;
+  return (
+    <div
+      data-testid="focus-image-status-badges"
+      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+      style={statusStyle}
+    >
+      {children}
+    </div>
+  );
 }
 
 function ZoomableImage({
@@ -1885,6 +1941,7 @@ function ZoomableImage({
   alt,
   resetKey,
   filter,
+  statusBadges,
   onLoaded,
   adjust,
 }: {
@@ -1892,6 +1949,7 @@ function ZoomableImage({
   alt: string;
   resetKey: string;
   filter?: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   adjust?: React.ReactNode;
 }) {
@@ -1941,6 +1999,7 @@ function ZoomableImage({
           </>
         )}
       </TransformWrapper>
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
       {expanded && <Lightbox src={src} alt={alt} filter={filter} onClose={() => setExpanded(false)} />}
     </div>
   );
@@ -2300,6 +2359,9 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   // A focused video/audio control handles its own keys natively; don't let any
   // tagger hotkey fire while the user is scrubbing or playing.
   if (isMediaTarget(e.target)) return;
+  // Native activation owns Enter/Space while this compact button has focus.
+  if (e.target instanceof HTMLElement && e.target.matches('[data-need-expert-toggle]') &&
+      (e.key === 'Enter' || e.key === ' ')) return;
 
   // A focused range slider only needs arrow keys for its own navigation —
   // every other key, including species hotkeys, falls through below instead
@@ -2446,8 +2508,7 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
       if (e.shiftKey) {
         const targets = s.targetsOf();
         if (!targets.length || !current) return;
-        const anchorDraft = s.drafts[current.key];
-        s.setQuestionableMany(s.ctx, targets, !anchorDraft?.questionable);
+        s.setQuestionableMany(s.ctx, targets, !effectiveOf(current, s.drafts[current.key]).questionable);
         return;
       }
       s.filterRef.current?.focus();

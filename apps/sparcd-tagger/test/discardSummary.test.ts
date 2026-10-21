@@ -55,7 +55,7 @@ describe('describeDiscardChanges', () => {
     });
     expect(describeDiscardChanges(edited, []).map((change) => change.label)).toEqual([
       'Added Coyote',
-      'Marked questionable',
+      'Marked Need expert',
       'Timestamp changed to 2026-01-02T03:04:05Z',
     ]);
   });

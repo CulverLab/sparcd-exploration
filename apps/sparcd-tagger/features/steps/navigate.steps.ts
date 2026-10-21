@@ -40,6 +40,73 @@ Then('the collection name and upload name are shown', async ({ page }) => {
   await expect(page.getByText(`${COLLECTION_NAME} / ${STAMP_A}`)).toBeVisible();
 });
 
+Then('its grid tile shows Has species and Questionable badges', async ({ page }) => {
+  const tile = gridCell(page, 'IMG001.JPG');
+  await expect(tile).toHaveAccessibleName(/Has species.*Needs expert opinion/);
+  await expect(tile.locator('[title^="Has species"]')).toBeVisible();
+  await expect(tile.locator('[title="Needs expert opinion"]')).toBeVisible();
+});
+
+When('the Overview is switched to the list view', async ({ page }) => {
+  await page.getByRole('button', { name: '☰ List' }).click();
+});
+
+Then('its list row shows Has species and Questionable badges', async ({ page }) => {
+  const row = listRow(page, 'IMG001.JPG');
+  const filename = row.locator('[data-column="filename"]');
+  await expect(filename.locator('[title^="Has species"]')).toBeVisible();
+  await expect(filename.locator('[title="Needs expert opinion"]')).toBeVisible();
+  await expect(row).toHaveAccessibleName(/Has species.*Needs expert opinion/);
+});
+
+When('the Overview is resized to a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the list badges follow the filename and fit inside their row', async ({ page }) => {
+  const row = listRow(page, 'IMG001.JPG');
+  const filename = row.locator('[data-column="filename"]');
+  await expect(filename.locator('[title^="Has species"]')).toBeVisible();
+  await expect.poll(async () => (await filename.boundingBox())?.width ?? 0).toBeGreaterThan(80);
+  const column = await filename.boundingBox();
+  const badge = await filename.getByTestId('classification-checkmark').boundingBox();
+  expect(badge!.x).toBeGreaterThan(column!.x);
+  expect(badge!.x + badge!.width).toBeLessThanOrEqual(column!.x + column!.width);
+  await expect(row.getByTestId('image-thumbnail').locator('[role="img"]')).toHaveCount(0);
+});
+
+Given('image {string} is focused', async ({ page }, fileName: string) => {
+  await focusFrame(page, fileName);
+});
+
+Then('the focused tile is named Questionable and not Has species', async ({ page }) => {
+  const tile = gridCell(page, 'IMG002.JPG');
+  await expect(tile).toHaveAccessibleName(/Needs expert opinion/);
+  await expect(tile).not.toHaveAccessibleName(/Has species/);
+  await expect(tile.locator('[title="Needs expert opinion"]')).toBeVisible();
+  await expect(tile.locator('[title^="Has species"]')).toHaveCount(0);
+});
+
+Then('the focused tile announces its species and review status', async ({ page }) => {
+  await expect(gridCell(page, 'IMG004.JPG')).toHaveAccessibleName(
+    /Species: Mountain Lion \+1; Review status: Mixed review/,
+  );
+});
+
+When('the image filter limits Tag state to Questionable only', async ({ page }) => {
+  if (!(await page.getByLabel('Tag state').isVisible())) await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Tag state').selectOption('questionable');
+});
+
+When('the image filter limits Tag state to Not questionable only', async ({ page }) => {
+  if (!(await page.getByLabel('Tag state').isVisible())) await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Tag state').selectOption('not-questionable');
+});
+
+Then('IMG001.JPG is absent from the Overview', async ({ page }) => {
+  await expect(gridCell(page, 'IMG001.JPG')).toHaveCount(0);
+});
+
 When('the image filter is opened and searches species for {string}', async ({ page }, query: string) => {
   await page.getByRole('button', { name: 'Filter' }).click();
   await page.getByLabel('Match text').fill(query);
@@ -281,10 +348,10 @@ Then('row numbers and the old species indicator are absent', async ({ page }) =>
 });
 
 Then('meaningful edit and questionable markers remain accessible', async ({ page }) => {
-  const markers = listRow(page, 'IMG002.JPG').locator('[data-column="markers"]');
-  await expect(markers.getByLabel('Unsaved edit')).toBeVisible();
-  await expect(markers.getByLabel('Questionable')).toBeVisible();
-  await expect(markers.locator('[title]')).toHaveCount(2);
+  const row = listRow(page, 'IMG002.JPG');
+  await expect(row.locator('[data-column="markers"]').getByLabel('Unsaved edit')).toBeVisible();
+  await expect(row.getByLabel('Needs expert opinion', { exact: true })).toBeVisible();
+  await expect(row.locator('[data-column="markers"]').locator('[title]')).toHaveCount(1);
 });
 
 Then('a narrow Overview keeps filenames visible in its compact rows', async ({ page }) => {
@@ -413,7 +480,7 @@ Then('Tab wraps within the Focus viewer at both boundaries', async ({ page }) =>
   const last = focusable.last();
   await last.focus();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(first).toBeFocused();
   await first.focus();
   await page.keyboard.press('Shift+Tab');
   await expect(last).toBeFocused();
