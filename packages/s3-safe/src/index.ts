@@ -180,6 +180,18 @@ export function readErrorDetails(err: unknown): S3ReadErrorDetails {
   };
 }
 
+/**
+ * The server's time, in ms, from a RequestTimeTooSkewed answer: its
+ * `<ServerTime>` when the body has one (AWS), else its `Date` header (MinIO).
+ * Undefined for any other error, or when the answer doesn't say.
+ */
+function skewedServerTime(err: unknown): number | undefined {
+  if (readErrorDetails(err).code !== 'RequestTimeTooSkewed') return undefined;
+  const e = err as { ServerTime?: unknown; $response?: { headers?: Record<string, string> } };
+  const time = Date.parse(String(e.ServerTime ?? responseHeader(e.$response, 'date') ?? ''));
+  return Number.isFinite(time) ? time : undefined;
+}
+
 function endpointUrl(cfg: S3Config): string {
   if (/^https?:\/\//i.test(cfg.endpoint)) return cfg.endpoint;
   const scheme = cfg.secure === false ? 'http' : 'https';
@@ -341,6 +353,32 @@ export class SafeS3Client {
       },
       { step: 'build', name: 'stripXIdQueryParam' },
     );
+    // S3 refuses a request signed more than 15 minutes from its own clock.
+    // The SDK learns the offset from the first refusal and retries that one
+    // request, but requests already in flight come back refused too, find
+    // the offset already learned, and fail. Each of those is sent once more
+    // with the server's time; a second refusal fails as usual.
+    this.client.middlewareStack.add(
+      (next) => async (args) => {
+        try {
+          return await next(args);
+        } catch (err) {
+          const serverTime = skewedServerTime(err);
+          if (serverTime === undefined) throw err;
+          this.client.config.systemClockOffset = serverTime - Date.now();
+          return next(args);
+        }
+      },
+      { step: 'initialize', name: 'retryOnceOnClockSkew' },
+    );
+  }
+
+  /**
+   * How far the server's clock is ahead of this computer's, in ms, as learned
+   * from its answers. Stays 0 unless the two differ by 5 minutes or more.
+   */
+  get clockOffset(): number {
+    return this.client.config.systemClockOffset ?? 0;
   }
 
   private assertAllowed(bucket: string): void {
@@ -485,6 +523,9 @@ export class SafeS3Client {
     this.assertAllowed(bucket);
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
       expiresIn: ttlSec,
+      // The presigner ignores the learned clock offset; a URL dated by a
+      // skewed clock would be refused as not yet valid, or already expired.
+      signingDate: new Date(Date.now() + this.clockOffset),
     });
   }
 
