@@ -37,6 +37,9 @@ type Toast = { id: number; message: string; undo?: () => void };
 /** Everything a reset or a data-check shortcut can change, so Undo can put it back. */
 type Snapshot = { filters: FilterState; separate: boolean; view: View };
 
+/** Where a row or data-check action came from, for Back: the view, filters and page scroll, and the model they were for. */
+export type Back = Snapshot & { scroll: number; model: Model | null };
+
 type State = {
   config: S3Config | null;
   account: string;
@@ -77,6 +80,8 @@ type State = {
   mapMode: MapMode;
   /** Sites of the Locations row under the pointer or focus, lit on the map. */
   highlight: number[] | null;
+  /** Set by a row or data-check action; the filter bar or Reset lets it go. */
+  back: Back | null;
 
   signIn: (config: S3Config, remember: boolean) => void;
   adoptSession: (config: S3Config | null) => void;
@@ -98,8 +103,14 @@ type State = {
   markGone: (key: string) => void;
   setFilters: (change: (f: FilterState) => FilterState) => void;
   clearFilter: (dim: FilterDimension) => void;
+  /** The Tagged switch over the photos, which keeps Back: it looks at what a drill-down showed. */
+  setPhotoTag: (photoTag: FilterState['photoTag']) => void;
   /** Apply a change to filters and view state with an Undo toast. */
   withUndo: (message: string, change: (s: Snapshot) => Snapshot) => void;
+  /** A row or data-check action: `withUndo`, and Back to where it came from, `scroll` included. One level; a new one replaces it. */
+  drillDown: (message: string, change: (s: Snapshot) => Snapshot, scroll: number) => void;
+  /** Back to where the last drill-down came from. */
+  goBack: () => void;
   resetFilters: () => void;
   setSeparate: (separate: boolean) => void;
   setView: (view: View) => void;
@@ -197,6 +208,7 @@ export const useStore = create<State>((set, get) => ({
   openGeneration: 0,
   mapMode: 'hexes',
   highlight: null,
+  back: null,
 
   signIn: (config, remember) => {
     saveSharedConnection(config, remember);
@@ -225,6 +237,7 @@ export const useStore = create<State>((set, get) => ({
       separate: false,
       sorting: DEFAULT_SORTING,
       toast: null,
+      back: null,
       openGeneration: get().openGeneration + 1,
     });
   },
@@ -272,6 +285,7 @@ export const useStore = create<State>((set, get) => ({
       filters: carried.state,
       separate: before ? separate : false,
       toast: null,
+      back: null,
     });
     if (carried.dropped) {
       // Onto the model shown when Undo is pressed: a refresh since may have changed it.
@@ -320,8 +334,9 @@ export const useStore = create<State>((set, get) => ({
     goneTimer ??= setTimeout(rebuildFiles, GONE_BATCH_MS);
   },
 
-  setFilters: (change) => set({ filters: change(get().filters) }),
-  clearFilter: (dim) => set({ filters: clearFilter(get().filters, dim) }),
+  setFilters: (change) => set({ filters: change(get().filters), back: null }),
+  clearFilter: (dim) => set({ filters: clearFilter(get().filters, dim), back: null }),
+  setPhotoTag: (photoTag) => set({ filters: { ...get().filters, photoTag } }),
 
   withUndo: (message, change) => {
     const { filters, separate, view, model: made } = get();
@@ -335,13 +350,32 @@ export const useStore = create<State>((set, get) => ({
       const restored =
         made && now && now !== made ? carryFilters(made, now, before.filters, { separate: before.separate, strict: true }).state : before.filters;
       get().setView(before.view);
-      set({ filters: restored, separate: before.separate });
+      set({ filters: restored, separate: before.separate, back: null });
       get().showToast('Filters restored');
     });
   },
 
+  drillDown: (message, change, scroll) => {
+    const { filters, separate, view, model: made } = get();
+    get().withUndo(message, change);
+    set({ back: { filters, separate, view, scroll, model: made } });
+  },
+
+  goBack: () => {
+    const { back, model: now } = get();
+    if (!back) return;
+    // A refresh since may have added items: the filters go back as their buttons named them.
+    const filters =
+      back.model && now && now !== back.model
+        ? carryFilters(back.model, now, back.filters, { separate: back.separate, strict: true }).state
+        : back.filters;
+    get().setView(back.view);
+    set({ filters, separate: back.separate, back: null, toast: null });
+  },
+
   resetFilters: () => {
     if (!isFiltered(get().filters)) return;
+    set({ back: null });
     get().withUndo('Filters reset', (s) => ({ ...s, filters: resetFilters(s.filters).state }));
   },
 

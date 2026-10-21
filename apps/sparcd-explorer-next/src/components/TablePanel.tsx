@@ -41,6 +41,9 @@ import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
 
 /** The Activity header: year labels thinned to fit, reporting the strip width it has. */
+const VIEW_NAMES = { locations: 'Locations', species: 'Species', photos: 'Photos', charts: 'Charts' } as const;
+
+/** The Activity header: year labels thinned to fit, reporting the strip width it has. */
 function ActivityHead({ ticks, onWidth }: { ticks: AxisTick[]; onWidth: (width: number) => void }) {
   const axisRef = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
@@ -164,7 +167,10 @@ export function TablePanel() {
   const setFilters = useStore((s) => s.setFilters);
   const display = useStore((s) => s.display);
   const reset = useStore((s) => s.resetFilters);
-  const withUndo = useStore((s) => s.withUndo);
+  const drillDown = useStore((s) => s.drillDown);
+  const setPhotoTag = useStore((s) => s.setPhotoTag);
+  const back = useStore((s) => s.back);
+  const goBack = useStore((s) => s.goBack);
   const checks = usePopover();
   const sorting = useStore((s) => s.sorting);
   const setSorting = useStore((s) => s.setSorting);
@@ -233,13 +239,18 @@ export function TablePanel() {
   // never scrolls back to the old one.
   const offsets = useRef<Record<PhotoLayout, number>>({ grid: 0, list: 0 });
   const restore = useRef<number | null>(null);
+  // Bumped when Back sets `restore`, so the scroll is put back once its view has drawn.
+  const [returned, setReturned] = useState(0);
+  const tableTop = () => {
+    const panel = document.getElementById('table')!;
+    return panel.getBoundingClientRect().top + scrollY + panel.clientTop - (document.getElementById('sticky-top')?.offsetHeight ?? 0);
+  };
   const switchLayout = (next: PhotoLayout) => {
     if (next === layout) return;
-    const panel = document.getElementById('table')!;
-    const top = panel.getBoundingClientRect().top + scrollY + panel.clientTop - (document.getElementById('sticky-top')?.offsetHeight ?? 0);
+    const top = tableTop();
     offsets.current[layout] = Math.max(0, scrollY - top);
-    const back = offsets.current[next];
-    restore.current = Math.round(back > 0 ? top + back : Math.min(scrollY, Math.max(0, top)));
+    const was = offsets.current[next];
+    restore.current = Math.round(was > 0 ? top + was : Math.min(scrollY, Math.max(0, top)));
     setLayout(next);
   };
   useLayoutEffect(() => {
@@ -250,7 +261,12 @@ export function TablePanel() {
     // Once more after the new rows have measured themselves and settled.
     const frame = requestAnimationFrame(() => scrollTo(0, to));
     return () => cancelAnimationFrame(frame);
-  }, [layout]);
+  }, [layout, returned]);
+  const backHere = () => {
+    restore.current = back!.scroll;
+    setReturned((n) => n + 1);
+    goBack();
+  };
 
   const count =
     view === 'species'
@@ -343,13 +359,21 @@ export function TablePanel() {
             <button
               type="button"
               className="linkbtn text-[12px]"
-              onClick={() =>
-                withUndo(`Showing photos from ${r.noLocation ? 'no location' : r.ids.join(', ')}`, (s) => ({
-                  ...s,
-                  filters: { ...s.filters, locations: onlyLocations(model, [r.key]), photoTag: 'all' },
-                  view: 'photos',
-                }))
-              }
+              onClick={() => {
+                const from = scrollY;
+                // The photos start at the table's top; the page stays put when that is already in view.
+                restore.current = Math.round(Math.min(from, Math.max(0, tableTop())));
+                setReturned((n) => n + 1);
+                drillDown(
+                  `Showing photos from ${r.noLocation ? 'no location' : r.ids.join(', ')}`,
+                  (s) => ({
+                    ...s,
+                    filters: { ...s.filters, locations: onlyLocations(model, [r.key]), photoTag: 'all' },
+                    view: 'photos',
+                  }),
+                  from,
+                );
+              }}
             >
               Show photos
             </button>
@@ -413,6 +437,11 @@ export function TablePanel() {
       {/* One line that stays under the filter bar while the table scrolls. */}
       <div className="tbl-head">
         <div className="tbl-tools">
+          {back && (
+            <button type="button" className="btn backbtn" onClick={backHere}>
+              <span aria-hidden="true">←</span> Back to {VIEW_NAMES[back.view]}
+            </button>
+          )}
           <Seg
             className="seg view-seg"
             label="Show"
@@ -444,7 +473,7 @@ export function TablePanel() {
                   ['untagged', 'Untagged'],
                   ['all', 'All'],
                 ]}
-                onChange={(photoTag) => setFilters((f) => ({ ...f, photoTag }))}
+                onChange={setPhotoTag}
               />
               {layout === 'grid' && (
                 <Seg<'new' | 'old' | ''>

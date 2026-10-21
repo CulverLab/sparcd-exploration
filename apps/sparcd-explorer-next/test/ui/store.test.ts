@@ -231,6 +231,70 @@ describe('Undo', () => {
   });
 });
 
+describe('Back, after a row or data-check action', () => {
+  const showPhotosOf = (id: string, scroll: number) =>
+    useStore.getState().drillDown(
+      `Showing photos from ${id}`,
+      (s) => ({
+        ...s,
+        filters: { ...s.filters, locations: onlyLocations(useStore.getState().model!, [`id:${id}`]), photoTag: 'all' },
+        view: 'photos',
+      }),
+      scroll,
+    );
+
+  beforeEach(() => {
+    open(alpha, bravo);
+    useStore.getState().setView('locations');
+    useStore.getState().setFilters((f) => ({ ...f, species: onlySpecies(useStore.getState().model!, ['Lynx rufus']) }));
+  });
+
+  it('goes back to the view, the exact filters and the scroll it came from', () => {
+    const before = useStore.getState().filters;
+    showPhotosOf('AA01', 420);
+    expect(useStore.getState().view).toBe('photos');
+    expect(useStore.getState().back).toMatchObject({ view: 'locations', filters: before, scroll: 420 });
+    useStore.getState().goBack();
+    const s = useStore.getState();
+    expect([s.view, s.filters, s.back]).toEqual(['locations', before, null]);
+  });
+
+  it('is one level: a new drill-down replaces it', () => {
+    showPhotosOf('AA01', 420);
+    useStore.getState().setView('species');
+    showPhotosOf('BB01', 90);
+    expect(useStore.getState().back).toMatchObject({ view: 'species', scroll: 90 });
+  });
+
+  it('goes once the filter bar or Reset is used, and stays through the Tagged switch', () => {
+    showPhotosOf('AA01', 0);
+    useStore.getState().setPhotoTag('tagged');
+    expect(useStore.getState().back).not.toBeNull();
+    useStore.getState().setFilters((f) => ({ ...f, years: [2024] }));
+    expect(useStore.getState().back).toBeNull();
+    showPhotosOf('AA01', 0);
+    useStore.getState().clearFilter('species');
+    expect(useStore.getState().back).toBeNull();
+    showPhotosOf('AA01', 0);
+    useStore.getState().resetFilters();
+    expect(useStore.getState().back).toBeNull();
+  });
+
+  it("goes with the drill-down's own Undo, which puts back the same place", () => {
+    const before = useStore.getState().filters;
+    showPhotosOf('AA01', 0);
+    useStore.getState().toast!.undo!();
+    const s = useStore.getState();
+    expect([s.view, s.filters, s.back]).toEqual(['locations', before, null]);
+  });
+
+  it('goes when other collections open', () => {
+    showPhotosOf('AA01', 0);
+    open(alpha);
+    expect(useStore.getState().back).toBeNull();
+  });
+});
+
 describe('refresh', () => {
   it('rebuilds after every finished check, so new read problems and corrected names show', () => {
     open(alpha);

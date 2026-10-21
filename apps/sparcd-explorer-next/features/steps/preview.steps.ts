@@ -2,7 +2,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
-import { Given, Then, When, columnLabels, expect, popover, tableRows } from './support/world';
+import { Given, Then, When, columnLabels, expect, popover, tableRows, viewButton } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
 const byCollection = (page: Page) => page.getByRole('region', { name: 'In view' }).locator('table.bc');
@@ -198,4 +198,37 @@ When('I tap the Collection of {string}', async ({ page }, id: string) => {
 
 Then('a small list shows {string} and {string}', async ({ page }, a: string, b: string) => {
   await expect(popover(page, 'Collections here').locator('li')).toHaveText([a, b]);
+});
+
+// --- #7 Back after a row or data-check action ----------------------------------
+
+Given('the screen is {int} pixels wide and {int} high', async ({ page }, width: number, height: number) => {
+  await page.setViewportSize({ width, height });
+});
+
+When('I press {string} on the Locations row {string}', async ({ page, scratch }, label: string, id: string) => {
+  // Where the page was at the click itself, however far it had to scroll to reach the row.
+  await page.evaluate(() =>
+    addEventListener('click', () => ((window as unknown as { clickedAt: number }).clickedAt = scrollY), { capture: true, once: true }),
+  );
+  await locationRow(page, id).getByRole('button', { name: label, exact: true }).click();
+  scratch.scroll = await page.evaluate(() => (window as unknown as { clickedAt: number }).clickedAt);
+});
+
+Then("the table's controls offer {string} before the view switch", async ({ page }, label: string) => {
+  const back = page.locator('#table .tbl-tools').getByRole('button', { name: label, exact: true });
+  await expect(back).toBeVisible();
+  const b = (await back.boundingBox())!;
+  const seg = (await page.getByRole('group', { name: 'Show' }).boundingBox())!;
+  expect(b.x + b.width).toBeLessThanOrEqual(seg.x);
+  expect(Math.abs(b.y + b.height / 2 - (seg.y + seg.height / 2))).toBeLessThan(2);
+});
+
+Then('the view switch shows {string}', async ({ page }, view: string) => {
+  await expect(viewButton(page, view)).toHaveAttribute('aria-pressed', 'true');
+});
+
+Then('the page is back where it was', async ({ page, scratch }) => {
+  expect(scratch.scroll).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(scratch.scroll);
 });

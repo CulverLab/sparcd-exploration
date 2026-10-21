@@ -60,3 +60,35 @@ Feature: Tables of locations, species and photos
     Then Data checks opens on "AB01 sits at 2 positions, so the camera probably moved."
     When I press Escape
     Then focus is back on the "moved" flag of "AB01"
+
+  @preview-7
+  Scenario: After "Show photos", Back returns to Locations as it was
+    Given the screen is 1440 pixels wide and 560 high
+    When I filter species to "Bobcat"
+    And I press "Show photos" on the Locations row "AB01"
+    Then the view switch shows "Photos"
+    And the table's controls offer "Back to Locations" before the view switch
+    When I press "Back to Locations"
+    Then the view switch shows "Locations"
+    And the species filter reads "Species: Bobcat"
+    And the locations filter reads "Locations"
+    And the page is back where it was
+    And there is no "Back to" button
+
+  @preview-7
+  Scenario: The Tagged switch keeps Back; the filter bar lets it go
+    When I press "Show photos" on the Locations row "AB01"
+    And I choose "Tagged" in the Photos switch
+    Then the table's controls offer "Back to Locations" before the view switch
+    When I filter species to "Bobcat"
+    Then there is no "Back to" button
+
+  @preview-7
+  Scenario: A data check's action offers Back too, and Reset lets it go
+    When I show the Species table
+    And I open Data checks
+    And I press "Show each position" in Data checks
+    Then the view switch shows "Locations"
+    And the table's controls offer "Back to Species" before the view switch
+    When I press "Reset filters"
+    Then there is no "Back to" button

@@ -12,32 +12,40 @@ export function useDataChecks() {
   return useMemo(() => dataChecks(model, unchecked).map((c) => describeCheck(model, c)), [model, unchecked]);
 }
 
-/** Show what a check is about: its locations alone, with Undo. */
+/** Show what a check is about: its locations alone, with Undo and Back. */
 export function useShowTarget() {
   const model = useStore((s) => s.model)!;
-  const withUndo = useStore((s) => s.withUndo);
+  const drillDown = useStore((s) => s.drillDown);
   return (t: CheckTarget) => {
-    withUndo(t.message, (s) => {
-      const clear = resetFilters(s.filters).state;
-      return {
-        filters: { ...clear, locations: onlyLocations(model, t.locations), photoTag: t.view === 'photos' ? 'all' : clear.photoTag },
-        separate: t.separate ?? s.separate,
-        view: t.view ?? s.view,
-      };
-    });
+    drillDown(
+      t.message,
+      (s) => {
+        const clear = resetFilters(s.filters).state;
+        return {
+          filters: { ...clear, locations: onlyLocations(model, t.locations), photoTag: t.view === 'photos' ? 'all' : clear.photoTag },
+          separate: t.separate ?? s.separate,
+          view: t.view ?? s.view,
+        };
+      },
+      scrollY,
+    );
     document.getElementById('table')?.scrollIntoView({ block: 'start' });
   };
 }
 
-/** Show the photos whose files are missing, alone, in Photos, with Undo. */
+/** Show the photos whose files are missing, alone, in Photos, with Undo and Back. */
 export function useShowMissing() {
-  const withUndo = useStore((s) => s.withUndo);
+  const drillDown = useStore((s) => s.drillDown);
   return () => {
-    withUndo('Showing photos whose files are missing', (s) => ({
-      ...s,
-      filters: { ...resetFilters(s.filters).state, missing: 'only', photoTag: 'all' },
-      view: 'photos',
-    }));
+    drillDown(
+      'Showing photos whose files are missing',
+      (s) => ({
+        ...s,
+        filters: { ...resetFilters(s.filters).state, missing: 'only', photoTag: 'all' },
+        view: 'photos',
+      }),
+      scrollY,
+    );
     document.getElementById('table')?.scrollIntoView({ block: 'start' });
   };
 }
