@@ -15,7 +15,15 @@ describe('Connection labels', () => {
     expect(html).toContain('>Access key</label>');
     expect(html).toContain('>Secret key</label>');
     expect(html).toContain('Remember endpoint &amp; access key on this device</label>');
+    expect(html).toContain('>(Don&#x27;t set remember endpoint &amp; access key if on a public computer)</p>');
     expect(html).toMatch(/type="submit"[^>]*>Connect<\/button>/);
+  });
+
+  it('ties the remember box to its note', () => {
+    const html = render();
+    const id = html.match(/aria-describedby="([^"]+)"/)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toContain(`<p id="${id}"`);
   });
 
   it('takes caller labels for the two credentials', () => {
@@ -32,12 +40,15 @@ describe('Connection labels', () => {
       endpointPlaceholder: 'server.example.org',
       intro: 'Use the account your project lead set up for you.',
       remember: 'Remember me on this device',
+      rememberHelp: 'Leave this unticked on a shared or public computer.',
       submit: 'Sign in',
     });
     expect(html).toContain('>Server address</label>');
     expect(html).toContain('placeholder="server.example.org"');
     expect(html).toContain('Use the account your project lead set up for you.</p>');
     expect(html).toContain('Remember me on this device</label>');
+    expect(html).toContain('>Leave this unticked on a shared or public computer.</p>');
+    expect(html).not.toContain('public computer)');
     expect(html).toMatch(/type="submit"[^>]*>Sign in<\/button>/);
     expect(html).not.toContain('S3-compatible');
   });

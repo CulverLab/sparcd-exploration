@@ -7,12 +7,13 @@ import { LEGACY_ZONE } from './fixtures-data';
 const MACHINE_ZONE = 'America/New_York'; // playwright.config.ts pins this
 const BEAR_CANYON_ZONE = 'America/Phoenix'; // where 32.4, -110.7 falls
 
-Given('a scanned batch has reached the Assign step', async ({ app }) => {
+Given('a scanned batch has reached the Describe step', async ({ app }) => {
   await app.connect();
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.continueToAssign();
   await app.waitForCollections();
+  await app.fillRequiredUploadComments();
 });
 
 // --- the upload timezone ---------------------------------------------------
@@ -91,7 +92,7 @@ Given('a file whose camera wrote a wall-clock time', async ({ app }) => {
 
 When('the batch is published', async ({ app }) => {
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -221,11 +222,19 @@ Then('the panel says so, and offers to spread the times instead', async ({ app }
 
 // --- overriding an estimate ------------------------------------------------
 
-const overrideInput = (app: App) => app.page.locator('input[type="datetime-local"]');
+// A plain text field now, not a native `datetime-local` picker (#456) — scoped
+// by its aria-label prefix so it never collides with the Spread tab's "First
+// image capture time" field, which shares the same placeholder text.
+const overrideInput = (app: App) => app.page.locator('input[aria-label^="Capture time for "]');
 
 When("a time is typed over one file's estimate", async ({ app }) => {
   await card(app, 'IMG_0002.JPG').click();
   await overrideInput(app).fill('2026-05-05T05:05:05');
+});
+
+When("a time with a space separator is typed over one file's estimate", async ({ app }) => {
+  await card(app, 'IMG_0002.JPG').click();
+  await overrideInput(app).fill('2026-05-05 05:05:05');
 });
 
 Then('that file shows the typed time as entered by hand', async ({ app }) => {
@@ -264,7 +273,7 @@ Then('each of them is marked as spread', async ({ app }) => {
 When('a date that does not exist is entered, such as 31 February', async ({ app }) => {
   await rescanFromAssign(app, gappyBatch());
   await card(app, 'IMG_0002.JPG').click();
-  await app.setControlledValue('input[type="datetime-local"]', '2026-02-31T10:00:00', 0);
+  await overrideInput(app).fill('2026-02-31 10:00:00');
 });
 
 Then('the file keeps the estimate it already had', async ({ app }) => {
@@ -316,9 +325,9 @@ When('that modified metadata time is overridden by hand', async ({ app }) => {
 
 Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back', exact: true }).click();
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   await app.stubTagger();
-  await app.page.getByRole('button', { name: 'Tag species first' }).click();
+  await app.page.getByRole('button', { name: 'Tag species before upload' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   const [record] = await app.readFlipRecords();
   expect(record.files[0]).toMatchObject({
@@ -331,4 +340,82 @@ Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
 Then('the modified metadata time is shown as a manual override', async ({ app }) => {
   await expect(card(app, 'MODIFIED.JPG')).toContainText('2026-07-02 03:04:05');
   await expect(card(app, 'MODIFIED.JPG')).toContainText('MANUAL');
+});
+
+When('the override is edited through incomplete text', async ({ app }) => {
+  const input = overrideInput(app);
+  await input.focus();
+  await input.press('End');
+  // Replace only the time portion with real keyboard input. The date remains,
+  // so this never passes through the explicitly cleared (empty) state.
+  for (let i = 0; i < 8; i++) await input.press('Shift+ArrowLeft');
+  await input.press('Backspace');
+  for (const key of ['2', '3', ':']) {
+    await input.press(key);
+    await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-05-05 05:05:05');
+    await expect(card(app, 'IMG_0002.JPG')).toContainText('MANUAL');
+    await expect(input).toBeFocused();
+  }
+});
+Then('the saved override remains unchanged while the edit is invalid', async ({ app }) => {
+  await expect(overrideInput(app)).toHaveValue('2026-05-05 23:');
+  await expect(overrideInput(app)).toHaveAttribute('aria-invalid', 'true');
+  await expect(overrideInput(app)).toHaveAccessibleDescription(/saved capture time is unchanged/);
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-05-05 05:05:05');
+});
+When('the typed override is completed', async ({ app }) => {
+  await overrideInput(app).pressSequentially('45:59');
+});
+Then('the completed 24-hour override is saved', async ({ app }) => {
+  await expect(overrideInput(app)).toHaveValue('2026-05-05 23:45:59');
+  await expect(overrideInput(app)).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-05-05 23:45:59');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('MANUAL');
+});
+When('the override text is emptied', async ({ app }) => {
+  await overrideInput(app).press('ControlOrMeta+a');
+  await overrideInput(app).press('Backspace');
+});
+Then('the open override is empty and the file returns to its estimate', async ({ app }) => {
+  await expect(overrideInput(app)).toHaveValue('');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 12:05:00');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+});
+Then('the open override shows the newly spread time', async ({ app }) => {
+  await expect(overrideInput(app)).toHaveValue('2026-07-01 09:00:15');
+  await expect(overrideInput(app)).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 09:00:15');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('SPREAD');
+});
+
+When('a spread matching the saved override is applied', async ({ app }) => {
+  await app.page.getByRole('tab', { name: 'Spread from a start time' }).click();
+  await app.page.getByLabel('First image capture time').fill('2026-05-05 05:05:05');
+  await app.page.getByRole('button', { name: 'Apply to 2 files' }).click();
+});
+Then('the open override returns to the saved time with spread provenance', async ({ app }) => {
+  await expect(overrideInput(app)).toHaveValue('2026-05-05 05:05:05');
+  await expect(overrideInput(app)).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('SPREAD');
+});
+When('a late-hour spread start is edited and applied', async ({ app }) => {
+  await app.page.getByRole('tab', { name: 'Spread from a start time' }).click();
+  const input = app.page.getByLabel('First image capture time');
+  const apply = app.page.getByRole('button', { name: 'Apply to 2 files' });
+  await expect(input).toHaveAttribute('type', 'text');
+  await input.fill('2026-07-01 23:45:59');
+  await app.page.getByLabel('Spacing in seconds').fill('60');
+  await expect(apply).toBeEnabled();
+  await input.fill('2026-07-01 23:');
+  await expect(apply).toBeDisabled();
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('EST.');
+  await input.pressSequentially('45:59');
+  await expect(input).toHaveValue('2026-07-01 23:45:59');
+  await expect(apply).toBeEnabled();
+  await apply.click();
+});
+Then('the spread uses the exact 24-hour start and spacing', async ({ app }) => {
+  await expect(card(app, 'IMG_0002.JPG')).toContainText('2026-07-01 23:45:59');
+  await expect(card(app, 'IMG_0004.JPG')).toContainText('2026-07-01 23:46:59');
+  await expect(app.page.getByText('SPREAD', { exact: true })).toHaveCount(2);
 });

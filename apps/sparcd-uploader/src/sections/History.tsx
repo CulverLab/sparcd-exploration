@@ -10,6 +10,8 @@ import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
 import { formatHistoryBatchStart } from '../lib/uploadDisplay';
 import { useStore } from '../store';
 import { formatBytes } from '../lib/scanFiles';
+import { useCollections } from '../lib/useCollections';
+import type { CollectionRef } from '../lib/s3';
 import {
   listBatches,
   loadSession,
@@ -36,6 +38,25 @@ type Row = { batch: BatchRecord } & SessionTally;
 
 const stampOf = (prefix: string) => prefix.slice(prefix.lastIndexOf('/') + 1);
 
+/** Resolve names using both bucket and collection ID. The saved ID remains
+ * visible even when discovery is unavailable or a collection was removed. */
+function CollectionLabel({
+  batch,
+  collections,
+}: {
+  batch: BatchRecord;
+  collections?: CollectionRef[];
+}) {
+  const match = collections?.find((c) => c.bucket === batch.targetBucket && c.uuid === batch.collectionUuid);
+  return (
+    <>
+      {match ? match.name ?? 'Unnamed collection' : 'Collection name unavailable'} ·{' '}
+      <span className="font-mono">{batch.collectionUuid}</span>
+      {!match && <span className="block font-mono text-[11px] text-inkMute">Storage bucket: {batch.targetBucket}</span>}
+    </>
+  );
+}
+
 function ownsPreparation(sessionId: string, connectionId: number, generation: number): boolean {
   const state = useStore.getState();
   return !!state.s3Config &&
@@ -49,7 +70,7 @@ function Badge({ batch }: { batch: BatchRecord }) {
   const done = !!batch.completedAt;
   return (
     <span
-      className={`font-mono text-[10px] uppercase tracking-[0.12em] px-1.5 py-0.5 border ${
+      className={`shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] px-1.5 py-0.5 border ${
         done ? 'border-ok/50 text-ok' : 'border-warn/50 text-warn'
       }`}
     >
@@ -60,6 +81,8 @@ function Badge({ batch }: { batch: BatchRecord }) {
 
 export function History() {
   const s3Config = useStore((s) => s.s3Config);
+  const connectionId = useStore((s) => s.connectionId);
+  const collections = useCollections(s3Config, connectionId);
   const setPendingResume = useStore((s) => s.setPendingResume);
   const setSection = useStore((s) => s.setSection);
   const setStep = useStore((s) => s.setStep);
@@ -473,12 +496,15 @@ export function History() {
           return (
             <li key={batch.id} className="border border-ruleSoft bg-panel px-4 py-3 space-y-2">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="font-mono text-[13px] text-ink truncate" title={batch.uploadPrefix}>
                     {stampOf(batch.uploadPrefix)}
                   </p>
-                  <p className="font-body text-[12px] text-inkSoft truncate">
-                    {batch.targetBucket} · {formatHistoryBatchStart(batch.startedAt)}
+                  <p className="font-body text-[12px] text-inkSoft [overflow-wrap:anywhere]">
+                    <CollectionLabel batch={batch} collections={collections.data} />
+                  </p>
+                  <p className="font-body text-[12px] text-inkSoft">
+                    {formatHistoryBatchStart(batch.startedAt)}
                   </p>
                 </div>
                 <Badge batch={batch} />
@@ -521,7 +547,7 @@ export function History() {
 
               {isPreparing && verifyProgress && (
                 <p className="font-body text-[12px] text-inkSoft">
-                  Verifying <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
+                  Resuming <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
                   <span className="font-mono text-ink">{verifyProgress.total}</span> files against
                   the original folder…
                 </p>
@@ -538,7 +564,7 @@ export function History() {
                         (!online && !offlineResumeOverride) || activeRunReserved || preparation !== null || pickerOpen ? 'opacity-40 cursor-not-allowed' : ''
                       }`}
                     >
-                      {isPreparing ? 'Verifying…' : 'Resume upload'}
+                      {isPreparing ? 'Resuming…' : 'Resume upload'}
                     </button>
                     {!online && !offlineResumeOverride && (
                       <button

@@ -51,7 +51,7 @@ type TaggerState = {
   burstThresholdSec: number; // sequence grouping threshold (5–600s), used when enabled
   dateFormat: DateFormat; // display only — media.csv col 4 is always stored as full ISO
   timeFormat: TimeFormat; // display only, ditto
-  distanceUnit: DistanceUnit; // not yet consumed — no location/elevation display exists
+  distanceUnit: DistanceUnit; // preferred unit emphasized in location elevation details
   autoAdvanceOnTag: boolean; // on by default — advances Focus after an assignment
 
   connect: (config: S3Config, remember: boolean) => void;

@@ -31,6 +31,7 @@ import { naiveInZoneToUtcIso } from './exifTime';
 import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
+import { formatUploadComments, type RequiredUploadComments } from './uploadComments';
 
 /** One blob to stream: the full object key (= media_path) plus its source. */
 export type UploadItem = {
@@ -226,6 +227,7 @@ export type BuildInput = {
   bucket: string;
   uploaderSlug: string;
   description: string;
+  requiredComments?: RequiredUploadComments;
   timeZone: string; // IANA zone the EXIF naive wall-clock is interpreted in
   files: FileEntry[];
   now: Date;
@@ -311,7 +313,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       imagesWithSpecies: uploadItems.filter((it) => hasSpecies(it.preTags)).length,
       bucket,
       uploadPath,
-      description,
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, imageCount: ready.length, uploadDate: now, comments: description }),
       captureTimeZone: timeZone,
     }),
   );
@@ -394,6 +396,7 @@ export async function buildBundleFromRecords(input: {
   bucket: string;
   uploaderSlug: string;
   description: string;
+  requiredComments?: RequiredUploadComments;
   timeZone?: string;
   uploadPath: string;
   startedAt: Date;
@@ -453,7 +456,7 @@ export async function buildBundleFromRecords(input: {
       imagesWithSpecies: files.filter((f) => hasSpecies(f.preTags)).length,
       bucket,
       uploadPath,
-      description,
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, imageCount: files.length, uploadDate: startedAt, comments: description }),
       captureTimeZone: timeZone,
     }),
   );

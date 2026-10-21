@@ -14,6 +14,7 @@ import {
 } from './support/world';
 import { BUCKET, PREFIX_A, mediaCsv, MEDIA_A, mediaKey } from './support/data';
 import { makePng } from './support/png';
+import { autoAdvanceCheckbox } from './support/flows';
 
 // --- react-zoom-pan-pinch introspection -------------------------------------
 
@@ -83,6 +84,8 @@ function expectFitted(view: { image: Rect; pane: Rect }): void {
   expectImageInBounds(view);
   const gaps = axes(view).map(([lo, hi, paneLo, paneHi]) => {
     expect(Math.abs(lo - paneLo - (paneHi - hi))).toBeLessThanOrEqual(FUDGE);
+    expect(lo).toBeGreaterThanOrEqual(paneLo - FUDGE);
+    expect(hi).toBeLessThanOrEqual(paneHi + FUDGE);
     return paneHi - paneLo - (hi - lo);
   });
   expect(Math.min(...gaps)).toBeLessThanOrEqual(FUDGE);
@@ -142,6 +145,110 @@ Then('the Focus image canvas fills the available area beside the species picker'
   expect(canvas.x + canvas.width).toBeLessThanOrEqual(species.x + 1);
   expect(canvas.width).toBeGreaterThan(viewport.width * 0.5);
   expect(canvas.height).toBeGreaterThan(viewport.height * 0.45);
+});
+
+// --- Resizable Focus split (issue #536) -------------------------------------
+
+async function dragDivider(page: Page, deltaX: number, deltaY: number): Promise<void> {
+  const box = (await page.getByRole('separator').boundingBox())!;
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 5 });
+  await page.mouse.up();
+}
+
+When("the species panel's divider is dragged narrower", async ({ page, scratch }) => {
+  scratch.speciesSizeBefore = (await page.getByTestId('focus-species-pane').boundingBox())!.width;
+  scratch.canvasSizeBefore = (await page.getByTestId('focus-drop-zone').boundingBox())!.width;
+  await dragDivider(page, 80, 0);
+});
+
+Then('the species panel is narrower and the image canvas is wider', async ({ page, scratch }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
+  expect(species.width).toBeLessThan(scratch.speciesSizeBefore as number);
+  expect(canvas.width).toBeGreaterThan(scratch.canvasSizeBefore as number);
+});
+
+When("the species panel's divider is dragged wider", async ({ page }) => {
+  await dragDivider(page, -200, 0);
+});
+
+Then('the species panel is wider than its default width', async ({ page }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  expect(species.width).toBeGreaterThan(340);
+});
+
+When("the species panel's divider is dragged as far narrow as it will go", async ({ page }) => {
+  await dragDivider(page, 2000, 0);
+});
+
+Then('the species panel stays at least 100px wide', async ({ page }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  expect(species.width).toBeGreaterThanOrEqual(100);
+  expect(species.width).toBeLessThan(150);
+  const pane = page.getByTestId('focus-species-pane');
+  expect(await pane.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  await pane.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+  expect(await pane.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+  await pane.evaluate(el => { el.scrollLeft = 0; });
+});
+
+When("the species panel's divider is dragged as far wide as it will go", async ({ page }) => {
+  await dragDivider(page, -2000, 0);
+});
+
+Then('the image canvas does not shrink away to nothing', async ({ page }) => {
+  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
+  expect(canvas.width).toBeGreaterThanOrEqual(200);
+});
+
+Given("the species panel's divider has been dragged to a new width", async ({ page, scratch }) => {
+  await dragDivider(page, 80, 0);
+  scratch.speciesWidthChosen = (await page.getByTestId('focus-species-pane').boundingBox())!.width;
+});
+
+When('Focus is closed and reopened', async ({ page }) => {
+  await page.getByRole('button', { name: 'Close Focus' }).click();
+  await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await focusFrame(page, 'IMG001.JPG');
+  await enterFocusView(page);
+});
+
+Then('the species panel keeps the width that was chosen', async ({ page, scratch }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  expect(species.width).toBeCloseTo(scratch.speciesWidthChosen as number, 0);
+});
+
+When("the species panel's divider is dragged shorter", async ({ page, scratch }) => {
+  scratch.speciesSizeBefore = (await page.getByTestId('focus-species-pane').boundingBox())!.height;
+  scratch.canvasSizeBefore = (await page.getByTestId('focus-drop-zone').boundingBox())!.height;
+  await dragDivider(page, 0, 80);
+});
+
+Then('the species panel is shorter and the image canvas is taller', async ({ page, scratch }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
+  expect(species.height).toBeLessThan(scratch.speciesSizeBefore as number);
+  expect(canvas.height).toBeGreaterThan(scratch.canvasSizeBefore as number);
+});
+
+When("the species panel's divider is focused", async ({ page, scratch }) => {
+  scratch.speciesSizeBefore = (await page.getByTestId('focus-species-pane').boundingBox())!.width;
+  await page.getByRole('separator').focus();
+});
+
+When('the narrowing arrow key is pressed', async ({ page }) => {
+  const before = await page.locator('.react-transform-component img').getAttribute('alt');
+  for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'ArrowRight']) await page.keyboard.press(key);
+  await expect(page.locator('.react-transform-component img')).toHaveAttribute('alt', before!);
+});
+
+Then('the species panel becomes narrower', async ({ page, scratch }) => {
+  const species = (await page.getByTestId('focus-species-pane').boundingBox())!;
+  expect(species.width).toBeLessThan(scratch.speciesSizeBefore as number);
 });
 
 Given('Overview thumbnail downloads are delayed', async ({ page, s3 }) => {
@@ -270,6 +377,67 @@ When('the image is zoomed in', async ({ page }) => {
 Then('it can be enlarged up to six times its fitted size', async ({ page }) => {
   const scale = await zoomToLimit(page.locator('body'));
   expect(scale).toBeCloseTo(6, 1);
+});
+
+// --- Fitting on resize (issue #533) ------------------------------------------
+
+const resizeViewer = (page: Page) => page.getByRole('dialog', { name: 'Fullscreen image', exact: true });
+async function activeResizeRoot(page: Page): Promise<Locator> {
+  return await resizeViewer(page).count() ? resizeViewer(page) : page.getByRole('dialog', { name: 'Focus image viewer', exact: true });
+}
+
+When('the workspace window is resized smaller', async ({ page, scratch }) => {
+  scratch.resizeOriginalViewport = page.viewportSize()!;
+  const before = page.viewportSize()!;
+  await page.setViewportSize({ width: Math.round(before.width * 0.6), height: Math.round(before.height * 0.6) });
+});
+
+When('the workspace window is restored to its original size', async ({ page, scratch }) => {
+  await page.setViewportSize(scratch.resizeOriginalViewport as { width: number; height: number });
+});
+
+Then('the image still fits the pane', async ({ page }) => {
+  const root = await activeResizeRoot(page);
+  // The zoom wrapper can itself overflow: compare with the independently sized canvas.
+  const canvas = await resizeViewer(page).count()
+    ? transformWrapper(root).locator('..')
+    : page.getByTestId('focus-drop-zone');
+  await expect(async () => {
+    const view = await imageInPane(root);
+    const bounds = await canvas.boundingBox();
+    expect(bounds).not.toBeNull();
+    const pane = { left: bounds!.x, top: bounds!.y, right: bounds!.x + bounds!.width, bottom: bounds!.y + bounds!.height };
+    for (const [lo, hi, paneLo, paneHi] of axes({ image: view.pane, pane })) {
+      expect(lo).toBeGreaterThanOrEqual(paneLo - FUDGE);
+      expect(hi).toBeLessThanOrEqual(paneHi + FUDGE);
+    }
+    // Focus has intentional canvas padding; fitting touches the inner pane,
+    // while containment against the outer canvas detects an oversized pane.
+    expectFitted(view);
+    expect((await readTransform(root)).scale).toBeCloseTo(1, 3);
+    await expect(root.locator('button[title="Reset to fit"]')).toHaveCount(0);
+  }).toPass({ timeout: 10_000 });
+});
+
+Given('a height-constrained portrait is shown in Focus', async ({ page, s3 }) => {
+  s3.put(BUCKET, mediaKey(PREFIX_A, MEDIA_A[0].file), makePng(400, 1600, 123), 'image/png');
+  await page.reload();
+  await openWorkspace(page);
+  await enterFocusView(page);
+  await expect.poll(() => page.locator('.react-transform-component img').evaluate((el: HTMLImageElement) => el.naturalHeight)).toBe(1600);
+});
+
+When('the window narrows without changing the portrait fitted size', async ({ page, scratch }) => {
+  const root = await activeResizeRoot(page);
+  const dimensions = await transformContent(root).evaluate(el => ({ width: (el as HTMLElement).offsetWidth, height: (el as HTMLElement).offsetHeight }));
+  const before = page.viewportSize()!;
+  scratch.resizeOriginalViewport = before;
+  await page.setViewportSize({ width: before.width - 120, height: before.height });
+  await expect.poll(() => transformContent(root).evaluate(el => ({ width: (el as HTMLElement).offsetWidth, height: (el as HTMLElement).offsetHeight }))).toEqual(dimensions);
+});
+
+When('the fullscreen image is zoomed in', async ({ page }) => {
+  expect(await zoomIn(resizeViewer(page), 1)).toBeGreaterThan(1);
 });
 
 Then('detail beyond the fitted view becomes legible', async ({ page }) => {
@@ -819,6 +987,45 @@ Then('the adjustment panel stays inside the window on a phone', async ({ page })
   }).toEqual([]);
 });
 
+Then('the Adjust control sits under the zoom button column, with a gap', async ({ page }) => {
+  const [adjust, fullscreen] = await Promise.all([
+    adjustToggle(page).boundingBox(),
+    page.getByRole('button', { name: 'Open fullscreen' }).boundingBox(),
+  ]);
+  expect(adjust).not.toBeNull();
+  expect(fullscreen).not.toBeNull();
+  // Right-anchored in the same column as the zoom buttons, below them, with
+  // more room than the gap used between the zoom buttons and Reset.
+  expect(Math.abs(adjust!.x + adjust!.width - (fullscreen!.x + fullscreen!.width))).toBeLessThanOrEqual(2);
+  expect(adjust!.y).toBeGreaterThan(fullscreen!.y + fullscreen!.height + 8);
+  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
+  expect(adjust!.x).toBeGreaterThanOrEqual(canvas.x);
+  expect(adjust!.x + adjust!.width).toBeLessThanOrEqual(canvas.x + canvas.width);
+  expect(adjust!.y + adjust!.height).toBeLessThanOrEqual(canvas.y + canvas.height);
+  await expect(adjustToggle(page)).toHaveCount(1);
+});
+
+When('the viewport is narrowed to a phone size', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the Adjust control sits at the top-left, clear of the zoom column', async ({ page }) => {
+  const [adjust, fullscreen] = await Promise.all([
+    adjustToggle(page).boundingBox(),
+    page.getByRole('button', { name: 'Open fullscreen' }).boundingBox(),
+  ]);
+  expect(adjust).not.toBeNull();
+  expect(fullscreen).not.toBeNull();
+  expect(adjust!.x).toBeLessThan(fullscreen!.x);
+  expect(adjust!.y).toBeLessThan(fullscreen!.y);
+  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
+  expect(Math.abs(adjust!.x - canvas.x - 16)).toBeLessThanOrEqual(2);
+  expect(Math.abs(adjust!.y - canvas.y - 16)).toBeLessThanOrEqual(2);
+  expect(adjust!.x + adjust!.width).toBeLessThanOrEqual(Math.min(canvas.x + canvas.width, 390));
+  expect(adjust!.y + adjust!.height).toBeLessThanOrEqual(844);
+  await expect(adjustToggle(page)).toHaveCount(1);
+});
+
 Then('keyboard focus enters the adjustment panel', async ({ page }) => {
   await expect(page.getByLabel('Brightness')).toBeFocused();
 });
@@ -826,10 +1033,12 @@ Then('keyboard focus enters the adjustment panel', async ({ page }) => {
 Then('Tab wraps between the Focus viewer and the adjustment panel', async ({ page }) => {
   const focusDialog = page.getByRole('dialog', { name: 'Focus image viewer' });
   const brightness = page.getByLabel('Brightness');
-  const saturation = page.getByLabel('Saturation');
+  // Reset stays disabled (and so out of the tab order) while the values are
+  // still neutral, so "Keep values" is the last enabled control at this point.
+  const keepValues = page.getByLabel('Keep values');
   await brightness.focus();
   await page.keyboard.press('Shift+Tab');
-  await expect(saturation).toBeFocused();
+  await expect(keepValues).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
   await adjustToggle(page).click();
@@ -899,6 +1108,32 @@ Given('the display adjustments have been changed in the Focus view', async ({ pa
   await expect(adjustToggle(page).locator('span.bg-accent')).toBeVisible();
 });
 
+Given('"Keep values" is checked', async ({ page }) => {
+  await adjustToggle(page).click();
+  await page.getByLabel('Keep values').check();
+  await expect(page.getByLabel('Keep values')).toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(adjustmentPanel(page)).toHaveCount(0);
+});
+
+Then('the Keep values checkbox is unchecked', async ({ page }) => {
+  await expect(page.getByLabel('Keep values')).not.toBeChecked();
+  await expect(page.getByLabel('Keep values')).toHaveAccessibleDescription('Keep adjustments when moving to the next or previous image. Turning this off leaves the current image unchanged.');
+});
+
+async function navigateAdjustmentImage(page: Page, direction: 'Next' | 'Previous') {
+  const image = page.locator('.react-transform-component img');
+  const beforeSrc = await image.getAttribute('src');
+  const beforeName = await image.getAttribute('alt');
+  expect(beforeSrc).toBeTruthy();
+  expect(beforeName).toBeTruthy();
+  await page.getByRole('button', { name: `${direction} image`, exact: true }).click();
+  await expect(image).toBeVisible();
+  await expect(image).not.toHaveAttribute('src', beforeSrc!);
+  await expect(image).not.toHaveAttribute('alt', beforeName!);
+  await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+}
+
 When('another image is opened in the Focus view', async ({ page, scratch }) => {
   scratch.filterBefore = await page
     .locator('.react-transform-component img')
@@ -906,14 +1141,27 @@ When('another image is opened in the Focus view', async ({ page, scratch }) => {
     .getAttribute('style');
   await page.keyboard.press('Escape');
   await expect(adjustmentPanel(page)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Next image' }).click();
-  await expect(page.locator('.react-transform-component img')).toBeVisible();
+  await navigateAdjustmentImage(page, 'Next');
 });
 
 Then('the same adjustments still apply', async ({ page, scratch }) => {
   const now = await page.locator('.react-transform-component img').first().getAttribute('style');
   expect(now).toBe(scratch.filterBefore);
   await expect(adjustToggle(page).locator('span.bg-accent')).toBeVisible();
+  await adjustToggle(page).click();
+  for (const [label, value] of [['Brightness', '50'], ['Contrast', '90'], ['Hue', '50'], ['Saturation', '50']]) {
+    await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
+  }
+});
+
+Then('the adjustments have reset to neutral', async ({ page }) => {
+  await adjustToggle(page).click();
+  for (const label of ['Brightness', 'Contrast', 'Hue', 'Saturation']) {
+    await expect(page.getByLabel(label, { exact: true })).toHaveValue('50');
+  }
+  await expect(adjustToggle(page).locator('span.bg-accent')).toHaveCount(0);
+  const style = await page.locator('.react-transform-component img').first().getAttribute('style');
+  expect(style ?? '').toContain('brightness(100%) contrast(100%) hue-rotate(0deg) saturate(100%)');
 });
 
 Then('leaving the Focus view returns the adjustments to neutral', async ({ page }) => {
@@ -925,4 +1173,185 @@ Then('leaving the Focus view returns the adjustments to neutral', async ({ page 
   await expect(adjustToggle(page).locator('span.bg-accent')).toHaveCount(0);
   const style = await page.locator('.react-transform-component img').first().getAttribute('style');
   expect(style ?? '').toContain('brightness(100%) contrast(100%) hue-rotate(0deg) saturate(100%)');
+  await adjustToggle(page).click();
+  await expect(page.getByLabel('Keep values')).not.toBeChecked();
+  for (const label of ['Brightness', 'Contrast', 'Hue', 'Saturation']) {
+    await expect(page.getByLabel(label, { exact: true })).toHaveValue('50');
+  }
+});
+
+When('the open Adjust panel crosses the desktop breakpoint in both directions', async ({ page }) => {
+  await adjustToggle(page).click();
+  const brightness = page.getByLabel('Brightness');
+  await expect(brightness).toBeFocused();
+  await brightness.fill('73');
+  for (const width of [1023, 1024, 390, 1440]) {
+    await page.setViewportSize({ width, height: 950 });
+    await expect(adjustToggle(page)).toHaveCount(1);
+    await expect(adjustmentPanel(page)).toHaveCount(1);
+    await expect(brightness).toHaveValue('73');
+    await expect(brightness).toBeFocused();
+    await expect(async () => {
+      const bounds = (await adjustmentPanel(page).boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(950);
+    }).toPass({ timeout: 5000 });
+    await page.keyboard.press('Escape');
+    await expect(adjustmentPanel(page)).toHaveCount(0);
+    await expect(adjustToggle(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(brightness).toBeFocused();
+    await expect(brightness).toHaveValue('73');
+  }
+});
+
+Given('a later image is open for testing previous-image adjustments', async ({ page }) => {
+  await navigateAdjustmentImage(page, 'Next');
+});
+
+When('the previous image is opened in the Focus view', async ({ page, scratch }) => {
+  scratch.filterBefore = await page.locator('.react-transform-component img').first().getAttribute('style');
+  await page.keyboard.press('Escape');
+  await expect(adjustmentPanel(page)).toHaveCount(0);
+  await navigateAdjustmentImage(page, 'Previous');
+});
+
+When('Keep values is turned off without navigating', async ({ page, scratch }) => {
+  scratch.filterBeforeUncheck = await page.locator('.react-transform-component img').first().getAttribute('style');
+  await page.getByLabel('Keep values').uncheck();
+});
+
+Then('the current adjustment values are preserved with Keep values off', async ({ page, scratch }) => {
+  await expect(page.getByLabel('Keep values')).not.toBeChecked();
+  await expect(page.getByLabel('Contrast', { exact: true })).toHaveValue('90');
+  await expect(page.locator('.react-transform-component img').first()).toHaveAttribute('style', scratch.filterBeforeUncheck as string);
+});
+
+Given('auto-advance is disabled for adjustment shortcut checks', async ({ page }) => {
+  await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
+  await sectionTab(page, 'Settings').click();
+  await autoAdvanceCheckbox(page).uncheck();
+  await sectionTab(page, 'Tag').click();
+});
+
+Then('Keep values supports {word} toggling without blocking workspace shortcuts', async ({ page }, activation: string) => {
+  const image = page.locator('.react-transform-component img');
+  const originalSrc = await image.getAttribute('src');
+  const originalName = await image.getAttribute('alt');
+  expect(originalSrc).toBeTruthy();
+  expect(originalName).toBeTruthy();
+  const count = page.getByRole('spinbutton', { name: 'Count for Mule Deer', exact: true });
+  let expectedCount = Number(await count.inputValue());
+
+  for (const checked of [true, false]) {
+    await adjustToggle(page).click();
+    await expect(page.getByLabel('Brightness', { exact: true })).toBeFocused();
+    await page.getByLabel('Contrast', { exact: true }).fill('90');
+    const checkbox = page.getByRole('checkbox', { name: 'Keep values', exact: true });
+    if (activation === 'pointer') {
+      await page.getByText('Keep values', { exact: true }).click();
+    } else {
+      await page.getByLabel('Brightness', { exact: true }).focus();
+      for (let tab = 0; tab < 4; tab++) await page.keyboard.press('Tab');
+      await expect(checkbox).toBeFocused();
+      await page.keyboard.press('Space');
+    }
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+    await expect(image).toHaveAttribute('src', originalSrc!);
+    await expect(count).toHaveValue(String(expectedCount));
+    await page.keyboard.press('Enter');
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+
+    await page.keyboard.press('d');
+    await expect(count).toHaveValue(String(++expectedCount));
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+    await page.keyboard.press('ArrowRight');
+    await expect(image).not.toHaveAttribute('src', originalSrc!);
+    await expect(image).not.toHaveAttribute('alt', originalName!);
+    await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+    await expect(adjustmentPanel(page)).toHaveCount(0);
+    await page.keyboard.press('ArrowLeft');
+    await expect(image).toHaveAttribute('src', originalSrc!);
+    await expect(image).toHaveAttribute('alt', originalName!);
+    await expect(count).toHaveValue(String(expectedCount));
+    const style = await image.getAttribute('style');
+    expect(style).toContain(checked ? 'contrast(180%)' : 'contrast(100%)');
+  }
+});
+
+Then('split preferences survive resizing and reload without hiding controls', async ({ page }) => {
+  const divider = page.getByRole('separator'), pane = page.getByTestId('focus-species-pane');
+  await page.setViewportSize({ width: 1920, height: 950 });
+  await divider.focus(); await page.keyboard.press('End');
+  const width = await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:w'));
+  expect(Number(width)).toBeGreaterThan(1000);
+  await page.setViewportSize({ width: 1024, height: 950 });
+  await expect.poll(() => pane.evaluate(el => el.clientWidth)).toBeLessThanOrEqual(776);
+  expect((await page.getByTestId('focus-drop-zone').boundingBox())!.width).toBeGreaterThanOrEqual(239);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await expect(divider).toHaveAttribute('aria-orientation', 'horizontal');
+  await divider.focus(); await page.keyboard.press('Home'); await page.keyboard.press('ArrowUp');
+  const height = await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:h'));
+  expect(height).toBe('116');
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.reload(); await openWorkspace(page); await enterFocusView(page);
+  await expect.poll(() => pane.evaluate(el => el.clientWidth)).toBe(Math.min(Number(width), 1192));
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:w'))).toBe(width);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => pane.evaluate(el => el.clientHeight)).toBe(Number(height));
+  const id = await divider.getAttribute('aria-controls');
+  expect(id).toBeTruthy(); await expect(pane).toHaveAttribute('id', id!);
+  await expect(divider).toHaveAttribute('aria-valuenow', height!);
+  await page.setViewportSize({ width: 390, height: 300 });
+  await expect.poll(() => page.getByTestId('focus-drop-zone').evaluate(el => el.clientHeight)).toBeGreaterThanOrEqual(240);
+  await page.getByTestId('species-panel').getByRole('textbox').scrollIntoViewIfNeeded();
+  expect(await pane.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+});
+
+Then('a touch drag resizes the phone split', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const divider = page.getByRole('separator'), pane = page.getByTestId('focus-species-pane');
+  await expect(divider).toHaveCSS('touch-action', 'none');
+  const before = (await pane.boundingBox())!.height, box = (await divider.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let delta = 10; delta <= 60; delta += 10) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + delta }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect.poll(() => pane.evaluate(el => el.clientHeight)).toBeLessThan(before - 30);
+  } finally { await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false }); await cdp.detach(); }
+});
+
+Then('canceled and unmounted drags stop resizing', async ({ page }) => {
+  const divider = page.getByRole('separator'), pane = page.getByTestId('focus-species-pane');
+  const box = (await divider.boundingBox())!;
+  await page.mouse.move(box.x + 4, box.y + 20); await page.mouse.down();
+  await page.mouse.move(box.x + 50, box.y + 20);
+  const activeSize = (await pane.boundingBox())!.width;
+  await divider.evaluate(el => el.dispatchEvent(new PointerEvent('pointermove', { pointerId: 999, clientX: 0, bubbles: true })));
+  expect((await pane.boundingBox())!.width).toBe(activeSize);
+  await divider.evaluate(el => el.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true })));
+  const canceled = (await pane.boundingBox())!.width;
+  await page.mouse.move(box.x + 150, box.y + 20); await page.mouse.up();
+  expect((await pane.boundingBox())!.width).toBe(canceled);
+  const capture = (await divider.boundingBox())!;
+  await page.mouse.move(capture.x + 4, capture.y + 20); await page.mouse.down();
+  await divider.evaluate(el => el.releasePointerCapture(1));
+  const released = (await pane.boundingBox())!.width;
+  await page.mouse.move(capture.x + 80, capture.y + 20); await page.mouse.up();
+  expect((await pane.boundingBox())!.width).toBe(released);
+  const next = (await divider.boundingBox())!;
+  await page.mouse.move(next.x + 4, next.y + 20); await page.mouse.down();
+  await page.keyboard.press('Escape'); await expect(divider).toHaveCount(0);
+  const saved = await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:w'));
+  await page.mouse.move(10, 10); await page.mouse.up();
+  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:w'))).toBe(saved);
+  await enterFocusView(page); await expect(divider).toBeVisible();
 });

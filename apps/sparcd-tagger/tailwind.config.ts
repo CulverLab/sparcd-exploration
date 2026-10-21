@@ -7,14 +7,18 @@ import plugin from 'tailwindcss/plugin';
 // container sizes, each the sum of the tracks that step turns on, so a column
 // appears exactly when it fits — Upload holding its 16rem floor and the Tagged
 // progress cell its 130px one, over 16px grid gaps and the row's own 34px of
-// horizontal padding and accent border.
-//   sm  34 + 120 + 256 + 160 + 140 + 70 + 4 gaps =  844px → adds Sync
-//   md  …                + 130 tagged   + 1 gap  =  990px → adds Tagged
-//   lg  …                +  70 images   + 1 gap  = 1076px → adds Images
+// horizontal padding and accent border. Tagged/Total and Collected are what
+// this list exists to answer, so they get the earlier step; Sync waits.
+//   compact: 34 + 78 + 160 + 96 + 84 tagged + 80 collected + 124 sync + 56 open + 6×6 gaps = 748px
+//      → keeps all status available in the 768–939px compact band
+//   sm  34 + 120 + 256 + 160 + 130 tagged + 90 collected + 5 gaps =  940px → adds Tagged/Total + Collected
+//   md  …                                 + 140 sync      + 1 gap = 1096px → adds Sync
+//   md's lower edge is 1072px so the flexible progress track can compress by 24px
+//      in the 1440px desktop layout while leaving Sync available.
 const browseTableSizes = {
-  'browse-sm': '52.75rem',
-  'browse-md': '61.875rem',
-  'browse-lg': '67.25rem',
+  'browse-compact': '48rem',
+  'browse-sm': '58.75rem',
+  'browse-md': '67rem',
 };
 
 // Field Notebook v2 tokens are driven by CSS variables (see index.css) so the
@@ -64,7 +68,13 @@ export default {
     // source order; the steps still resolve against each other in size order.
     plugin(({ addVariant }) => {
       for (const [name, size] of Object.entries(browseTableSizes)) {
-        addVariant(name, `@container browse-upload (min-width: ${size}) { && }`);
+        // This compact layout is only for the narrow band before the normal
+        // Tagged/Total and Collected tracks fit. At 940px the regular table
+        // layout takes over and Sync can again wait for its larger step.
+        const range = name === 'browse-compact'
+          ? `(min-width: ${size}) and (max-width: 58.74rem)`
+          : `(min-width: ${size})`;
+        addVariant(name, `@container browse-upload ${range} { && }`);
       }
     }),
   ],

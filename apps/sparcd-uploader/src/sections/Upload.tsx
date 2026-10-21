@@ -6,6 +6,7 @@ import { useLocations } from '../lib/useLocations';
 import { findAllowedLocation } from '../lib/allowedLocations';
 import { useCollections } from '../lib/useCollections';
 import { sanitizeUploaderUser } from '../lib/normalize';
+import { formatUploadComments } from '../lib/uploadComments';
 import { formatBytes } from '../lib/scanFiles';
 import { loadSession, type BatchRecord } from '../lib/db';
 import type { ReconcileProblem } from '../lib/resume';
@@ -35,44 +36,6 @@ const concurrencyControl = (): ConcurrencyControl =>
   useStore.getState().concurrencyMode === 'manual'
     ? { mode: 'manual', get: () => useStore.getState().uploadConcurrency }
     : { mode: 'adaptive' };
-
-// What "adaptive" means, on demand — the explanation only matters the first time
-// someone wonders, so it stays behind the 'i' rather than sitting in the layout.
-function AdaptiveInfo() {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLSpanElement>(null);
-
-  // Close on outside click.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDoc);
-    return () => document.removeEventListener('pointerdown', onDoc);
-  }, [open]);
-
-  return (
-    <span ref={rootRef} className="relative inline-flex">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="About adaptive concurrency"
-        className="shrink-0 min-w-11 min-h-11 sm:min-w-5 sm:min-h-5 grid place-items-center border border-rule text-inkSoft hover:text-ink hover:border-ink [@media(hover:none)]:text-ink [@media(hover:none)]:border-ink text-[11px] font-mono focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
-      >
-        i
-      </button>
-      {open && (
-        <span className="absolute left-0 top-full z-10 mt-1 block w-[min(22rem,calc(100vw-2.5rem))] border border-rule bg-panel px-3 py-2 font-body text-[12px] leading-[1.5] text-inkSoft">
-          Adaptive probes different lane counts against measured throughput and keeps whichever is
-          fastest. The lane count it has settled on shows here while a run is in flight. To pin a
-          fixed number instead, switch to manual in Settings.
-        </span>
-      )}
-    </span>
-  );
-}
 
 const uploadConnectivityStatusId = 'upload-connectivity-status';
 
@@ -116,21 +79,24 @@ function UploadConnectivityStatus({
   );
 }
 
+class MissingUploadRecordError extends Error {}
+
 export function Upload() {
+  const previewUploadDate = useStore((s) => s.uploadCommentDate);
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const setStep = useStore((s) => s.setStep);
+  const setSection = useStore((s) => s.setSection);
   const files = useStore((s) => s.files);
   const uploaderUser = useStore((s) => s.uploaderUser);
+  const mountainRange = useStore((s) => s.mountainRange);
+  const dateCollected = useStore((s) => s.dateCollected);
   const description = useStore((s) => s.uploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
   const selectedLocationId = useStore((s) => s.selectedLocationId);
   const selectedBucket = useStore((s) => s.selectedBucket);
   const dryRun = useStore((s) => s.dryRun);
   const setDryRun = useStore((s) => s.setDryRun);
-  const concurrencyMode = useStore((s) => s.concurrencyMode);
-  const concurrency = useStore((s) => s.uploadConcurrency);
-  const setConcurrency = useStore((s) => s.setUploadConcurrency);
   const nextBatch = useStore((s) => s.nextBatch);
   const flipId = useStore((s) => s.flipId);
   const fileAccessMode = useStore((s) => s.fileAccessMode);
@@ -147,27 +113,15 @@ export function Upload() {
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
   const effectiveDryRun = dryRun;
 
-  // One browser connection per origin the blob lanes are built from: the main
-  // endpoint plus each shard proxy port that answered. Asking here also warms
-  // the probe, so a run started now already has the shards that are up. The set
-  // grows as they answer and there is no event for a join, so poll it until the
-  // slowest probe times out.
-  const [connections, setConnections] = useState(1);
+  // Warms the shard connection pool ahead of a real run — probeShardClients
+  // caches per connection, so a run started now already has whichever shards
+  // are up instead of discovering them from scratch at the first PUT.
   useEffect(() => {
-    setConnections(1);
     if (!s3Config || effectiveDryRun) return;
-    const shards = probeShardClients(s3Config);
-    let mounted = true;
-    const joins = setInterval(() => setConnections(shards.live.length), 250);
-    void shards.settled.then((clients) => {
-      clearInterval(joins);
-      if (mounted) setConnections(clients.length);
-    });
-    return () => {
-      mounted = false;
-      clearInterval(joins);
-    };
+    probeShardClients(s3Config);
   }, [s3Config, effectiveDryRun]);
+  const [showComments, setShowComments] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   // A dry run never touches the network (nothing is written), so it's still
   // usable offline — only a real upload/retry needs to be gated.
   const online = useOnline();
@@ -196,6 +150,13 @@ export function Upload() {
   const running =
     snap?.phase === 'preparing' || snap?.phase === 'blobs' || snap?.phase === 'metadata';
   const anyRunActive = activeRunReserved;
+  // Once a real run reaches done/partial/error, Back must stay blocked too —
+  // not just while it's in flight — or the same files can be resubmitted from
+  // Assign to the same destination (#477), bypassing Next batch/Retry/Resume,
+  // the paths that actually guard against a duplicate upload (AL2). A
+  // completed dry run writes nothing, so it's exempt: going back to adjust
+  // Assign and dry-running again is safe.
+  const backBlocked = anyRunActive || (!!snap && !snap.dryRun);
   // Dismisses the "upload complete" popup — reset whenever a new run (fresh
   // start or resume) begins, so a later run's completion pops it again.
   const [completeDismissed, setCompleteDismissed] = useState(false);
@@ -252,6 +213,12 @@ export function Upload() {
   // gap; falling back to Assign here can briefly name a different batch.
   const savedBatch = resumedBatch ?? pendingResume?.session.batch ?? null;
   const isResumed = Boolean(attachedFiles || pendingResume || resumedSessionId);
+  // Resume never borrows metadata from the current wizard, including while
+  // its saved record is loading or when legacy fields are unavailable.
+  const summaryTimeZone = isResumed ? savedBatch?.uploadTimeZone : uploadTimeZone;
+  const summaryMountainRange = isResumed ? savedBatch?.requiredComments?.mountainRange : mountainRange;
+  const summaryDateCollected = isResumed ? savedBatch?.requiredComments?.dateCollected : dateCollected;
+  const summaryComments = isResumed ? savedBatch?.description : description;
   const dest = savedBatch
     ? {
         collectionName:
@@ -272,7 +239,7 @@ export function Upload() {
       };
 
   const start = () => {
-    if (!s3Config || !location || !collection || !slug) return;
+    if (!s3Config || !location || !collection || !slug || !mountainRange.trim() || !dateCollected) return;
     setCompleteDismissed(false);
     attachedRef.current = null; // this batch's files are the store's again
     setResumeProblems([]);
@@ -292,6 +259,7 @@ export function Upload() {
           bucket: collection.bucket,
           uploaderSlug: slug,
           description,
+          requiredComments: { mountainRange, dateCollected, previewUploadDate: previewUploadDate ?? undefined },
           timeZone: uploadTimeZone,
           files,
         },
@@ -307,8 +275,8 @@ export function Upload() {
   // The hand-off record exists to get a batch to the tagger and its tags back;
   // once those tags are published it is dead weight holding paths, hashes,
   // thumbnails and possibly a live folder handle. Only a real publish clears it
-  // — a dry run wrote nothing, and "Start over" is not the user saying they are
-  // finished with the tags.
+  // — a dry run wrote nothing, and discarding the batch (Verify's "Back") is
+  // not the user saying they are finished with the tags.
   useEffect(() => {
     if (!flipId || snap?.phase !== 'done' || snap.dryRun) return;
     void deleteFlipRecord(flipId);
@@ -316,6 +284,7 @@ export function Upload() {
 
   const retryPending = useRef(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryRecordMissing, setRetryRecordMissing] = useState(false);
   const retryFailed = useCallback(async () => {
     // The async gap before resumeUpload's first emit leaves the Retry button
     // mounted — guard so a double-click can't start two concurrent runs.
@@ -334,7 +303,7 @@ export function Upload() {
       // and the guard must unlatch or Retry is dead until a reload.
       const session = await loadSession(snap.sessionId);
       if (!connectionIsCurrent()) return;
-      if (!session) throw new Error('no saved record for this session');
+      if (!session) throw new MissingUploadRecordError('no saved record for this session');
       const attached = attachedRef.current ?? new Map(files.map((f) => [f.relPath, f.file]));
 
       // A run that hit the systemic-failure abort (e.g. many concurrent
@@ -373,7 +342,7 @@ export function Upload() {
 
       const finalSession = session.bundle ? session : await loadSession(snap.sessionId);
       if (!connectionIsCurrent()) return;
-      if (!finalSession) throw new Error('session record disappeared while resolving it');
+      if (!finalSession) throw new MissingUploadRecordError('session record disappeared while resolving it');
 
       const config = useStore.getState().s3Config;
       if (!config || !connectionIsCurrent()) return;
@@ -390,9 +359,12 @@ export function Upload() {
       );
       setActiveRun(run, generation);
     } catch (e) {
-      setRetryError(
-        `Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). Retry again; if it keeps failing, go Back and start the upload over.`,
-      );
+      const missing = e instanceof MissingUploadRecordError;
+      setRetryRecordMissing(missing);
+      const guidance = missing
+        ? 'The saved upload record is missing. Automatic recovery is unavailable. Do not start a new upload of these files; contact your administrator to check the original destination.'
+        : 'Retry again, or open History and resume this saved upload. This batch remains locked to prevent duplicate uploads.';
+      setRetryError(`Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). ${guidance}`);
     } finally {
       retryPending.current = false;
     }
@@ -430,6 +402,17 @@ export function Upload() {
         offlineOverride={offlineOverride}
         onAllowOfflineUpload={() => setOfflineOverride(true)}
       />
+      {!isResumed && location && mountainRange.trim() && dateCollected && (
+        <div className="border border-ruleSoft p-3 break-words">
+          <h3 className={sectionLabel}>Generated upload comment</h3>
+          <p aria-label="Generated upload comment" className="font-body text-[13px] text-inkSoft">
+            {formatUploadComments({
+              required: { mountainRange, dateCollected, previewUploadDate: previewUploadDate ?? undefined }, siteName: location.name,
+              imageCount: files.length, uploadDate: new Date(), comments: '',
+            })}
+          </p>
+        </div>
+      )}
       {/* Run configuration. A resume handed off from History replays a persisted
           bundle with no Assign state behind it, so the options collapse away. */}
       <section className="space-y-3">
@@ -447,7 +430,9 @@ export function Upload() {
             <dl className="space-y-1.5 font-body text-[13px]">
               <div className="flex items-baseline gap-3">
                 <dt className="text-inkSoft w-28 shrink-0">Collection</dt>
-                <dd className="text-ink min-w-0 break-words">{dest.collectionName}</dd>
+                <dd className="text-ink min-w-0 break-words">
+                  {dest.collectionName} <span className="font-mono text-inkMute">({dest.collectionUuid})</span>
+                </dd>
               </div>
               {dest.location && (
                 <div className="flex items-baseline gap-3">
@@ -462,23 +447,71 @@ export function Upload() {
               )}
               {dest.folder && (
                 <div className="flex items-baseline gap-3">
-                  <dt className="text-inkSoft w-28 shrink-0">Folder</dt>
+                  <dt className="text-inkSoft w-28 shrink-0">Source folder</dt>
                   <dd className="font-mono text-ink min-w-0 break-all">{dest.folder}</dd>
+                </div>
+              )}
+              {summaryTimeZone && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Timezone</dt>
+                  <dd className="text-ink min-w-0">{summaryTimeZone}</dd>
+                </div>
+              )}
+              {summaryMountainRange?.trim() && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Mountain range</dt>
+                  <dd className="text-ink min-w-0 break-words">{summaryMountainRange}</dd>
+                </div>
+              )}
+              {summaryDateCollected && (
+                <div className="flex items-baseline gap-3">
+                  <dt className="text-inkSoft w-28 shrink-0">Date collected</dt>
+                  <dd className="text-ink min-w-0">{summaryDateCollected}</dd>
                 </div>
               )}
             </dl>
 
+            {summaryComments?.trim() && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowComments((v) => !v)}
+                  aria-expanded={showComments}
+                  className="inline-flex items-center gap-1.5 font-body text-[13px] text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <span aria-hidden>{showComments ? '▾' : '▸'}</span>
+                  Comments
+                </button>
+                {showComments && (
+                  <p className="font-body text-[13px] text-inkSoft mt-1.5 whitespace-pre-wrap break-words">{summaryComments}</p>
+                )}
+              </div>
+            )}
+
             {!isResumed && (
-              <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
-                <input
-                  type="checkbox"
-                  checked={effectiveDryRun}
-                  disabled={anyRunActive}
-                  onChange={(e) => setDryRun(e.target.checked)}
-                  className="accent-accent"
-                />
-                Test the upload, nothing is written
-              </label>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  aria-expanded={showAdvanced}
+                  className="inline-flex items-center gap-1.5 font-body text-[13px] text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <span aria-hidden>{showAdvanced ? '▾' : '▸'}</span>
+                  Advanced
+                </button>
+                {showAdvanced && (
+                  <label className="flex items-center gap-2.5 font-body text-[14px] text-ink mt-1.5">
+                    <input
+                      type="checkbox"
+                      checked={effectiveDryRun}
+                      disabled={anyRunActive}
+                      onChange={(e) => setDryRun(e.target.checked)}
+                      className="accent-accent"
+                    />
+                    Test the upload, nothing is written
+                  </label>
+                )}
+              </div>
             )}
 
             {snap && (snap.phase === 'error' || snap.phase === 'partial') && !snap.dryRun && (
@@ -500,48 +533,6 @@ export function Upload() {
           />
         )}
 
-        {/* Concurrency sits outside the config gate: a resume handed off from
-            History has no Assign state behind it but still runs lanes. */}
-        {(collection || snap || pendingResume) && (
-          <div className="space-y-1.5">
-            {concurrencyMode === 'adaptive' ? (
-              <div className="flex items-center gap-3">
-                <span className="font-body text-[13px] text-inkSoft w-28">Concurrency</span>
-                <span className="flex items-center gap-2 font-mono text-[13px] text-ink">
-                  adaptive
-                  <AdaptiveInfo />
-                  {running && snap?.lanes ? <span>· {snap.lanes} lanes</span> : null}
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3">
-                <label className="font-body text-[13px] text-inkSoft w-28">Concurrency</label>
-                <input
-                  type="range"
-                  min={4}
-                  max={32}
-                  value={concurrency}
-                  onChange={(e) => setConcurrency(Number(e.target.value))}
-                  className="flex-1 accent-accent"
-                />
-                <span className="font-mono text-[13px] text-ink w-8 text-right">{concurrency}</span>
-              </div>
-            )}
-            {concurrencyMode === 'manual' && (
-              <p className="font-body text-[12px] text-inkMute">
-                Changes apply immediately, mid-run. Switch to adaptive tuning in Settings.
-              </p>
-            )}
-            <div className="flex items-center gap-3">
-              <span className="font-body text-[13px] text-inkSoft w-28">Endpoints</span>
-              <span className="font-mono text-[13px] text-ink">
-                {connections} connection{connections === 1 ? '' : 's'}
-                {connections > 1 &&
-                  ` (main + ${connections - 1} shard${connections === 2 ? '' : 's'})`}
-              </span>
-            </div>
-          </div>
-        )}
       </section>
 
       {resumeProblems.length > 0 && (
@@ -569,19 +560,46 @@ export function Upload() {
       {/* Live run */}
       {snap && <RunMonitor snap={snap} />}
 
-      {retryError && <Note tone="warn" message={retryError} />}
+      {retryError && (
+        <div className="space-y-2">
+          <Note tone="warn" message={retryError} />
+          {!retryRecordMissing && (
+            <button onClick={() => setSection('history')} className="border border-ink px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+              Open History
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-ruleSoft pt-5">
-        <button
-          onClick={() => setStep('assign')}
-          disabled={anyRunActive}
-          className={`border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-            anyRunActive ? 'opacity-40 cursor-not-allowed' : ''
-          }`}
+        <div
+          role="group"
+          aria-label="Back navigation"
+          tabIndex={backBlocked ? 0 : undefined}
+          aria-describedby={backBlocked ? 'upload-back-help' : undefined}
+          className="max-w-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          Back
-        </button>
+          <button
+            onClick={() => setStep('assign')}
+            disabled={backBlocked}
+            aria-describedby={backBlocked ? 'upload-back-help' : undefined}
+            className={`border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+              backBlocked ? 'opacity-40 cursor-not-allowed' : ''
+            }`}
+          >
+            Back
+          </button>
+          {backBlocked && (
+            <p id="upload-back-help" className="text-[12px] text-inkSoft mt-2">
+              {(snap?.dryRun ?? effectiveDryRun) ? 'Back is unavailable while this dry run is active.' : 'Back is unavailable once a real upload starts, to prevent duplicate uploads.'}{' '}
+              {(snap?.dryRun ?? effectiveDryRun) ? 'Cancel or wait for the dry run to finish before returning to Assign.'
+                : running ? 'Cancel to pause this upload; you can resume it afterward.'
+                : snap?.phase === 'done' ? 'Use Next batch to prepare different files.'
+                  : 'Use Retry failed files or Resume upload to continue this batch.'}
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {running ? (

@@ -50,6 +50,7 @@ export interface BatchRecord {
   uploaderSlug: string; // sanitized slug actually used in keys
   collectionUuid: string;
   description: string;
+  requiredComments?: import('./uploadComments').RequiredUploadComments;
   startedAt: string; // ISO
   completedAt?: string; // ISO once UploadComplete.json lands
   totalFiles: number;

@@ -321,6 +321,7 @@ Feature: Assign species to images in an upload
     Given the server rejects species vocabulary reads
     When the stale tagger tab regains focus
     Then the existing species vocabulary remains available
+    And the species panel explains the failed refresh without hiding cached species
     And no vocabulary-change message is shown
 
   @H2
@@ -391,3 +392,36 @@ Feature: Assign species to images in an upload
     And the sync is run
     Then the image left behind still reads as untagged
     And the stored observations record no species for the image left behind
+
+  @H2
+  Scenario Outline: Pending count stays in the species header across layouts
+    Given an image is focused
+    When the count preview layout is "<layout>" at width <width>
+    And the pending count is corrected from two to four
+    Then the species header alone announces pending count four
+    When the bound key is pressed once
+    Then the new species count is 4
+    And the pending species count is cleared
+
+    Examples:
+      | layout | width |
+      | grid   | 1440  |
+      | list   | 1440  |
+      | Focus  | 1440  |
+      | grid   | 390   |
+      | list   | 390   |
+      | Focus  | 390   |
+
+  @H2
+  Scenario: Navigating to another image clears the pending count
+    Given an image is focused
+    And count 15 is pending
+    When the count-preview image changes
+    Then no pending species count is shown
+
+  @H2
+  Scenario: Switching to a different upload clears the pending count
+    Given an image is focused
+    And count 15 is pending
+    When the count-preview upload changes
+    Then no pending species count is shown

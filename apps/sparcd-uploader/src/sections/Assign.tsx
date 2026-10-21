@@ -1,3 +1,4 @@
+import { InfoTooltip } from '../components/InfoTooltip';
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Connection, OfflineBanner, loadPersistedConnection, useOnline } from '@sparcd/auth-ui';
@@ -13,6 +14,7 @@ import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
 import { timeZoneForCoords } from '../lib/coords';
 import { findAllowedLocation, orderAllowedLocations } from '../lib/allowedLocations';
+import { formatUploadComments } from '../lib/uploadComments';
 
 const sectionLabel =
   'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
@@ -26,16 +28,21 @@ const connectPrefill = { ...loadPersistedConnection() };
  *  deployments changed server-side mid-session. */
 function RefreshableLabel({
   label,
+  info,
   onRefresh,
   refreshing,
 }: {
   label: string;
+  info: string;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
   return (
     <div className="flex items-center justify-between mb-2">
-      <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">{label}</h2>
+      <span className="inline-flex items-center gap-1.5">
+        <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">{label} (required)</h2>
+        <InfoTooltip label={label} text={info} />
+      </span>
       <button
         type="button"
         onClick={onRefresh}
@@ -63,12 +70,19 @@ function LocationsState({ message, tone }: { message: string; tone: 'mute' | 'wa
 }
 
 export function Assign() {
+  const previewUploadDate = useStore((s) => s.uploadCommentDate);
+  const captureUploadCommentDate = useStore((s) => s.captureUploadCommentDate);
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const connect = useStore((s) => s.connect);
   const setStep = useStore((s) => s.setStep);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
+  const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
+  const mountainRange = useStore((s) => s.mountainRange);
+  const dateCollected = useStore((s) => s.dateCollected);
+  const setMountainRange = useStore((s) => s.setMountainRange);
+  const setDateCollected = useStore((s) => s.setDateCollected);
   const description = useStore((s) => s.uploadDescription);
   const setDescription = useStore((s) => s.setUploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
@@ -155,6 +169,10 @@ export function Assign() {
 
   const location = findAllowedLocation(collectionLocations, selectedLocationId);
 
+  useEffect(() => {
+    if (location && mountainRange.trim() && dateCollected) captureUploadCommentDate();
+  }, [location, mountainRange, dateCollected, captureUploadCommentDate]);
+
   // A collection switch can leave the old key in the persisted store while
   // the new scoped list is loading. Clear it once the new list is available so
   // a removed location cannot be carried into a new upload.
@@ -193,7 +211,7 @@ export function Assign() {
   // Background processing finishing is no longer part of this gate: Upload
   // streams blobs as files individually become ready and only publishes once
   // processing genuinely completes, so there's nothing to wait for here.
-  const baseReady = !!location && !!slug && !!collection && !!uploadTimeZone;
+  const baseReady = !!location && !!slug && !!collection && !!uploadTimeZone && !!mountainRange.trim() && !!dateCollected;
   const continueHint = !location
     ? 'Select a deployment location first'
     : !collection
@@ -202,7 +220,11 @@ export function Assign() {
         ? 'Set an uploader identity first'
         : !uploadTimeZone
           ? 'Select a timezone first'
-          : null;
+          : !mountainRange.trim()
+            ? 'Enter a mountain range before continuing'
+            : !dateCollected
+              ? 'Enter a date collected before continuing'
+              : null;
 
   function handleContinue() {
     if (!baseReady) return;
@@ -242,7 +264,8 @@ export function Assign() {
       <OfflineBanner message="You're offline — locations and collections won't load until your connection is back." />
       <section>
         <RefreshableLabel
-          label="Target collection"
+          label="Collection"
+          info="The collection this batch will be stored under. Only collections your connected credentials can read are listed."
           onRefresh={refreshCollections}
           refreshing={collections.isFetching}
         />
@@ -268,7 +291,7 @@ export function Assign() {
                   onChange={(key) => setSelectedBucket(key)}
                 />
                 {collection && (
-                  <p className="font-body text-[12px] text-inkMute">
+                  <p className="font-body text-[12px] text-inkMute italic">
                     <span className="text-inkSoft">{collection.name ?? 'Unnamed collection'}</span> ·{' '}
                     <span className="font-mono">{collection.uuid}</span>
                   </p>
@@ -281,7 +304,8 @@ export function Assign() {
 
       <section>
         <RefreshableLabel
-          label="Deployment"
+          label="Site ID"
+          info="The camera location (deployment) this batch's SD card came from — previously used locations are listed first."
           onRefresh={refreshDeployments}
           refreshing={isFetching || deployments.isFetching}
         />
@@ -334,23 +358,34 @@ export function Assign() {
       </section>
 
       <section>
-        <h2 className={sectionLabel}>Uploader</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="uploaderUser" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Uploader (required)
+          </label>
+          <InfoTooltip label="Uploader" text="Who's uploading this batch. Recorded with every upload and used to build the storage path." />
+        </div>
         <input
           id="uploaderUser"
           name="uploaderUser"
           autoComplete="name"
           value={uploaderUser}
           onChange={(e) => setUploaderUser(e.target.value)}
+          onBlur={ensureUploaderIdentity}
           placeholder="e.g. John Doe"
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Required. Recorded with every upload you make.
+          Recorded with every upload you make.
         </p>
       </section>
 
       <section>
-        <h2 id="upload-timezone-label" className={sectionLabel}>Timezone</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <h2 id="upload-timezone-label" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Timezone of images (required)
+          </h2>
+          <InfoTooltip label="Timezone of images" text="Defaults to the selected deployment location's zone — change it here if the camera's clock was actually set to a different one." />
+        </div>
         <select
           id="uploadTimeZone"
           value={uploadTimeZone}
@@ -376,13 +411,53 @@ export function Assign() {
 
       {needsCaptureTime && (
         <section>
-          <h2 className={sectionLabel}>Capture times</h2>
+          <div className="flex items-center gap-1.5 mb-2">
+            <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">Capture times</h2>
+            <InfoTooltip label="Capture times" text="Review or correct capture times the camera didn't record or got wrong." />
+          </div>
           <CaptureTimeEditor files={files} />
         </section>
       )}
 
       <section>
-        <h2 className={sectionLabel}>Description</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="mountainRange" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Mountain range (required)
+          </label>
+          <InfoTooltip label="Mountain range" text="The mountain range this site belongs to — used to build the required upload comment." />
+        </div>
+        <input
+          id="mountainRange"
+          required
+          aria-describedby="mountain-range-help"
+          type="text"
+          value={mountainRange}
+          onChange={(e) => setMountainRange(e.target.value)}
+          className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink mb-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+        />
+        <p id="mountain-range-help" className="font-body text-[12px] text-inkMute mb-4">Required for the generated upload comment.</p>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="dateCollected" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Date collected (required)
+          </label>
+          <InfoTooltip label="Date collected" text="The date these images were collected in the field — used to build the required upload comment." />
+        </div>
+        <input
+          id="dateCollected"
+          required
+          aria-describedby="date-collected-help"
+          type="date"
+          value={dateCollected}
+          onChange={(e) => setDateCollected(e.target.value)}
+          className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink mb-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+        />
+        <p id="date-collected-help" className="font-body text-[12px] text-inkMute mb-4">Required for the generated upload comment.</p>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="uploadDescription" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Comments (optional)
+          </label>
+          <InfoTooltip label="Comments" text="Optional notes appended after the generated comment — anything else worth recording about this batch." />
+        </div>
         <textarea
           id="uploadDescription"
           name="uploadDescription"
@@ -390,15 +465,18 @@ export function Assign() {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
-          placeholder="What this batch is — site, date range, notes."
+          placeholder="Additional notes about this batch."
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
-        <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Mountain Range - Site Name - No. of images collected - Date Uploaded - Date collected
-        </p>
-        <p className="font-body text-[12px] text-inkMute">
-          (e.g.: Santa Rita Mountains - SAN06 - 39 images - uploaded 04-10-2020 - collected 03-28-2000)
-        </p>
+        <div className="mt-3 border border-ruleSoft p-3 break-words">
+          <h3 className={sectionLabel}>Generated upload comment</h3>
+          <p aria-label="Generated upload comment" className="font-body text-[13px] text-inkSoft">
+            {location && mountainRange.trim() && dateCollected && previewUploadDate ? formatUploadComments({
+              required: { mountainRange, dateCollected, previewUploadDate }, siteName: location.name,
+              imageCount: files.length, uploadDate: new Date(), comments: description,
+            }) : 'Enter a mountain range and date collected to preview the required comment.'}
+          </p>
+        </div>
       </section>
 
       {!baseReady && continueHint && (

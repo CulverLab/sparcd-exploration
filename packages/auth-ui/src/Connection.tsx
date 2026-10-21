@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { detectBackendDefaults, type S3Config } from '@sparcd/types';
 import { BrandSwitcher } from './BrandSwitcher';
 import { OfflineBanner } from './OfflineBanner';
@@ -39,6 +39,8 @@ export type ConnectionLabels = {
   intro?: string;
   /** Default "Remember endpoint & access key on this device". */
   remember?: string;
+  /** The note under the remember box. Default "(Don't set remember endpoint & access key if on a public computer)". */
+  rememberHelp?: string;
   /** Default "Connect". */
   submit?: string;
 };
@@ -63,6 +65,7 @@ export function Connection({
   embedded,
   labels,
 }: ConnectionProps) {
+  const rememberHelpId = useId();
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
   const [accessKey, setAccessKey] = useState(initialConfig?.accessKey ?? '');
   const [secretKey, setSecretKey] = useState(initialConfig?.secretKey ?? '');
@@ -181,10 +184,15 @@ export function Connection({
               type="checkbox"
               className="w-4 h-4 accent-accent"
               checked={remember}
+              aria-describedby={rememberHelpId}
               onChange={(e) => setRemember(e.target.checked)}
             />
             {labels?.remember ?? 'Remember endpoint & access key on this device'}
           </label>
+          <p id={rememberHelpId} className="font-body text-[13px] text-inkMute italic">
+            {labels?.rememberHelp ??
+              "(Don't set remember endpoint & access key if on a public computer)"}
+          </p>
         </div>
 
         <button

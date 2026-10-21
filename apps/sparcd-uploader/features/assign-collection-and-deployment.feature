@@ -1,17 +1,17 @@
 # DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-uploader (src/sections/Assign.tsx, src/components/CollectionPicker.tsx, src/sections/Upload.tsx, src/lib/s3.ts, src/lib/locations.ts, src/lib/useCollections.ts, test/locations.test.ts).
 
-Feature: Assign a batch to a collection and a camera location
+Feature: Describe a batch with its collection and a camera location
 
   """
-  As-built flow: step 3 of 4 ("Assign"). Before a batch can be uploaded the user
+  As-built flow: step 3 of 4 ("Describe"). Before a batch can be uploaded the user
   says where it belongs — which collection receives it, which camera location
   (deployment) the SD card came from, who is uploading it, and optionally a
   description. Nothing can be uploaded until all of that is settled.
   """
 
   Background:
-    Given a scanned batch has passed the Inspect step
-    And the New upload section is showing the Assign step
+    Given a scanned batch has passed the Verify step
+    And the New upload section is showing the Describe step
 
   @F2 @A2 @A2-3
   Scenario: The batch cannot be uploaded until a camera location is assigned
@@ -31,14 +31,16 @@ Feature: Assign a batch to a collection and a camera location
     # collection first" message in the code is unreachable.
 
   @unmapped
-  Scenario: The batch cannot be uploaded until an uploader identity is set
+  Scenario: An empty identity pauses Describe until blur restores the login default
     Given the uploader identity is empty
     Then the Continue button is disabled
     And it states that an uploader identity must be set first
+    When the blank Describe identity field loses focus
+    Then Describe restores the connected default identity
 
   @unmapped
   Scenario: The collections offered are the ones the connection can actually read
-    When the Assign step opens
+    When the Describe step opens
     Then the tool lists the collections readable with the connected credentials
     And the first of them is pre-selected
     And each is shown with its name and its organization or contact, and the selected one's identifier is shown beneath the list
@@ -119,7 +121,7 @@ Feature: Assign a batch to a collection and a camera location
   @unmapped
   Scenario: A registry that cannot be read is reported plainly
     Given the location registry cannot be read with the connected credentials
-    Then the Assign step explains that the registry could not be loaded
+    Then the Describe step explains that the registry could not be loaded
     And no deployment can be chosen until it can be read
 
   @unmapped
@@ -127,9 +129,9 @@ Feature: Assign a batch to a collection and a camera location
     When an uploader identity is typed
     Then the tool shows the key-safe form of it that will appear in the upload's storage path and object names
     # The identity is free text; the tool does not check it against the
-    # credentials it connected with. Assign itself only holds the raw
+    # credentials it connected with. Describe itself only holds the raw
     # identity — the key-safe preview lives in Settings, since that field is
-    # the same shared uploaderUser Assign just set.
+    # the same shared uploaderUser Describe just set.
 
   @unmapped
   Scenario: A description can be recorded with the batch
@@ -158,3 +160,53 @@ Feature: Assign a batch to a collection and a camera location
     And every image and every observation in each upload points at that location
     # One batch per upload, so "each batch" here is two SD cards uploaded one
     # after the other, each to its own camera location.
+
+  @unmapped
+  Scenario Outline: Required upload comments are generated separately from optional notes
+    When the mountain range and collection date are entered with notes "<notes>"
+    Then the required comment is previewed without changing the optional notes
+    And the generated comment and optional notes are written to upload metadata
+
+    Examples:
+      | notes                     |
+      | Camera moved after rain   |
+      |                           |
+
+  @unmapped
+  Scenario: Both required comment fields must be entered before continuing
+    When the other assignment fields are complete but both comment fields are empty
+    Then Continue explains that a mountain range is required
+    When a whitespace-only mountain range is entered
+    Then Continue explains that a mountain range is required
+    When a mountain range is entered without a collection date
+    Then Continue explains that a collection date is required
+    When the collection date is entered
+    Then Continue allows the Upload step
+    When the mountain range is cleared with the collection date still entered
+    Then Continue explains that a mountain range is required
+
+  @unmapped
+  Scenario: The original preview date is preserved when upload starts after midnight
+    When the mountain range and collection date are entered with notes "Overnight batch"
+    Then the required comment is previewed without changing the optional notes
+    When the next day arrives while Describe stays open
+    Then the comment preview keeps its original upload date
+    When Upload is opened and another day arrives before starting
+    Then the Upload preview keeps the original preview date
+    When the batch is uploaded after midnight
+    Then the saved comment includes optional notes and keeps its original preview date
+
+  @unmapped
+  Scenario: The images shorthand counts all valid uploaded files including videos
+    Given the batch contains one JPEG and two MP4 videos
+    When the mountain range and collection date are entered with notes "Mixed batch"
+    Then the required comment is previewed without changing the optional notes
+    And the generated comment and optional notes are written to upload metadata
+
+  @unmapped
+  Scenario: Describe help stays inside narrow viewports with keyboard access
+    Then Describe help is keyboard accessible and clamped at phone widths
+
+  @unmapped
+  Scenario: Describe help supports touch dismissal and viewport changes
+    Then Describe help can be opened and dismissed on a touch screen

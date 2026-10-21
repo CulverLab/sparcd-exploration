@@ -22,7 +22,7 @@ that map to an agreed story carry its ID; the rest carry `@unmapped`.
 | `local-drafts-and-recovery.feature` | Local drafts, unsaved counts, History recovery, discard | `@unmapped` |
 | `sync-identifications-to-the-collection.feature` | Preview, dry-run gate, conflict, snapshot, conditional write, resume | `@H2` `@H3` + `@unmapped` |
 | `restore-a-previous-snapshot.feature` | Snapshot listing and restore (supports the M2 constraint) | `@unmapped` |
-| `correct-capture-times.feature` | Whole-upload, selection and per-image time correction | `@unmapped` |
+| `correct-capture-times.feature` | Whole-upload and selection time correction; direct single-image selection in grid/list and narrow touch controls, deselection, timestamp eligibility, and filtered targets (#521) | `@unmapped` |
 | `F4-location-visibility.feature` | What the tool actually reveals about camera locations | `@F4` |
 | `local-batch.feature` | Tagging a batch the Uploader handed over, with no connection | `@A1` `@unmapped` |
 
@@ -133,3 +133,6 @@ Marked with trailing comments in the feature files:
 - A successful live sync **clears the whole-upload time shift**, because the
   shift has been baked into the stored capture times; leaving it would shift
   them twice on the next sync.
+
+Sync-state explanations (#525/#528): header and Browse row native hover titles are supplemented by keyboard-visible, Escape-dismissible descriptions. Coverage exercises all seven header states, dry-run progress with no writes, and completed sync with questionable-only drafts still pending; Browse checks local-only/unsynced/synced help at 375px and 1440px. Sync semantics are unchanged.
+Collection rail ID help (#523): Browse BDD covers per-collection hover and keyboard descriptions, Escape/pointer dismissal, keyboard selection, matching names, single-tooltip ownership across focus/hover, non-obstructing narrow-row help with selection-changing click-through at 320px/375px, separate desktop tooltip clicks that preserve selection at 1280px/1440px, and viewport bounds at 375px/1280px/1440px.

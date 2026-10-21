@@ -26,6 +26,16 @@ Feature: Tag a batch that has not been uploaded yet
     Then the header says it is a local batch from the Uploader, with the file count
     And it offers "Done · back to Uploader"
 
+  @A1
+  Scenario: Done is available even before a local batch identity is entered
+    When the local batch identity is cleared
+    Then "Done · back to Uploader" is enabled
+    When "Done · back to Uploader" is chosen
+    Then the browser goes back to the Uploader carrying the batch's id
+    And the returned batch remains untagged with a blank identity
+    # Regression for #499: Done used to stay disabled until the handoff
+    # identity was set, with no way back to the Uploader until it was found.
+
   @unmapped
   Scenario: Collection-only tools are absent, not disabled
     Then there is no Browse, History, Sync or Snapshots
@@ -66,3 +76,24 @@ Feature: Tag a batch that has not been uploaded yet
     Given the link points at a batch that is not in this browser
     Then the workspace says there is no such batch
     And it explains that the two tools only share batches on the same origin
+
+  @unmapped
+  Scenario Outline: A failed local save preserves edits and allows Done to be retried
+    Given a species has been applied to an image
+    And the next local <stage> save fails
+    When Done is attempted while saving fails
+    Then the return failure is announced and Done can be retried
+    When "Done · back to Uploader" is chosen
+    Then the browser goes back to the Uploader carrying the batch's id
+    And the batch carries the tag for the Uploader to read
+
+    Examples:
+      | stage   |
+      | draft   |
+      | handoff |
+
+  @unmapped
+  Scenario: Repeated Done activation saves and returns only once
+    Given a species has been applied to an image
+    When Done is activated twice while a save is pending
+    Then only one handoff is started and the batch returns with its tags

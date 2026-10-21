@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { Given, When, Then, expect } from './fixtures';
 import { ACCESS_KEY, SECRET_KEY, S3_ORIGIN, type App } from './app';
@@ -79,15 +80,15 @@ Then('a batch can be dropped and inspected with no connection', async ({ app }) 
   expect(app.s3.puts).toHaveLength(0);
 });
 
-When('the Assign step is reached with no connection', async ({ app }) => {
+When('the Describe step is reached with no connection', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Continue' }).click();
 });
 
 Then('it shows the connection screen instead of a collection picker', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toHaveCount(0);
 });
 
 Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
@@ -199,7 +200,7 @@ Given('two tabs are connected and one has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Cross-tab logout' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -209,7 +210,7 @@ Given('the connected uploader has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Connection replacement' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -236,21 +237,19 @@ When('one of them disconnects', async ({ app }) => {
 });
 
 When('another tab replaces the shared connection', async ({ app }) => {
-  await app.page.evaluate(() => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint: 'https://replacement.example',
-        region: 'us-west-2',
-        accessKey: 'AKIAREPLACEMENT',
-        secretKey: 'replacement-secret',
-        forcePathStyle: false,
-        secure: true,
-      },
-    });
-    channel.close();
-  });
+  const sibling = await app.page.context().newPage();
+  await sibling.route('**/session-replacement', (route) => route.fulfill({
+    contentType: 'text/html', body: '<title>Session replacement</title>',
+  }));
+  await sibling.goto(`${S3_ORIGIN}/session-replacement`);
+  await sibling.evaluate(async (moduleUrl) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ moduleUrl);
+    saveSharedConnection({
+      endpoint: 'https://replacement.example', region: 'us-west-2',
+      accessKey: 'AKIAREPLACEMENT', secretKey: 'replacement-secret',
+      forcePathStyle: false, secure: true,
+    }, false);
+  }, `/sparcd-exploration/uploader/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}`);
 });
 
 Then('the other returns to the connection screen', async ({ app }) => {
@@ -260,7 +259,7 @@ Then('the other returns to the connection screen', async ({ app }) => {
 Then('its in-progress batch, chosen collection and chosen deployment are cleared', async ({ app }) => {
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await app.expectStep('Files');
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
@@ -296,6 +295,7 @@ Then('the header shows the endpoint host and a masked form of the access key', a
 
 Then('it shows the uploader identity when one has been set', async ({ app }) => {
   await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
   await app.setUploader('Ada Lovelace');
   await expect(app.page.locator('header')).toContainText('Ada Lovelace');
 });
@@ -351,15 +351,17 @@ When('a connection is made', async ({ app }) => {
   await app.connect();
 });
 
-Then('the uploader identity is blank', async ({ app }) => {
+Then('the uploader identity defaults to the access key', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
 });
 
 Then('the header shows the access key only in its masked form', async ({ app }) => {
   const header = app.page.locator('header');
   await expect(header).toContainText(`${ACCESS_KEY.slice(0, 2)}…${ACCESS_KEY.slice(-2)}`);
   await expect(header).not.toContainText(ACCESS_KEY);
+  expect(await header.evaluate((element) => element.outerHTML)).not.toContain(ACCESS_KEY);
 });
 
 Then('the tool offers no list of permitted buckets of its own', async ({ app }) => {
@@ -393,9 +395,9 @@ When('a deferred batch is still being inspected', async ({ app }) => {
 });
 
 Then('Assign loads collections without losing the batch', async ({ app }) => {
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.connectForm()).toHaveCount(0);
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
 });
 
@@ -408,4 +410,14 @@ Then('the deferred inspection finishes after connecting', async ({ app }) => {
   expect(files.map((file) => file.name).sort()).toEqual(
     slowPublishableBatch().map((file) => file.path.split('/').pop()).sort(),
   );
+});
+
+Then('the remember checkbox describes its public-computer warning', async ({ app }) => {
+  const checkbox = app.page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = app.page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
 });

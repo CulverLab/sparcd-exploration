@@ -223,7 +223,6 @@ function Telemetry({ snap }: { snap: UploadSnapshot }) {
     <p className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[12px] text-inkSoft">
       <span>{rate > 0 ? fmtRate(rate) : 'measuring…'}</span>
       <span>elapsed {fmtDuration(elapsedMs)}</span>
-      {snap.lanes ? <span>· {snap.lanes} lanes</span> : null}
       <span className="text-ink">{etaMs !== null ? fmtEta(etaMs) : 'estimating…'}</span>
     </p>
   );

@@ -41,6 +41,14 @@ export class MockS3 {
   /** When set, the next canonical replace answers with this failure mode. */
   replaceMode: 'ok' | 'unsupported' = 'ok';
 
+  /** Deterministic GET gate for asserting a pending UI before releasing data. */
+  readonly heldGets = new Map<string, Promise<void>>();
+  holdGet(key: string): () => void {
+    let resolve!: () => void;
+    this.heldGets.set(key, new Promise<void>(done => { resolve = done; }));
+    return () => { this.heldGets.delete(key); resolve(); };
+  }
+
   /** Artificial latency per object key — lets a test observe loading states. */
   readonly delays = new Map<string, number>();
   /** Object reads to make refresh assertions independent of timing. */
@@ -307,6 +315,7 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
 
     if (request.method() === 'GET') {
       s3.reads.set(key, s3.readCount(key) + 1);
+      if (s3.heldGets.has(key)) await s3.heldGets.get(key);
       if (s3.failedReads.has(key)) {
         await route.fulfill({
           status: 500,

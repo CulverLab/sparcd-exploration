@@ -1,9 +1,9 @@
 import type { WizardStep } from '../store';
 
 const STEPS: { id: WizardStep; label: string }[] = [
-  { id: 'drop', label: 'Files' },
-  { id: 'inspect', label: 'Inspect' },
-  { id: 'assign', label: 'Assign' },
+  { id: 'drop', label: 'Choose' },
+  { id: 'inspect', label: 'Verify' },
+  { id: 'assign', label: 'Describe' },
   { id: 'upload', label: 'Upload' },
 ];
 

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
+import { extractCollectedDate } from '../lib/collectedDate';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useStore } from '../store';
 import {
@@ -11,6 +12,9 @@ import {
   type UploadDraftState,
 } from '../lib/queries';
 import { PawPads } from '../components/Paw';
+import { useFocusExplanation } from '../components/useFocusExplanation';
+import { SYNC_EXPLANATIONS } from '../lib/syncExplanations';
+import { CollectionButton } from '../components/CollectionButton';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
 
@@ -22,6 +26,24 @@ function parseStamp(stamp: string): { date: string; time: string; user: string |
   if (!m) return { date: stamp, time: '', user: null };
   const [, y, mo, d, hh, mm] = m;
   return { date: `${y}-${mo}-${d}`, time: `${hh}:${mm}`, user: m[7] ?? null };
+}
+
+// Free-text match over uploader, date, time, location name and location ID.
+// A row whose summary hasn't resolved yet is never excluded on that account —
+// it would otherwise flash out of a filtered view the instant the filter is
+// typed and only reappear once its data happens to load, which looks like a
+// bug. It filters normally as soon as its data is in.
+function matchesUploadFilter(
+  stamp: string,
+  summary: UploadSummary | undefined,
+  loading: boolean,
+  query: string,
+): boolean {
+  if (!query) return true;
+  if (loading) return true;
+  const { date, time, user } = parseStamp(stamp);
+  const locations = summary?.deployments.map((d) => `${d.name} ${d.locationId}`).join(' ') ?? '';
+  return `${user ?? ''} ${date} ${time} ${locations}`.toLowerCase().includes(query);
 }
 
 type Tab = 'all' | 'in-progress' | 'done';
@@ -50,7 +72,9 @@ export function Browse() {
   const draftStates = useUploadDraftStates(connectionId, collectionKey);
 
   const [filter, setFilter] = useState('');
+  const [tooltipCollectionKey, setTooltipCollectionKey] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
+  const [uploadFilter, setUploadFilter] = useState('');
 
   const collection = collections.data?.find((c) => c.key === collectionKey);
 
@@ -82,6 +106,20 @@ export function Browse() {
 
   const uploadCount = uploads.data?.length ?? 0;
 
+  // Tab and free-text filter compose (AND): both must pass for a row to show.
+  const uploadFilterQuery = uploadFilter.trim().toLowerCase();
+  const visibleUploads = useMemo(
+    () =>
+      (uploads.data ?? []).flatMap((u, i) => {
+        const summaryQuery = summaries[i];
+        const t = tabOf(summaryQuery?.data);
+        if (tab !== 'all' && t !== tab) return [];
+        if (!matchesUploadFilter(u.stamp, summaryQuery?.data, summaryQuery?.isLoading ?? true, uploadFilterQuery)) return [];
+        return [{ upload: u, query: summaryQuery }];
+      }),
+    [uploads.data, summaries, tab, uploadFilterQuery],
+  );
+
   return (
     <div className="h-full grid grid-cols-1 xl:grid-cols-[320px_1fr] min-h-0">
       {/* Collection rail */}
@@ -106,32 +144,17 @@ export function Browse() {
           <ul>
             {shownCollections.map((c) => (
               <li key={c.key}>
-                <button
-                  onClick={() => selectCollection(c.key)}
-                  aria-current={c.key === collectionKey ? 'true' : undefined}
-                  className={`w-full text-left px-4 py-3.5 border-b border-ruleSoft border-l-2 hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                    c.key === collectionKey ? 'bg-mark border-l-accent' : 'border-l-transparent'
-                  }`}
-                >
-                  <div className={`text-[14px] text-ink ${c.key === collectionKey ? 'font-[600]' : ''}`}>
-                    {c.name ?? c.bucket}
-                  </div>
-                  {c.organization && (
-                    <div className="text-[12px] text-inkSoft font-mono mt-1">{c.organization}</div>
-                  )}
-                </button>
+                <CollectionButton
+                  collection={c}
+                  selected={c.key === collectionKey}
+                  onSelect={() => selectCollection(c.key)}
+                  tooltipActive={tooltipCollectionKey === c.key}
+                  onTooltipActivate={() => setTooltipCollectionKey(c.key)}
+                />
               </li>
             ))}
           </ul>
         </div>
-
-        <p className="text-[12px] text-inkMute font-body border-t border-rule p-4">
-          {species.isLoading && 'Loading species vocabulary…'}
-          {species.isError && `Species vocabulary unavailable: ${(species.error as Error).message}`}
-          {species.data &&
-            `${species.data.species.length} species loaded from ${species.data.sourceBucket}/${species.data.sourceKey}` +
-              (species.data.skipped.length ? ` (${species.data.skipped.length} skipped)` : '')}
-        </p>
       </aside>
 
       {/* Uploads for the chosen collection */}
@@ -207,34 +230,46 @@ export function Browse() {
             <Status q={uploads} empty="No uploads in this collection." />
 
             {!uploads.isError && uploadCount > 0 && (
-              <div className="browse-upload-table bg-panel border border-rule">
-                {/* Column header */}
-                <div className={`hidden md:grid ${uploadGrid} gap-4 px-4 py-2.5 border-b border-rule text-[11px] font-[600] tracking-[0.14em] uppercase text-inkSoft`}>
-                  <span data-column="date">Date</span>
-                  <span data-column="upload">Upload</span>
-                  <span data-column="deployment">Deployment</span>
-                  <span data-column="images" className={`${imagesCell} text-right`}>Images</span>
-                  <span data-column="tagged" className="md:hidden browse-md:block">Tagged</span>
-                  <span data-column="sync" className={syncCell}>Sync</span>
-                  <span />
-                </div>
+              <>
+                <input
+                  value={uploadFilter}
+                  onChange={(e) => setUploadFilter(e.target.value)}
+                  placeholder="Filter by uploader, date, time, or location…"
+                  aria-label="Filter uploads"
+                  className="mb-3 w-full max-w-sm bg-paper border border-rule px-3 py-2 text-[14px] text-ink placeholder:text-inkMute focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                />
 
-                {uploads.isLoading && <RowsSkeleton />}
+                {!uploads.isLoading && uploadFilter && visibleUploads.length === 0 ? (
+                  <p className="text-[13px] text-inkMute px-4 py-3" role="status">
+                    No uploads match “{uploadFilter}”.
+                  </p>
+                ) : (
+                  <div className="browse-upload-table bg-panel border border-rule">
+                    {/* Column header */}
+                    <div className={`hidden md:grid ${uploadGrid} gap-4 px-4 py-2.5 border-b border-rule text-[11px] font-[600] tracking-[0.14em] uppercase text-inkSoft`}>
+                      <span data-column="date">Date</span>
+                      <span data-column="upload">Upload</span>
+                      <span data-column="location">Location</span>
+                      <span data-column="tagged-total" className={taggedCell}>Tagged/Total</span>
+                      <span data-column="collected" className={taggedCell}>Collected</span>
+                      <span data-column="sync" className={syncCell}>Sync</span>
+                      <span />
+                    </div>
 
-                {uploads.data?.map((u, i) => {
-                  const t = tabOf(summaries[i]?.data);
-                  if (tab !== 'all' && t !== tab) return null;
-                  return (
-                    <UploadRow
-                      key={u.prefix}
-                      stamp={u.stamp}
-                      query={summaries[i]}
-                      draftState={draftStates.data?.get(u.prefix)}
-                      onOpen={() => selectUpload(u.prefix)}
-                    />
-                  );
-                })}
-              </div>
+                    {uploads.isLoading && <RowsSkeleton />}
+
+                    {visibleUploads.map(({ upload: u, query }) => (
+                      <UploadRow
+                        key={u.prefix}
+                        stamp={u.stamp}
+                        query={query}
+                        draftState={draftStates.data?.get(u.prefix)}
+                        onOpen={() => selectUpload(u.prefix)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -244,19 +279,21 @@ export function Browse() {
 }
 
 // Column tracks for the upload table, shared by the header and every row so the
-// two cannot drift. `browse-sm/md/lg` are the table's own container size steps
-// (defined in tailwind.config.ts): each adds the column whose track it just
+// two cannot drift. `browse-sm/md` are the table's own container size steps
+// (defined in tailwind.config.ts): each adds the columns whose tracks it just
 // made room for. Below `md` the row stacks into a single column and every cell
 // shows, which is why each supporting cell hides at `md` before its step
-// restores it.
+// restores it. Tagged/Total and Collected are promoted ahead of Sync — they're
+// the ones this list exists to answer ("which upload needs tagging"), so they
+// reappear at the earlier step and Sync waits for the later one.
 const uploadGrid =
   'grid-cols-[1fr] md:grid-cols-[120px_minmax(16rem,1fr)_160px_70px] ' +
-  'browse-sm:grid-cols-[120px_minmax(16rem,1fr)_160px_140px_70px] ' +
-  'browse-md:grid-cols-[120px_minmax(16rem,1fr)_160px_minmax(0,1.2fr)_140px_70px] ' +
-  'browse-lg:grid-cols-[120px_minmax(16rem,1fr)_160px_70px_minmax(0,1.2fr)_140px_70px]';
+  'browse-compact:grid-cols-[78px_minmax(10rem,1.15fr)_minmax(6rem,0.8fr)_84px_80px_124px_56px] ' +
+  'browse-sm:grid-cols-[120px_minmax(16rem,1fr)_160px_minmax(0,1.2fr)_90px_70px] ' +
+  'browse-md:grid-cols-[120px_minmax(16rem,1fr)_160px_minmax(0,1.2fr)_90px_140px_70px]';
 
-const syncCell = 'md:hidden browse-sm:block';
-const imagesCell = 'md:hidden browse-lg:block';
+const syncCell = 'md:hidden browse-compact:block browse-md:block';
+const taggedCell = 'md:hidden browse-compact:flex browse-sm:block';
 
 function UploadRow({
   stamp,
@@ -270,53 +307,83 @@ function UploadRow({
   onOpen: () => void;
 }) {
   const { date, time, user } = parseStamp(stamp);
+  const help = useFocusExplanation(SYNC_EXPLANATIONS[draftState ?? 'local-only']);
   const s = query?.data;
   const loading = query?.isLoading ?? true;
   const pct = s && s.imageCount > 0 ? Math.round((s.imagesWithSpecies / s.imageCount) * 100) : 0;
+  const collected = s ? extractCollectedDate(s.description) : null;
+  const missingCollected = !loading && !query?.isError && !!s && !collected;
+  const collectedHelpId = useId();
+  const collectedHelp = 'Date collected is missing or not in a recognized format';
 
   return (
-    <button
-      onClick={onOpen}
-      className={`w-full text-left grid ${uploadGrid} gap-2 md:gap-4 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group`}
-    >
-      <span data-column="date" className="font-mono text-[12.5px] text-inkSoft">{date}</span>
+    <>
+      <button
+        onClick={onOpen}
+        aria-describedby={[help.id, missingCollected ? collectedHelpId : ''].filter(Boolean).join(' ')}
+        {...help.triggerProps}
+        className={`w-full text-left grid ${uploadGrid} gap-2 md:gap-4 browse-compact:gap-1.5 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group`}
+      >
+        <span data-column="date" className="font-mono text-[12.5px] text-inkSoft"><span className="md:sr-only">Uploaded: </span>{date}</span>
 
-      <span data-column="upload" className="min-w-0">
-        <span className="block font-mono text-[13px] text-ink truncate">{user ?? stamp}</span>
-        {time && <span className="block font-mono text-[11px] text-inkMute">{time}</span>}
-      </span>
+        <span data-column="upload" className="min-w-0">
+          <span className="md:sr-only">Upload: </span>
+          <span className="block font-mono text-[13px] text-ink truncate">{user ?? stamp}</span>
+          {time && <span className="block font-mono text-[11px] text-inkMute">{time}</span>}
+        </span>
 
-      <span data-column="deployment" className="font-mono text-[13px] text-inkSoft truncate">
-        {loading ? <Skeleton w="w-24" /> : s?.deployments.length ? s.deployments.join(', ') : '—'}
-      </span>
+        <span data-column="location" className="min-w-0 font-mono text-[13px] text-inkSoft whitespace-normal break-words">
+          <span className="md:sr-only">Location: </span>
+          {loading
+            ? <Skeleton w="w-24" />
+            : s?.deployments.length
+              ? s.deployments.map((d) => (
+                  <span key={`${d.name}\0${d.locationId}`} className="block">
+                    <span>{d.name}</span>{' '}
+                    <span data-location-id className="block break-all font-[600]">{d.locationId ? `(${d.locationId})` : '(ID unavailable)'}</span>
+                  </span>
+                ))
+              : '—'}
+        </span>
 
-      <span data-column="images" className={`${imagesCell} font-mono text-[13px] text-ink text-right`}>
-        {loading ? <Skeleton w="w-12" /> : query?.isError ? '—' : s!.imageCount.toLocaleString()}
-      </span>
+        <span data-column="tagged-total" className="flex md:hidden browse-compact:flex browse-sm:flex items-center gap-2.5">
+          <span className="md:sr-only">Tagged/Total: </span>
+          {loading || query?.isError || !s ? (
+            <Skeleton w="w-full" />
+          ) : (
+            <>
+              <span aria-hidden="true" className="flex-1 h-1.5 bg-ruleSoft relative">
+                <span className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${pct}%` }} />
+              </span>
+              <span className="font-mono text-[12px] text-inkSoft min-w-[72px] text-right">
+                <span className="text-ink">{s.imagesWithSpecies.toLocaleString()}</span> / {s.imageCount.toLocaleString()}
+              </span>
+            </>
+          )}
+        </span>
 
-      <span data-column="tagged" className="flex md:hidden browse-md:flex items-center gap-2.5">
-        {loading || query?.isError || !s ? (
-          <Skeleton w="w-full" />
-        ) : (
-          <>
-            <span className="flex-1 h-1.5 bg-ruleSoft relative">
-              <span className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${pct}%` }} />
-            </span>
-            <span className="font-mono text-[12px] text-inkSoft min-w-[72px] text-right">
-              <span className="text-ink">{s.imagesWithSpecies.toLocaleString()}</span> / {s.imageCount.toLocaleString()}
-            </span>
-          </>
-        )}
-      </span>
+        <span
+          data-column="collected"
+          className={`${taggedCell} font-mono text-[12.5px] text-inkSoft`}
+          title={missingCollected ? collectedHelp : undefined}
+        >
+          <span className="md:sr-only">Collected: </span>
+          <span data-collected-value>{loading ? <Skeleton w="w-20" /> : query?.isError || !s ? '—' : collected ?? <><span className="hidden md:inline" aria-hidden="true">—</span><span className="md:hidden">Not recorded or unrecognized</span></>}</span>
+        </span>
 
-      <span data-column="sync" className={syncCell}>
-        <SyncPill state={draftState ?? 'local-only'} />
-      </span>
+        <span data-column="sync" className={syncCell}>
+          <span className="md:sr-only">Sync: </span>
+          <SyncPill state={draftState ?? 'local-only'} />
+        </span>
 
-      <span className="text-right text-accent font-[600] text-[13px] opacity-70 group-hover:opacity-100">
-        Open →
-      </span>
-    </button>
+        <span className="text-right text-accent font-[600] text-[13px] opacity-70 group-hover:opacity-100">
+          Open →
+        </span>
+        {missingCollected && <span data-collected-help aria-hidden="true" className="hidden md:group-focus-visible:block col-span-full text-[12px] text-inkSoft">{collectedHelp}</span>}
+      </button>
+      {help.explanation}
+      {missingCollected && <span id={collectedHelpId} className="sr-only">{collectedHelp}</span>}
+    </>
   );
 }
 
@@ -326,7 +393,7 @@ function UploadRow({
 function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
   if (state === 'local-only') {
     return (
-      <span className="inline-flex items-center gap-1.5 border border-rule px-3 h-7 text-[12px] font-body font-[600] text-inkSoft lowercase">
+      <span className="inline-flex items-center gap-1.5 border border-rule px-3 h-7 text-[12px] font-body font-[600] text-inkSoft lowercase" title={SYNC_EXPLANATIONS['local-only']}>
         <span className="font-mono" aria-hidden>
           ○
         </span>
@@ -342,6 +409,7 @@ function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
     <span
       className={`inline-flex items-center gap-1.5 px-3.5 h-7 text-[12px] font-body font-[600] text-paper lowercase ${spec.bg}`}
       style={{ clipPath: spec.clip }}
+      title={SYNC_EXPLANATIONS[state]}
     >
       <span className="font-mono" aria-hidden>
         {spec.glyph}

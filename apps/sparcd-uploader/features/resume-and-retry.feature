@@ -31,7 +31,11 @@ Feature: Resume an interrupted upload and retry a failed one
     When History is opened
     Then that upload is listed as open
     And it shows how many of its files are done and how many failed
-    And only uploads whose metadata was published are marked complete
+    # The complete-vs-open contrast this used to re-prove with a second run
+    # (Back after completion) is now covered by "Uploads left running
+    # unattended are found either complete or ready to resume" below — #477
+    # closed that path, so a second run here goes through Next batch instead,
+    # which that scenario already does.
 
   @AL1 @AL1-3
   Scenario: Uploads left running unattended are found either complete or ready to resume
@@ -46,6 +50,8 @@ Feature: Resume an interrupted upload and retry a failed one
     Given an interrupted upload has a matching UploadMeta publication already stored
     When it is resumed
     Then the resumed publication completes without replacing that metadata
+    And the Back button is disabled
+    And the Back explanation is keyboard discoverable
     And its completion record is written
 
   @AL1
@@ -53,6 +59,11 @@ Feature: Resume an interrupted upload and retry a failed one
     Given a completed upload started late in the day is recorded
     When History is opened
     Then History shows the batch start as "2026-09-11 22:15:10"
+
+  @AL1
+  Scenario: History identifies the upload's destination by collection, not bucket
+    Given an open upload is listed in History
+    Then History shows the collection's name and ID, not the bucket
 
   @AL1 @F1 @F1-5
   Scenario: An interrupted upload can be continued from where it stopped
@@ -79,11 +90,18 @@ Feature: Resume an interrupted upload and retry a failed one
     And the resumed upload's observations.csv matches what a fresh upload would have written
 
   @AL2 @AL2-1
-  Scenario: A resumed upload names its saved destination on the Upload step
+  Scenario Outline: A resumed upload names its saved destination and metadata on the Upload step
     Given an open upload is listed in History
+    And the saved summary has <metadata> fields
     And another batch is set up for a different collection and location
     When it is resumed
     Then the Upload step names the resumed upload's collection, location and folder
+    And the resumed summary uses saved metadata without current wizard values
+
+    Examples:
+      | metadata |
+      | complete |
+      | legacy   |
 
   @AL2
   Scenario: A partial History-resumed run retries automatically when the tab becomes visible again
@@ -196,5 +214,34 @@ Feature: Resume an interrupted upload and retry a failed one
     Given the local record for a partial run cannot be read
     When "Retry failed files" is chosen
     Then the tool reports that the saved record could not be loaded
-    And it suggests retrying, or going back and starting the upload over
+    And it explains missing-record recovery without suggesting a duplicate upload
     And repeated clicks never start two runs at once
+
+  @AL1
+  Scenario Outline: History retains collection identity when discovery is unavailable
+    Given an open upload is listed in History
+    When collection discovery becomes "<state>" for History
+    Then the History row retains its saved collection ID with an unavailable-name label
+
+    Examples:
+      | state        |
+      | disconnected |
+      | removed      |
+      | failed       |
+
+  @AL1
+  Scenario: History resolves collection names separately for each saved destination
+    Given an open upload is listed in History
+    When a second History record has the same collection ID in a different bucket
+    Then each History row identifies only its own collection
+
+  @AL1
+  Scenario: Long collection names and IDs remain readable in narrow History cards
+    Given an open upload is listed in History
+    When History has a long collection name on a phone-sized viewport
+    Then the full collection name and ID wrap within the History row
+  @AL2
+  Scenario: A temporary saved-record read failure offers History recovery without unlocking Back
+    Given a partial upload record has a temporary read failure
+    When "Retry failed files" is chosen
+    Then History recovery is offered for the saved upload without unlocking Back

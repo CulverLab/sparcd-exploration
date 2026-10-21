@@ -231,6 +231,8 @@ describe('store persistence', () => {
   it('persists wizard prefs and never the in-flight batch', () => {
     useStore.getState().setUploaderUser('Ada Lovelace');
     useStore.getState().setUploadDescription('Sky Island transect');
+    useStore.getState().setMountainRange('Santa Catalina Mountains');
+    useStore.getState().setDateCollected('2026-10-01');
     useStore.getState().setSelectedBucket('bucket::uuid');
       useStore.getState().setSelectedLocationId('loc-7');
     useStore.getState().setUploadTimeZone('America/Phoenix');
@@ -247,6 +249,9 @@ describe('store persistence', () => {
       elevationUnit: 'meters',
       uploaderUser: 'Ada Lovelace',
       uploadDescription: 'Sky Island transect',
+      uploadCommentDate: null,
+      mountainRange: 'Santa Catalina Mountains',
+      dateCollected: '2026-10-01',
       selectedBucket: 'bucket::uuid',
       selectedLocationId: 'loc-7',
       requireCollectionSelection: false,
@@ -472,4 +477,45 @@ it('keeps two separately-spread folders\' starts distinct (#256)', () => {
   const files = useStore.getState().files;
   expect(files.find((f) => f.id === 'folderA/1')?.manualSpreadStart).toEqual(START_A);
   expect(files.find((f) => f.id === 'folderB/1')?.manualSpreadStart).toEqual(START_B);
+});
+
+describe('upload comment preview date', () => {
+  it('retains the first preview date across midnight and resets for the next batch', () => {
+    vi.useFakeTimers();
+    try {
+      useStore.setState({ uploadCommentDate: null });
+      vi.setSystemTime(new Date(2026, 9, 14, 23, 59));
+      useStore.getState().captureUploadCommentDate();
+      vi.setSystemTime(new Date(2026, 9, 15, 0, 1));
+      useStore.getState().captureUploadCommentDate();
+      expect(useStore.getState().uploadCommentDate).toBe('2026-10-14');
+      const persisted = JSON.parse(window.sessionStorage.getItem('sparcd-uploader-session')!).state;
+      expect(persisted.uploadCommentDate).toBe('2026-10-14');
+      useStore.getState().nextBatch();
+      expect(useStore.getState().uploadCommentDate).toBeNull();
+      useStore.getState().captureUploadCommentDate();
+      expect(useStore.getState().uploadCommentDate).toBe('2026-10-15');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('connected identity fallback', () => {
+  const config = { endpoint: 'http://localhost', accessKey: 'storage-user', secretKey: 'test-secret', region: 'us-east-1', forcePathStyle: true, secure: false };
+  it('fills empty and whitespace identities from the current account', () => {
+    for (const uploaderUser of ['', '   ']) {
+      useStore.setState({ uploaderUser, s3Config: config });
+      useStore.getState().ensureUploaderIdentity();
+      expect(useStore.getState().uploaderUser).toBe('storage-user');
+    }
+  });
+  it('preserves custom identity and leaves an offline blank unchanged', () => {
+    useStore.setState({ uploaderUser: 'Ada', s3Config: config });
+    useStore.getState().ensureUploaderIdentity();
+    expect(useStore.getState().uploaderUser).toBe('Ada');
+    useStore.setState({ uploaderUser: '', s3Config: null });
+    useStore.getState().ensureUploaderIdentity();
+    expect(useStore.getState().uploaderUser).toBe('');
+  });
 });

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode, type RefObject } from 'react';
+import { useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import Fuse from 'fuse.js';
 import type { Species } from '../lib/species';
 import type { AppliedTag } from '../lib/drafts';
@@ -12,6 +12,9 @@ import { encodeSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
 
 export type SpeciesPanelProps = {
   species: Species[];
+  speciesLoading?: boolean;
+  speciesLoadError?: boolean;
+  onRetrySpecies?: () => Promise<boolean>;
   onApply: (tag: AppliedTag) => void; // add-only; count omitted defaults to 1
   filter: string;
   onFilterChange: (v: string) => void;
@@ -35,6 +38,18 @@ export type SpeciesPanelProps = {
 
 export function SpeciesPanel(props: SpeciesPanelProps) {
   const { species, filter } = props;
+  const [retrying, setRetrying] = useState(false);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  async function retrySpecies() {
+    if (retrying || !props.onRetrySpecies) return;
+    setRetrying(true);
+    try {
+      const recovered = await props.onRetrySpecies();
+      // Keep focus on Retry during a failed attempt; after success return to
+      // the species filter, unless the user has already moved elsewhere.
+      if (recovered && document.activeElement === retryRef.current) props.filterRef.current?.focus();
+    } finally { setRetrying(false); }
+  }
 
   const fuse = useMemo(
     () =>
@@ -92,6 +107,19 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
         )}
       </div>
 
+      {(props.speciesLoadError || retrying) && (
+        <div className="px-3 py-2 border-b border-warn text-[13px] font-body space-y-2">
+          {retrying ? <p role="status">Retrying the species list…</p> : (
+            <p role="alert">{species.length ? "Couldn't refresh the species list. Your previously loaded species remain available." : "Couldn't load the species list."} Check your connection and access permissions, then retry.</p>
+          )}
+          <button ref={retryRef} type="button" aria-label="Retry loading species" aria-disabled={retrying}
+            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation(); }}
+            onClick={() => void retrySpecies()} className="min-h-11 px-3 py-2 border border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      )}
+      {props.speciesLoading && !retrying && <p role="status" className="px-3 py-2 text-[13px] text-inkSoft">Loading species…</p>}
       <div className="flex-1 overflow-y-auto min-h-0">
         {ordered.map((s) => (
           <Row
@@ -126,7 +154,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
           />
         )}
 
-        {!ordered.length && !trimmed && (
+        {!ordered.length && !trimmed && !props.speciesLoading && !props.speciesLoadError && !retrying && (
           <p className="p-4 text-[13px] text-inkMute font-body">No species in the vocabulary.</p>
         )}
       </div>

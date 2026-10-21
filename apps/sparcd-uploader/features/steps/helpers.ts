@@ -105,12 +105,12 @@ export function expectStoredAtLocation(
 export async function rescanFromUpload(app: App, specs: FileSpec[]): Promise<void> {
   await app.page.waitForTimeout(1_100);
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Back' }).click();
   await expect(app.fileListToggle()).toBeVisible();
   await app.rescan(specs);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await app.continueToAssign();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await app.continueToUpload();
 }
 
@@ -127,7 +127,7 @@ export async function producePartialRun(app: App, specs: FileSpec[] = publishabl
   app.s3.putHooks.push((_b, key) =>
     key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 }
@@ -141,7 +141,7 @@ export async function produceFatalRun(app: App, specs: FileSpec[] = publishableB
   app.s3.putHooks.push((_b, key) =>
     key.endsWith(FAILING_FILE) ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 }
@@ -152,7 +152,7 @@ export async function produceCompleteRun(app: App, specs: FileSpec[] = publishab
   app.notes.sourceSpecs = specs;
   await app.dropFolder(specs);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 }

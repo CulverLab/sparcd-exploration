@@ -120,3 +120,7 @@ Feature: Connect the tagger to a collection store and manage the session
     When the theme control in the header is used
     Then the workspace switches between the light and dark presentation
     And the choice is remembered on this machine, shared with the other SPARC'd tools
+
+  @unmapped
+  Scenario: Remembering connection details includes an accessible public-computer warning
+    Then the remember checkbox describes its public-computer warning

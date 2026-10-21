@@ -12,7 +12,9 @@ export function App() {
   const adoptSession = useStore((s) => s.adoptSession);
   const hasModel = useStore((s) => s.model !== null);
 
-  // Signing in or out in any SPARC'd tab carries over to this one.
+  // The newest sign-in or sign-out in any SPARC'd tab carries over to this one.
+  // The session module drops older ones and answers other tabs itself, so the
+  // getter it still takes is unused.
   useEffect(
     () =>
       subscribeSharedConnection(
@@ -20,7 +22,7 @@ export function App() {
           if (!cfg) stopChecking();
           adoptSession(cfg);
         },
-        () => useStore.getState().config,
+        () => null,
       ),
     [adoptSession],
   );

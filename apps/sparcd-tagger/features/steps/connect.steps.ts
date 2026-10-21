@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {
   Given,
   When,
@@ -188,12 +189,10 @@ When('a sibling tool disconnects the shared session', async ({ context }) => {
     route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
   );
   await sibling.goto(`${ENDPOINT}/sibling-disconnect`);
-  await sibling.evaluate(async () => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({ type: 'disconnect' });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  });
+  await sibling.evaluate(async (url) => {
+    const { clearSharedConnection } = await import(/* @vite-ignore */ url);
+    clearSharedConnection();
+  }, `/sparcd-exploration/tagger/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}`);
 });
 
 Then('the tagger returns to the connection screen', async ({ page }) => {
@@ -250,21 +249,13 @@ When('a sibling tool connects the shared session with different credentials', as
     route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
   );
   await sibling.goto(`${ENDPOINT}/sibling-connect`);
-  await sibling.evaluate(async (endpoint) => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint,
-        region: 'us-east-1',
-        accessKey: 'otherkey',
-        secretKey: 'othersecret',
-        forcePathStyle: true,
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  }, ENDPOINT);
+  await sibling.evaluate(async ({ endpoint, url }) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ url);
+    saveSharedConnection({
+      endpoint, region: 'us-east-1', accessKey: 'otherkey',
+      secretKey: 'othersecret', forcePathStyle: true,
+    }, false);
+  }, { endpoint: ENDPOINT, url: `/sparcd-exploration/tagger/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}` });
 });
 
 // --- Session defaults -------------------------------------------------------
@@ -419,3 +410,13 @@ async function openWorkspaceFromBrowse(page: import('@playwright/test').Page): P
   await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
   await expect(page.locator('button[title="IMG001.JPG"]')).toBeVisible();
 }
+
+Then('the remember checkbox describes its public-computer warning', async ({ page }) => {
+  const checkbox = page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});

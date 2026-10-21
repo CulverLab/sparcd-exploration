@@ -10,3 +10,15 @@ Feature: One sign-in across tabs
     And the explorer is open in a second tab
     When I sign out
     Then the second tab shows the sign-in step
+
+  Scenario: An older sign-in sent from another tab never replaces a newer one
+    Given I am signed in
+    And another tab holds on to this sign-in
+    When I sign out and sign in as "otherlead"
+    And the other tab sends its old sign-in
+    And I reload the page
+    Then this tab shows "Choose collections" for "otherlead"
+    When I sign out
+    And the other tab sends its old sign-in
+    And I reload the page
+    Then I am still on the sign-in step

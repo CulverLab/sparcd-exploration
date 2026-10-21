@@ -1,4 +1,4 @@
-# DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-tagger (src/sections/Browse.tsx, src/lib/s3.ts — loadUploadSummary/presignImage, src/sections/Tag.tsx — shortDeployment, src/lib/workspace.ts). Nothing in apps/sparcd-tagger references sensitive species or location protection.
+# DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-tagger (src/sections/Browse.tsx, src/lib/s3.ts — loadUploadSummary/presignImage, src/sections/Tag.tsx — Focus location label, src/lib/workspace.ts). Nothing in apps/sparcd-tagger references sensitive species or location protection.
 
 @F4
 Feature: What the tagger reveals about where images were taken
@@ -10,7 +10,7 @@ Feature: What the tagger reveals about where images were taken
   """
 
   As-built: the tagger shows the camera location recorded for each upload and
-  the deployment identifier of each image. It has no concept of a sensitive
+  the location name and ID in Focus. It has no concept of a sensitive
   species or a protected location, so it applies no restriction of its own —
   what a person sees is whatever their S3 credentials can read. Recorded here
   so the gap between F4/M1 and the tool as built is explicit for review.
@@ -25,9 +25,46 @@ Feature: What the tagger reveals about where images were taken
     And no location is withheld on the grounds of the species in the images
 
   @F4
-  Scenario: The focused image shows the deployment it belongs to
+  Scenario: The focused image shows the location name and ID of its deployment
     Given an image is open in the Focus view
-    Then the deployment identifier recorded for that image is shown alongside its file name
+    Then the location name and ID recorded for that image's deployment are shown alongside its file name
+
+  @unmapped
+  Scenario: A missing deployment file leaves the location area blank in Focus
+    Given an image is open in the Focus view for an upload with no readable deployment file
+    Then no location is shown alongside its file name
+
+  @unmapped
+  Scenario Outline: Incomplete recorded location information leaves the Focus location blank
+    Given the recorded deployment has <state>
+    And an image is open in the Focus view
+    Then no location is shown alongside its file name
+
+    Examples:
+      | state              |
+      | an empty file      |
+      | no location name   |
+      | no location ID     |
+      | whitespace fields  |
+
+  @unmapped
+  Scenario: A failed location refresh clears the label without closing Focus
+    Given an image is open in the Focus view
+    When the recorded location lookup becomes unreadable
+    Then no location is shown alongside its file name
+
+  @unmapped
+  Scenario Outline: Long Focus locations leave room for the filename and Close control
+    Given the recorded location has a long name and ID and the image has an EXIF warning
+    And an image is open in the Focus view
+    Then the Focus header fits at <width> pixels with its full accessible location
+
+    Examples:
+      | width |
+      | 320   |
+      | 390   |
+      | 768   |
+      | 1440  |
 
   @F4
   Scenario: The tagger applies no species-based or location-based restriction

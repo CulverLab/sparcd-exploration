@@ -18,6 +18,11 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const uploaderUser = useStore((s) => s.uploaderUser);
+  // A login-derived identity is already represented by the masked key chip.
+  // Do not expose another copy in identity text or its full-value tooltip.
+  const headerIdentity = uploaderUser.trim() === s3Config?.accessKey.trim()
+    ? undefined
+    : uploaderUser || undefined;
   const disconnect = useStore((s) => s.disconnect);
 
   // A real (non-dry) run in progress — disconnect would cancel it, so confirm first.
@@ -75,7 +80,7 @@ export function Chrome({ uploadState, children }: { uploadState: UploadState; ch
         <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-3">
           <StatePill state={uploadState} />
           {s3Config && (
-            <ConnectionChip identity={uploaderUser || undefined} onDisconnect={handleDisconnect} />
+            <ConnectionChip identity={headerIdentity} onDisconnect={handleDisconnect} />
           )}
           <button
             onClick={toggleTheme}

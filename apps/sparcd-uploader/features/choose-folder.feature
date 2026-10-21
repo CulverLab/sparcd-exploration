@@ -11,7 +11,7 @@ Feature: Choose the folder of media to upload
 
   Background:
     Given the uploader is connected
-    And the New upload section is showing the Files step
+    And the New upload section is showing the Choose step
 
   @unmapped
   Scenario: The drop area names both ways to hand over a folder
@@ -41,7 +41,7 @@ Feature: Choose the folder of media to upload
   Scenario: A folder that holds no usable media says so instead of continuing
     When a folder containing no JPEG or MP4 files is chosen
     Then the tool reports that the folder was read but held no images or videos
-    And it stays on the Files step so another folder can be chosen
+    And it stays on the Choose step so another folder can be chosen
 
   @unmapped
   Scenario: A device that cannot select whole folders offers individual files

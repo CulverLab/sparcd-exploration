@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App, FileSpec } from './app';
 import { FOLDER, jpegAt, manyJpegs, publishableBatch, slowPublishableBatch } from './batches';
-import { BUCKET_A, COLLECTION_A_NAME, COLLECTION_B_NAME, UUID_A } from './fixtures-data';
+import { BUCKET_A, BUCKET_B, COLLECTION_A_NAME, COLLECTION_B_NAME, UUID_A } from './fixtures-data';
 import {
   FAILING_FILE,
   produceCompleteRun,
@@ -66,7 +66,7 @@ When('a real upload starts', async ({ app }) => {
   app.s3.putDelayMs = 150;
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -100,7 +100,7 @@ Then("each file's state is updated as it lands", async ({ app }) => {
 When('a dry run is started', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace' });
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -159,6 +159,13 @@ Then('History shows the batch start as {string}', async ({ app }, expected: stri
   await expect(app.page.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeVisible();
 });
 
+Then("History shows the collection's name and ID, not the bucket", async ({ app }) => {
+  const batch = (await app.readBatchRecords()).find((b) => b.targetBucket === BUCKET_A)!;
+  const row = historyRow(app, batch.uploadPrefix as string);
+  await expect(row.getByText(`${COLLECTION_A_NAME} · ${UUID_A}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(BUCKET_A, { exact: false })).toHaveCount(0);
+});
+
 Then('it shows how many of its files are done and how many failed', async ({ app }) => {
   await expect(app.page.getByText(/4 files · .* · 3 done · 1 failed/)).toBeVisible();
 });
@@ -176,16 +183,15 @@ Then('only uploads whose metadata was published are marked complete', async ({ a
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.page.getByRole('button', { name: 'Back' }).click();
   await app.rescan(app.notes.sourceSpecs as FileSpec[]);
-  await app.page.getByRole('button', { name: 'Continue' }).click();
+  await app.continueToAssign();
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   await app.gotoSection('History');
   await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
   await expect(app.page.getByText('open', { exact: true })).toHaveCount(1);
 });
-
 // --- found in the morning --------------------------------------------------
 
 Given('one upload finished while nobody was watching', async ({ app }) => {
@@ -208,7 +214,7 @@ Given('a second upload was cut off part-way while nobody was watching', async ({
   let media = 0;
   app.s3.holdPut = (_bucket, key) =>
     !METADATA_NAMES.some((n) => key.endsWith(n)) && ++media > 2;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect
     .poll(async () => (await app.readFileRecords())
@@ -382,11 +388,11 @@ Then(
   async ({ app }) => {
     const meta = JSON.parse(metadataPuts(app).find((p) => p.key.endsWith('UploadMeta.json'))!.body);
     expect(meta.uploadUser).toBe('ada-lovelace');
-    expect(meta.description).toBe('July retrieval');
+    expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - \d+ images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01 - July retrieval$/);
     const deployments = metadataPuts(app).find((p) => p.key.endsWith('deployments.csv'))!;
     expect(deployments.body).toContain(`${UUID_A}:BEAR1`);
     // Nothing on the History screen asked for any of it.
-    await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
+    await expect(app.page.getByRole('heading', { name: 'Collection' })).toHaveCount(0);
   },
 );
 
@@ -413,6 +419,10 @@ Given('another batch is set up for a different collection and location', async (
   await app.openCollectionList();
   await app.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: COLLECTION_B_NAME }).click();
   await app.chooseDeployment('Coyote Wash');
+  await app.page.locator('#mountainRange').fill('UNRELATED mountain range');
+  await app.page.locator('#dateCollected').fill('2025-02-03');
+  await app.page.locator('#uploadTimeZone').selectOption('Europe/Paris');
+  await app.setDescription('UNRELATED notes');
   await app.continueToUpload();
   await expect(app.page.locator('dl').filter({ hasText: 'Collection' })).toContainText(COLLECTION_B_NAME);
   // The Resume folder dialog hands back the interrupted upload's source folder.
@@ -513,8 +523,8 @@ When('a failed upload is retried or resumed', async ({ app }) => {
 Then(
   'the collection, deployment, uploader identity and timezone are not asked for again',
   async ({ app }) => {
-    await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
-    await expect(app.page.getByRole('heading', { name: 'Deployment' })).toHaveCount(0);
+    await expect(app.page.getByRole('heading', { name: 'Collection' })).toHaveCount(0);
+    await expect(app.page.getByRole('heading', { name: 'Site ID' })).toHaveCount(0);
     const [batch] = await app.readBatchRecords();
     expect(batch.uploadTimeZone).toBe('America/Phoenix');
     const meta = JSON.parse(metadataPuts(app).find((p) => p.key.endsWith('UploadMeta.json'))!.body);
@@ -594,7 +604,7 @@ Given('an upload was interrupted before every file had been examined', async ({ 
   await app.dropFolder(app.notes.sourceSpecs as FileSpec[]);
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -686,7 +696,7 @@ Then('no other upload can be resumed while one is running', async ({ app }) => {
 
 When('the user leaves History and returns while the resume is running', async ({ app }) => {
   await app.gotoSection('Settings');
-  await expect(app.page.getByText('Uploader identity')).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Connection', exact: true })).toBeVisible();
   await app.gotoSection('History');
 });
 
@@ -708,7 +718,7 @@ Given('a fresh upload is running in the background', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -744,19 +754,19 @@ Given('the local record for a partial run cannot be read', async ({ app }) => {
 });
 
 Then('the tool reports that the saved record could not be loaded', async ({ app }) => {
-  // retryFailed's catch is now a single generic wrapper covering every
-  // failure mode in its try block (not just a missing session record, since
-  // ensureBundle can fail here too) — the underlying reason still comes
-  // through via the error message it wraps.
+  // The underlying missing-record reason remains visible alongside the
+  // specific guidance; read/rebuild failures have a separate recovery path.
   await expect(
     app.page.getByText(/Couldn't resume this upload \(no saved record for this session\)/),
   ).toBeVisible({ timeout: 60_000 });
 });
 
-Then('it suggests retrying, or going back and starting the upload over', async ({ app }) => {
+Then('it explains missing-record recovery without suggesting a duplicate upload', async ({ app }) => {
   await expect(
-    app.page.getByText(/Retry again; if it keeps failing, go Back and start the upload over\./),
+    app.page.getByText(/The saved upload record is missing\. Automatic recovery is unavailable\./),
   ).toBeVisible();
+  await expect(app.page.getByText(/Do not start a new upload of these files/)).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeDisabled();
 });
 
 Then('repeated clicks never start two runs at once', async ({ app }) => {
@@ -782,4 +792,193 @@ When('the folder picker is opened and dismissed without selecting a folder', asy
 
 Then('the Resume button becomes available again', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeEnabled();
+});
+
+// Resolve assertions against the upload stamp so another card or a collection
+// picker elsewhere on History cannot accidentally satisfy them.
+const historyRow = (app: App, prefix: string) => app.page.locator('li').filter({
+  has: app.page.locator('p[title]').filter({ hasText: prefix.split('/').filter(Boolean).pop()! }),
+});
+
+When('collection discovery becomes {string} for History', async ({ app }, state: string) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  await app.page.evaluate(() => localStorage.removeItem('sparcd-uploader-discovery'));
+  if (state === 'disconnected') {
+    await app.reopenInNewTab();
+    await app.page.getByRole('button', { name: 'Login later', exact: true }).click();
+  } else {
+    if (state === 'removed') app.s3.delete(BUCKET_A, `Collections/${UUID_A}/collection.json`);
+    else {
+      expect(state).toBe('failed');
+      app.notes.discoveryFailures = 0;
+      await app.page.route('**/*', async (route) => {
+        const request = route.request();
+        if (request.headers().authorization && new URL(request.url()).pathname === '/' && request.method() === 'GET') {
+          app.notes.discoveryFailures = Number(app.notes.discoveryFailures) + 1;
+          await route.fulfill({ status: 403, contentType: 'application/xml', body: '<Error><Code>AccessDenied</Code><Message>Discovery denied</Message></Error>' });
+        } else await route.fallback();
+      });
+    }
+    await app.reopen();
+  }
+  await app.gotoSection('History');
+  if (state === 'failed') await expect.poll(() => Number(app.notes.discoveryFailures)).toBeGreaterThanOrEqual(2);
+});
+Then('the History row retains its saved collection ID with an unavailable-name label', async ({ app }) => {
+  const row = historyRow(app, app.notes.historyPrefix as string);
+  await expect(row.getByText(`Collection name unavailable · ${UUID_A}`, { exact: false })).toBeVisible();
+  await expect(row.getByText(`Storage bucket: ${BUCKET_A}`, { exact: true })).toBeVisible();
+  await expect(row.getByText(COLLECTION_A_NAME, { exact: false })).toHaveCount(0);
+});
+
+When('a second History record has the same collection ID in a different bucket', async ({ app }) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  const prefix = `Collections/${UUID_A}/Uploads/unknown_collection_upload`;
+  app.notes.unmatchedPrefix = prefix;
+  await app.page.evaluate(async ({ batch, bucket, prefix }) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const tx = db.transaction('batches', 'readwrite');
+    tx.objectStore('batches').put({ ...batch, id: 'unmatched-history-record', targetBucket: bucket, uploadPrefix: prefix });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  }, { batch, bucket: BUCKET_B, prefix });
+  await app.gotoSection('New upload');
+  await app.gotoSection('History');
+});
+Then('each History row identifies only its own collection', async ({ app }) => {
+  const known = historyRow(app, app.notes.historyPrefix as string);
+  const unknown = historyRow(app, app.notes.unmatchedPrefix as string);
+  await expect(known.getByText(`${COLLECTION_A_NAME} · ${UUID_A}`, { exact: true })).toBeVisible();
+  await expect(unknown.getByText(`Collection name unavailable · ${UUID_A}`, { exact: false })).toBeVisible();
+  await expect(unknown.getByText(`Storage bucket: ${BUCKET_B}`, { exact: true })).toBeVisible();
+  await expect(unknown.getByText(/Alpha Collection|Beta Collection/)).toHaveCount(0);
+});
+
+When('History has a long collection name on a phone-sized viewport', async ({ app }) => {
+  const [batch] = await app.readBatchRecords();
+  app.notes.historyPrefix = batch.uploadPrefix;
+  const name = 'LongCollectionNameWithoutSpaces'.repeat(6);
+  app.notes.longCollectionName = name;
+  const key = `Collections/${UUID_A}/collection.json`;
+  const doc = JSON.parse(app.s3.text(BUCKET_A, key)!);
+  app.s3.put(BUCKET_A, key, JSON.stringify({ ...doc, nameProperty: name }), { contentType: 'application/json' });
+  await app.page.evaluate(() => localStorage.removeItem('sparcd-uploader-discovery'));
+  await app.page.setViewportSize({ width: 375, height: 812 });
+  await app.reopen();
+  await app.page.getByLabel('Section', { exact: true }).selectOption('history');
+});
+Then('the full collection name and ID wrap within the History row', async ({ app }) => {
+  const row = historyRow(app, app.notes.historyPrefix as string);
+  const label = row.getByText(`${app.notes.longCollectionName} · ${UUID_A}`, { exact: true });
+  await expect(label).toBeVisible();
+  const measurements = await label.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const rects = [...range.getClientRects()];
+    const style = getComputedStyle(element);
+    return {
+      clipped: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
+      inside: rects.every((r) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1),
+      lines: new Set(rects.map((r) => Math.round(r.top))).size,
+      whiteSpace: style.whiteSpace,
+      textOverflow: style.textOverflow,
+    };
+  });
+  expect(measurements.clipped).toBe(false);
+  expect(measurements.inside).toBe(true);
+  expect(measurements.lines).toBeGreaterThan(1);
+  expect(measurements.whiteSpace).not.toBe('nowrap');
+  expect(measurements.textOverflow).not.toBe('ellipsis');
+  expect(await app.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+Given('a partial upload record has a temporary read failure', async ({ app }) => {
+  await producePartialRun(app);
+  await app.page.evaluate(() => {
+    const original = IDBObjectStore.prototype.get;
+    (window as unknown as { restoreBatchRead: () => void }).restoreBatchRead = () => { IDBObjectStore.prototype.get = original; };
+    IDBObjectStore.prototype.get = function (key) {
+      if (this.name === 'batches') throw new DOMException('Simulated record read failure', 'UnknownError');
+      return original.call(this, key);
+    };
+  });
+});
+Then('History recovery is offered for the saved upload without unlocking Back', async ({ app }) => {
+  await expect(app.page.getByText(/Retry again, or open History and resume this saved upload/)).toBeVisible();
+  await expect(app.page.getByText(/Automatic recovery is unavailable/)).toHaveCount(0);
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeDisabled();
+  await app.page.evaluate(() => (window as unknown as { restoreBatchRead: () => void }).restoreBatchRead());
+  await app.page.getByRole('button', { name: 'Open History', exact: true }).click();
+  const records = await app.readBatchRecords();
+  expect(records).toHaveLength(1);
+  app.s3.putHooks.length = 0;
+  const resume = app.page.getByRole('button', { name: 'Resume upload', exact: true });
+  await expect(resume).toBeEnabled();
+  await resume.click();
+  await app.waitForRunPhase('done');
+  const after = await app.readBatchRecords();
+  expect(after).toHaveLength(1);
+  expect(after[0].id).toBe(records[0].id);
+  expect(after[0].uploadPrefix).toBe(records[0].uploadPrefix);
+
+});
+
+Given('the saved summary has {word} fields', async ({ app }, metadata: string) => {
+  app.notes.summaryMetadata = metadata;
+  const [batch] = await app.readBatchRecords();
+  app.notes.savedSummary = batch;
+  if (metadata !== 'legacy') return;
+  await app.page.evaluate(async id => {
+    const request = indexedDB.open('sparcd-uploader');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    const transaction = db.transaction('batches', 'readwrite');
+    const store = transaction.objectStore('batches');
+    const read = store.get(id);
+    read.onsuccess = () => {
+      const batch = read.result;
+      delete batch.requiredComments;
+      batch.description = '';
+      store.put(batch);
+    };
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+  }, batch.id);
+});
+
+Then('the resumed summary uses saved metadata without current wizard values', async ({ app }) => {
+  const summary = app.page.locator('dl').filter({ hasText: 'Collection' });
+  await expect(summary).toContainText('America/Phoenix');
+  await expect(summary).not.toContainText('UNRELATED');
+  await expect(summary).not.toContainText('Europe/Paris');
+  await expect(summary).not.toContainText('2025-02-03');
+  const comments = app.page.getByRole('button', { name: 'Comments', exact: true });
+  if (app.notes.summaryMetadata === 'legacy') {
+    await expect(summary).not.toContainText('Mountain range');
+    await expect(summary).not.toContainText('Date collected');
+    await expect(comments).toHaveCount(0);
+  } else {
+    await expect(summary).toContainText('Santa Catalina Mountains');
+    await expect(summary).toContainText('2026-10-01');
+    await expect(comments).toHaveAttribute('aria-expanded', 'false');
+    await comments.focus();
+    await app.page.keyboard.press('Enter');
+    await expect(comments.locator('..')).toContainText('July retrieval');
+    await expect(comments.locator('..')).not.toContainText('UNRELATED notes');
+    await app.page.keyboard.press('Space');
+    await expect(comments).toHaveAttribute('aria-expanded', 'false');
+  }
 });

@@ -14,7 +14,6 @@ import {
   naiveInZoneToUtcIso,
   formatNaive,
   localTimeZone,
-  naiveToInputValue,
   inputValueToNaive,
   type NaiveDateTime,
 } from '../src/lib/exifTime';
@@ -148,15 +147,22 @@ describe('helpers', () => {
   });
 });
 
-describe('datetime-local <-> naive (manual capture-time entry)', () => {
-  it('round-trips a naive value through the input string', () => {
+describe('manual capture-time text entry', () => {
+  it('round-trips a naive value through formatNaive', () => {
     const n = at({ month: 3, day: 9, hour: 7, minute: 5, second: 1 });
-    expect(naiveToInputValue(n)).toBe('2024-03-09T07:05:01');
-    expect(inputValueToNaive(naiveToInputValue(n))).toEqual(n);
+    expect(formatNaive(n)).toBe('2024-03-09T07:05:01');
+    expect(inputValueToNaive(formatNaive(n))).toEqual(n);
   });
 
-  it('defaults missing seconds to 0 (browsers may omit at step=1)', () => {
+  it('accepts a space separator the same as a literal T (#456)', () => {
+    const n = at({ month: 3, day: 9, hour: 7, minute: 5, second: 1 });
+    expect(inputValueToNaive('2024-03-09 07:05:01')).toEqual(n);
+    expect(inputValueToNaive('2024-03-09T07:05:01')).toEqual(n);
+  });
+
+  it('defaults missing seconds to 0', () => {
     expect(inputValueToNaive('2024-03-09T07:05')).toEqual(at({ month: 3, day: 9, hour: 7, minute: 5 }));
+    expect(inputValueToNaive('2024-03-09 07:05')).toEqual(at({ month: 3, day: 9, hour: 7, minute: 5 }));
   });
 
   it('returns null for empty or malformed input', () => {

@@ -5,9 +5,9 @@ Feature: Settings and the data the uploader keeps on this machine
 
   """
   As-built flow: the Settings section holds the default uploader identity and
-  the disconnect that clears this machine. A SPARC'd tool is often shared on one
-  laptop, so logging out has to leave nothing of the previous person behind —
-  but it must not silently destroy uploads they have not finished.
+  the disconnect that ends the shared session and clears local upload records.
+  Remembered non-secret connection details remain. Unfinished uploads must not
+  be silently destroyed; discarding them requires explicit confirmation.
   """
 
   Background:
@@ -17,15 +17,16 @@ Feature: Settings and the data the uploader keeps on this machine
   Scenario: A default uploader identity can be set once
     When an uploader identity is entered in Settings
     Then the tool shows the key-safe form of it that will appear in upload paths
-    And each new batch starts with that identity already filled in on the Assign step
+    And each new batch starts with that identity already filled in on the Describe step
 
   @unmapped
   Scenario: Disconnecting from Settings clears this machine's upload records
     Given there are no unfinished uploads on this machine
-    When "Disconnect" is chosen
+    When Disconnect is chosen after reviewing its security explanation
     Then the connection is ended
     And this browser's recorded upload sessions, file states and metadata are cleared
     And the tool returns to the connection screen ready for the next person
+    And remembered non-secret connection details remain with no live session
 
   @unmapped
   Scenario: Disconnecting is guarded when unfinished uploads exist
@@ -54,3 +55,22 @@ Feature: Settings and the data the uploader keeps on this machine
     When the appearance is switched between light and dark
     Then the choice survives a page reload
     And it is kept where the other SPARC'd tools on this machine read it
+
+  @unmapped
+  Scenario: Defaults and Advanced are collapsed, independent keyboard disclosures
+    When the settings disclosures are exercised
+    And expanded settings controls fit on a narrow screen
+    Then their preferences survive reopening with both disclosures collapsed
+
+  @unmapped
+  Scenario: Blank identity falls back on blur and custom identity survives reload
+    When identity is cleared, typed, and left blank
+    Then the login default returns on blur
+    When an uploader identity is entered in Settings
+    And the custom identity is reloaded
+    Then the custom identity is preserved
+
+  @unmapped
+  Scenario: Restored and shared sessions supply a missing identity
+    When the blank identity session is restored and shared
+    Then both sessions default identity from the connected access key

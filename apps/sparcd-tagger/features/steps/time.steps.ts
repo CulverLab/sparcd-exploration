@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, Locator } from '@playwright/test';
 import { parseMedia } from '@sparcd/camtrap';
 import {
   Given,
@@ -147,6 +147,36 @@ Then('the images show their original capture times again', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Focus', exact: true })).toBeVisible();
 });
 
+/** Reasons stay hidden in the layout but are available to keyboard and pointer users. */
+async function expectDisabledHint(page: Page, button: Locator, label: string, reason: string) {
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute('title', reason);
+  await expect(button).toHaveAccessibleDescription(reason);
+  await expect(button).toHaveCSS('cursor', 'not-allowed');
+  const target = page.getByRole('group', { name: `${label} unavailable`, exact: true });
+  await expect(target).toHaveAccessibleDescription(reason);
+  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toHaveCount(0);
+  for (let i = 0; i < 20 && !(await target.evaluate(node => node === document.activeElement)); i++) await page.keyboard.press('Tab');
+  await expect(target).toBeFocused();
+  await expect(tooltip).toHaveText(reason);
+  await expect(tooltip).toHaveCount(1);
+  const position = await positionReadout(page).innerText();
+  await page.keyboard.press('Enter'); await page.keyboard.press('Space');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(positionReadout(page)).toHaveText(position);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await expect(target).toBeFocused();
+  await page.getByRole('button', { name: 'Overview', exact: true }).focus();
+  await target.hover(); await expect(tooltip).toHaveText(reason);
+  await page.keyboard.press('Escape'); await expect(tooltip).toHaveCount(0);
+  await page.mouse.move(0, 0); await target.hover(); await expect(tooltip).toHaveText(reason);
+  await tooltip.hover(); await expect(tooltip).toBeVisible();
+  await page.mouse.move(0, 0); await expect(tooltip).toHaveCount(0);
+}
+
 // --- Whole-upload shift is unavailable with nothing to shift (issue #302) --
 
 Given('an upload with no capture times is open in the tagging workspace', async ({ page }) => {
@@ -156,13 +186,7 @@ Given('an upload with no capture times is open in the tagging workspace', async 
 
 Then('the whole-upload time shift is disabled with an explanation', async ({ page }) => {
   const button = timeShiftButton(page);
-  await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute('title', 'No image in this upload has a capture time to shift');
-  await expect(button).toHaveAttribute('aria-describedby', 'upload-time-unavailable');
-  await expect(page.locator('#upload-time-unavailable')).toHaveText(
-    'No image in this upload has a capture time to shift',
-  );
-  await expect(page.locator('#upload-time-unavailable')).toBeVisible();
+  await expectDisabledHint(page, button, 'Time shift', 'No image in this upload has a capture time to shift');
 });
 
 Given('a persisted whole-upload shift exists for an upload with no capture times', async ({ page }) => {
@@ -192,18 +216,44 @@ Given('a single image is focused with no selection', async ({ page }) => {
 
 Then('time shift selection is disabled with an explanation', async ({ page }) => {
   const button = page.getByRole('button', { name: 'Time shift selection', exact: true });
-  await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute('title', 'Select one or more images to time shift');
-  await expect(page.locator('#scoped-time-unavailable')).toHaveText(
-    'Select one or more images to time shift',
-  );
-  await expect(page.locator('#scoped-time-unavailable')).toBeVisible();
+  await expectDisabledHint(page, button, 'Time shift selection', 'Select one or more images to time shift');
 });
 
-Given('exactly one image is selected', async ({ page }) => {
-  await focusFrame(page, 'IMG001.JPG');
-  await gridCell(page, 'IMG002.JPG').click({ modifiers: ['Meta'] });
-  await gridCell(page, 'IMG001.JPG').click({ modifiers: ['Meta'] });
+Given('exactly one image is selected in the {string} Overview', async ({ page }, view: string) => {
+  if (view === 'list') await page.getByRole('button', { name: '☰ List' }).click();
+  if (view === 'narrow') await page.setViewportSize({ width: 390, height: 844 });
+  const image = view === 'list' ? listRow(page, 'IMG001.JPG') : gridCell(page, 'IMG001.JPG');
+  await image.click();
+  const shift = page.getByRole('button', { name: 'Time shift selection', exact: true });
+  await expect(shift).toBeDisabled();
+  if (view === 'narrow') {
+    await page.getByRole('button', { name: '＋ Select', exact: true }).click();
+  } else {
+    await image.click({ modifiers: ['ControlOrMeta'] });
+  }
+  await expect(positionReadout(page)).toHaveText('1 selected');
+  await expect(shift).toBeEnabled();
+});
+
+When('that one-image selection is toggled off', async ({ page }) => {
+  const touchToggle = page.getByRole('button', { name: '✓ In selection', exact: true });
+  if (await touchToggle.isVisible()) {
+    await touchToggle.click();
+  } else {
+    const tile = gridCell(page, 'IMG001.JPG');
+    const image = await tile.count() ? tile : listRow(page, 'IMG001.JPG');
+    await image.click({ modifiers: ['ControlOrMeta'] });
+  }
+  await expect(positionReadout(page)).not.toContainText('selected');
+});
+
+When('the selection is filtered down to IMG001.JPG', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Search in').selectOption('filename');
+  await page.getByLabel('Match text').fill('IMG001.JPG');
+  await page.getByLabel('Match text').press('Escape');
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG003.JPG')).toHaveCount(0);
   await expect(positionReadout(page)).toHaveText('1 selected');
 });
 
@@ -221,8 +271,8 @@ Then('exactly that selected image receives a time override', async ({ page }) =>
     timeOverride: string | null;
   }[];
   expect(drafts).toHaveLength(1);
-  expect(drafts[0].mediaPath).toMatch(/IMG002\.JPG$/);
-  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:30.000-07:00');
+  expect(drafts[0].mediaPath).toMatch(/IMG001\.JPG$/);
+  expect(drafts[0].timeOverride).toBe('2024-01-10T09:00:00.000-07:00');
 });
 
 Then('the unselected frames are unchanged', async ({ page }) => {
@@ -343,17 +393,13 @@ Then('the dialog states that they are', async ({ page }) => {
 
 Given('only timestamp-less images are selected', async ({ page }) => {
   await gridCell(page, 'VID001.MP4').click();
-  await gridCell(page, 'VID001.MP4').click({ modifiers: ['Shift'] });
+  await gridCell(page, 'VID001.MP4').click({ modifiers: ['ControlOrMeta'] });
   await expect(positionReadout(page)).toHaveText('1 selected');
 });
 
 Then('time shift selection is disabled because no selected frame has a capture time', async ({ page }) => {
   const button = page.getByRole('button', { name: 'Time shift selection', exact: true });
-  await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute('title', 'None of the selected frames has a capture time to shift');
-  await expect(page.locator('#scoped-time-unavailable')).toHaveText(
-    'None of the selected frames has a capture time to shift',
-  );
+  await expectDisabledHint(page, button, 'Time shift selection', 'None of the selected frames has a capture time to shift');
 });
 
 // --- Per-image override -----------------------------------------------------
@@ -529,4 +575,44 @@ Then('only the times shown on the burst bands change', async ({ page, scratch })
   expect(before[0]).toContain('08:00–08:00');
   expect(after[0]).toContain('09:00–09:00');
   expect(after[0]).not.toBe(before[0]);
+});
+
+Then('disabled time-shift hints are touch-readable and stay within a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const target = page.getByRole('group', { name: 'Time shift selection unavailable', exact: true });
+  await target.scrollIntoViewIfNeeded();
+  const box = (await target.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toHaveText('Select one or more images to time shift');
+    const bounds = (await tooltip.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390); expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await expect(tooltip).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  } finally { await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false }); await cdp.detach(); }
+});
+Then('only one time-shift explanation is visible at a time', async ({ page }) => {
+  const upload = page.getByRole('group', { name: 'Time shift unavailable', exact: true });
+  const selection = page.getByRole('group', { name: 'Time shift selection unavailable', exact: true });
+  await upload.focus(); await expect(page.getByRole('tooltip')).toHaveText('No image in this upload has a capture time to shift');
+  await selection.hover(); await expect(page.getByRole('tooltip')).toHaveCount(1);
+  await expect(page.getByRole('tooltip')).toHaveText('Select one or more images to time shift');
+});
+
+When('the keyboard selects images while the disabled selection explanation has focus', async ({ page }) => {
+  await page.getByRole('group', { name: 'Time shift selection unavailable', exact: true }).focus();
+  await page.keyboard.press('ControlOrMeta+A');
+});
+Then('the enabled selection time-shift button receives focus', async ({ page }) => {
+  const button = page.getByRole('button', { name: 'Time shift selection', exact: true });
+  await expect(button).toBeEnabled();
+  await expect(button).toBeFocused();
+  await expect(page.getByRole('group', { name: 'Time shift selection unavailable', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
 });

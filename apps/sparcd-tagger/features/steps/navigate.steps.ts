@@ -146,6 +146,45 @@ Then('IMG005.JPG is the focused filtered image', async ({ page }) => {
   await expect(listRow(page, 'IMG001.JPG')).toHaveCount(0);
 });
 
+// --- Filtered-Overview navigation skips hidden raw-list neighbors (#442) ----
+
+When('the image filter limits the Overview to untagged images', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Tag state').selectOption('untagged');
+  await page.keyboard.press('Escape');
+});
+
+When('the image filter limits the Overview to tagged images', async ({ page }) => {
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByLabel('Tag state').selectOption('tagged');
+  await page.keyboard.press('Escape');
+});
+
+// Untagged matches, in list order: IMG002, IMG005, VID001 — IMG003/IMG004
+// (both tagged) sit between the first and second match, hiding the raw-list
+// neighbor the old code would have stepped to.
+When('the first untagged match is focused', async ({ page }) => {
+  await gridCell(page, 'IMG002.JPG').click();
+});
+
+Then('the second untagged match is focused', async ({ page }) => {
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG005.JPG');
+});
+
+// Tagged matches, in list order: IMG001, IMG003, IMG004 — IMG002 (untagged,
+// between IMG001 and IMG003) is the raw-list neighbor the filter hides.
+When('the first matching image in the Overview is focused', async ({ page }) => {
+  await gridCell(page, 'IMG001.JPG').click();
+});
+
+When("it is tagged with a species it doesn't already carry", async ({ page }) => {
+  await page.keyboard.press('p'); // Mountain Lion — IMG001 only carries Mule Deer
+});
+
+Then('the next matching image is focused, skipping the one the filter hides', async ({ page }) => {
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG003.JPG');
+});
+
 When('the image filter is opened in a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 860 });
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
@@ -600,6 +639,14 @@ Then('only that image is selected as the focus', async ({ page }) => {
   await expect(positionReadout(page)).toHaveText('2 / 6');
 });
 
+Then('an additive click on another image selects both images', async ({ page }) => {
+  await gridCell(page, 'IMG004.JPG').click({ modifiers: ['ControlOrMeta'] });
+  await expect(positionReadout(page)).toHaveText('2 selected');
+  await expect(selectedTiles(page)).toHaveCount(2);
+  expect(await selectedTiles(page).evaluateAll((els) => els.map((el) => el.getAttribute('title'))))
+    .toEqual(['IMG002.JPG', 'IMG004.JPG']);
+});
+
 Then('shift-clicking another image selects the whole range between them', async ({ page }) => {
   await gridCell(page, 'IMG004.JPG').click({ modifiers: ['Shift'] });
   await expect(positionReadout(page)).toHaveText('3 selected');
@@ -804,12 +851,20 @@ Given('a video is being played or scrubbed', async ({ page }) => {
   await focusFrame(page, 'VID001.MP4');
   await page.getByRole('button', { name: 'Focus', exact: true }).click();
   await expect(page.locator('video[controls]')).toBeVisible();
-  await page.locator('video[controls]').focus();
+  const video = page.locator('video[controls]');
+  await video.focus();
+  // Focus must remain owned by the media after deferred rendering settles.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(video).toBeFocused();
 });
 
 Then('its own playback keys work and no tagging keystroke fires', async ({ page }) => {
+  const video = page.locator('video[controls]');
+  await expect(video).toBeFocused();
   await page.keyboard.press('d');
+  await expect(video).toBeFocused();
   await page.keyboard.press(' ');
+  await expect(video).toBeFocused();
   await expect(page.getByText(/unsaved · discard/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
   await expect(gridCell(page, 'VID001.MP4')).toHaveAttribute('title', 'VID001.MP4');
@@ -936,4 +991,113 @@ When('Escape is pressed with the slider focused', async ({ page }) => {
 Then('the Adjust popup closes and the same images are still selected', async ({ page, scratch }) => {
   await expect(page.getByRole('dialog', { name: 'Image adjustments' })).toHaveCount(0);
   await expect(positionReadout(page)).toHaveText(scratch.selectionReadout as string);
+});
+
+Given('three untagged matches have hidden images between them', async ({ page }) => {
+  await gridCell(page, 'IMG005.JPG').click();
+  await page.keyboard.press('d');
+  await gridCell(page, 'IMG004.JPG').click();
+  await enterFocusView(page);
+  await page.getByRole('button', { name: 'Clear Species', exact: true }).click();
+  await page.getByRole('button', { name: 'Close Focus', exact: true }).click();
+});
+
+When('the second separated match is chosen', async ({ page }) => {
+  await expect.poll(() => tileOrder(page)).toEqual(['IMG002.JPG', 'IMG004.JPG', 'VID001.MP4']);
+  await gridCell(page, 'IMG004.JPG').click();
+});
+When('{string} is pressed in the filtered Overview', async ({ page }, key: string) => {
+  await page.keyboard.press(key);
+});
+Then('the third separated match is focused', async ({ page }) => {
+  await expect(focusedTile(page)).toHaveAttribute('title', 'VID001.MP4');
+});
+Then('the second separated match is focused', async ({ page }) => {
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG004.JPG');
+});
+When('the focused untagged image is identified', async ({ page }) => {
+  await page.keyboard.press('d');
+});
+Then('the identified image has disappeared from the filtered Overview', async ({ page }) => {
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveCount(0);
+});
+When('the image filter excludes the video', async ({ page }) => {
+  await page.locator('button[aria-controls="image-filter-panel"]').click();
+  await page.getByLabel('Match text').fill('IMG');
+  await page.getByLabel('Search in').selectOption('filename');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => tileOrder(page)).toEqual(['IMG002.JPG', 'IMG005.JPG']);
+});
+When('the final image match is opened in {string}', async ({ page }, view: string) => {
+  await gridCell(page, 'IMG005.JPG').click();
+  if (view === 'Focus') await enterFocusView(page);
+});
+Then('exhausted focus stays on the image just identified in {string}', async ({ page }, view: string) => {
+  if (view === 'Focus') {
+    await expect(page.getByRole('dialog', { name: 'Focus image viewer' }).locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG005.JPG');
+    await expect(page.getByRole('button', { name: 'Previous image' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Next image' })).toHaveCount(0);
+  } else {
+    await expect(positionReadout(page)).toHaveText('5 / 6');
+    await expect(focusedTile(page)).toHaveCount(0);
+  }
+});
+When('another species key is pressed after exhaustion', async ({ page }) => {
+  await page.keyboard.press('p');
+});
+Then('only the original identification was applied and earlier matches remain untouched', async ({ page }) => {
+  await expect.poll(async () => {
+    const drafts = await readStore(page, 'drafts') as { mediaPath: string; observations: { scientificName: string; count: number }[] }[];
+    return drafts.map((draft) => ({ file: draft.mediaPath.split('/').pop(), observations: draft.observations.map(({ scientificName, count }) => ({ scientificName, count })) }));
+  }).toEqual([{ file: 'IMG005.JPG', observations: [{ scientificName: 'Odocoileus hemionus', count: 1 }] }]);
+});
+When('the previous filtered match is requested in {string}', async ({ page }, view: string) => {
+  if (view === 'Focus') await page.getByRole('button', { name: 'Previous image' }).click();
+  else await page.keyboard.press('ArrowUp');
+});
+Then('the earlier matching image is reachable in {string}', async ({ page }, view: string) => {
+  if (view === 'Focus') {
+    await expect(page.getByRole('dialog', { name: 'Focus image viewer' }).locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG002.JPG');
+    await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  } else await expect(focusedTile(page)).toHaveAttribute('title', 'IMG002.JPG');
+});
+
+When('the filter is narrowed to the earlier matching image', async ({ page }) => {
+  await page.locator('button[aria-controls="image-filter-panel"]').click();
+  await page.getByLabel('Match text').fill('IMG002');
+  await page.keyboard.press('Escape');
+});
+
+When('both image matches are selected with the earlier match focused', async ({ page }) => {
+  await gridCell(page, 'IMG005.JPG').click();
+  await gridCell(page, 'IMG002.JPG').click({ modifiers: ['ControlOrMeta'] });
+  await expect(selectedTiles(page)).toHaveCount(2);
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG002.JPG');
+});
+
+Then('exhausted bulk focus stays at the earlier image and all matches are removed', async ({ page }) => {
+  await expect(page.getByText('No images match these filters.', { exact: true })).toBeVisible();
+  await expect(positionReadout(page)).toHaveText('2 / 6');
+  await expect(selectedTiles(page)).toHaveCount(0);
+  await expect.poll(async () => {
+    const drafts = await readStore(page, 'drafts') as { mediaPath: string; observations: { scientificName: string; count: number }[] }[];
+    return drafts.map((draft) => ({ file: draft.mediaPath.split('/').pop(), observations: draft.observations.map(({ scientificName, count }) => ({ scientificName, count })) }));
+  }).toEqual([
+    { file: 'IMG002.JPG', observations: [{ scientificName: 'Odocoileus hemionus', count: 1 }] },
+    { file: 'IMG005.JPG', observations: [{ scientificName: 'Odocoileus hemionus', count: 1 }] },
+  ]);
+});
+
+When('the images are sorted by Species ascending', async ({ page }) => {
+  await page.getByRole('button', { name: /^Species/ }).click();
+  await expect.poll(() => tileOrder(page)).toEqual(['IMG002.JPG', 'IMG005.JPG', 'VID001.MP4', 'IMG001.JPG', 'IMG003.JPG', 'IMG004.JPG']);
+});
+
+Then('the sorted exhausted focus remains on IMG005 in {string}', async ({ page }, view: string) => {
+  if (view === 'Focus') {
+    await expect(page.getByRole('dialog', { name: 'Focus image viewer' }).locator('.react-transform-component img')).toHaveAttribute('alt', 'IMG005.JPG');
+  } else {
+    await expect(positionReadout(page)).toHaveText('5 / 6');
+    await expect(focusedTile(page)).toHaveCount(0);
+  }
 });

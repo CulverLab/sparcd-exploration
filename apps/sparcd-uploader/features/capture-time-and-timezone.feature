@@ -13,7 +13,7 @@ Feature: Establish the true capture time of every file
   """
 
   Background:
-    Given a scanned batch has reached the Assign step
+    Given a scanned batch has reached the Describe step
 
   @unmapped
   Scenario: The upload timezone starts as this machine's timezone
@@ -79,6 +79,15 @@ Feature: Establish the true capture time of every file
     And clearing it returns the file to its estimate
 
   @unmapped
+  Scenario: A manual override is entered in 24-hour text, not a locale-dependent picker
+    Given some examined files carry no camera capture time
+    When a time with a space separator is typed over one file's estimate
+    Then that file shows the typed time as entered by hand
+    # #456: the override field is a plain 24-hour text field, not a native
+    # `datetime-local` picker, so its format never depends on the machine's
+    # locale (which a US machine would otherwise show as 12-hour with AM/PM).
+
+  @unmapped
   Scenario: A selection can be spread from a start time
     Given some examined files carry no camera capture time
     When a start time and a spacing are applied to the selection
@@ -113,3 +122,43 @@ Feature: Establish the true capture time of every file
   Scenario: Upload is never blocked by a missing capture time
     Given some examined files carry no camera capture time
     Then the batch can be published without anyone entering a time
+
+  @unmapped
+  Scenario: Incomplete override typing preserves the saved time until valid or cleared
+    Given some examined files carry no camera capture time
+    When a time with a space separator is typed over one file's estimate
+    And the override is edited through incomplete text
+    Then the saved override remains unchanged while the edit is invalid
+    When the typed override is completed
+    Then the completed 24-hour override is saved
+    When the override text is emptied
+    Then the open override is empty and the file returns to its estimate
+
+  @unmapped
+  Scenario: Resetting an override refreshes its open field
+    Given some examined files carry no camera capture time
+    When a time with a space separator is typed over one file's estimate
+    And clearing it returns the file to its estimate
+    Then the open override is empty and the file returns to its estimate
+
+  @unmapped
+  Scenario: Applying a spread refreshes an open override field
+    Given some examined files carry no camera capture time
+    When a time with a space separator is typed over one file's estimate
+    And the override is edited through incomplete text
+    And a start time and a spacing are applied to the selection
+    Then the open override shows the newly spread time
+
+  @unmapped
+  Scenario: A same-time spread still replaces unfinished override text
+    Given some examined files carry no camera capture time
+    When a time with a space separator is typed over one file's estimate
+    And the override is edited through incomplete text
+    And a spread matching the saved override is applied
+    Then the open override returns to the saved time with spread provenance
+
+  @unmapped
+  Scenario: Spread start accepts late-hour text and disables Apply for incomplete text
+    Given some examined files carry no camera capture time
+    When a late-hour spread start is edited and applied
+    Then the spread uses the exact 24-hour start and spacing

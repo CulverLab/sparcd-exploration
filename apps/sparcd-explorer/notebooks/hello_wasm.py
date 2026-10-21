@@ -461,6 +461,37 @@ def _():
           model.set("access_key", stored.accessKey || "");
           model.set("secure", typeof stored.secure === "boolean" ? stored.secure : false);
           model.save_changes();
+          // Marimo does not expose aria-describedby on its checkbox API.
+          // Associate the generated control without changing its visible label.
+          function describeRemember() {
+            const sidebar = document.querySelector("aside.app-sidebar");
+            if (!sidebar) return;
+            function visit(root) {
+              if (!observedRoots.has(root)) {
+                observedRoots.add(root);
+                observer.observe(root, { childList: true, subtree: true });
+              }
+              const warning = root.querySelector("#sparcd-remember-public-computer-warning");
+              for (const wrapper of root.querySelectorAll("[data-sparcd-remember-control]")) {
+                const host = wrapper.querySelector("marimo-checkbox");
+                const checkbox = (host?.shadowRoot || wrapper).querySelector('input[type="checkbox"], [role="checkbox"]');
+                if (!warning || !checkbox) continue;
+                // IDs cannot cross Marimo's nested shadow boundaries. Derive
+                // the native control's description from its visible note.
+                checkbox.setAttribute("aria-description", warning.textContent.trim());
+                checkbox.setAttribute("aria-label", "Remember endpoint & access key on this device");
+              }
+              for (const host of root.querySelectorAll("marimo-form, marimo-dict, marimo-checkbox")) {
+                if (host.shadowRoot) visit(host.shadowRoot);
+              }
+            }
+            visit(sidebar);
+          }
+          const observedRoots = new WeakSet();
+          const observer = new MutationObserver(describeRemember);
+          observer.observe(document.body, { childList: true, subtree: true });
+          describeRemember();
+          return () => observer.disconnect();
         }
         export default { render };
         """
@@ -593,7 +624,9 @@ def _(DEFAULT_ACCESS, DEFAULT_ENDPOINT, DEFAULT_SECRET, DEFAULT_SECURE, mo, reme
 
         {secure}
 
-        {remember}
+        <span data-sparcd-remember-control>{remember}</span>
+
+        <span id="sparcd-remember-public-computer-warning"><em>(Don't set remember endpoint &amp; access key if on a public computer)</em></span>
         """)
         .batch(
             endpoint=_endpoint_in,

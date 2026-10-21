@@ -31,6 +31,25 @@ Feature: Upload and publish a batch
     And no storage path is shown
 
   @unmapped
+  Scenario: Comments are shown collapsed, expanding to reveal them
+    Given the upload has not been started
+    Then the Comments control is collapsed
+    When "Comments" is chosen
+    Then the comments are shown
+
+  @unmapped
+  Scenario: No Comments control appears when there are no comments
+    Given the upload has no comments
+    Then there is no Comments control
+
+  @unmapped
+  Scenario: Test the upload is tucked under a collapsed Advanced control
+    Given the upload has not been started
+    Then the "Test the upload" option is tucked under a collapsed Advanced control
+    When "Advanced" is chosen
+    Then the "Test the upload" option becomes available
+
+  @unmapped
   Scenario: A real upload is offered by default; a dry run is opt-in
     Given the upload has not been started
     Then dry run is switched off by default
@@ -76,14 +95,24 @@ Feature: Upload and publish a batch
     When a file has been uploaded
     Then the tool lists the upload folder and confirms every object is stored at its recorded size
     And a few of the stored objects are re-read to confirm storage kept their recorded fingerprint
-    And an object the listing contradicts is treated as a failure of that file, not as a success
-    And an object whose sha256 fingerprint is absent from storage is treated as a failure
     # One listing pass per thousand objects rather than a re-read per file: at
     # long-haul latency the extra round trip per file dominated a small upload,
     # and the listing answers the question that matters — is every object there,
     # at the size the metadata claims for it. A listing can't show the recorded
     # fingerprint, so a handful of objects are re-read for it — losing it is a
     # property of the path, not of one object.
+
+  @F1 @F1-1
+  Scenario: An object the listing contradicts is treated as a failure, not a success
+    When a real upload runs against storage that quietly truncates one object after it lands
+    Then that object is treated as a failure of that file, not as a success
+    And no metadata is published for the batch
+
+  @F1 @F1-1
+  Scenario: An object whose sha256 fingerprint is absent from storage is treated as a failure
+    When a real upload runs against storage that drops the sha256 digest for every object
+    Then the run is reported as partial
+    And no metadata is published for the batch
 
   @unmapped
   Scenario: Uploading begins before the whole batch has finished being examined
@@ -159,8 +188,9 @@ Feature: Upload and publish a batch
     And a pinned number defaults to 8
     And a pinned number can be changed while a run is in progress
     # Choosing automatic or pinned is a Settings choice, remembered for the
-    # rest of the browser session. Once pinned, the slider also appears on the
-    # Upload step and stays live while a run is going.
+    # rest of the browser session. #494 removed the Upload step's own copy of
+    # this control; Settings' slider stays live and adjustable from any
+    # section while a run is going, since the run survives navigation.
 
   @unmapped
   Scenario: A momentary failure is retried before the file is given up on
@@ -273,6 +303,8 @@ Feature: Upload and publish a batch
     When a fresh upload attempts that write
     Then the write is refused rather than replacing the existing object
     And the run reports the failure
+    And the Back button is disabled
+    And the Back explanation is keyboard discoverable
     # The storage wrapper offers no delete or copy operation, and its only
     # overwrite path is the reviewed edit-after-publish flow.
 
@@ -282,19 +314,35 @@ Feature: Upload and publish a batch
     Then in-flight transfers are abandoned
     And the run is reported as cancelled
     And files already stored remain stored
+    And the Back button is disabled
+    And the Back explanation is keyboard discoverable
     # Cancelling a real run leaves the session open in History, so it can be
     # resumed later.
 
   @unmapped
-  Scenario: Going back to Assign is blocked while a run is in progress
+  Scenario: Going back to Describe is blocked while a run is in progress
     Given a run is in progress
     Then the Back button is disabled
+
+  @AL2
+  Scenario: Going back to Describe is blocked after a real upload completes
+    Given a real upload has completed
+    Then the Back button is disabled
+    And the Back explanation is keyboard discoverable
+    # #477: Back must stay blocked so the same files can't be resubmitted to
+    # the same destination — Next batch is the only way past a completed run.
+
+  @AL2
+  Scenario: Going back to Describe is blocked after a real upload ends partially
+    Given a real upload in which some files failed after their retries
+    Then the Back button is disabled
+    # Retry failed files is the only way past a partial run — not Back.
 
   @US-007
   Scenario: The next batch starts with assignment details cleared
     Given a real upload has completed
     When "Next batch" is chosen
-    Then the wizard returns to the Files step with an empty batch
+    Then the wizard returns to the Choose step with an empty batch
     And the next batch has no collection, deployment, description or timezone selected
     And the uploader identity is still filled in
     And continuing without a timezone is disabled
@@ -314,3 +362,16 @@ Feature: Upload and publish a batch
     Then the run log has the preparing-upload entry
     And the browser wake lock was requested
     And releasing the held blob lets the upload complete
+
+  @AL2
+  Scenario: A completed dry run permits returning to Describe
+    When the operator opts into a dry run
+    And the dry run is started and completes
+    Then Back returns to Describe after the dry run
+
+  @AL2
+  Scenario: Next batch restores pre-upload Back navigation
+    Given a real upload has completed
+    When "Next batch" is chosen
+    And a fresh batch reaches Upload
+    Then Back returns to Describe before another real run starts

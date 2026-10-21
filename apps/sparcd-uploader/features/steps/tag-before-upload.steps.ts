@@ -15,7 +15,7 @@ const TAGS = {
   // IMG_0003.JPG is deliberately left alone.
 };
 
-const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag species first' });
+const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag species before upload' });
 
 /** Hand the batch over and stop at the Tagger's doorstep, holding its id. */
 async function handOff(app: App): Promise<string> {
@@ -32,25 +32,31 @@ async function handBack(app: App, id: string): Promise<void> {
 
 // --- offering the hand-off --------------------------------------------------
 
-Then('"Tag species first" sits between "Start over" and "Continue"', async ({ app }) => {
-  const row = app.page.locator('button', { hasText: 'Start over' }).locator('..');
-  const labels = await row.getByRole('button').allInnerTexts();
-  expect(labels).toEqual(['Start over', 'Tag species first', 'Continue']);
-});
+Then(
+  '"Tag species before upload" sits beside the step indicators, not with "Back" and "Continue"',
+  async ({ app }) => {
+    // #472: the hand-off action lives in the header, to the right of the step
+    // indicators — not grouped with the two batch-navigation buttons below.
+    const header = app.page.getByRole('list', { name: 'Upload steps' }).locator('..');
+    await expect(header.locator('> *').last()).toHaveText('Tag species before upload');
+    const actionsRow = app.page.getByRole('button', { name: 'Back', exact: true }).locator('..');
+    await expect(actionsRow.getByRole('button', { name: 'Tag species before upload' })).toHaveCount(0);
+  },
+);
 
 Then('it is available exactly when Continue is', async ({ app }) => {
   await expect(tagButton(app)).toBeEnabled();
   await expect(app.continueButton()).toBeEnabled();
 });
 
-Then('"Tag species first" is unavailable', async ({ app }) => {
+Then('"Tag species before upload" is unavailable', async ({ app }) => {
   await expect(tagButton(app)).toBeDisabled();
   await expect(app.continueButton()).toBeDisabled();
 });
 
 // --- handing over -----------------------------------------------------------
 
-When('"Tag species first" is chosen', async ({ app }) => {
+When('"Tag species before upload" is chosen', async ({ app }) => {
   app.notes.flipId = await handOff(app);
 });
 
@@ -96,9 +102,9 @@ Then("the browser goes to the Tagger carrying the batch's id", async ({ app }) =
 
 // --- real cross-tool hand-off through the issue #73 proxy ------------------
 
-When('"Tag species first" is chosen through the unified dev origin', async ({ app }) => {
+When('"Tag species before upload" is chosen through the unified dev origin', async ({ app }) => {
   await tagButton(app).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/tagger\/\?batch=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
 });
 
@@ -139,7 +145,7 @@ When('the real Tagger identity is set to Anita', async ({ app }) => {
 
 When('the real Tagger hands the batch back', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Done · back to Uploader' }).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/uploader\/\?flip=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/uploader\/\?flip=/);
   // A navigation resets the fake picker. Re-selecting the original dragged
   // folder is the real UI's expected return path and does not seed IndexedDB.
   await app.seedPickedFolder(app.lastSpecs);
@@ -148,7 +154,7 @@ When('the real Tagger hands the batch back', async ({ app }) => {
 });
 
 Then('the Uploader receives Coyote from the shared hand-off record', async ({ app }) => {
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   const rows = await app.listedFiles();
   const image = rows.find((row) => row.name === 'IMG_0002.JPG');
   expect(image?.species).toBe('Coyote×1');
@@ -219,7 +225,7 @@ Given('its upload failed part-way', async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
   expect(app.s3.puts.some((p) => p.key.endsWith('observations.csv'))).toBe(false);
@@ -244,7 +250,7 @@ Then('the upload finishes without going back to Inspect or the Tagger', async ({
   await app.expectStep('Upload');
   await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
   expect((app.notes.visited as string[]).filter((u) => u.includes('/tagger/'))).toEqual([]);
-  await expect(app.page.getByRole('button', { name: /Tag species first|Edit tags/ })).toHaveCount(0);
+  await expect(app.page.getByRole('button', { name: /Tag species before upload|Edit tags/ })).toHaveCount(0);
 });
 
 Given('a batch tagged in the Tagger is handed back with no remembered folder', async ({ app }) => {
@@ -270,8 +276,8 @@ Given(
   },
 );
 
-Then('the wizard is on the Inspect step with the same files', async ({ app }) => {
-  await app.expectStep('Inspect');
+Then('the wizard is on the Verify step with the same files', async ({ app }) => {
+  await app.expectStep('Verify');
   expect(await app.fileCount()).toBe(4);
 });
 
@@ -306,7 +312,7 @@ Then('the summary says how many files are tagged', async ({ app }) => {
   expect(await app.batchSummary()).toContain('2 tagged');
 });
 
-Then('the action row offers "Edit tags" instead of "Tag species first"', async ({ app }) => {
+Then('the action row offers "Edit tags" instead of "Tag species before upload"', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Edit tags' })).toBeEnabled();
   await expect(tagButton(app)).toHaveCount(0);
 });
@@ -317,10 +323,10 @@ Then('choosing it returns to the Tagger with the same batch id', async ({ app })
   expect(new URL(app.page.url()).searchParams.get('batch')).toBe(app.notes.flipId);
 });
 
-Then('choosing the folder again puts the batch back on the Inspect step', async ({ app }) => {
+Then('choosing the folder again puts the batch back on the Verify step', async ({ app }) => {
   await expect(app.page.getByRole('heading', { name: 'Choose the folder again' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   expect(await app.fileCount()).toBe(4);
 });
 
@@ -333,14 +339,14 @@ Then('a "Reopen batch" button is offered instead of the file list', async ({ app
 
 When('it is published', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 When('a dry run of it is started', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await app.startRun();
   await app.waitForRunPhase('done');
 });

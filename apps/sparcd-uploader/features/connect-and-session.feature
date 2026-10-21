@@ -26,7 +26,7 @@ Feature: Connect the uploader to storage and manage the session
     When "Login later" is chosen instead of connecting
     Then the New upload, History and Settings sections become reachable
     And a batch can be dropped and inspected with no connection
-    When the Assign step is reached with no connection
+    When the Describe step is reached with no connection
     Then it shows the connection screen instead of a collection picker
     And going back from it returns to Inspect with the batch intact
 
@@ -39,7 +39,7 @@ Feature: Connect the uploader to storage and manage the session
     And the browser is offline before deferring login
     When "Login later" is chosen instead of connecting
     Then a batch can be dropped and inspected with no connection
-    When the Assign step is reached with no connection
+    When the Describe step is reached with no connection
     Then it shows the connection screen instead of a collection picker
     And going back from it returns to Inspect with the batch intact
 
@@ -48,7 +48,7 @@ Feature: Connect the uploader to storage and manage the session
     Given no connection has been made in this browser session
     When "Login later" is chosen instead of connecting
     And a deferred batch is still being inspected
-    And the Assign step is reached with no connection
+    And the Describe step is reached with no connection
     Then it shows the connection screen instead of a collection picker
     When a connection is made
     Then Assign loads collections without losing the batch
@@ -136,10 +136,10 @@ Feature: Connect the uploader to storage and manage the session
     And no result cached under the previous connection is reused
 
   @unmapped
-  Scenario: The uploader identity starts blank
+  Scenario: A blank uploader identity defaults to the connected access key
     Given no uploader identity has been entered
     When a connection is made
-    Then the uploader identity is blank
+    Then the uploader identity defaults to the access key
     And the header shows the access key only in its masked form
 
   @unmapped
@@ -150,3 +150,7 @@ Feature: Connect the uploader to storage and manage the session
     # As-built the app passes a wildcard bucket scope to its storage wrapper for
     # both reads and writes, so the wrapper's allowlist is not acting as a
     # restriction here. The wrapper still exposes no delete or copy operation.
+
+  @unmapped
+  Scenario: Remembering connection details includes an accessible public-computer warning
+    Then the remember checkbox describes its public-computer warning

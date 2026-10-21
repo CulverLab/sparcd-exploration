@@ -47,8 +47,8 @@ export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) 
     () => getLiveConnection() ?? loadPersistedConnection(),
   );
 
-  // This chip is purely a passive display, not a source of truth for "is
-  // anyone connected" — it never answers a sibling tab's request.
+  // This chip is a passive display. The session module answers sibling
+  // requests from accepted live state, independently of this subscription.
   useEffect(() => subscribeSharedConnection(setCfg, () => null), []);
   const online = useOnline();
 

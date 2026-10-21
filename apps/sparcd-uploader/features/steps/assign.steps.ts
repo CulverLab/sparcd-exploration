@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
-import type { App } from './app';
-import { jpegAt, standardBatch } from './batches';
-import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign } from './helpers';
+import { ACCESS_KEY, type App } from './app';
+import { clipVideo, jpegAt, jpegNoTime, standardBatch } from './batches';
+import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign, rescanFromAssign } from './helpers';
 import {
   BUCKET_A,
   BUCKET_B,
@@ -26,13 +26,13 @@ const METADATA_NAMES = [
   'UploadComplete.json',
 ];
 
-Given('a scanned batch has passed the Inspect step', async ({ app }) => {
+Given('a scanned batch has passed the Verify step', async ({ app }) => {
   await app.connect();
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
 });
 
-Given('the New upload section is showing the Assign step', async ({ app }) => {
+Given('the New upload section is showing the Describe step', async ({ app }) => {
   await app.continueToAssign();
   await app.waitForCollections();
 });
@@ -64,6 +64,8 @@ Then('the Continue gate never has to ask for a collection', async ({ app }) => {
   await expect(app.continueButton()).toHaveAttribute('title', 'Select a deployment location first');
   await app.setUploader('Ada Lovelace');
   await app.chooseDeployment('Bear Canyon');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
   await expect(app.continueButton()).toBeEnabled();
   await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
 });
@@ -79,7 +81,7 @@ Then('it states that an uploader identity must be set first', async ({ app }) =>
 
 // --- the collection list ---------------------------------------------------
 
-When('the Assign step opens', async ({ app }) => {
+When('the Describe step opens', async ({ app }) => {
   await expect(app.collectionTrigger()).toBeVisible();
 });
 
@@ -301,7 +303,7 @@ Given('the location registry cannot be read with the connected credentials', asy
   await reconnectAndReturnToAssign(app);
 });
 
-Then('the Assign step explains that the registry could not be loaded', async ({ app }) => {
+Then('the Describe step explains that the registry could not be loaded', async ({ app }) => {
   await expect(app.page.getByText(/No readable settings bucket found/)).toBeVisible({ timeout: 30_000 });
 });
 
@@ -320,6 +322,7 @@ Then(
   "the tool shows the key-safe form of it that will appear in the upload's storage path and object names",
   async ({ app }) => {
     await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
     await expect(app.page.getByText(/Used in upload prefixes and object keys as/)).toContainText(
       'ada-lovelace',
     );
@@ -334,11 +337,11 @@ When('a description is entered', async ({ app }) => {
 
 Then("it is stored as the upload's description in the upload's metadata file", async ({ app }) => {
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   const uploadMeta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
-  expect(uploadMeta?.body).toContain('"description": "South ridge, July retrieval"');
+  expect(JSON.parse(uploadMeta!.body).description).toMatch(/ - South ridge, July retrieval$/);
 });
 
 Given('a collection, a deployment and an uploader identity have been chosen', async ({ app }) => {
@@ -389,7 +392,7 @@ async function uploadAt(app: App, location: string): Promise<void> {
   await app.chooseDeployment(location);
   await app.setUploader('Ada Lovelace');
   await app.continueToUpload();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   const uploads = (app.notes.uploads ??= []) as PublishedBatch[];
@@ -434,4 +437,200 @@ Then('every image and every observation in each upload points at that location',
     expect(media).toHaveLength(u.files);
     expect(new Set(observations.map((r) => r[3]))).toEqual(new Set(media.map((r) => r[0])));
   }
+});
+
+When('the mountain range and collection date are entered with notes {string}', async ({ app }, notes: string) => {
+  await app.page.clock.setSystemTime(new Date('2026-10-14T12:00:00-04:00'));
+  app.notes.optionalComments = notes;
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+  await app.page.getByLabel('Comments (optional)', { exact: true }).fill(notes);
+});
+
+Then('the required comment is previewed without changing the optional notes', async ({ app }) => {
+  const notes = app.notes.optionalComments as string;
+  const prefix = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01';
+  const expected = notes ? `${prefix} - ${notes}` : prefix;
+  app.notes.expectedComment = expected;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
+  await expect(app.page.getByLabel('Comments (optional)', { exact: true })).toHaveValue(notes);
+});
+
+Then('the generated comment and optional notes are written to upload metadata', async ({ app }) => {
+  const expected = app.notes.expectedComment as string;
+  await app.continueToUpload();
+  await (await app.dryRunCheckbox()).uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+  const meta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
+  expect(meta).toBeDefined();
+  expect(JSON.parse(meta!.body).description).toBe(expected);
+});
+
+When('the other assignment fields are complete but both comment fields are empty', async ({ app }) => {
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('');
+  await expect(app.page.getByLabel('Mountain range (required)', { exact: true })).toHaveAttribute('required', '');
+  await expect(app.page.getByLabel('Date collected (required)', { exact: true })).toHaveAttribute('required', '');
+});
+
+When('a whitespace-only mountain range is entered', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('   ');
+});
+
+When('a mountain range is entered without a collection date', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+});
+
+When('the collection date is entered', async ({ app }) => {
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+});
+
+When('the mountain range is cleared with the collection date still entered', async ({ app }) => {
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('');
+});
+
+Then('Continue explains that a mountain range is required', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.continueButton()).toHaveAttribute('aria-describedby', 'upload-continue-help');
+  await expect(app.page.locator('#upload-continue-help')).toContainText('Enter a mountain range before continuing');
+});
+
+Then('Continue explains that a collection date is required', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.page.locator('#upload-continue-help')).toContainText('Enter a date collected before continuing');
+});
+
+Then('Continue allows the Upload step', async ({ app }) => {
+  await expect(app.continueButton()).toBeEnabled();
+  await expect(app.continueButton()).toHaveAttribute('title', 'Continue to upload');
+});
+
+When('the next day arrives while Describe stays open', async ({ app }) => {
+  await app.page.clock.setSystemTime(new Date('2026-10-15T00:00:01-04:00'));
+});
+
+Then("the comment preview keeps its original upload date", async ({ app }) => {
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(
+    'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch',
+  );
+});
+
+When('Upload is opened and another day arrives before starting', async ({ app }) => {
+  await app.continueToUpload();
+  await app.page.clock.setSystemTime(new Date('2026-10-16T00:00:01-04:00'));
+  await app.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+});
+
+Then('the Upload preview keeps the original preview date', async ({ app }) => {
+  const expected = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch';
+  const preview = expected.replace(' - Overnight batch', '');
+  app.notes.expectedComment = expected;
+  app.notes.expectedPreview = preview;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(preview);
+  const comments = app.page.getByRole('button', { name: 'Comments', exact: true });
+  await expect(comments).toHaveAttribute('aria-expanded', 'false');
+  await expect(app.page.getByText('Overnight batch', { exact: true })).toHaveCount(0);
+  await comments.click();
+  await expect(comments.locator('..')).toContainText('Overnight batch');
+  await comments.click();
+});
+
+When('the batch is uploaded after midnight', async ({ app }) => {
+  await (await app.dryRunCheckbox()).uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('done');
+});
+
+Then('the saved comment includes optional notes and keeps its original preview date', async ({ app }) => {
+  const expected = app.notes.expectedComment as string;
+  const meta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
+  expect(JSON.parse(meta!.body).description).toBe(expected);
+  const batch = (await app.readBatchRecords())[0];
+  expect(String(batch.startedAt).slice(0, 10)).toBe('2026-10-16');
+  expect(batch.requiredComments).toMatchObject({ previewUploadDate: '2026-10-14' });
+  await app.page.clock.setSystemTime(new Date('2026-10-17T12:00:00-04:00'));
+  await app.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(app.notes.expectedPreview as string);
+});
+
+Given('the batch contains one JPEG and two MP4 videos', async ({ app }) => {
+  await rescanFromAssign(app, [standardBatch()[0], clipVideo('FIRST.MP4'), clipVideo('SECOND.MP4')]);
+});
+
+Then('Describe help is keyboard accessible and clamped at phone widths', async ({ app }) => {
+  await rescanFromAssign(app, [jpegNoTime('NO_TIME.JPG')]);
+  await expect(app.page.getByRole('button', { name: 'About Capture times', exact: true })).toBeVisible();
+  for (const width of [320, 375]) {
+    await app.page.setViewportSize({ width, height: 640 });
+    for (const label of ['Collection', 'Site ID', 'Uploader', 'Timezone of images', 'Capture times', 'Mountain range', 'Date collected', 'Comments']) {
+      const button = app.page.getByRole('button', { name: `About ${label}`, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      await button.focus();
+      await expect(button).toHaveAttribute('aria-expanded', 'true');
+      const popup = app.page.getByRole('tooltip');
+      await expect(popup).toBeVisible();
+      const box = await popup.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(16);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width - 16);
+      expect(box!.y).toBeGreaterThanOrEqual(16);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(640 - 16);
+      await app.page.keyboard.press('Escape');
+      await expect(button).toHaveAttribute('aria-expanded', 'false');
+      await expect(button).toBeFocused();
+      await expect(app.page.getByRole('tooltip')).toHaveCount(0);
+    }
+  }
+  const hover = app.page.getByRole('button', { name: 'About Collection', exact: true });
+  await hover.hover();
+  const tooltip = app.page.getByRole('tooltip');
+  await expect(tooltip).toBeVisible();
+  await tooltip.hover();
+  // Stay past the pointer-transfer grace period to prove the help is hoverable.
+  await app.page.waitForTimeout(200);
+  await expect(tooltip).toBeVisible();
+  await app.page.mouse.move(0, 0);
+  await expect(tooltip).toHaveCount(0);
+});
+
+Then('Describe help can be opened and dismissed on a touch screen', async ({ app, browser, s3 }) => {
+  const { App } = await import('./app');
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 375, height: 640 }, baseURL: new URL(app.page.url()).origin });
+  try {
+    const page = await context.newPage();
+    const touchApp = new App(page, s3);
+    await touchApp.connect();
+    await touchApp.dropFolder(standardBatch());
+    await touchApp.waitForInspected();
+    await touchApp.continueToAssign();
+    await touchApp.waitForCollections();
+    const button = page.getByRole('button', { name: 'About Timezone of images', exact: true });
+    await button.tap();
+    const popup = page.getByRole('tooltip');
+    await expect(popup).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 480 });
+    await expect.poll(async () => {
+      const bounds = await popup.boundingBox();
+      return !!bounds && bounds.x >= 16 && bounds.x + bounds.width <= 304 && bounds.y >= 16 && bounds.y + bounds.height <= 464;
+    }).toBe(true);
+    await page.evaluate(() => window.scrollBy(0, 100));
+    await expect(popup).toBeInViewport();
+    await button.tap();
+    await expect(popup).toHaveCount(0);
+    await button.tap();
+    await expect(popup).toBeVisible();
+    await page.locator('#uploadTimeZone').tap();
+    await expect(popup).toHaveCount(0);
+  } finally { await context.close(); }
+});
+
+When('the blank Describe identity field loses focus', async ({ app }) => {
+  await app.page.locator('#uploaderUser').press('Tab');
+});
+Then('Describe restores the connected default identity', async ({ app }) => {
+  await expect(app.page.locator('#uploaderUser')).toHaveValue(ACCESS_KEY);
 });

@@ -171,6 +171,16 @@ Feature: Publish local identifications back to the collection
     Then the diff counts it as 1 addition and 0 modifications
 
   @unmapped
+  Scenario: Header sync explanations are available to keyboard users
+    Then the header sync explanation is available on hover and keyboard focus
+
+  @unmapped
+  Scenario: A completed sync does not claim questionable-only edits were saved
+    Given a different image has only a questionable edit
+    When the sync is run
+    Then the completed-sync explanation leaves questionable-only edits visibly unsaved
+
+  @unmapped
   Scenario: The workspace reports its sync state at a glance
     Then the header shows whether the upload is local-only, has unsynced edits, is syncing, is synced, is in conflict, was a dry-run, or errored
     And the state is distinguishable by shape and glyph, not by colour alone

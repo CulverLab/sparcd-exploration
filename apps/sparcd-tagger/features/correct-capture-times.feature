@@ -50,8 +50,24 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then time shift selection is disabled with an explanation
 
   @unmapped
-  Scenario: A selection containing exactly one frame can be shifted
-    Given exactly one image is selected
+  Scenario Outline: A selection containing exactly one frame can be shifted
+    Given exactly one image is selected in the "<view>" Overview
+    When that one-frame selection is shifted
+    Then exactly that selected image receives a time override
+    When that one-image selection is toggled off
+    Then time shift selection is disabled with an explanation
+
+    Examples:
+      | view   |
+      | grid   |
+      | list   |
+      | narrow |
+
+  @unmapped
+  Scenario: Selection time shift excludes images hidden by a filter
+    Given several images are selected
+    When the selection is filtered down to IMG001.JPG
+    Then time shift selection is enabled
     When that one-frame selection is shifted
     Then exactly that selected image receives a time override
 
@@ -95,3 +111,19 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     When a whole-upload shift is applied
     Then the same images remain grouped together
     And only the times shown on the burst bands change
+
+  @unmapped
+  Scenario: Disabled shift reasons are available on touch without overflowing the viewport
+    Given a single image is focused with no selection
+    Then disabled time-shift hints are touch-readable and stay within a narrow viewport
+
+  @unmapped
+  Scenario: Only the current disabled time-shift explanation is displayed
+    Given an upload with no capture times is open in the tagging workspace
+    Then only one time-shift explanation is visible at a time
+
+  @unmapped
+  Scenario: Keyboard selection transfers focus from the explanation to the enabled action
+    Given a single image is focused with no selection
+    When the keyboard selects images while the disabled selection explanation has focus
+    Then the enabled selection time-shift button receives focus

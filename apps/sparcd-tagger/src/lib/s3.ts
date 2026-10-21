@@ -108,13 +108,15 @@ export async function listUploads(cfg: S3Config, bucket: string, uuid: string): 
 // A cheap per-upload summary for the Browse list: the canonical tally from
 // `UploadMeta.json` (image count + how many already carry a species) plus the
 // deployment location label(s) from `deployments.csv`. Two small GETs — no image
-// walk — so the list can render Date / Deployment / Images / Tagged per row.
+// walk — so the list can render Date / Location / Tagged·Total per row.
+export type DeploymentLabel = { name: string; locationId: string };
+
 export type UploadSummary = {
   imageCount: number;
   imagesWithSpecies: number;
   uploadUser: string;
   description: string;
-  deployments: string[]; // location names, deduped; usually one
+  deployments: DeploymentLabel[]; // location name + ID, deduped; usually one
 };
 
 export async function loadUploadSummary(
@@ -134,10 +136,17 @@ export async function loadUploadSummary(
 
   // The location label is secondary — a missing or unreadable `deployments.csv`
   // must not blank an otherwise-good row, so it degrades to no label.
-  let deployments: string[] = [];
+  let deployments: DeploymentLabel[] = [];
   try {
     const rows = parseDeployments(decode(await client.getObject(bucket, `${uploadPrefix}deployments.csv`)));
-    deployments = [...new Set(rows.map((d) => d.locationName.trim()).filter(Boolean))];
+    const seen = new Map<string, DeploymentLabel>();
+    for (const d of rows) {
+      const name = d.locationName.trim();
+      if (!name) continue;
+      const key = `${name}\u0000${d.locationId}`;
+      if (!seen.has(key)) seen.set(key, { name, locationId: d.locationId });
+    }
+    deployments = [...seen.values()];
   } catch {
     // No deployment label for this row.
   }

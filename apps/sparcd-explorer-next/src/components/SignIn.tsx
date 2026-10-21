@@ -20,6 +20,7 @@ const LABELS = {
   accessKey: 'Username',
   secretKey: 'Password',
   remember: 'Remember me on this device',
+  rememberHelp: 'Leave this unticked on a shared or public computer.',
   submit: 'Sign in',
 };
 

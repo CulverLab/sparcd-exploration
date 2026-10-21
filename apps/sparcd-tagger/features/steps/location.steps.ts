@@ -11,7 +11,8 @@ import {
   sectionTab,
   enterFocusView,
 } from './support/world';
-import { LOCATION_NAME, DEPLOYMENT } from './support/data';
+import { LOCATION_NAME, DEPLOYMENT, BUCKET, PREFIX_A, PREFIX_B } from './support/data';
+import { MEDIA_COL, parseCsvRows, serializeCsvRows } from '@sparcd/camtrap';
 
 const SENSITIVITY_WORDS =
   /sensitiv|protected species|redact|coarsen|withheld|obfuscat|restricted location/i;
@@ -42,14 +43,112 @@ Given('an image is open in the Focus view', async ({ page }) => {
 });
 
 Then(
-  'the deployment identifier recorded for that image is shown alongside its file name',
+  "the location name and ID recorded for that image's deployment are shown alongside its file name",
   async ({ page }) => {
     const focus = page.getByRole('dialog', { name: 'Focus image viewer' });
     await expect(focus).toContainText('IMG001.JPG');
-    await expect(focus).toContainText(DEPLOYMENT);
-    await expect(focus.getByLabel(`Deployment: ${DEPLOYMENT}`)).toBeVisible();
+    await expect(focus).not.toContainText(DEPLOYMENT);
+    await expect(focus.getByLabel(`Location: ${LOCATION_NAME} (SAN15)`)).toBeVisible();
   },
 );
+
+Given('an image is open in the Focus view for an upload with no readable deployment file', async ({ page, s3 }) => {
+  expect(s3.has(BUCKET, `${PREFIX_B}deployments.csv`)).toBe(false);
+  await openAppConnected(page);
+  await selectCollection(page);
+  await openUpload(page, 'fielduser');
+  await enterFocusView(page);
+});
+
+Then('no location is shown alongside its file name', async ({ page }) => {
+  const focus = page.getByRole('dialog', { name: 'Focus image viewer' });
+  await expect(focus).toContainText(/\.(JPG|MP4)/);
+  await expect(focus.getByLabel(/^Location:/)).toHaveCount(0);
+});
+
+Given(/^the recorded deployment has (an empty file|no location name|no location ID|whitespace fields)$/, async ({ s3 }, state: string) => {
+  const key = `${PREFIX_A}deployments.csv`;
+  if (state === 'an empty file') {
+    s3.put(BUCKET, key, '', 'text/csv');
+    return;
+  }
+  const rows = parseCsvRows(s3.text(BUCKET, key));
+  if (state === 'no location name') rows[0][2] = '';
+  else if (state === 'no location ID') rows[0][1] = '';
+  else {
+    rows[0][1] = '  ';
+    rows[0][2] = '\t ';
+  }
+  s3.put(BUCKET, key, serializeCsvRows(rows), 'text/csv');
+});
+
+When('the recorded location lookup becomes unreadable', async ({ page, s3 }) => {
+  const key = `${PREFIX_A}deployments.csv`;
+  await expect(page.getByLabel(`Location: ${LOCATION_NAME} (SAN15)`)).toBeVisible();
+  const before = s3.readCount(key);
+  s3.failGetsWith(key, 0, 403, 'AccessDenied');
+  await page.clock.install();
+  await page.clock.fastForward(61_000);
+  // Model switching away and returning: Query only refetches on an actual
+  // visibility transition, rather than a duplicate event while already focused.
+  await page.evaluate(() => {
+    for (const state of ['hidden', 'visible']) {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+      document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+    }
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+  await expect.poll(() => s3.readCount(key)).toBeGreaterThan(before);
+  await expect(page.getByRole('dialog', { name: 'Focus image viewer' }).getByLabel(/^Location:/)).toHaveCount(0);
+});
+
+const LONG_LOCATION_NAME = 'San Pedro research station beside the western mountain range and riparian corridor';
+const LONG_LOCATION_ID = 'SAN15-WESTERN-RIPARIAN-CORRIDOR';
+
+Given('the recorded location has a long name and ID and the image has an EXIF warning', async ({ s3 }) => {
+  const deploymentsKey = `${PREFIX_A}deployments.csv`;
+  const deployments = parseCsvRows(s3.text(BUCKET, deploymentsKey));
+  deployments[0][1] = LONG_LOCATION_ID;
+  deployments[0][2] = LONG_LOCATION_NAME;
+  s3.put(BUCKET, deploymentsKey, serializeCsvRows(deployments), 'text/csv');
+  const mediaKey = `${PREFIX_A}media.csv`;
+  const media = parseCsvRows(s3.text(BUCKET, mediaKey));
+  media[0][MEDIA_COL.comments] = '[TIMESTAMP:exif-modify]';
+  s3.put(BUCKET, mediaKey, serializeCsvRows(media), 'text/csv');
+});
+
+Then('the Focus header fits at {int} pixels with its full accessible location', async ({ page }, width: number) => {
+  await page.setViewportSize({ width, height: 900 });
+  const focus = page.getByRole('dialog', { name: 'Focus image viewer' });
+  const location = focus.getByLabel(`Location: ${LONG_LOCATION_NAME} (${LONG_LOCATION_ID})`);
+  await expect(location).toBeVisible();
+  await expect(location).toHaveAttribute('title', `Location: ${LONG_LOCATION_NAME} (${LONG_LOCATION_ID})`);
+  const controls = [
+    focus.getByText('Focus · IMG001.JPG', { exact: true }),
+    location,
+    focus.getByText('EXIF Modified', { exact: true }),
+    focus.getByRole('button', { name: 'Close Focus', exact: true }),
+  ];
+  const boxes = [];
+  for (const control of controls) {
+    await expect(control).toBeVisible();
+    const box = await control.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+    boxes.push(box!);
+  }
+  expect(boxes[0].width).toBeGreaterThanOrEqual(80);
+  expect(boxes[3].width).toBeGreaterThanOrEqual(44);
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      expect(a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height).toBe(false);
+    }
+  }
+  await controls[3].click();
+  await expect(focus).toHaveCount(0);
+});
 
 When('any view, dialog or synced file is produced', async ({ page }) => {
   await selectCollection(page);

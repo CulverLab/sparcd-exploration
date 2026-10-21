@@ -12,6 +12,7 @@ export function Settings() {
   const setSection = useStore((s) => s.setSection);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
+  const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
   const concurrencyMode = useStore((s) => s.concurrencyMode);
   const setConcurrencyMode = useStore((s) => s.setConcurrencyMode);
   const concurrency = useStore((s) => s.uploadConcurrency);
@@ -53,12 +54,14 @@ export function Settings() {
               </p>
               <button
                 onClick={() => void logout()}
+                aria-describedby="settings-disconnect-help"
                 className="border border-ink text-ink px-3.5 py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
                 Disconnect
               </button>
-              <p className="font-body text-[12px] text-inkMute">
-                Clears this browser's local upload sessions so the next person connects to a clean app.
+              <p id="settings-disconnect-help" className="font-body text-[12px] text-inkMute">
+                Clears this browser's local upload sessions and logs you out. Remembered connection
+                details remain. Disconnect before leaving a shared or public computer.
               </p>
             </>
           ) : (
@@ -75,16 +78,17 @@ export function Settings() {
         </div>
       </section>
 
-      <section>
-        <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-3">
+      <details className="border border-ruleSoft bg-panel">
+        <summary className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft px-5 py-4 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
           Defaults
-        </h2>
-        <div className="border border-ruleSoft bg-panel p-5 space-y-4">
+        </summary>
+        <div className="border-t border-ruleSoft p-5 space-y-4">
           <label className="block">
             <span className="block font-body text-[13px] text-inkSoft mb-1.5">Uploader identity</span>
             <input
               value={uploaderUser}
               onChange={(e) => setUploaderUser(e.target.value)}
+              onBlur={ensureUploaderIdentity}
               placeholder="e.g. John Doe"
               className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
             />
@@ -95,9 +99,17 @@ export function Settings() {
               ) : (
                 <span className="italic">a key-safe slug</span>
               )}
-              .
+              . A blank identity defaults to your connected Access key when you leave the field.
             </span>
           </label>
+        </div>
+      </details>
+
+      <details className="border border-ruleSoft bg-panel">
+        <summary className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft px-5 py-4 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+          Advanced
+        </summary>
+        <div className="border-t border-ruleSoft p-5 space-y-4">
           <div className="block">
             <span className="block font-body text-[13px] text-inkSoft mb-1.5">
               Upload concurrency
@@ -118,8 +130,9 @@ export function Settings() {
             </div>
             {concurrencyMode === 'manual' && (
               <div className="flex items-center gap-3 mt-3">
-                <label className="font-body text-[13px] text-inkSoft w-28">Parallel lanes</label>
+                <label htmlFor="upload-concurrency" className="font-body text-[13px] text-inkSoft w-28">Parallel lanes</label>
                 <input
+                  id="upload-concurrency"
                   type="range"
                   min={4}
                   max={32}
@@ -137,7 +150,7 @@ export function Settings() {
             </span>
           </div>
         </div>
-      </section>
+      </details>
 
       {pendingResumable !== null && (
         <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4">

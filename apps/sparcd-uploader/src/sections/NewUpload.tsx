@@ -9,6 +9,7 @@ import { Upload } from './Upload';
 import { canPickFolder, formatBytes, supportsDirectoryHandle } from '../lib/scanFiles';
 import { summarize } from '../lib/validation';
 import { ensureProcessing } from '../lib/processing';
+import { selectResumeNotice } from '../lib/resumeNotice';
 import { listResumable, fileStateCounts } from '../lib/db';
 import { reselectFolder } from '../lib/resume';
 import type { FlipRecord } from '@sparcd/flip';
@@ -23,7 +24,7 @@ import {
 } from '../lib/flip';
 
 
-type OpenSession = { stamp: string; done: number; total: number; others: number };
+type OpenSession = NonNullable<ReturnType<typeof selectResumeNotice>>;
 
 // A reload lands on the empty Drop step, which gives no sign that an
 // interrupted wet upload is still resumable in IndexedDB. Point at History,
@@ -31,31 +32,51 @@ type OpenSession = { stamp: string; done: number; total: number; others: number 
 function ResumeNotice() {
   const setSection = useStore((s) => s.setSection);
   const [open, setOpen] = useState<OpenSession | null>(null);
+  const [readFailed, setReadFailed] = useState(false);
 
   useEffect(() => {
+    let live = true;
     void (async () => {
-      const [latest, ...others] = await listResumable();
-      if (!latest) return;
-      const counts = await fileStateCounts(latest.id);
-      setOpen({
-        stamp: latest.uploadPrefix.slice(latest.uploadPrefix.lastIndexOf('/') + 1),
-        done: counts.done,
-        total: latest.totalFiles,
-        others: others.length,
-      });
-    })();
+      const batches = await listResumable();
+      const candidates = await Promise.all(batches.map(async (batch) => ({
+        batch, counts: await fileStateCounts(batch.id),
+      })));
+      if (live) setOpen(selectResumeNotice(candidates));
+    })().catch(() => {
+      // IndexedDB access can be unavailable; do not leave an unhandled rejection.
+      if (live) setReadFailed(true);
+    });
+    return () => { live = false; };
   }, []);
 
+  if (readFailed) return <div role="status" className="mb-4 border border-warn bg-paper p-3 text-warn">
+    Could not check unfinished uploads. <button type="button" className="underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setSection('history')}>Open History</button> to review saved uploads.
+  </div>;
   if (!open) return null;
 
+  const hasFailures = open.failed > 0;
+
   return (
-    <div className="mb-4 flex flex-col gap-2 border border-ruleSoft bg-paper px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-      <p className="font-body text-[13px] text-inkSoft">
-        An interrupted upload is waiting:{' '}
-        <span className="font-mono text-ink">{open.stamp}</span> —{' '}
+    <div role="status" aria-label="Unfinished uploads"
+      className={`mb-4 flex flex-col gap-2 border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between ${
+        hasFailures || open.publicationIncomplete ? 'border-warn bg-paper' : 'border-warn/40 bg-paper'
+      }`}
+    >
+      <p className="min-w-0 break-words font-body text-[13px] text-warn">
+        {hasFailures ? 'An interrupted upload failed:' : open.publicationIncomplete ? 'An upload needs publication:' : 'An interrupted upload is waiting:'}{' '}
+        <span className="font-mono text-ink break-all">{open.stamp}</span> —{' '}
         <span className="font-mono text-ink">{open.done}</span> of{' '}
-        <span className="font-mono text-ink">{open.total}</span> files uploaded.
-        {open.others > 0 && ` (+${open.others} more in History)`}
+        <span className="font-mono text-ink">{open.total}</span> files uploaded
+        {hasFailures && (
+          <>
+            , <span className="font-mono font-[600] text-warn">✕ {open.failed} failed</span>
+          </>
+        )}
+        .{open.others > 0 && ` (+${open.others} more in History)`}
+        {open.failedUploads > 1 && ` ${open.failedUploads} uploads have failed files.`}
+        {hasFailures ? ' Open History to fix.' : open.publicationIncomplete
+          ? ' All files uploaded, but publication is incomplete. Open History to review and finish.'
+          : ' Open History to review and continue.'}
       </p>
       <button
         type="button"
@@ -124,8 +145,26 @@ export function NewUpload() {
 
   return (
     <div className="px-6 py-6">
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <StepIndicator current={step} />
+        {step === 'inspect' && (
+          <button
+            disabled={!summary.ready}
+            onClick={() => (flipId ? reopenTagger(flipId) : void handOffToTagger())}
+            title={
+              flipId
+                ? 'Go back to the tagger and pick up where you left off'
+                : summary.ready
+                  ? 'Identify species in the Tagger before uploading'
+                  : 'Resolve files that need attention first'
+            }
+            className={`min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+              summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
+            }`}
+          >
+            {flipId ? 'Edit tags' : 'Tag species before upload'}
+          </button>
+        )}
       </div>
 
       {step === 'drop' &&
@@ -140,7 +179,7 @@ export function NewUpload() {
 
       {step === 'inspect' && (
         <div className="space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-3">
             <p className="font-body text-[14px] text-inkSoft">
               <span className="font-mono text-ink">{summary.processed}</span> of{' '}
               <span className="font-mono text-ink">{files.length}</span> files processed ·{' '}
@@ -200,34 +239,19 @@ export function NewUpload() {
                 </>
               )}
             </p>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex justify-center gap-3">
               <button
                 onClick={resetBatch}
-                className="flex-1 sm:flex-none min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                title="Discard this batch and return to Choose"
+                className="min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               >
-                Start over
-              </button>
-              <button
-                disabled={!summary.ready}
-                onClick={() => (flipId ? reopenTagger(flipId) : void handOffToTagger())}
-                title={
-                  flipId
-                    ? 'Go back to the tagger and pick up where you left off'
-                    : summary.ready
-                      ? 'Identify species in the Tagger before uploading'
-                      : 'Resolve files that need attention first'
-                }
-                className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-                  summary.ready ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
-                }`}
-              >
-                {flipId ? 'Edit tags' : 'Tag species first'}
+                Back
               </button>
               <button
                 disabled={!summary.ready}
                 onClick={() => setStep('assign')}
                 title={summary.ready ? 'Continue to assignment' : 'Resolve files that need attention first'}
-                className={`flex-1 sm:flex-none min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+                className={`min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
                   summary.ready
                     ? `hover:opacity-90 hover:animate-none ${throb ? 'animate-throb' : ''}`
                     : 'opacity-40 cursor-not-allowed'

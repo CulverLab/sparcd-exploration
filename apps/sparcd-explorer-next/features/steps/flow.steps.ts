@@ -242,6 +242,45 @@ When('I sign out and sign in as {string} in the second tab', async ({ scratch },
   await expect(second.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
 });
 
+// What a tab that stays open on an old sign-in would send when asked.
+Given('another tab holds on to this sign-in', async ({ page, context, scratch }) => {
+  scratch.oldSignIn = await page.evaluate(() => {
+    const { __sparcdRevision: _, ...config } = JSON.parse(sessionStorage.getItem('sparcd-connection-tab')!);
+    return { ...JSON.parse(localStorage.getItem('sparcd-connection-revision')!), type: 'connect', config };
+  });
+  const stale = await context.newPage();
+  await stale.route('**/stale-tab', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Stale tab</title>' }));
+  await stale.goto(new URL('/stale-tab', page.url()).href);
+  scratch.stale = stale;
+});
+
+When('I sign out and sign in as {string}', async ({ page }, name: string) => {
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await signIn(page, name);
+  await expect(page.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
+});
+
+// The barrier arrives after the old sign-in, so hearing it means this tab has handled it.
+When('the other tab sends its old sign-in', async ({ page, scratch }) => {
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('sparcd-connection-live');
+    (window as unknown as { heard: Promise<void> }).heard = new Promise((resolve) =>
+      channel.addEventListener('message', (e) => e.data?.type === 'test-barrier' && resolve()),
+    );
+  });
+  await (scratch.stale as Page).evaluate((old) => {
+    const channel = new BroadcastChannel('sparcd-connection-live');
+    channel.postMessage(old);
+    channel.postMessage({ type: 'test-barrier' });
+    channel.close();
+  }, scratch.oldSignIn);
+  await page.evaluate(() => (window as unknown as { heard: Promise<void> }).heard);
+});
+
+When('I reload the page', async ({ page }) => {
+  await page.reload();
+});
+
 async function showsChooserFor(page: Page, name: string) {
   await expect(page.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
   await expect(page.getByText(`Signed in as ${name}`)).toBeVisible();

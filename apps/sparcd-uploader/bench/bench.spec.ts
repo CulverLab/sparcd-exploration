@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -91,15 +91,22 @@ test('uploads the fixed corpus through the real app', async ({ page }) => {
   const inspectedAt = performance.now();
 
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await expect(page.locator('button[aria-haspopup="listbox"]').first()).toBeVisible();
   const deployment = page.locator('button[aria-haspopup="listbox"]').nth(1);
   await deployment.click();
   await page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: 'Bear Canyon' }).first().click();
   await page.getByPlaceholder('e.g. John Doe').first().fill(`Perf Runner ${runIndex}`);
+  await page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled();
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Upload', exact: true })).toBeVisible();
-  const dryRun = page.getByRole('checkbox');
+  const advanced = page.getByRole('button', { name: 'Advanced', exact: true });
+  await expect(advanced).toHaveAttribute('aria-expanded', 'false');
+  await advanced.click();
+  const dryRun = page.getByRole('checkbox', { name: 'Test the upload, nothing is written', exact: true });
+  await expect(dryRun).toBeVisible();
   if (await dryRun.isChecked()) await dryRun.uncheck();
   await page.getByRole('button', { name: 'Start upload' }).click();
   await expect(page.getByRole('button', { name: 'Next batch' })).toBeVisible({ timeout: 120_000 });
@@ -123,6 +130,10 @@ test('uploads the fixed corpus through the real app', async ({ page }) => {
   expect(media).toHaveLength(362);
   expect(media.reduce((sum, item) => sum + (item.Size ?? 0), 0)).toBe(TOTAL_MEDIA_BYTES);
   expect(metadata).toHaveLength(5);
+  const uploadMeta = await s3.send(new GetObjectCommand({ Bucket: COLLECTION_BUCKET, Key: `${uploadPrefix}/UploadMeta.json` }));
+  const meta = JSON.parse(await uploadMeta.Body!.transformToString());
+  expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - 362 images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01$/);
+  expect(meta.imageCount).toBe(362);
   // 360 single PUTs, 2x2 multipart parts, one listing page covering all 362
   // blobs, three spread-out HEAD samples for the digest contract, and 5 metadata PUTs.
   // The request profile is deterministic — any deviation (extra HEADs, retries,

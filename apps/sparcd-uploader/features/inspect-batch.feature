@@ -1,9 +1,9 @@
 # DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-uploader (src/sections/NewUpload.tsx, src/components/FileList.tsx, src/lib/validation.ts, src/lib/processing.ts, src/lib/processPool.ts, src/workers/fileProcessor.worker.ts, test/validation.test.ts).
 
-Feature: Inspect the scanned batch before assigning it
+Feature: Verify the scanned batch before describing it
 
   """
-  As-built flow: step 2 of 4 ("Inspect"). Every scanned file is examined in the
+  As-built flow: step 2 of 4 ("Verify"). Every scanned file is examined in the
   background — capture time, camera, dimensions, a thumbnail and a content
   fingerprint — and each file gets a verdict. Problems that would corrupt the
   upload block the batch; everything else is surfaced as a warning the user can
@@ -12,7 +12,7 @@ Feature: Inspect the scanned batch before assigning it
 
   Background:
     Given a folder of media has been scanned
-    And the New upload section is showing the Inspect step
+    And the New upload section is showing the Verify step
 
   @F1
   Scenario: Every file's capture time and content fingerprint are established before upload
@@ -40,7 +40,7 @@ Feature: Inspect the scanned batch before assigning it
   @unmapped
   Scenario: A new batch starts with the per-file list folded
     When "Show files" is chosen
-    And "Start over" is chosen
+    And "Back" is chosen
     And another folder is dropped
     Then the summary line is showing and the per-file list is hidden
 
@@ -54,7 +54,7 @@ Feature: Inspect the scanned batch before assigning it
   Scenario: A file that cannot be examined blocks the batch
     Given one file fails to be examined
     Then that file is marked as needing attention
-    And the batch cannot continue to the Assign step until it is resolved
+    And the batch cannot continue to the Describe step until it is resolved
     # Resolving it means dropping the file from the batch; there is no retry
     # of a single file's examination.
 
@@ -67,8 +67,8 @@ Feature: Inspect the scanned batch before assigning it
   @unmapped
   Scenario: A file with no capture time is a warning here, not a blocker
     Given a file carries no camera capture time
-    Then it is shown as a warning at Inspect
-    And the batch can still continue to the Assign step, where the estimate can be overridden
+    Then it is shown as a warning at Verify
+    And the batch can still continue to the Describe step, where the estimate can be overridden
 
   @unmapped
   Scenario: Files with identical content are flagged as duplicates
@@ -109,11 +109,51 @@ Feature: Inspect the scanned batch before assigning it
 
   @unmapped
   Scenario: Starting over discards the batch
-    When "Start over" is chosen
-    Then the batch is cleared and the wizard returns to the Files step
+    When "Back" is chosen
+    Then the batch is cleared and the wizard returns to the Choose step
 
   @unmapped
   Scenario: The file list stays usable for a very large batch
     Given a batch of several thousand files
     Then the list scrolls smoothly with only the visible rows drawn
     And files can be stepped through and dropped from the keyboard
+
+  @unmapped
+  Scenario: Local image preview owns focus and history without changing the batch
+    When "Show files" is chosen
+    Then the fitted image preview supports keyboard, dismissal and offline viewing
+
+  @unmapped
+  Scenario: Inspect video preview and narrow screen remain read only
+    When "Show files" is chosen
+    Then the video preview is fitted and reports decoding errors without changing the batch
+
+  @unmapped
+  Scenario: Preview releases local media and closes when its file is removed
+    When "Show files" is chosen
+    Then removing the previewed file closes it and releases its local URL
+
+  @unmapped
+  Scenario: Playable original video keeps native controls and stops on close
+    When "Show files" is chosen
+    Then the original local video plays offline and stops on close
+
+  @unmapped
+  Scenario: Preview preserves a filtered virtual list and restores fallback focus
+    When "Show files" is chosen
+    Then preview preserves filter and scroll and restores focus after virtualization
+
+  @unmapped
+  Scenario: Preview loading and image errors are safe in either theme
+    When "Show files" is chosen
+    Then preview loading and image errors leave the batch intact in light and dark themes
+
+  @unmapped
+  Scenario: Resetting a batch closes its preview and releases the media
+    When "Show files" is chosen
+    Then resetting the batch closes the preview and releases the local media
+
+  @unmapped
+  Scenario: Long preview filenames remain readable at phone width
+    When "Show files" is chosen
+    Then a long preview filename wraps at phone width in both themes
