@@ -56,6 +56,8 @@ type State = {
   checkingFiles: boolean;
   /** Uploads whose folder the last listing couldn't list. */
   filesUnchecked: number;
+  /** How far the server's clock is ahead of this computer's, in ms, once the explorer has had to adjust for it. */
+  clockOffset: number;
   /**
    * Photo files a read found gone this session, as `bucket/key`: left out like
    * `missingFiles` and never requested again, until a listing finds them.
@@ -183,6 +185,7 @@ export const useStore = create<State>((set, get) => ({
   missingFiles: NONE,
   checkingFiles: false,
   filesUnchecked: 0,
+  clockOffset: 0,
   gone: NONE,
   filters: NO_FILTERS,
   separate: false,
@@ -216,6 +219,7 @@ export const useStore = create<State>((set, get) => ({
       model: null,
       missingFiles: NONE,
       filesUnchecked: 0,
+      clockOffset: 0,
       gone: NONE,
       filters: NO_FILTERS,
       separate: false,

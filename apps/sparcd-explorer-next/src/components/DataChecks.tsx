@@ -1,6 +1,7 @@
 import { useMemo, useState, type RefObject } from 'react';
 import { dataChecks, onlyLocations, resetFilters } from '@/data';
 import { describeCheck, type CheckTarget } from '@/lib/checkText';
+import { clockNote } from '@/lib/openingText';
 import { checkFiles, checkForUploads } from '@/lib/opening';
 import { useStore } from '@/store';
 import { Popover } from './Popover';
@@ -51,6 +52,7 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
   const showMissing = useShowMissing();
   const anyMissing = checks.some((c) => c.action.kind === 'missing-files');
   const [listed, setListed] = useState<number | null>(null);
+  const clock = clockNote(useStore((s) => s.clockOffset));
   return (
     <Popover anchor={anchor} label="Data checks" onClose={onClose}>
       <div className="sect">
@@ -82,6 +84,7 @@ export function DataChecksPanel({ anchor, onClose }: { anchor: RefObject<HTMLEle
         ) : (
           <p className="fine">No problems found.</p>
         )}
+        {clock && <p className="fine">{clock}</p>}
       </div>
       <div className="sect">
         <div className="row">

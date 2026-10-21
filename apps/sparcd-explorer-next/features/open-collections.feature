@@ -103,3 +103,56 @@ Feature: Open collections
     Then no row is highlighted in By collection
     And there is no "× Clear" by the collections
     And the photo count reads "14 photos"
+
+  @preview-3
+  Scenario: Collections open when the computer's clock is off, and Data checks says so
+    Given I am signed in
+    And the server's clock is 20 minutes ahead of this computer
+    When I tick "Alpha Basin"
+    And I tick "Bravo Flats"
+    And I tick "Charlie Pond"
+    And I press the open button
+    Then the header names "Alpha Basin + 2 more"
+    And the photo count reads "17 photos"
+    When I open Data checks
+    Then I see "Your computer's clock is about 20 minutes off. The explorer adjusted for it."
+
+  @preview-3
+  Scenario: A clock the explorer can't adjust for says what to do, and Retry failed opens once it is right
+    Given I am signed in
+    And the server's clock is 20 minutes ahead of this computer
+    And the server doesn't say what time it is
+    When I open "Alpha Basin" and "Bravo Flats" together
+    Then I see "Alpha Basin and Bravo Flats: The server refused the request because your computer's clock is off. Check your date and time settings, then retry."
+    And the opening panel offers "Retry failed"
+    And the opening panel does not offer "Continue with"
+    When the server's clock is right again
+    And I press "Retry failed"
+    Then the header names "Alpha Basin + 1 more"
+    And the photo count reads "14 photos"
+
+  @preview-3
+  Scenario: Continue with the collections that opened; the others stay unticked for later
+    Given I am signed in
+    And the uploads of "Bravo Flats" can't be listed
+    When I open "Alpha Basin" and "Bravo Flats" together
+    Then I see "Bravo Flats: couldn't open"
+    And I see "Bravo Flats: Access denied reading the uploads of \"Bravo Flats\""
+    And the opening panel offers "Retry failed"
+    When I press "Continue with Alpha Basin"
+    Then the header names "Alpha Basin"
+    And the photo count reads "11 photos"
+    When I go back to choose collections
+    Then "Alpha Basin" is ticked
+    And "Bravo Flats" is not ticked
+
+  @preview-3
+  Scenario: Retry failed opens a collection once it can be read
+    Given I am signed in
+    And the uploads of "Bravo Flats" can't be listed
+    When I open "Alpha Basin" and "Bravo Flats" together
+    Then I see "Bravo Flats: couldn't open"
+    When the uploads of "Bravo Flats" can be listed again
+    And I press "Retry failed"
+    Then the header names "Alpha Basin + 1 more"
+    And the photo count reads "14 photos"

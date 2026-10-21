@@ -1,6 +1,7 @@
 import type { CollectionRef } from '@sparcd/s3-safe';
 import type { Progress } from '@/lib/opening';
 import { fmtN } from '@/lib/format';
+import { failureLines } from '@/lib/openingText';
 
 const nameOf = (ref: CollectionRef) => ref.name ?? ref.bucket;
 
@@ -54,17 +55,28 @@ function collectionLine(p: Progress) {
 export function OpeningPanel({
   refs,
   progress,
-  failed,
+  settled,
+  opened,
+  onRetry,
+  onContinue,
   onCancel,
 }: {
   refs: CollectionRef[];
   progress: Progress[];
-  failed: boolean;
+  /** Every collection has been tried, and some couldn't open. */
+  settled: boolean;
+  /** The collections that did open. */
+  opened: CollectionRef[];
+  onRetry: () => void;
+  onContinue: () => void;
   onCancel: () => void;
 }) {
   const done = progress.reduce((n, p) => n + fraction(p), 0) / Math.max(1, progress.length);
   const lines = refs.length === 1 && !progress[0].cached ? singleSteps(progress[0]) : progress.map(collectionLine);
-  const errors = progress.filter((p) => p.error);
+  const errors = failureLines(
+    progress.flatMap((p) => (p.error ? [{ name: nameOf(p.ref), reason: p.error }] : [])),
+    refs.length > 1,
+  );
   return (
     <section className="load" aria-live="polite" aria-label="Opening">
       <h2 className="font-display text-[21px] font-[500] leading-tight">
@@ -80,7 +92,7 @@ export function OpeningPanel({
       >
         <i style={{ width: `${Math.round(done * 100)}%` }} />
       </div>
-      <ol className="steps">
+      <ol className={lines.length > 8 ? 'steps many' : 'steps'}>
         {lines.map((l) => (
           <li key={l.label} className={`step ${l.state}`}>
             <span className="dot" />
@@ -89,16 +101,33 @@ export function OpeningPanel({
           </li>
         ))}
       </ol>
-      {errors.map((p) => (
-        <p key={p.ref.key} role="alert" className="field-err">
-          {p.error}
+      {errors.map((e) => (
+        <p key={e.reason} role="alert" className="field-err">
+          {e.names && <b>{e.names}: </b>}
+          {e.reason}
         </p>
       ))}
-      <div>
-        <button type="button" className="btn" onClick={onCancel} autoFocus>
-          {failed ? 'Back to the list' : 'Cancel'}
-        </button>
-      </div>
+      {settled ? (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={opened.length ? 'btn' : 'btn primary'} onClick={onRetry} autoFocus={!opened.length}>
+            Retry failed
+          </button>
+          {opened.length > 0 && (
+            <button type="button" className="btn primary" onClick={onContinue} autoFocus>
+              {opened.length === 1 ? `Continue with ${nameOf(opened[0])}` : `Continue with ${opened.length} collections`}
+            </button>
+          )}
+          <button type="button" className="btn" onClick={onCancel}>
+            Back to the list
+          </button>
+        </div>
+      ) : (
+        <div>
+          <button type="button" className="btn" onClick={onCancel} autoFocus>
+            Cancel
+          </button>
+        </div>
+      )}
     </section>
   );
 }

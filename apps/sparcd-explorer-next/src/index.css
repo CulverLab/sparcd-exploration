@@ -499,6 +499,10 @@ select {
   background: var(--warn);
   border-color: var(--warn);
 }
+.steps.many {
+  max-height: min(50vh, 420px);
+  overflow: auto;
+}
 .step .ct {
   font: 400 12px 'JetBrains Mono', monospace;
   font-variant-numeric: tabular-nums;

@@ -33,6 +33,14 @@ export class MockS3 {
   refuseRanges = false;
   /** Each photo's thumbnail colour, by the date and time its tile shows. */
   readonly thumbColors = new Map<string, [number, number, number]>();
+  /**
+   * How far the store's clock runs ahead of this computer's, in ms. Like S3
+   * and MinIO, it refuses a request signed more than 15 minutes from its own
+   * time with 403 RequestTimeTooSkewed, saying its time in a Date header.
+   */
+  clockAheadMs = 0;
+  /** Leave the Date header out, as a server whose CORS policy hides it. */
+  hideDate = false;
 
   addBucket(name: string): void {
     if (!this.buckets.includes(name)) this.buckets.push(name);
@@ -82,6 +90,12 @@ const NS = 'http://s3.amazonaws.com/doc/2006-03-01/';
 const NOW = '2024-06-01T00:00:00.000Z';
 const XML = { 'content-type': 'application/xml' } as const;
 
+const FIFTEEN_MINUTES = 15 * 60_000;
+
+/** `20261021T101500Z`, as SigV4 dates a request, in ms. */
+const amzTime = (s: string): number =>
+  Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(9, 11), +s.slice(11, 13), +s.slice(13, 15));
+
 const errorXml = (code: string, message: string): string =>
   `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${xmlEscape(message)}</Message><RequestId>mock</RequestId></Error>`;
 
@@ -122,6 +136,17 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
     const isListBuckets = segments.length === 0 && auth.startsWith('AWS4-HMAC');
     const bucket = segments[0] ?? '';
     if (!isListBuckets && !s3.buckets.includes(bucket)) return route.fallback();
+
+    const now = Date.now() + s3.clockAheadMs;
+    const signedAt = request.headers()['x-amz-date'] ?? url.searchParams.get('X-Amz-Date');
+    if (s3.clockAheadMs && signedAt && Math.abs(now - amzTime(signedAt)) > FIFTEEN_MINUTES) {
+      await route.fulfill({
+        status: 403,
+        headers: s3.hideDate ? XML : { ...XML, date: new Date(now).toUTCString() },
+        body: errorXml('RequestTimeTooSkewed', "The difference between the request time and the server's time is too large."),
+      });
+      return;
+    }
 
     const accessKey = /Credential=([^/]+)\//.exec(auth)?.[1];
     if (accessKey && s3.rejectedKeys.has(accessKey)) {

@@ -3,7 +3,7 @@
 // per-collection progress. Either way the workspace then checks every ETag in
 // the background, then which photo files storage lacks.
 
-import type { CollectionRef } from '@sparcd/s3-safe';
+import type { CollectionRef, SafeS3Client } from '@sparcd/s3-safe';
 import type { S3Config } from '@sparcd/types';
 import {
   ExplorerDb,
@@ -22,14 +22,39 @@ import {
   type Source,
 } from '@/data';
 import { useStore } from '@/store';
+import { openFailure } from './openingText';
 
 const db = new ExplorerDb();
-let current: { config: S3Config; source: Source } | null = null;
+let current: { config: S3Config; client: SafeS3Client; source: Source } | null = null;
 
+const sameConnection = (a: S3Config, b: S3Config) =>
+  a.endpoint === b.endpoint &&
+  a.region === b.region &&
+  a.accessKey === b.accessKey &&
+  a.secretKey === b.secretKey &&
+  a.forcePathStyle === b.forcePathStyle &&
+  a.secure === b.secure;
+
+/**
+ * The one client for a connection. Another tab can hand over the same
+ * connection as a new object; the client stays, with the clock offset it
+ * learned from the server.
+ */
 export function sourceFor(config: S3Config): Source {
-  if (current?.config !== config) current = { config, source: { client: readClient(config), db, account: accountKey(config) } };
+  if (!current || !sameConnection(current.config, config)) {
+    const client = readClient(config);
+    current = { config, client, source: { client, db, account: accountKey(config) } };
+  }
   return current.source;
 }
+
+/** How far the server's clock is ahead of this computer's, in ms, as learned so far. */
+export function clockOffsetFor(config: S3Config): number {
+  sourceFor(config);
+  return current!.client.clockOffset;
+}
+
+
 
 export type Progress = {
   ref: CollectionRef;
@@ -41,21 +66,28 @@ export type Progress = {
   error?: string;
 };
 
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+/** A collection that couldn't open, and why in plain words. */
+export type Failure = { ref: CollectionRef; reason: string };
+
+/** The species lists and registries last read for `refs`, in their order. */
+export const registriesFor = (config: S3Config, refs: CollectionRef[]): Promise<Registries> => cachedRegistries(sourceFor(config), refs);
 
 /**
  * Open `refs`. When every one is cached this returns at once with the cached
- * copies; otherwise it reads the missing ones, reporting progress. Throws the
- * abort reason when cancelled, and an error naming the collection that failed.
+ * copies; otherwise it reads the missing ones, reporting progress. Every
+ * collection is tried; those that fail come back in `failed`, and
+ * `registries` covers the loaded ones. Throws the abort reason when cancelled.
  */
 export async function openSelection(
   config: S3Config,
   refs: CollectionRef[],
   opts: { signal: AbortSignal; onProgress: (p: Progress[]) => void },
-): Promise<{ loaded: LoadedCollection[]; registries: Registries }> {
+): Promise<{ loaded: LoadedCollection[]; failed: Failure[]; registries: Registries }> {
   const source = sourceFor(config);
   const cached = await Promise.all(refs.map((ref) => readCachedCollection(source.db, source.account, ref)));
-  if (cached.every(Boolean)) return { loaded: cached as LoadedCollection[], registries: await cachedRegistries(source, refs) };
+  if (cached.every(Boolean)) {
+    return { loaded: cached as LoadedCollection[], failed: [], registries: await cachedRegistries(source, refs) };
+  }
 
   const progress: Progress[] = refs.map((ref, i) => ({
     ref,
@@ -67,9 +99,9 @@ export async function openSelection(
   const report = () => opts.onProgress(progress.map((p) => ({ ...p })));
   report();
   const run = createLimiter(REQUESTS_IN_FLIGHT);
-  const [loaded, registries] = await Promise.all([
+  const [results] = await Promise.all([
     Promise.all(
-      refs.map(async (ref, i) => {
+      refs.map(async (ref, i): Promise<LoadedCollection | Failure> => {
         if (cached[i]) return cached[i]!;
         try {
           const read = await syncCollection(source, ref, {
@@ -84,18 +116,25 @@ export async function openSelection(
           report();
           return read;
         } catch (err) {
-          if (!opts.signal.aborted) {
-            Object.assign(progress[i], { step: 'failed', error: errorText(err) });
-            report();
-          }
-          throw err;
+          if (opts.signal.aborted) throw err;
+          const reason = openFailure(err);
+          Object.assign(progress[i], { step: 'failed', error: reason });
+          report();
+          return { ref, reason };
         }
       }),
     ),
     fetchRegistries(source, refs),
   ]);
   opts.signal.throwIfAborted();
-  return { loaded, registries };
+  const loaded = results.filter((r): r is LoadedCollection => !('reason' in r));
+  const failed = results.filter((r): r is Failure => 'reason' in r);
+  return { loaded, failed, registries: await cachedRegistries(source, loaded.map((l) => l.ref)) };
+}
+
+/** Keep what the server's answers so far say about this computer's clock, for Data checks. */
+export function noteClock(config: S3Config): void {
+  if (useStore.getState().config === config) useStore.setState({ clockOffset: clockOffsetFor(config) });
 }
 
 let checking: AbortController | null = null;
@@ -149,6 +188,7 @@ export async function checkForUploads(force = false): Promise<void> {
     ]);
     if (useStore.getState().refs !== refs) return;
     applyRefresh(loaded, registries);
+    noteClock(config);
     setChecking(false);
     void checkFiles(force);
   } catch (err) {
@@ -157,7 +197,7 @@ export async function checkForUploads(force = false): Promise<void> {
       if (checking === null || checking === controller) setChecking(false);
       return;
     }
-    setChecking(false, errorText(err));
+    setChecking(false, openFailure(err));
     void checkFiles(force);
   } finally {
     if (checking === controller) checking = null;

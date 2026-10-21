@@ -1,7 +1,7 @@
 // Steps for the preview feedback (Juli4nG/sparcd-explorer-preview#1–#7).
 
 import type { Locator, Page } from '@playwright/test';
-import { ALPHA, addUpload, putCollection } from './support/data';
+import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
 import { Given, Then, When, expect } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
@@ -85,6 +85,34 @@ When('I note where By collection is', async ({ page, scratch }) => {
 
 Then('By collection has not moved', async ({ page, scratch }) => {
   expect(await byCollection(page).boundingBox()).toEqual(scratch.byCollection);
+});
+
+// --- #3 Clock skew, and opening what can be opened -------------------------------
+
+// From now on: the reads the page has already started (the chooser lists collections again as it shows) finish first.
+Given("the server's clock is {int} minutes ahead of this computer", async ({ page, s3 }, minutes: number) => {
+  await page.waitForLoadState('networkidle');
+  s3.clockAheadMs = minutes * 60_000;
+});
+
+Given("the server doesn't say what time it is", async ({ s3 }) => {
+  s3.hideDate = true;
+});
+
+When("the server's clock is right again", async ({ s3 }) => {
+  s3.clockAheadMs = 0;
+});
+
+When('the uploads of "Bravo Flats" can be listed again', async ({ s3 }) => {
+  s3.failures.delete(`Collections/${BRAVO.uuid}/Uploads/`);
+});
+
+Then('the opening panel offers {string}', async ({ page }, label: string) => {
+  await expect(page.getByRole('region', { name: 'Opening' }).getByRole('button', { name: label, exact: true })).toBeVisible();
+});
+
+Then('the opening panel does not offer {string}', async ({ page }, label: string) => {
+  await expect(page.getByRole('region', { name: 'Opening' }).getByRole('button', { name: new RegExp(`^${label}`) })).toHaveCount(0);
 });
 
 // --- #4 Year labels that never pile up -------------------------------------------

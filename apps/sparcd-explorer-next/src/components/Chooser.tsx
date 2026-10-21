@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { CollectionRef } from '@sparcd/s3-safe';
-import { discoverCollections } from '@/data';
-import { checkFiles, checkForUploads, openSelection, sourceFor, type Progress } from '@/lib/opening';
+import { discoverCollections, type LoadedCollection, type Registries } from '@/data';
+import { openFailure } from '@/lib/openingText';
+import {
+  checkFiles,
+  checkForUploads,
+  noteClock,
+  openSelection,
+  registriesFor,
+  sourceFor,
+  type Failure,
+  type Progress,
+} from '@/lib/opening';
 import { matching, pickAll, unpickAll } from '@/lib/picks';
-import { readLast, useStore } from '@/store';
+import { readLast, useStore, type OpenStamp } from '@/store';
 import { SelClear } from './SelClear';
 import { Stepper } from './Stepper';
 import { OpeningPanel } from './OpeningPanel';
@@ -16,7 +26,24 @@ const comboName = (refs: CollectionRef[]) =>
 
 const host = (endpoint: string) => endpoint.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
 
-type Opening = { refs: CollectionRef[]; progress: Progress[]; failed: boolean; controller: AbortController };
+/** An open under way, or one that ended with collections that couldn't open. */
+type Opening = {
+  refs: CollectionRef[];
+  progress: Progress[];
+  /** What opened, in the order of `refs`. */
+  loaded: LoadedCollection[];
+  failed: Failure[];
+  /** Every collection has been tried. */
+  settled: boolean;
+  controller: AbortController;
+};
+
+/** Progress lines with `next`'s collections updated, or `next` itself to start. */
+const merged = (lines: Progress[], next: Progress[]) =>
+  lines.length ? lines.map((l) => next.find((n) => n.ref.key === l.ref.key) ?? l) : next;
+
+const inOrder = (refs: CollectionRef[], loaded: LoadedCollection[]) =>
+  refs.flatMap((r) => loaded.find((l) => l.ref.key === r.key) ?? []);
 
 export function Chooser() {
   const config = useStore((s) => s.config)!;
@@ -56,31 +83,61 @@ export function Chooser() {
   const shown = matching(all, search, nameOf);
   const shownKeys = shown.map((c) => c.key);
 
-  async function open(refs: CollectionRef[]) {
-    if (resumeWorkspace(refs)) return;
+  // Only an open's own state changes; a newer open may have replaced it.
+  const mine = (controller: AbortController, next: (o: Opening) => Opening | null) => (o: Opening | null) =>
+    o?.controller !== controller ? o : next(o);
+
+  function enter(stamp: OpenStamp, refs: CollectionRef[], loaded: LoadedCollection[], registries: Registries, controller: AbortController) {
+    if (!enterWorkspace(stamp, refs, loaded, registries)) return setOpening(mine(controller, () => null));
+    noteClock(config);
+    // Anything that came from this device is checked for new uploads now.
+    // The photo files are checked at once too, from their cached answers
+    // where media.csv is unchanged, and again after any new uploads land.
+    if (refs.some((r) => all.find((c) => c.key === r.key)?.cached)) void checkForUploads();
+    void checkFiles();
+  }
+
+  /** Read `refs` of `whole`, keeping `before`, which already opened; open them all once none fails. */
+  async function read(refs: CollectionRef[], whole: CollectionRef[], before: LoadedCollection[], progress: Progress[]) {
     pending.current?.abort();
     const controller = (pending.current = new AbortController());
     const stamp = beginOpen();
-    // Only this open's own state changes; a newer open may have replaced it.
-    const mine =
-      (next: Opening | null | ((o: Opening) => Opening | null)) =>
-      (o: Opening | null): Opening | null =>
-        o?.controller !== controller ? o : typeof next === 'function' ? next(o) : next;
-    setOpening({ refs, progress: [], failed: false, controller });
+    setOpening({ refs: whole, progress, loaded: before, failed: [], settled: false, controller });
     try {
-      const { loaded, registries } = await openSelection(config, refs, {
+      const result = await openSelection(config, refs, {
         signal: controller.signal,
-        onProgress: (progress) => setOpening(mine((o) => ({ ...o, progress }))),
+        onProgress: (next) => setOpening(mine(controller, (o) => ({ ...o, progress: merged(o.progress, next) }))),
       });
-      if (!enterWorkspace(stamp, refs, loaded, registries)) return setOpening(mine(null));
-      // Anything that came from this device is checked for new uploads now.
-      // The photo files are checked at once too, from their cached answers
-      // where media.csv is unchanged, and again after any new uploads land.
-      if (refs.some((r) => all.find((c) => c.key === r.key)?.cached)) void checkForUploads();
-      void checkFiles();
-    } catch {
-      setOpening(mine((o) => (controller.signal.aborted ? null : { ...o, failed: true })));
+      const loaded = inOrder(whole, [...before, ...result.loaded]);
+      if (!result.failed.length) {
+        return enter(stamp, whole, loaded, before.length ? await registriesFor(config, whole) : result.registries, controller);
+      }
+      setOpening(mine(controller, (o) => ({ ...o, loaded, failed: result.failed, settled: true })));
+    } catch (err) {
+      const reason = openFailure(err);
+      const failed = refs.map((ref) => ({ ref, reason }));
+      const lines = (o: Opening) =>
+        whole.map((ref): Progress => {
+          const line = o.progress.find((p) => p.ref.key === ref.key);
+          return line?.step === 'ready' ? line : { ref, cached: false, done: 0, total: 0, ...line, step: 'failed', error: reason };
+        });
+      setOpening(mine(controller, (o) => (controller.signal.aborted ? null : { ...o, progress: lines(o), failed, settled: true })));
     }
+  }
+
+  function open(refs: CollectionRef[]) {
+    if (!resumeWorkspace(refs)) void read(refs, refs, [], []);
+  }
+
+  function retryFailed(o: Opening) {
+    const keys = new Set(o.failed.map((f) => f.ref.key));
+    const waiting = o.progress.map((p): Progress => (keys.has(p.ref.key) ? { ...p, step: 'waiting', done: 0, total: 0, error: undefined } : p));
+    void read(o.failed.map((f) => f.ref), o.refs, o.loaded, waiting);
+  }
+
+  async function continueWith(o: Opening) {
+    const refs = o.loaded.map((l) => l.ref);
+    enter(beginOpen(), refs, o.loaded, await registriesFor(config, refs), o.controller);
   }
 
   const toggle = (key: string) => setPicks(picks.includes(key) ? picks.filter((k) => k !== key) : [...picks, key]);
@@ -111,7 +168,10 @@ export function Chooser() {
           <OpeningPanel
             refs={opening.refs}
             progress={opening.progress}
-            failed={opening.failed}
+            settled={opening.settled}
+            opened={opening.loaded.map((l) => l.ref)}
+            onRetry={() => retryFailed(opening)}
+            onContinue={() => void continueWith(opening)}
             onCancel={() => {
               opening.controller.abort();
               cancelOpen();
@@ -134,7 +194,7 @@ export function Chooser() {
         ) : (
           <>
             {canContinue && (
-              <button type="button" className="btn primary bigbtn justify-between" onClick={() => void open(last)}>
+              <button type="button" className="btn primary bigbtn justify-between" onClick={() => open(last)}>
                 <span>Continue with {comboName(last)}</span>
                 <span aria-hidden="true" className="text-[20px] leading-none">
                   ›
@@ -212,7 +272,7 @@ export function Chooser() {
                   firstBox.current?.focus();
                 }}
               />
-              <button type="button" className="btn primary bigbtn" disabled={!picked.length} onClick={() => void open(picked)}>
+              <button type="button" className="btn primary bigbtn" disabled={!picked.length} onClick={() => open(picked)}>
                 {picked.length === 0
                   ? 'Pick a collection'
                   : picked.length === 1
