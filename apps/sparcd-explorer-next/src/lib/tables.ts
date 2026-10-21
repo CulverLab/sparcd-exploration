@@ -178,7 +178,7 @@ const timeRanks = new WeakMap<Model, Uint32Array>();
  */
 export function photoTimeRanks(model: Model): Uint32Array {
   let ranks = timeRanks.get(model);
-  if (!ranks) timeRanks.set(model, (ranks = numberRanks(model.photos.map((p) => timeKey(p.timestamp))).rank));
+  if (!ranks) timeRanks.set(model, (ranks = numberRanks(model.photos.map((p) => p.timeKey)).rank));
   return ranks;
 }
 

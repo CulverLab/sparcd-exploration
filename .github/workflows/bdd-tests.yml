@@ -52,6 +52,9 @@ jobs:
       - name: Run unit tests
         working-directory: apps/${{ matrix.app }}
         run: pnpm test
+        env:
+          # Hosted runners are slower than a laptop; the explorer's perf budgets scale by this.
+          PERF_FACTOR: 2
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4

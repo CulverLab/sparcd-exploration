@@ -8,6 +8,8 @@ export type LocalTime = {
   year: number;
   month: number; // 1-12
   hour: number | null; // null when the text carries a date only
+  /** Sorts in camera-clock order; see `localTimeKey`. */
+  key: number;
 };
 
 // The whole text must match: a date, optionally a time (seconds and a fraction
@@ -38,7 +40,14 @@ export function parseLocalTimestamp(timestamp: string): LocalTime | null {
   const m = matchLocal(timestamp);
   if (!m) return null;
   const date = `${m[1]}-${m[2]}-${m[3]}`;
-  return { date, day: dayNumber(date), year: Number(m[1]), month: Number(m[2]), hour: m[4] === undefined ? null : Number(m[4]) };
+  const hour = m[4] === undefined ? null : Number(m[4]);
+  return { date, day: dayNumber(date), year: Number(m[1]), month: Number(m[2]), hour, key: sortKey(m) };
+}
+
+function sortKey(m: RegExpExecArray): number {
+  const n = (i: number) => (m[i] === undefined ? 0 : Number(m[i]));
+  const key = ((((n(1) * 100 + n(2)) * 100 + n(3)) * 100 + n(4)) * 100 + n(5)) * 100 + n(6);
+  return key * 3 + (m[4] === undefined ? 0 : m[6] === undefined ? 1 : 2);
 }
 
 /**
@@ -49,10 +58,7 @@ export function parseLocalTimestamp(timestamp: string): LocalTime | null {
  */
 export function localTimeKey(timestamp: string): number | null {
   const m = matchLocal(timestamp);
-  if (!m) return null;
-  const n = (i: number) => (m[i] === undefined ? 0 : Number(m[i]));
-  const key = ((((n(1) * 100 + n(2)) * 100 + n(3)) * 100 + n(4)) * 100 + n(5)) * 100 + n(6);
-  return key * 3 + (m[4] === undefined ? 0 : m[6] === undefined ? 1 : 2);
+  return m ? sortKey(m) : null;
 }
 
 /** A stored timestamp as `YYYY-MM-DD HH:MM:SS`, 24-hour, with no locale AM/PM. */

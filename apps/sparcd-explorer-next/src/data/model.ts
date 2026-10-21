@@ -51,6 +51,8 @@ export type Photo = {
   mimeType: string;
   video: boolean;
   timestamp: string;
+  /** Sort key in camera-clock order, or null when the timestamp doesn't parse. */
+  timeKey: number | null;
   /** Camera-local date, or null when the timestamp doesn't parse. */
   date: string | null;
   day: number | null;
@@ -214,6 +216,7 @@ export function buildModel(
             year: t?.year ?? null,
             month: t?.month ?? null,
             hour: t?.hour ?? null,
+            timeKey: t?.key ?? null,
             tagged: false,
             missing: missing?.has(`${c.ref.bucket}/${media.mediaPath}`) ?? false,
             detections: NO_DETECTIONS,

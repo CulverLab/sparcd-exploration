@@ -181,9 +181,14 @@ describe('cancel during a refresh', () => {
     const { s3, source, before } = await cachedThenChanged();
     s3.latency = 10;
     const controller = new AbortController();
+    // Cancel from inside the fourth read, so earlier reads are still in flight
+    // however fast or slow the machine is.
+    const get = s3.getObject.bind(s3);
+    s3.getObject = ((...args: Parameters<typeof get>) => {
+      if (s3.gets.length === 3) controller.abort();
+      return get(...args);
+    }) as typeof get;
     const refreshing = syncCollection(source, REF, { signal: controller.signal });
-    await vi.waitFor(() => expect(s3.gets.length).toBeGreaterThan(3));
-    controller.abort();
     await expect(refreshing).rejects.toMatchObject({ name: 'AbortError' });
     expect(await readCachedCollection(source.db, source.account, REF)).toEqual(before);
   });
