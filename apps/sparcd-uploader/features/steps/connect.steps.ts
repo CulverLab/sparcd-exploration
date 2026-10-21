@@ -171,6 +171,24 @@ Then('the uploader stays on the connection screen until the secret is re-entered
   await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
 });
 
+When('a different endpoint is entered and the field is left', async ({ app }) => {
+  await app.page.fill('#endpoint', AWS_ENDPOINT);
+  await app.page.locator('#endpoint').blur();
+});
+
+Then(
+  'the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over',
+  async ({ app }) => {
+    await app.page.getByRole('button', { name: '+ Advanced' }).click();
+    // S3_ORIGIN (the remembered connection) is plain-http MinIO-shaped:
+    // secure: false, forcePathStyle: true, region: us-east-1 — the opposite
+    // of AWS_ENDPOINT's own inferred values on every one of the three.
+    await expect(app.page.locator('#region')).toHaveValue('us-west-2');
+    await expect(app.page.getByLabel('Force path-style addressing (MinIO)')).not.toBeChecked();
+    await expect(app.page.getByLabel('Secure (HTTPS)')).toBeChecked();
+  },
+);
+
 Given("one tab of a SPARC'd tool is already connected in this browser", async ({ app }) => {
   await app.connect();
 });

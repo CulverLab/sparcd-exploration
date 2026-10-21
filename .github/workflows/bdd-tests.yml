@@ -25,6 +25,30 @@ on:
   workflow_dispatch:
 
 jobs:
+  auth-ui:
+    name: Auth UI unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Check auth UI types
+        run: pnpm --filter @sparcd/auth-ui check
+
+      - name: Run auth UI unit tests
+        run: pnpm --filter @sparcd/auth-ui test
+
   bdd:
     timeout-minutes: 30
     strategy:

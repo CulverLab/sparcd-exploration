@@ -119,6 +119,28 @@ When('the tab is closed and the tagger is opened in a new one', async ({ page })
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
+When('a different endpoint is entered and the field is left', async ({ page }) => {
+  await page.locator('#endpoint').fill('https://s3.us-west-2.amazonaws.com');
+  await page.locator('#endpoint').blur();
+});
+
+Then(
+  'the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over',
+  async ({ page }) => {
+    await page.getByRole('button', { name: '+ Advanced' }).click();
+    // ENDPOINT (the remembered connection) is plain-http MinIO-shaped:
+    // secure: false, forcePathStyle: true, region: us-east-1 — the opposite
+    // of this AWS host's own inferred values on every one of the three.
+    await expect(page.locator('#region')).toHaveValue('us-west-2');
+    await expect(
+      page.locator('label').filter({ hasText: 'Force path-style' }).locator('input'),
+    ).not.toBeChecked();
+    await expect(
+      page.locator('label').filter({ hasText: 'Secure (HTTPS)' }).locator('input'),
+    ).toBeChecked();
+  },
+);
+
 Then('the endpoint and access key are pre-filled from the previous connection', async ({ page }) => {
   await expect(page.locator('#endpoint')).toHaveValue(ENDPOINT);
   await expect(page.locator('#accessKey')).toHaveValue('testkey');

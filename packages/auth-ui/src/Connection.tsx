@@ -59,6 +59,11 @@ export function Connection({
     initialConfig?.forcePathStyle,
   );
   const [secureOverride, setSecureOverride] = useState<boolean | undefined>(initialConfig?.secure);
+  // What `endpoint` was the last time the overrides above were resolved
+  // against it (see syncOverridesToEndpoint). Starts equal to the prefilled
+  // endpoint so a remembered override still applies until the endpoint is
+  // actually touched.
+  const [lastSyncedEndpoint, setLastSyncedEndpoint] = useState(initialConfig?.endpoint ?? '');
 
   const inferred = useMemo(() => detectBackendDefaults(endpoint || 'localhost'), [endpoint]);
   const region = regionOverride ?? inferred.region;
@@ -72,17 +77,58 @@ export function Connection({
   const online = useOnline();
   const canConnect = endpoint.trim() && accessKey.trim() && secretKey.trim();
 
+  // The page itself may be served over HTTPS (GitHub Pages, etc.) even when
+  // the configured endpoint resolves to plain HTTP — browsers block that as
+  // mixed content before any request leaves, with nothing for the app to
+  // catch or translate into an error. Checked eagerly, not on failure.
+  const pageIsSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  // Explicit schemes take precedence over the Secure setting in endpointUrl.
+  const trimmedEndpoint = endpoint.trim();
+  const endpointIsSecure = /^https?:\/\//i.test(trimmedEndpoint)
+    ? /^https:\/\//i.test(trimmedEndpoint)
+    : secure;
+  const showMixedContentWarning = online && pageIsSecure && !endpointIsSecure;
+
+  // A remembered secure/path-style/region override only means anything for
+  // the endpoint it was saved for (#596) — otherwise it silently outlives
+  // the endpoint it came from, e.g. a stale local-MinIO "secure: false"
+  // surviving a later connection to a real HTTPS endpoint. Resolved here
+  // against the current endpoint, and only called on blur and at submit —
+  // never on every keystroke, so Advanced's fields don't flicker mid-edit.
+  // Returns the resolved values directly rather than relying on the state
+  // setters below having landed by the time the caller reads them.
+  function syncOverridesToEndpoint() {
+    const trimmed = endpoint.trim();
+    if (trimmed === lastSyncedEndpoint) {
+      return { region: regionOverride, forcePathStyle: pathStyleOverride, secure: secureOverride };
+    }
+    setLastSyncedEndpoint(trimmed);
+    const resolved =
+      trimmed === (initialConfig?.endpoint ?? '')
+        ? {
+            region: initialConfig?.region,
+            forcePathStyle: initialConfig?.forcePathStyle,
+            secure: initialConfig?.secure,
+          }
+        : { region: undefined, forcePathStyle: undefined, secure: undefined };
+    setRegionOverride(resolved.region);
+    setPathStyleOverride(resolved.forcePathStyle);
+    setSecureOverride(resolved.secure);
+    return resolved;
+  }
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!canConnect) return;
+    const resolved = syncOverridesToEndpoint();
     onConnect(
       {
         endpoint: endpoint.trim(),
-        region,
+        region: resolved.region ?? inferred.region,
         accessKey: accessKey.trim(),
         secretKey: secretKey.trim(),
-        forcePathStyle,
-        secure,
+        forcePathStyle: resolved.forcePathStyle ?? inferred.forcePathStyle,
+        secure: resolved.secure ?? inferred.secure,
       },
       remember,
     );
@@ -109,8 +155,18 @@ export function Connection({
           Connect to an S3-compatible endpoint to begin.
         </p>
 
-        <div className="mb-4">
+        <div className="mb-4 space-y-2">
           <OfflineBanner message="You're offline — connecting needs a network connection." />
+          {showMixedContentWarning && (
+            <div
+              role="status"
+              data-testid="mixed-content-warning"
+              className="border border-warn/40 bg-paper px-3 py-2.5 font-body text-[13px] text-warn"
+            >
+              This page is loaded over HTTPS, so connecting to a plain HTTP endpoint will be
+              blocked by the browser. Check the endpoint's scheme under Advanced.
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -125,6 +181,7 @@ export function Connection({
               placeholder="host[:port] or https://host"
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
+              onBlur={() => syncOverridesToEndpoint()}
               autoComplete="url"
               spellCheck={false}
             />

@@ -69,6 +69,15 @@ Feature: Connect the uploader to storage and manage the session
     And any of them can be overridden before connecting
 
   @unmapped
+  Scenario: A remembered connection's backend details are not carried over to a different endpoint
+    Given a successful connection was made earlier in this browser
+    When the tab is closed and the uploader is opened in a new one
+    And a different endpoint is entered and the field is left
+    Then the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over
+    # #596 — secure/forcePathStyle/region used to be remembered forever once
+    # set, regardless of what endpoint was later typed.
+
+  @unmapped
   Scenario: Reloading the page keeps the connection
     Given a successful connection was made earlier in this browser
     When the uploader is opened again in a new page load
