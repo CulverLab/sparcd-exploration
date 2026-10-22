@@ -70,6 +70,20 @@ Feature: Filter the photos in view
     When I press "Select all" in the species filter
     Then the species filter reads "Species"
 
+  Scenario: A search shows its × while it has text, and Esc clears it before closing
+    When I open the species filter
+    Then the species search has no "Clear search" button
+    When I search the species filter for "deer"
+    Then the species search shows "Clear search", at least 28 pixels square
+    When I press "Clear search" in the species filter
+    Then the species search is empty, with the cursor in it
+    And every row of the species filter is ticked
+    When I search the species filter for "deer"
+    And I press Escape
+    Then the species search is empty, with the cursor in it
+    When I press Escape
+    Then the species filter is closed
+
   Scenario: Only on a location
     When I press Only on "AB02" in the locations filter
     Then the locations filter reads "Locations: AB02"

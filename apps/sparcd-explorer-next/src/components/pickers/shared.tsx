@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { applyFilters, clearFilter, type FilterDimension } from '@/data';
 import { useView } from '@/lib/useView';
+import { SearchField } from '../SearchField';
 
 /** What every filter but `dim` keeps, so each option's count says what picking it gives. */
 export function useWithout(dim: FilterDimension) {
@@ -64,15 +65,7 @@ export function ListPicker({
             <label className="sr" htmlFor={id}>
               {search.label}
             </label>
-            <input
-              id={id}
-              className="field"
-              type="search"
-              placeholder={search.placeholder}
-              autoComplete="off"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <SearchField id={id} placeholder={search.placeholder} value={query} onChange={setQuery} />
           </>
         )}
       </div>

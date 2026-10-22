@@ -15,6 +15,7 @@ import {
 } from '@/lib/opening';
 import { matching, pickAll, unpickAll } from '@/lib/picks';
 import { readLast, useStore, type OpenStamp } from '@/store';
+import { SearchField } from './SearchField';
 import { SelClear } from './SelClear';
 import { Stepper } from './Stepper';
 import { OpeningPanel } from './OpeningPanel';
@@ -206,15 +207,7 @@ export function Chooser() {
                 <label className="sr" htmlFor="coll-search">
                   Search collections
                 </label>
-                <input
-                  id="coll-search"
-                  className="field"
-                  type="search"
-                  placeholder="Search collections"
-                  autoComplete="off"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                <SearchField id="coll-search" placeholder="Search collections" value={search} onChange={setSearch} />
               </>
             )}
             <div className="-mb-3 flex items-center gap-3 text-[12px]">

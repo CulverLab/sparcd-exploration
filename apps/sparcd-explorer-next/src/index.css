@@ -272,6 +272,38 @@ select {
 .field::placeholder {
   color: var(--inkMute);
 }
+/* Our own × shows whenever there is text; the browser's shows only on hover. */
+.searchfield {
+  position: relative;
+}
+.searchfield .field {
+  padding-right: 32px;
+}
+.searchfield .field::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.searchclear {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--inkMute);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.searchclear:hover {
+  background: var(--panelHover);
+  color: var(--ink);
+}
 .check {
   display: flex;
   align-items: center;

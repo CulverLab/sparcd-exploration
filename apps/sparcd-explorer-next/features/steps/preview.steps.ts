@@ -26,7 +26,9 @@ When('I search the collections for {string}', async ({ page }, text: string) => 
 });
 
 When('I clear the search', async ({ page }) => {
-  await page.getByLabel('Search collections').fill('');
+  await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+  await expect(page.getByLabel('Search collections')).toHaveValue('');
+  await expect(page.getByLabel('Search collections')).toBeFocused();
 });
 
 Then('every collection is ticked', async ({ page }) => {

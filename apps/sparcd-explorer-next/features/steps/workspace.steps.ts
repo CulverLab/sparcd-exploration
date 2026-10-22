@@ -102,8 +102,34 @@ When(/^I press "(Select all|Clear all)" in the (species|locations|mountain range
   await popover(page, FILTER_NAMES[filter]).getByRole('button', { name: label, exact: true }).click();
 });
 
+const speciesSearch = (page: Page) => popover(page, 'Species').getByRole('searchbox', { name: 'Search species' });
+const speciesSearchClear = (page: Page) => popover(page, 'Species').getByRole('button', { name: 'Clear search', exact: true });
+
 When('I search the species filter for {string}', async ({ page }, text: string) => {
-  await popover(page, 'Species').getByRole('searchbox', { name: 'Search species' }).fill(text);
+  await speciesSearch(page).fill(text);
+});
+
+Then('the species search has no "Clear search" button', async ({ page }) => {
+  await expect(speciesSearchClear(page)).toHaveCount(0);
+});
+
+Then('the species search shows "Clear search", at least 28 pixels square', async ({ page }) => {
+  await expect(speciesSearchClear(page)).toBeVisible();
+  const box = (await speciesSearchClear(page).boundingBox())!;
+  expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(28);
+});
+
+When('I press "Clear search" in the species filter', async ({ page }) => {
+  await speciesSearchClear(page).click();
+});
+
+Then('the species search is empty, with the cursor in it', async ({ page }) => {
+  await expect(speciesSearch(page)).toHaveValue('');
+  await expect(speciesSearch(page)).toBeFocused();
+});
+
+Then('the species filter is closed', async ({ page }) => {
+  await expect(popover(page, 'Species')).toHaveCount(0);
 });
 
 Then(/^every row of the (species|locations) filter is ticked$/, async ({ page }, filter: string) => {
