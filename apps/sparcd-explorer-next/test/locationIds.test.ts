@@ -21,4 +21,9 @@ describe('location ID rules', () => {
     expect(mountainRange('0000')).toBe('');
     expect(mountainRange('')).toBe('');
   });
+
+  it('takes the same mountain range from IDs that differ only in case', () => {
+    expect(mountainRange('pat26')).toBe('PAT');
+    expect(mountainRange('PAT26')).toBe('PAT');
+  });
 });

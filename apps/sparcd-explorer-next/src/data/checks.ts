@@ -8,6 +8,7 @@ import type { Model } from './model';
 export type NoLocationCheck = { kind: 'no-location'; photos: number; untagged: number; years: number[] };
 export type MovedCheck = { kind: 'moved'; locationId: string; pairs: number; sites: number[] };
 export type NearDuplicateCheck = { kind: 'near-duplicate-ids'; ids: string[] };
+export type MixedCaseCheck = { kind: 'mixed-case-ids'; ids: string[] };
 export type NoCoordinatesCheck = { kind: 'no-coordinates'; site: number; deployments: number };
 export type HiddenUploadsCheck = { kind: 'hidden-uploads'; collection: number; folders: string[] };
 export type SharedLocationCheck = {
@@ -24,6 +25,7 @@ export type DataCheck =
   | NoLocationCheck
   | MovedCheck
   | NearDuplicateCheck
+  | MixedCaseCheck
   | NoCoordinatesCheck
   | HiddenUploadsCheck
   | SharedLocationCheck
@@ -46,33 +48,50 @@ export function checkNoLocation(model: Model): NoLocationCheck[] {
   return photos ? [{ kind: 'no-location', photos, untagged, years: [...years].sort() }] : [];
 }
 
-/** One location ID at more than one coordinate pair, usually a camera that moved. */
+/** One location ID, in any case, at more than one coordinate pair, usually a camera that moved. Named as its row shows it. */
 export function checkMoved(model: Model): MovedCheck[] {
   const byId = new Map<string, { pairs: Set<string>; sites: number[] }>();
   model.sites.forEach((s, i) => {
     if (!s.position) return;
-    let entry = byId.get(s.locationId);
-    if (!entry) byId.set(s.locationId, (entry = { pairs: new Set(), sites: [] }));
+    let entry = byId.get(s.groupKey);
+    if (!entry) byId.set(s.groupKey, (entry = { pairs: new Set(), sites: [] }));
     entry.pairs.add(`${s.position.lat},${s.position.lon}`);
     entry.sites.push(i);
   });
-  return [...byId]
-    .filter(([, e]) => e.pairs.size > 1)
-    .map(([locationId, e]) => ({ kind: 'moved', locationId, pairs: e.pairs.size, sites: e.sites }));
+  return [...byId.values()]
+    .filter((e) => e.pairs.size > 1)
+    .map((e) => ({ kind: 'moved', locationId: model.sites[e.sites[0]].displayId, pairs: e.pairs.size, sites: e.sites }));
 }
 
-/** IDs that are the same after uppercasing and dropping punctuation (SR-07, SR07). */
+/**
+ * Locations whose IDs are the same after dropping punctuation (SR-07, SR07),
+ * named as their rows show them. IDs that differ only in case are one
+ * location already; `checkMixedCaseIds` names those.
+ */
 export function checkNearDuplicateIds(model: Model): NearDuplicateCheck[] {
   const byNorm = new Map<string, Set<string>>();
   for (const s of model.sites) {
     if (s.noLocation) continue;
     const norm = normalizeLocationId(s.locationId);
     if (!byNorm.has(norm)) byNorm.set(norm, new Set());
-    byNorm.get(norm)!.add(s.locationId);
+    byNorm.get(norm)!.add(s.displayId);
   }
   return [...byNorm.values()]
     .filter((ids) => ids.size > 1)
     .map((ids) => ({ kind: 'near-duplicate-ids', ids: [...ids].sort() }));
+}
+
+/** One location ID written in different case (pat26, PAT26): shown as one location, listed for whoever tidies the data. */
+export function checkMixedCaseIds(model: Model): MixedCaseCheck[] {
+  const byKey = new Map<string, Set<string>>();
+  for (const s of model.sites) {
+    if (s.noLocation) continue;
+    if (!byKey.has(s.groupKey)) byKey.set(s.groupKey, new Set());
+    byKey.get(s.groupKey)!.add(s.locationId);
+  }
+  return [...byKey.values()]
+    .filter((ids) => ids.size > 1)
+    .map((ids) => ({ kind: 'mixed-case-ids', ids: [...ids].sort((a, b) => a.localeCompare(b)) }));
 }
 
 /** Deployments with a location ID but no usable coordinates. */
@@ -100,7 +119,7 @@ export function checkSharedLocations(model: Model): SharedLocationCheck[] {
     if (s.noLocation) return;
     let entry = byKey.get(s.groupKey);
     if (!entry) byKey.set(s.groupKey, (entry = { ids: new Set(), spans: new Map() }));
-    entry.ids.add(s.locationId);
+    entry.ids.add(s.displayId);
     if (!entry.spans.has(s.collection)) entry.spans.set(s.collection, { first: null, last: null });
   });
   for (const p of model.photos) {
@@ -151,7 +170,7 @@ export function checkMissingFiles(model: Model): MissingFilesCheck[] {
   return photos ? [{ kind: 'missing-files', photos, uploads: uploads.size }] : [];
 }
 
-/** Every check, the ones that change counts most first. `unchecked`: uploads whose files the last check couldn't list. */
+/** Every check, the ones that change counts most first and the case note, which changes none, last. `unchecked`: uploads whose files the last check couldn't list. */
 export function dataChecks(model: Model, unchecked = 0): DataCheck[] {
   return [
     ...checkNoLocation(model),
@@ -164,5 +183,6 @@ export function dataChecks(model: Model, unchecked = 0): DataCheck[] {
     ...checkNearDuplicateIds(model),
     ...checkNoCoordinates(model),
     ...checkBadTimestamps(model),
+    ...checkMixedCaseIds(model),
   ];
 }

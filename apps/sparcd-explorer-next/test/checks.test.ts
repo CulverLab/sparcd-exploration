@@ -4,6 +4,7 @@ import {
   checkBadTimestamps,
   checkHiddenUploads,
   checkMissingFiles,
+  checkMixedCaseIds,
   checkMoved,
   checkNearDuplicateIds,
   checkNoCoordinates,
@@ -59,6 +60,31 @@ describe('data checks', () => {
         .upload('u3', { deployments: [deployment('AB01', 'Other', 12.6, -100.3)], media: [media('u3', 'c.jpg', 'AB01', TS)] }),
     );
     expect(checkNearDuplicateIds(model)).toEqual([{ kind: 'near-duplicate-ids', ids: ['AA01', 'aa-01'] }]);
+  });
+
+  // aa01 is AA01 written in lowercase: one location.
+  const lowercase = () => clean().upload('u2', { deployments: [deployment('aa01', 'Alpha', 12.5, -100.25)], media: [media('u2', 'b.jpg', 'aa01', TS)] });
+
+  it('leave IDs that differ only in case out of near-duplicates, and name each near-duplicate location once', () => {
+    expect(checkNearDuplicateIds(modelOf(lowercase()))).toEqual([]);
+    const dashed = modelOf(
+      lowercase().upload('u3', { deployments: [deployment('AA-01', 'Alpha', 12.5, -100.25)], media: [media('u3', 'c.jpg', 'AA-01', TS)] }),
+    );
+    expect(checkNearDuplicateIds(dashed)).toEqual([{ kind: 'near-duplicate-ids', ids: ['AA-01', 'AA01'] }]);
+  });
+
+  it('note one location ID written in different case, last, as it changes no count', () => {
+    const model = modelOf(lowercase().upload('u3', { deployments: [deployment('0000', '', null, null)], media: [media('u3', 'c.jpg', '0000', TS)] }));
+    expect(checkMixedCaseIds(model)).toEqual([{ kind: 'mixed-case-ids', ids: ['aa01', 'AA01'] }]);
+    expect(dataChecks(model).map((c) => c.kind)).toEqual(['no-location', 'mixed-case-ids']);
+    expect(checkMixedCaseIds(modelOf(clean()))).toEqual([]);
+  });
+
+  it('find a camera moved under an ID written in another case', () => {
+    const model = modelOf(
+      clean().upload('u2', { deployments: [deployment('aa01', 'Alpha', 12.75, -100.25)], media: [media('u2', 'b.jpg', 'aa01', TS)] }),
+    );
+    expect(checkMoved(model)).toEqual([{ kind: 'moved', locationId: 'AA01', pairs: 2, sites: [0, 1] }]);
   });
 
   it('find deployments with a location ID but no usable coordinates', () => {

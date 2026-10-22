@@ -35,11 +35,12 @@ export class LocationsShapeError extends Error {
 const ELEVATION_UNSET = -20000;
 
 /**
- * Registry identity: the id and its coordinates at the six decimals
- * `deployments.csv` is written with, so a deployment finds its entry.
+ * Registry identity: the id, in any case as location IDs group, and its
+ * coordinates at the six decimals `deployments.csv` is written with, so a
+ * deployment finds its entry.
  */
 export function registryKey(id: string, latitude: number, longitude: number): string {
-  return `${id.trim()}|${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+  return `${id.trim().toUpperCase()}|${latitude.toFixed(6)},${longitude.toFixed(6)}`;
 }
 
 function invalidReason(o: RegistryLocation): string | null {

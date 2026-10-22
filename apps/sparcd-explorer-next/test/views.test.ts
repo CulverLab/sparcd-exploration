@@ -98,7 +98,7 @@ describe('locationRows', () => {
     expect(rows[0].key).toBe(model.sites[0].key);
   });
 
-  it('keeps IDs that differ only in case or punctuation apart', () => {
+  it('keeps IDs that differ in punctuation apart', () => {
     const nearDuplicates = modelOf(
       collection()
         .upload('u1', { deployments: [deployment('AA-01', 'Alpha', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'AA-01', '2023-01-01T10:00:00')] })
@@ -109,6 +109,42 @@ describe('locationRows', () => {
       ['id:AA-01', ['AA-01'], 1],
       ['id:AA01', ['AA01'], 1],
     ]);
+  });
+
+  // pat26 and PAT26 are one camera written two ways; pat26 has more photos.
+  const mixedCase = modelOf(
+    collection()
+      .upload('u1', {
+        deployments: [deployment('pat26', 'Pass', 12.5, -100.25)],
+        media: [media('u1', 'a.jpg', 'pat26', '2023-01-01T10:00:00'), media('u1', 'b.jpg', 'pat26', '2023-01-02T10:00:00')],
+      })
+      .upload('u2', { deployments: [deployment('PAT26', 'Pass', 12.5, -100.25)], media: [media('u2', 'c.jpg', 'PAT26', '2023-01-03T10:00:00')] }),
+  );
+
+  it('groups IDs that differ only in case as one location, in one mountain range', () => {
+    const all = filter(mixedCase);
+    expect(locationRows(mixedCase, all, grouped).map((r) => [r.key, r.photos, r.activeDays, r.range])).toEqual([['id:PAT26', 3, 3, 'PAT']]);
+    expect(summarize(mixedCase, all, grouped).locations).toBe(1);
+    expect(locationRows(mixedCase, all, separate).map((r) => [r.ids, r.photos])).toEqual([
+      [['pat26'], 2],
+      [['PAT26'], 1],
+    ]);
+  });
+
+  it('shows a grouped location as the spelling with the most photos, the uppercase one on a tie', () => {
+    expect(locationRows(mixedCase, filter(mixedCase), grouped)[0].ids).toEqual(['pat26']);
+    const tie = modelOf(
+      collection()
+        .upload('u1', { deployments: [deployment('pat26', 'Pass', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'pat26', '2023-01-01T10:00:00')] })
+        .upload('u2', { deployments: [deployment('PAT26', 'Pass', 12.5, -100.25)], media: [media('u2', 'b.jpg', 'PAT26', '2023-01-01T10:00:00')] }),
+    );
+    expect(locationRows(tie, filter(tie), grouped)[0].ids).toEqual(['PAT26']);
+  });
+
+  it("names each photo's location as its row does", () => {
+    const all = filter(mixedCase);
+    expect(photoRows(mixedCase, all.photos, all.detections, grouped).map((r) => r.locationId)).toEqual(['pat26', 'pat26', 'pat26']);
+    expect(photoRows(mixedCase, all.photos, all.detections, separate).map((r) => r.locationId)).toEqual(['pat26', 'pat26', 'PAT26']);
   });
 
   it('counts active days from camera effort, so a species filter leaves them alone', () => {

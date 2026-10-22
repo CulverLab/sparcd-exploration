@@ -47,10 +47,11 @@ const NO_PHOTOS: PhotoRow[] = [];
 
 // The Photos rows last built: switching back to Photos rebuilds nothing, and
 // their order, cached by `sortRows`, stays too.
-let photoCache: { model: Model; result: FilterResult; tag: PhotoTag; rows: PhotoRow[] } | null = null;
-function photoRowsOf(model: Model, result: FilterResult, tag: PhotoTag): PhotoRow[] {
-  if (photoCache?.model !== model || photoCache.result !== result || photoCache.tag !== tag) {
-    photoCache = { model, result, tag, rows: photoRows(model, photosForTag(model, result.photos, tag), result.detections) };
+let photoCache: { model: Model; result: FilterResult; tag: PhotoTag; separate: boolean; rows: PhotoRow[] } | null = null;
+function photoRowsOf(model: Model, result: FilterResult, tag: PhotoTag, separate: boolean): PhotoRow[] {
+  if (photoCache?.model !== model || photoCache.result !== result || photoCache.tag !== tag || photoCache.separate !== separate) {
+    const rows = photoRows(model, photosForTag(model, result.photos, tag), result.detections, { separate });
+    photoCache = { model, result, tag, separate, rows };
   }
   return photoCache.rows;
 }
@@ -205,7 +206,7 @@ export function TablePanel() {
 
   const rows = useMemo(() => {
     if (view === 'species') return speciesRows(model, result, grouping);
-    if (view === 'photos') return photoRowsOf(model, result, filters.photoTag);
+    if (view === 'photos') return photoRowsOf(model, result, filters.photoTag, grouping.separate);
     return locationRows(model, result, grouping);
   }, [view, model, result, grouping, filters.photoTag]);
   // Every table walks one order: the one its header sorts by.

@@ -4,10 +4,10 @@
 //
 // A site is one camera position as the files describe it: (collection,
 // location ID, name, coordinates). A location is what the tables show: by
-// default every site sharing the exact location ID (across collections) is one
-// location; with "Show each location ID separately" on, each site is its own
-// location. IDs that differ only in case or punctuation stay apart; the
-// near-duplicate data check names them.
+// default every site sharing the trimmed location ID in any case (across
+// collections) is one location; with "Show each location ID separately" on,
+// each site is its own location. IDs that differ in punctuation stay apart;
+// the near-duplicate data check names them.
 
 import { commonNameFromComments } from '@sparcd/camtrap';
 import type { NullableDeployment } from '@sparcd/camtrap';
@@ -38,6 +38,8 @@ export type Site = {
   range: string;
   /** The location this site belongs to while IDs are grouped. */
   groupKey: string;
+  /** Its location's ID as a grouped row shows it: the spelling with the most photos, uppercase on a tie. */
+  displayId: string;
   deployments: number;
   lastDay: number | null;
 };
@@ -88,6 +90,16 @@ export function locationKeyOf(site: Site, separate: boolean): string {
   return separate ? site.key : site.groupKey;
 }
 
+/** The grouped location of an ID: IDs that differ only in case are one location. */
+export function locationGroupKey(locationId: string): string {
+  return `id:${locationId.trim().toUpperCase()}`;
+}
+
+/** The location ID a site shows under: its own, or its location's spelling while IDs are grouped. */
+export function locationIdOf(site: Site, separate: boolean): string {
+  return separate ? site.locationId : site.displayId;
+}
+
 const NO_DETECTIONS: number[] = [];
 const MARKER = /\[[A-Z0-9_]+:[^\]]*\]/g;
 
@@ -129,10 +141,10 @@ export function buildModel(
     problems: [],
   };
 
-  const addSite = (site: Omit<Site, 'deployments' | 'elevation' | 'lastDay'>): number => {
+  const addSite = (site: Omit<Site, 'displayId' | 'deployments' | 'elevation' | 'lastDay'>): number => {
     let i = siteIndex.get(site.key);
     if (i === undefined) {
-      i = sites.push({ ...site, deployments: 0, elevation: null, lastDay: null }) - 1;
+      i = sites.push({ ...site, displayId: site.locationId, deployments: 0, elevation: null, lastDay: null }) - 1;
       siteIndex.set(site.key, i);
       elevations[i] = [];
     }
@@ -163,7 +175,7 @@ export function buildModel(
       name,
       position,
       range: mountainRange(id),
-      groupKey: `id:${id}`,
+      groupKey: locationGroupKey(id),
     });
     const elevation = d.elevation ?? listed?.elevation;
     if (elevation != null) elevations[i].push(elevation);
@@ -254,12 +266,28 @@ export function buildModel(
   });
   let first: string | null = null;
   let last: string | null = null;
+  const sitePhotos = new Uint32Array(sites.length);
   for (const p of m.photos) {
+    if (!p.missing) sitePhotos[p.site]++;
     if (p.date === null) continue;
     if (first === null || p.date < first) first = p.date;
     if (last === null || p.date > last) last = p.date;
     const site = sites[p.site];
     if (site.lastDay === null || p.day! > site.lastDay) site.lastDay = p.day;
   }
+  showSpellings(sites, sitePhotos);
   return { ...m, dateSpan: first && last ? { first, last } : null };
+}
+
+/** Each location's ID as the spelling with the most photos; the uppercase one wins a tie. */
+function showSpellings(sites: Site[], photos: Uint32Array): void {
+  const counts = new Map<string, Map<string, number>>();
+  sites.forEach((s, i) => {
+    const ids = counts.get(s.groupKey) ?? new Map<string, number>();
+    counts.set(s.groupKey, ids.set(s.locationId, (ids.get(s.locationId) ?? 0) + photos[i]));
+  });
+  const shown = new Map(
+    [...counts].map(([key, ids]) => [key, [...ids].reduce((a, b) => (b[1] > a[1] || (b[1] === a[1] && b[0] === b[0].toUpperCase()) ? b : a))[0]]),
+  );
+  for (const s of sites) s.displayId = shown.get(s.groupKey)!;
 }

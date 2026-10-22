@@ -9,6 +9,7 @@ import {
   elevationIn,
   formatDegrees,
   localTimeKey,
+  locationGroupKey,
   reduceDegrees,
   shownPosition,
   type LocationRow,
@@ -362,14 +363,15 @@ export type Flag = { label: string; tip: string; check: string };
 
 /** The warnings shown after a location's name, from the data checks. */
 export function locationFlagger(model: Model): (row: LocationRow) => Flag[] {
-  const moved = new Map(checkMoved(model).map((m) => [m.locationId, m]));
-  const similar = new Map(checkNearDuplicateIds(model).flatMap((c) => c.ids.map((id) => [id, c] as const)));
+  // By location, so a row finds its checks whichever spelling it shows.
+  const moved = new Map(checkMoved(model).map((m) => [locationGroupKey(m.locationId), m]));
+  const similar = new Map(checkNearDuplicateIds(model).flatMap((c) => c.ids.map((id) => [locationGroupKey(id), c] as const)));
   return (row) => {
     const flags: Flag[] = [];
     if (row.noLocation) {
       flags.push({ label: 'no location', tip: "These photos have no location ID (0000), so they can't go on the map.", check: 'no-location' });
     }
-    const m = row.ids.map((id) => moved.get(id)).find(Boolean);
+    const m = row.ids.map((id) => moved.get(locationGroupKey(id))).find(Boolean);
     if (m) {
       flags.push({
         label: 'moved',
@@ -377,7 +379,7 @@ export function locationFlagger(model: Model): (row: LocationRow) => Flag[] {
         check: checkKey(m)!,
       });
     }
-    const s = row.ids.map((id) => similar.get(id)).find(Boolean);
+    const s = row.ids.map((id) => similar.get(locationGroupKey(id))).find(Boolean);
     if (s) flags.push({ label: 'similar ID', tip: `${andList(s.ids)} look like the same location.`, check: checkKey(s)! });
     return flags;
   };

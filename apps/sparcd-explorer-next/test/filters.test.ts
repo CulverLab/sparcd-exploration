@@ -444,3 +444,31 @@ describe('carrying the Locations filter by what its picker lists', () => {
     expect(filter(bOnly, state).photos).toEqual([]);
   });
 });
+
+describe('carrying the Locations filter across case', () => {
+  // pat26 and BB01; a refresh brings the same camera written PAT26.
+  const pass = (refreshed: boolean) => {
+    const c = collection('G', 'ggg')
+      .upload('u1', { deployments: [deployment('pat26', 'Pass', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'pat26', '2024-01-01T10:00:00')] })
+      .upload('u2', { deployments: [deployment('BB01', 'Wash', 13.5, -100.25)], media: [media('u2', 'w.jpg', 'BB01', '2024-01-01T10:00:00')] });
+    if (refreshed) {
+      c.upload('u3', { deployments: [deployment('PAT26', 'Pass', 12.5, -100.25)], media: [media('u3', 'b.jpg', 'PAT26', '2024-01-02T10:00:00')] });
+    }
+    return modelOf(c);
+  };
+  const before = pass(false);
+  const after = pass(true);
+  const pat26 = before.sites[siteNamed(before, 'Pass')].key;
+  const shown = (state: FilterState) => fileNames(after, filter(after, state).photos);
+
+  it('keeps "only pat26" as that one location when PAT26 arrives', () => {
+    const { state, dropped } = carryFilters(before, after, { ...NO_FILTERS, locations: onlyLocations(before, [pat26]) });
+    expect(dropped).toBe(false);
+    expect(shown(state)).toEqual(['a.jpg', 'b.jpg']);
+  });
+
+  it('keeps "all but pat26" leaving PAT26 out too', () => {
+    const { state } = carryFilters(before, after, { ...NO_FILTERS, locations: { hidden: [pat26] } });
+    expect(shown(state)).toEqual(['w.jpg']);
+  });
+});

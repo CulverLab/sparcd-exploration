@@ -20,6 +20,7 @@ import {
   tableRows,
   viewButton,
 } from './support/world';
+import { ALPHA, addUpload } from './support/data';
 
 // --- Filters --------------------------------------------------------------------
 
@@ -371,7 +372,23 @@ Then('Data checks shows {int} problems', async ({ page }, n: number) => {
 });
 
 When('I press {string} in Data checks', async ({ page }, label: string) => {
-  await popover(page, 'Data checks').getByRole('button', { name: label }).click();
+  await popover(page, 'Data checks').getByRole('button', { name: label, exact: true }).click();
+});
+
+Given('{string} has photos at {string} in one upload and {string} in another', async ({ s3 }, name: string, one: string, other: string) => {
+  expect(name).toBe('Alpha Basin');
+  const at = (stamp: string, id: string, files: string[]) =>
+    addUpload(s3, ALPHA, {
+      stamp,
+      deployment: { id, name: 'Pine Pass', lat: 0.59, lon: -150.24, elevation: 1150 },
+      photos: files.map((file, i) => ({ file, time: `2025-09-1${i}T07:00:00` })),
+    });
+  at('2025.10.01.10.00.00_fielduser', one, ['IMG2601.JPG']);
+  at('2025.10.02.10.00.00_fielduser', other, ['IMG2602.JPG', 'IMG2603.JPG']);
+});
+
+Then('the Locations table lists {string} once, and no {string}', async ({ page }, id: string, other: string) => {
+  await expect.poll(async () => (await columnValues(page, 'Location ID')).filter((v) => v === id || v === other)).toEqual([id]);
 });
 
 When('I switch on {string}', async ({ page }, label: string) => {

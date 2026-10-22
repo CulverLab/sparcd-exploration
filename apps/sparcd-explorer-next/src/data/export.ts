@@ -147,7 +147,7 @@ const byTime = (a: { time: string; fileName: string }, b: { time: string; fileNa
 
 /** The Photos rows in the page's order, or oldest first. */
 function orderedPhotos(model: Model, result: FilterResult, o: ExportOptions): PhotoRow[] {
-  const rows = photoRows(model, result.photos, result.detections);
+  const rows = photoRows(model, result.photos, result.detections, o);
   return o.order ? o.order.photos(rows) : rows.sort(byTime);
 }
 
@@ -197,7 +197,7 @@ export function detectionsTable(model: Model, result: FilterResult, o: ExportOpt
   const many = multi(model);
   // Each photo's species together, in the Photos table's order.
   const rank = new Map(orderedPhotos(model, result, o).map((r, i) => [r.photo, i]));
-  const rows = detectionRows(model, result.detections).sort((a, b) => rank.get(a.photo)! - rank.get(b.photo)! || a.detection - b.detection);
+  const rows = detectionRows(model, result.detections, o).sort((a, b) => rank.get(a.photo)! - rank.get(b.photo)! || a.detection - b.detection);
   return {
     name: 'Detections',
     columns: [

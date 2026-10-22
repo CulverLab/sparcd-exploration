@@ -10,7 +10,7 @@ export function normalizeLocationId(locationId: string): string {
   return locationId.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-/** Today's rule, kept from the old explorer: the first three characters of the location ID. */
+/** Today's rule, kept from the old explorer: the first three characters of the location ID, uppercased as IDs group. */
 export function mountainRange(locationId: string): string {
-  return isNoLocation(locationId) ? '' : locationId.trim().slice(0, 3);
+  return isNoLocation(locationId) ? '' : locationId.trim().slice(0, 3).toUpperCase();
 }

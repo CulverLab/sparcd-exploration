@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { canShowExactSites, checkNoLocation, hexCenter, hexRing, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
+import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
 import { attachPinchZoom } from '@/lib/mapGestures';
 import { describeCheck } from '@/lib/checkText';
@@ -59,11 +59,11 @@ function hexTip(model: Model, h: HexView, multi: boolean, selected: boolean): st
   );
 }
 
-function siteTip(model: Model, s: SiteView, multi: boolean, unit: 'm' | 'ft'): string {
+function siteTip(model: Model, s: SiteView, multi: boolean, unit: 'm' | 'ft', separate: boolean): string {
   const site = model.sites[s.site];
   const where = [site.range, formatElevation(site.elevation, unit)].filter((x) => x && x !== '—').join(' · ');
   return (
-    `<b><span class="m">${esc(site.locationId)}</span> ${esc(site.name)}</b>` +
+    `<b><span class="m">${esc(locationIdOf(site, separate))}</span> ${esc(site.name)}</b>` +
     (multi ? `<div>${esc(model.collections[site.collection].name)}</div>` : '') +
     (where ? `<div class="muted">${esc(where)}</div>` : '') +
     `<table><tr><td>Photos</td><td class="n">${fmtN(s.photos)}</td></tr><tr><td>Detections</td><td class="n">${fmtN(s.detections)}</td></tr></table>`
@@ -306,9 +306,9 @@ export function MapBand() {
         'class',
         ['leaflet-interactive st', s.inView ? 'in' : 'out', on && 'sel', lit?.sites.has(s.site) && 'hl'].filter(Boolean).join(' '),
       );
-      dot.setTooltipContent(siteTip(model, s, multi, display.elevation));
+      dot.setTooltipContent(siteTip(model, s, multi, display.elevation, grouping.separate));
     }
-  }, [map, mode, sites, filters.area, lit, model, multi, display.elevation]);
+  }, [map, mode, sites, filters.area, lit, model, multi, display.elevation, grouping.separate]);
 
   // --- "× Clear" sits just above the selection's top-right corner -----------------
   const siteSelection = useMemo(

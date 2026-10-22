@@ -53,6 +53,15 @@ describe('the registry in the model', () => {
     expect(model.sites[0]).toMatchObject({ name: 'Registry name', elevation: 1800 });
   });
 
+  it('finds the entry whatever case the deployment writes its ID in', () => {
+    const { locations } = parseLocations(JSON.stringify([entry('ZZ01', 'Registry name', 12.5, -100.25, 1800)]));
+    const c = collection().upload('u1', {
+      deployments: [deployment('zz01', '', 12.5, -100.25, null)],
+      media: [media('u1', 'a.jpg', 'zz01', '2024-01-01T10:00:00')],
+    });
+    expect(buildModel([c.build()], { registry: locations }).sites[0]).toMatchObject({ name: 'Registry name', elevation: 1800 });
+  });
+
   it('does not borrow from an entry with the same ID at other coordinates', () => {
     const { locations } = parseLocations(JSON.stringify([entry('ZZ01', 'Elsewhere', 12.75, -100.25)]));
     const c = collection().upload('u1', {

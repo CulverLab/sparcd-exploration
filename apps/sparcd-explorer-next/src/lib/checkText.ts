@@ -1,6 +1,6 @@
 // Each data check as one plain sentence with one action.
 
-import { NO_LOCATION_KEY, type DataCheck, type Model } from '@/data';
+import { NO_LOCATION_KEY, locationGroupKey, type DataCheck, type Model } from '@/data';
 import { fmtN, monthName } from './format';
 
 /** Where an action takes the workspace: these locations, optionally split and in a view. */
@@ -105,7 +105,7 @@ function sentence(model: Model, check: DataCheck): CheckLine {
         action: {
           label: n === 2 ? 'Show both' : `Show all ${n}`,
           kind: 'show',
-          target: { locations: check.ids.map((i) => `id:${i}`), separate: true, view: 'locations', message: `Showing ${id}` },
+          target: { locations: check.ids.map(locationGroupKey), separate: true, view: 'locations', message: `Showing ${id}` },
         },
       };
     }
@@ -115,7 +115,7 @@ function sentence(model: Model, check: DataCheck): CheckLine {
         action: {
           label: 'Show each position',
           kind: 'show',
-          target: { locations: [`id:${check.locationId}`], separate: true, view: 'locations', message: `Showing ${check.locationId}` },
+          target: { locations: [locationGroupKey(check.locationId)], separate: true, view: 'locations', message: `Showing ${check.locationId}` },
         },
       };
     case 'near-duplicate-ids':
@@ -124,7 +124,16 @@ function sentence(model: Model, check: DataCheck): CheckLine {
         action: {
           label: check.ids.length === 2 ? 'Show both IDs' : `Show all ${check.ids.length} IDs`,
           kind: 'show',
-          target: { locations: check.ids.map((i) => `id:${i}`), view: 'locations', message: `Showing ${andList(check.ids)}` },
+          target: { locations: check.ids.map(locationGroupKey), view: 'locations', message: `Showing ${andList(check.ids)}` },
+        },
+      };
+    case 'mixed-case-ids':
+      return {
+        text: `${andList(check.ids)} are written in different case; they're shown as one location.`,
+        action: {
+          label: check.ids.length === 2 ? 'Show both' : `Show all ${check.ids.length}`,
+          kind: 'show',
+          target: { locations: [locationGroupKey(check.ids[0])], separate: true, view: 'locations', message: `Showing ${andList(check.ids)}` },
         },
       };
     case 'no-coordinates': {

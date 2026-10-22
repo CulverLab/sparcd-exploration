@@ -93,7 +93,7 @@ export function siteHexes(sites: Site[], display: CoordDisplay): SiteHexes {
   const anchors = new Map<string, Position>();
   sites.forEach((s, i) => {
     const p = shown[i];
-    if (p) anchors.set(`${s.locationId}|${p.lat},${p.lon}`, p);
+    if (p) anchors.set(`${s.groupKey}|${p.lat},${p.lon}`, p);
   });
   const grid = hexGrid([...anchors.values()], hexSizeFor(display.precision));
   return { grid, cells: shown.map((p) => (p ? hexOf(grid, p) : null)) };

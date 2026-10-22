@@ -102,6 +102,21 @@ describe('list filter labels', () => {
     expect(labels({ locations: onlyLocations(both, ['none']) }, both)[2]).toBe('Locations: No location set');
   });
 
+  it('name a location as its row does, and each spelling with IDs shown separately', () => {
+    const mixed = modelOf(
+      collection('Case', 'ccc')
+        .upload('u1', {
+          deployments: [deployment('pat26', 'Pass', 12.5, -100.25)],
+          media: [media('u1', 'a.jpg', 'pat26', '2024-01-01T10:00:00'), media('u1', 'b.jpg', 'pat26', '2024-01-02T10:00:00')],
+        })
+        .upload('u2', { deployments: [deployment('PAT26', 'Pass', 12.5, -100.25)], media: [media('u2', 'c.jpg', 'PAT26', '2024-01-03T10:00:00')] })
+        .upload('u3', { deployments: [deployment('BB01', 'Wash', 13.5, -100.25)], media: [media('u3', 'd.jpg', 'BB01', '2024-01-04T10:00:00')] }),
+    );
+    const f: FilterState = { ...NO_FILTERS, locations: onlyLocations(mixed, ['id:PAT26']) };
+    expect(filterButtons(mixed, f, 'm')[1].label).toBe('Locations: pat26');
+    expect(filterButtons(mixed, f, 'm', true)[1].label).toBe('Locations: pat26, PAT26');
+  });
+
   it('say when a location has only some of its sites ticked', () => {
     // AA01 at two sites; with IDs shown separately, one of them is unticked.
     const c = collection('Two', 'ttt');

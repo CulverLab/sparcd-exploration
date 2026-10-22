@@ -5,6 +5,7 @@ import {
   activeFilters,
   elevationIn,
   listKeys,
+  locationIdOf,
   locationKeyOf,
   photoSites,
   type ElevationUnit,
@@ -76,7 +77,7 @@ function locationItems(model: Model, f: FilterState, separate: boolean): Item[] 
     const ticked = !hidden.has(s.key);
     const item = items.get(key);
     if (item) item.ticked = item.ticked === ticked ? ticked : 'some';
-    else items.set(key, { label: s.noLocation ? 'No location set' : s.locationId, ticked });
+    else items.set(key, { label: s.noLocation ? 'No location set' : locationIdOf(s, separate), ticked });
   }
   return [...items.values()];
 }

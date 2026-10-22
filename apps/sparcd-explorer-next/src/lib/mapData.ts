@@ -9,6 +9,7 @@ import {
   hexCenter,
   shownPosition,
   hexRing,
+  locationIdOf,
   locationKeyOf,
   type FilterResult,
   type HexGrid,
@@ -84,7 +85,8 @@ export function hexViews(model: Model, result: FilterResult, separate: boolean, 
     const key = locationKeyOf(site, separate);
     let loc = h.locations.find((l) => l.key === key);
     if (!loc) h.locations.push((loc = { key, ids: [], name: site.name, photos: 0, detections: 0, inView: false }));
-    if (!loc.ids.includes(site.locationId)) loc.ids.push(site.locationId);
+    const shownId = locationIdOf(site, separate);
+    if (!loc.ids.includes(shownId)) loc.ids.push(shownId);
     loc.photos += t.photos;
     loc.detections += t.detections;
     loc.inView ||= t.effort;

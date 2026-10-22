@@ -42,7 +42,24 @@ describe('data check sentences', () => {
   it('near-duplicate IDs, both shown', () => {
     const line = lineFor('near-duplicate-ids');
     expect(line.text).toBe('AA01 and aa-01 look like the same location.');
-    expect(line.action).toMatchObject({ label: 'Show both IDs', target: { locations: ['id:AA01', 'id:aa-01'] } });
+    expect(line.action).toMatchObject({ label: 'Show both IDs', target: { locations: ['id:AA01', 'id:AA-01'] } });
+  });
+
+  it('one location ID written in different case, both shown separately, with no flag', () => {
+    const m = modelOf(
+      collection()
+        .upload('u1', { deployments: [deployment('pat26', 'Pass', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'pat26', TS)] })
+        .upload('u2', { deployments: [deployment('PAT26', 'Pass', 12.5, -100.25)], media: [media('u2', 'b.jpg', 'PAT26', TS)] }),
+    );
+    const line = describeCheck(m, dataChecks(m).find((c) => c.kind === 'mixed-case-ids')!);
+    expect(line).toEqual({
+      text: "pat26 and PAT26 are written in different case; they're shown as one location.",
+      action: {
+        label: 'Show both',
+        kind: 'show',
+        target: { locations: ['id:PAT26'], separate: true, view: 'locations', message: 'Showing pat26 and PAT26' },
+      },
+    });
   });
 
   it('one location in two collections, with each one’s months', () => {

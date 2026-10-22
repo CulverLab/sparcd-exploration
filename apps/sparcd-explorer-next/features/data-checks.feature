@@ -48,6 +48,17 @@ Feature: Data checks
     Then the Locations table has 2 rows
     And the locations filter reads "Locations: AB03, AB-03"
 
+  Scenario: One location ID written in different case is one location, and Data checks shows both
+    Given "Alpha Basin" has photos at "pat26" in one upload and "PAT26" in another
+    And I have opened "Alpha Basin"
+    Then the Locations table lists "PAT26" once, and no "pat26"
+    When I open Data checks
+    Then I see "pat26 and PAT26 are written in different case; they're shown as one location."
+    When I press "Show both" in Data checks
+    Then the Locations table has 2 rows
+    And the "Location ID" column lists "pat26"
+    And I see "Each location ID shown separately"
+
   Scenario: Hidden uploads are named on request
     Given I have opened "Alpha Basin"
     When I open Data checks

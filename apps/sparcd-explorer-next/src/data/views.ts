@@ -3,7 +3,7 @@
 
 import type { FilterResult } from './filters';
 import { hexCenter, type SiteHexes } from './hex';
-import { locationKeyOf, type Model } from './model';
+import { locationIdOf, locationKeyOf, type Model } from './model';
 import type { Position } from './coords';
 import { formatTimestamp24 } from './time';
 
@@ -169,7 +169,7 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
     const shown = model.sites[sites.reduce((best, s) => (lastDay(s) > lastDay(best) ? s : best))];
     return {
       key,
-      ids: [...new Set(sites.map((s) => model.sites[s].locationId))].sort(),
+      ids: [...new Set(sites.map((s) => locationIdOf(model.sites[s], grouping.separate)))].sort(),
       name: shown.name,
       noLocation: shown.noLocation,
       collections: [...new Set(sites.map((s) => model.sites[s].collection))],
@@ -251,7 +251,7 @@ export type PhotoRow = {
 };
 
 /** One row per photo, its species joined. `detections` limits the species to those in view. */
-export function photoRows(model: Model, photos: number[], detections?: number[]): PhotoRow[] {
+export function photoRows(model: Model, photos: number[], detections?: number[], grouping: Grouping = { separate: false }): PhotoRow[] {
   // Built for hundreds of thousands of photos: a mark per detection rather
   // than a set, and no set per row for the one or two species most photos have.
   let shown: Uint8Array | null = null;
@@ -282,7 +282,7 @@ export function photoRows(model: Model, photos: number[], detections?: number[])
       species: names.join(', '),
       scientificNames: scientific.join(', '),
       count,
-      locationId: site.locationId,
+      locationId: locationIdOf(site, grouping.separate),
       locationName: site.name,
       collection: collections[p.collection],
       tagged: p.tagged,
@@ -307,7 +307,7 @@ export type DetectionRow = {
 };
 
 /** One row per species tag. */
-export function detectionRows(model: Model, detections: number[]): DetectionRow[] {
+export function detectionRows(model: Model, detections: number[], grouping: Grouping = { separate: false }): DetectionRow[] {
   return detections.map((d) => {
     const det = model.detections[d];
     const p = model.photos[det.photo];
@@ -322,7 +322,7 @@ export function detectionRows(model: Model, detections: number[]): DetectionRow[
       species: species.name,
       scientificName: species.scientificName,
       count: det.count,
-      locationId: site.locationId,
+      locationId: locationIdOf(site, grouping.separate),
       locationName: site.name,
       collection: model.collections[p.collection].name,
     };
