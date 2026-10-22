@@ -127,7 +127,7 @@ Then(/^the (species|dates|locations|area|files|mountain range) filter reads "(.*
   await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${FILTER_NAMES[which]}`) })).toHaveText(label);
 });
 
-When(/^I clear the (Species|Area|Locations|Files) filter with its ×$/, async ({ page }, name: string) => {
+When(/^I clear the (Collections|Species|Area|Locations|Files|Dates) filter with its ×$/, async ({ page }, name: string) => {
   await page.getByRole('button', { name: `Clear ${name} filter` }).click();
 });
 

@@ -21,6 +21,7 @@ function Stat({ k, children, wide, title }: { k: React.ReactNode; children: Reac
 function ByCollection() {
   const { model, filters } = useView();
   const setFilters = useStore((s) => s.setFilters);
+  const clear = useStore((s) => s.clearFilter);
   const counts = useCollectionCounts();
   const { hidden } = filters.collections;
   const list = useRef<HTMLTableElement>(null);
@@ -36,7 +37,7 @@ function ByCollection() {
           label="Clear collection selection"
           onClick={() => {
             list.current?.querySelector('button')?.focus({ preventScroll: true });
-            setFilters((f) => ({ ...f, collections: NO_FILTERS.collections }));
+            clear('collections');
           }}
         />
       </div>

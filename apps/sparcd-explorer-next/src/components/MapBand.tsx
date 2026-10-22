@@ -89,6 +89,7 @@ export function MapBand() {
   const storedMode = useStore((s) => s.mapMode);
   const setMapMode = useStore((s) => s.setMapMode);
   const setFilters = useStore((s) => s.setFilters);
+  const clearFilter = useStore((s) => s.clearFilter);
   const highlight = useStore((s) => s.highlight);
   const show = useShowTarget();
 
@@ -341,7 +342,7 @@ export function MapBand() {
     return () => void map.off('move zoom resize', place);
   }, [map, hasSelection, selected, cells, siteSelection, model]);
 
-  const clearSelection = () => setFilters((f) => ({ ...f, area: [] }));
+  const clearSelection = () => clearFilter('area');
 
   // --- Select area ------------------------------------------------------------
   useEffect(() => {

@@ -25,6 +25,7 @@ const BASE = 82;
 export function EffortStrip() {
   const { model, filters, result } = useView();
   const setFilters = useStore((s) => s.setFilters);
+  const clear = useStore((s) => s.clearFilter);
   const tagShown = useStore((s) => s.view === 'photos');
   const legend = matchLegend(model, filters, tagShown);
   const wrap = useRef<HTMLDivElement>(null);
@@ -87,10 +88,11 @@ export function EffortStrip() {
 
   const setMonths = (a: number, b: number) =>
     setFilters((f) => ({ ...f, ...monthsToDates(a, b), years: [], months: [] }));
-  const clearDates = () => setFilters((f) => ({ ...f, dateFrom: null, dateTo: null }));
+  /** Lets the picked months go, as a second click on one does; "× Clear" clears all of Dates. */
+  const clearMonths = () => setFilters((f) => ({ ...f, dateFrom: null, dateTo: null }));
   /** A click picks one month; a second click on the same month lets it go. */
   const pick = (m: number) => {
-    if (range && range[0] === m && range[1] === m) clearDates();
+    if (range && range[0] === m && range[1] === m) clearMonths();
     else setMonths(m, m);
   };
 
@@ -179,7 +181,7 @@ export function EffortStrip() {
         setMonths(at, at);
         setAnchor(at);
       } else {
-        if (anchor === at) clearDates();
+        if (anchor === at) clearMonths();
         else setMonths(anchor, at);
         setAnchor(null);
       }
@@ -303,7 +305,7 @@ export function EffortStrip() {
             className="onstrip"
             style={{ left: 10 + Math.min(Math.max(bracketEnd - clearW, X0), W - clearW), top: 1 }}
             label="Clear dates"
-            onClick={clearDates}
+            onClick={() => clear('dates')}
           />
         )}
       </div>

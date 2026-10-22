@@ -16,6 +16,21 @@ Feature: Camera effort
     Then the dates filter reads "Dates"
     And the photo count reads "11 photos"
 
+  Scenario Outline: The strip's × Clear clears Dates as the filter's × does, and Back goes with it
+    When I drag the strip from "Jan 2024" to "May 2024"
+    And I pick the year 2024 in the dates filter
+    And I press "Show photos" on the Locations row "AB02"
+    Then the table's controls offer "Back to Locations" before the view switch
+    When <clear>
+    Then the dates filter reads "Dates"
+    And the locations filter reads "Locations: AB02"
+    And there is no "Back to" button
+
+    Examples:
+      | clear                               |
+      | I press "× Clear" on the strip      |
+      | I clear the Dates filter with its × |
+
   Scenario: A click picks one month, and a second click lets it go
     When I click "Jan 2024" on the strip
     Then the dates filter reads "Dates: Jan 2024"

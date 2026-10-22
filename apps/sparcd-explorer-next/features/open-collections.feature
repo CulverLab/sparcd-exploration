@@ -104,6 +104,22 @@ Feature: Open collections
     And there is no "× Clear" by the collections
     And the photo count reads "14 photos"
 
+  Scenario Outline: By collection's × Clear clears Collections as the filter's × does, and Back goes with it
+    Given I am signed in
+    And I open "Alpha Basin" and "Bravo Flats" together
+    When I pick "Bravo Flats" in By collection
+    And I press "Show photos" on the Locations row "BF01"
+    Then the table's controls offer "Back to Locations" before the view switch
+    When <clear>
+    Then no row is highlighted in By collection
+    And the locations filter reads "Locations: BF01"
+    And there is no "Back to" button
+
+    Examples:
+      | clear                                     |
+      | I press "× Clear" by the collections      |
+      | I clear the Collections filter with its × |
+
   @preview-3
   Scenario: Collections open when the computer's clock is off, and Data checks says so
     Given I am signed in
