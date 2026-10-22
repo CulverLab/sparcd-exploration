@@ -8,6 +8,8 @@ import { ListPicker, useWithout, type PickRow } from './shared';
 /** The row for photos with no species, set apart above the species. */
 const UNTAGGED = '\0untagged';
 
+const compare = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
 export function SpeciesPicker() {
   const { model, filters } = useView();
   const setFilters = useStore((s) => s.setFilters);
@@ -37,7 +39,8 @@ export function SpeciesPicker() {
     },
     ...model.species
       .map((s, i) => ({ ...s, n: counts.n.get(i) ?? 0 }))
-      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+      // A to Z by the name shown, so a species is where one looks for it.
+      .sort((a, b) => compare(a.name, b.name) || compare(a.scientificName, b.scientificName))
       .map((s) => ({
         key: s.key,
         name: s.name,

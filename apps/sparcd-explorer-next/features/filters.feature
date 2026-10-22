@@ -22,6 +22,7 @@ Feature: Filter the photos in view
     When I open the species filter
     Then every row of the species filter is ticked
     And the species filter lists "Untagged photos" first, apart from the species
+    And the species filter lists, in order, "Untagged photos, Bobcat, Coyote, Deer (Mule), Gray Fox"
     And the species filter reads "Species"
 
   Scenario: Only shows one species and unticks the rest, untagged photos too

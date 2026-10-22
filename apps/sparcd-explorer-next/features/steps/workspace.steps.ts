@@ -150,6 +150,10 @@ Then(/^"(.*)" is (ticked|unticked) in the (species|locations) filter$/, async ({
   await (state === 'ticked' ? expect(box).toBeChecked() : expect(box).not.toBeChecked());
 });
 
+Then('the species filter lists, in order, {string}', async ({ page }, list: string) => {
+  await expect(popover(page, 'Species').locator('.opt .t')).toHaveText(list.split(', '));
+});
+
 Then('the species filter lists {string} first, apart from the species', async ({ page }, item: string) => {
   const first = popover(page, 'Species').locator('.opt').first();
   await expect(first).toHaveClass(/apart/);
