@@ -5,16 +5,12 @@ import { Then, When, expect, tableRows } from './support/world';
 
 // --- Map ------------------------------------------------------------------------
 
-/** Sends one wheel event over the map's centre; true when the page was left to handle it. */
-async function wheelOverMap(page: Page, opts: { ctrlKey: boolean; deltaY: number }): Promise<boolean> {
+/** Notes the map's zoom, for "the map is zoomed in" and "the map is not zoomed" to compare with. */
+async function noteZoom(page: Page): Promise<Locator> {
   const map = page.locator('.leafmap');
   await expect(map).toHaveAttribute('data-zoom', /\d/);
   await map.evaluate((el) => ((el as HTMLElement).dataset.zoomBefore = (el as HTMLElement).dataset.zoom));
-  return map.evaluate((el, o) => {
-    const r = el.getBoundingClientRect();
-    const e = new WheelEvent('wheel', { ...o, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
-    return el.dispatchEvent(e);
-  }, opts);
+  return map;
 }
 
 let pageHandledWheel = true;
@@ -22,12 +18,21 @@ const zoomOf = (page: Page) =>
   page.locator('.leafmap').evaluate((el) => ({ before: Number((el as HTMLElement).dataset.zoomBefore), now: Number((el as HTMLElement).dataset.zoom) }));
 
 When('I pinch to zoom in over the map', async ({ page }) => {
-  // A trackpad pinch arrives as a wheel event with ctrlKey set.
-  pageHandledWheel = await wheelOverMap(page, { ctrlKey: true, deltaY: -60 });
+  const map = await noteZoom(page);
+  // A trackpad pinch arrives as a wheel event with ctrlKey set; the page handled it unless it was cancelled.
+  pageHandledWheel = await map.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const e = new WheelEvent('wheel', { ctrlKey: true, deltaY: -60, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
+    return el.dispatchEvent(e);
+  });
 });
 
-When('I scroll over the map without pinching', async ({ page }) => {
-  pageHandledWheel = await wheelOverMap(page, { ctrlKey: false, deltaY: 60 });
+When('I scroll over the map without pinching', async ({ page, scratch }) => {
+  await page.evaluate(() => scrollTo(0, 0));
+  const box = (await (await noteZoom(page)).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  scratch.scroll = await page.evaluate(() => scrollY);
+  await page.mouse.wheel(0, 300);
 });
 
 Then('the map is zoomed in', async ({ page }) => {
@@ -45,8 +50,8 @@ Then('the browser did not zoom the page', () => {
   expect(pageHandledWheel, 'the pinch was kept from the browser').toBe(false);
 });
 
-Then('the browser scrolled the page as usual', () => {
-  expect(pageHandledWheel, 'the plain scroll was left to the browser').toBe(true);
+Then('the browser scrolled the page as usual', async ({ page, scratch }) => {
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(scratch.scroll as number);
 });
 
 Then('a hint over the map reads {string}', async ({ page }, text: string) => {

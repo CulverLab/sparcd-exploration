@@ -11,6 +11,7 @@ import {
   type Registries,
   type ThumbIo,
 } from '../../src/data';
+import { nothingTicked } from '../../src/lib/filterLabels';
 import { DEFAULT_SORTING, GONE_BATCH_MS, readLast, useStore } from '../../src/store';
 import { collection, collectionRef, deployment, fileNames, media, observation } from '../support/fixtures';
 
@@ -250,6 +251,28 @@ describe('Undo', () => {
     expect(useStore.getState().toast?.message).toBe('No species were picked, so all are shown again');
     useStore.getState().toast!.undo!();
     expect(useStore.getState().filters).toEqual(empty);
+  });
+});
+
+describe('Undo after the Species list closes with only "Untagged photos" unticked', () => {
+  it('shows everything again, then puts back exactly what was there', () => {
+    const bare = collection('Bare', 'bbb')
+      .upload('u1', {
+        deployments: [deployment('BB01', 'Wash', 13.5, -100.25)],
+        media: [media('u1', 'a.jpg', 'BB01', '2024-01-01T10:00:00')],
+      })
+      .build();
+    const s = useStore.getState();
+    s.enterWorkspace(s.beginOpen(), [collectionRef('Bare', 'bbb')], [bare], NONE);
+    s.setFilters((f) => ({ ...f, years: [2024], species: { hidden: [], hideUntagged: true } }));
+    const before = useStore.getState().filters;
+    const { model, filters } = useStore.getState();
+    expect(nothingTicked(model!, filters, 'species')).toBe(true);
+
+    useStore.getState().clearFilter('species', 'No species were picked, so all are shown again');
+    expect(useStore.getState().filters).toEqual({ ...before, species: { hidden: [], hideUntagged: false } });
+    useStore.getState().toast!.undo!();
+    expect(useStore.getState().filters).toEqual(before);
   });
 });
 

@@ -304,7 +304,7 @@ export function TablePanel() {
   };
 
   const nothing = active && result.photos.length === 0;
-  const unpicked = nothing ? noneTicked(model, filters, grouping.separate) : null;
+  const unpicked = nothing ? noneTicked(model, filters) : null;
   let body;
   if (nothing) {
     body = (

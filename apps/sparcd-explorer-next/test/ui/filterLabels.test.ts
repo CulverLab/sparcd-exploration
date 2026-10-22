@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NO_FILTERS, activeFilters, clearFilter, listKeys, only, onlyLocations, onlySpecies, resetFilters, type FilterState } from '../../src/data';
-import { filterButtons, filterWords, matchLegend, noneTicked, photoCountLabel } from '../../src/lib/filterLabels';
+import { filterButtons, filterWords, matchLegend, noneTicked, nothingTicked, photoCountLabel } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
 const alpha = collection('Alpha', 'aaa').upload('u1', {
@@ -84,6 +84,31 @@ describe('list filter labels', () => {
     expect(noneTicked(wide, { ...NO_FILTERS, species: onlySpecies(wide, []) })).toBe('species');
     expect(noneTicked(wide, { ...NO_FILTERS, species: onlySpecies(wide, [], true) })).toBeNull();
     expect(noneTicked(wide, NO_FILTERS)).toBeNull();
+  });
+
+  it('say none when "Untagged photos" is the only row and is unticked', () => {
+    const bare = modelOf(
+      collection('Bare', 'bbb').upload('u1', {
+        deployments: [deployment('BB01', 'Wash', 13.5, -100.25)],
+        media: [media('u1', 'a.jpg', 'BB01', '2024-01-01T10:00:00')],
+      }),
+    );
+    const cleared = { ...NO_FILTERS, species: { hidden: [], hideUntagged: true } };
+    expect(filterButtons(bare, cleared, 'm')[0].label).toBe('Species: no untagged');
+    expect(noneTicked(bare, cleared)).toBe('species');
+    expect(noneTicked(bare, NO_FILTERS)).toBeNull();
+  });
+
+  it('judge nothing ticked from the filter state, for every list', () => {
+    const hideAll = (dim: 'collections' | 'locations' | 'ranges', m = wide) => ({ ...NO_FILTERS, [dim]: { hidden: listKeys(m, dim) } });
+    expect(nothingTicked(wide, hideAll('locations'), 'locations')).toBe(true);
+    expect(nothingTicked(wide, hideAll('ranges'), 'ranges')).toBe(true);
+    expect(nothingTicked(both, hideAll('collections', both), 'collections')).toBe(true);
+    expect(nothingTicked(wide, { ...NO_FILTERS, species: { hidden: listKeys(wide, 'species'), hideUntagged: true } }, 'species')).toBe(true);
+    expect(nothingTicked(wide, { ...NO_FILTERS, species: { hidden: listKeys(wide, 'species'), hideUntagged: false } }, 'species')).toBe(false);
+    const oneLeft = { ...NO_FILTERS, locations: { hidden: listKeys(wide, 'locations').slice(1) } };
+    expect(nothingTicked(wide, oneLeft, 'locations')).toBe(false);
+    expect(nothingTicked(wide, NO_FILTERS, 'locations')).toBe(false);
   });
 
   it('read the filter name again once everything is ticked', () => {

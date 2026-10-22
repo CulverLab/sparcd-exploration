@@ -117,15 +117,22 @@ function speciesWords(model: Model, f: FilterState): string | null {
   return untagged ? value.text : `${value.text}, no untagged photos`;
 }
 
-/** Whether a list filter has nothing at all ticked, so nothing can match. */
-export function nothingTicked(model: Model, f: FilterState, dim: ListDimension, separate = false): boolean {
-  return activeFilters(f).includes(dim) && listFilterValue(model, f, dim, separate) === 'none';
+/**
+ * Whether a list filter has nothing at all ticked, so nothing can match. For
+ * species that includes the "Untagged photos" row, the only one a collection
+ * with no species observations has.
+ */
+export function nothingTicked(model: Model, f: FilterState, dim: ListDimension): boolean {
+  const hidden = new Set(f[dim].hidden);
+  const keys = listKeys(model, dim);
+  const allHidden = keys.every((k) => hidden.has(k));
+  return dim === 'species' ? allHidden && f.species.hideUntagged : keys.length > 0 && allHidden;
 }
 
 /** The list filter, if any, with nothing at all ticked. */
-export function noneTicked(model: Model, f: FilterState, separate = false): ListDimension | null {
+export function noneTicked(model: Model, f: FilterState): ListDimension | null {
   const lists: ListDimension[] = ['collections', 'species', 'locations', 'ranges'];
-  return lists.find((dim) => nothingTicked(model, f, dim, separate)) ?? null;
+  return lists.find((dim) => nothingTicked(model, f, dim)) ?? null;
 }
 
 const lastDayOf = (date: string): number =>

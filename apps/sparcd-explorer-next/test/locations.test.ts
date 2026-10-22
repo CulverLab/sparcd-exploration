@@ -62,6 +62,15 @@ describe('the registry in the model', () => {
     expect(buildModel([c.build()], { registry: locations }).sites[0]).toMatchObject({ name: 'Registry name', elevation: 1800 });
   });
 
+  it('finds an entry cached with a case-sensitive key from before IDs lost their case', () => {
+    const cached = [{ key: 'zz01|12.500000,-100.250000', id: 'zz01', name: 'Registry name', latitude: 12.5, longitude: -100.25, elevation: 1800 }];
+    const c = collection().upload('u1', {
+      deployments: [deployment('ZZ01', '', 12.5, -100.25, null)],
+      media: [media('u1', 'a.jpg', 'ZZ01', '2024-01-01T10:00:00')],
+    });
+    expect(buildModel([c.build()], { registry: cached }).sites[0]).toMatchObject({ name: 'Registry name', elevation: 1800 });
+  });
+
   it('does not borrow from an entry with the same ID at other coordinates', () => {
     const { locations } = parseLocations(JSON.stringify([entry('ZZ01', 'Elsewhere', 12.75, -100.25)]));
     const c = collection().upload('u1', {

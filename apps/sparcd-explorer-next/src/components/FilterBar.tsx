@@ -27,9 +27,9 @@ function FilterButtonView({ button }: { button: FilterButton }) {
   // A list closed with nothing ticked shows everything again; Undo puts the empty list back.
   const close = (refocus: boolean) => {
     pop.close(refocus);
-    const { model, filters, separate } = useStore.getState();
+    const { model, filters } = useStore.getState();
     const dim = button.dim as ListDimension;
-    if (dim in LIST_NOUNS && nothingTicked(model!, filters, dim, separate)) {
+    if (dim in LIST_NOUNS && nothingTicked(model!, filters, dim)) {
       clear(dim, `No ${LIST_NOUNS[dim]} were picked, so all are shown again`);
     }
   };

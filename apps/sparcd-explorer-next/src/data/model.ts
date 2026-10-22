@@ -125,7 +125,8 @@ export function buildModel(
 ): Model {
   const missing = opts.missing?.size ? opts.missing : null;
   const nameSpecies = speciesNamer(...(opts.species ?? []));
-  const registry = new Map((opts.registry ?? []).map((l) => [l.key, l]));
+  // Keyed afresh: a cached registry may hold keys from before IDs lost their case.
+  const registry = new Map((opts.registry ?? []).map((l) => [registryKey(l.id, l.latitude, l.longitude), l]));
   const sites: Site[] = [];
   const siteIndex = new Map<string, number>();
   const elevations: number[][] = [];
