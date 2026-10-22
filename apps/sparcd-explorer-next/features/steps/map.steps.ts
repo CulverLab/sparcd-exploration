@@ -35,6 +35,8 @@ Then('the map is zoomed in', async ({ page }) => {
 });
 
 Then('the map is not zoomed', async ({ page }) => {
+  // Past Leaflet's 40ms wheel debounce and its zoom animation.
+  await page.waitForTimeout(400);
   const z = await zoomOf(page);
   expect(z.now).toBe(z.before);
 });

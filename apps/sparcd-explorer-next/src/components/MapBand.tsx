@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
-import { attachPinchZoom } from '@/lib/mapGestures';
+import { PINCH_ZOOM_OPTIONS, attachPinchZoom } from '@/lib/mapGestures';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
 import {
@@ -139,25 +139,25 @@ export function MapBand() {
 
   // --- The map itself --------------------------------------------------------
   useEffect(() => {
-    const el = wrapRef.current!.querySelector<HTMLDivElement>('.leafmap')!;
+    const wrap = wrapRef.current!;
+    const el = wrap.querySelector<HTMLDivElement>('.leafmap')!;
     const m = L.map(el, {
       zoomControl: false,
       attributionControl: false,
-      // Plain wheel scrolls the page and double-click would fight hex clicks;
-      // pinch (and Ctrl/⌘ + wheel) zooms through attachPinchZoom below.
-      scrollWheelZoom: false,
+      // Pinch and Ctrl/⌘ + wheel zoom; attachPinchZoom keeps plain wheel
+      // scrolling the page. Double-click would fight hex clicks.
+      ...PINCH_ZOOM_OPTIONS,
       doubleClickZoom: false,
       boxZoom: false,
       maxZoom: MAX_ZOOM,
       minZoom: 2,
-      zoomSnap: 0.25,
     });
     L.control.zoom({ position: 'topright' }).addTo(m);
     m.on('moveend', () => {
       lastView = { key: fitKeyRef.current, center: m.getCenter(), zoom: m.getZoom() };
     });
     m.on('zoomend', () => (el.dataset.zoom = String(m.getZoom())));
-    const detachPinch = attachPinchZoom(m, el, () => setScrollHint((shown) => (shown === null ? true : shown)));
+    const detachPinch = attachPinchZoom(m, wrap, () => setScrollHint((shown) => (shown === null ? true : shown)));
     const resize = new ResizeObserver(() => m.invalidateSize());
     resize.observe(el);
     setMap(m);
