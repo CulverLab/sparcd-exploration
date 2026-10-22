@@ -77,10 +77,12 @@ function csvRow(fields: string[]): string {
 
 // SPARC'd writes coordinates / camera geometry with six decimals; integer-ish
 // fields (uncertainty, interval, heading) stay bare. Matches the live bytes.
-const f6 = (n: number): string => n.toFixed(6);
+// A position or elevation that is not known stays blank, as a reader of
+// `parseDeploymentsNullable` saw it.
+const f6 = (n: number | null): string => (n === null ? '' : n.toFixed(6));
 
 /** Serialize `deployments.csv` (one row per deployment), v016 23-column shape. */
-export function serializeDeployments(deployments: Deployment[]): string {
+export function serializeDeployments(deployments: (Deployment | NullableDeployment)[]): string {
   return deployments
     .map((d) =>
       csvRow([
@@ -422,6 +424,36 @@ export function parseDeployments(csv: string): Deployment[] {
     longitude: Number(r[DEPLOY_COL.longitude]),
     latitude: Number(r[DEPLOY_COL.latitude]),
     elevation: Number(r[DEPLOY_COL.cameraHeight]),
+    timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
+  }));
+}
+
+/** A `deployments.csv` row whose position and elevation stay `null` when blank. */
+export type NullableDeployment = Omit<Deployment, 'latitude' | 'longitude' | 'elevation'> & {
+  latitude: number | null;
+  longitude: number | null;
+  elevation: number | null;
+};
+
+const numberOrNull = (cell: string | undefined): number | null => {
+  if (!cell?.trim()) return null;
+  const n = Number(cell);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Like `parseDeployments`, but a blank or non-numeric latitude, longitude or
+ * elevation reads as `null` instead of `0` / `NaN`, so a reader can tell a
+ * deployment without coordinates from one at 0.
+ */
+export function parseDeploymentsNullable(csv: string): NullableDeployment[] {
+  return parseCsvRows(csv).map((r) => ({
+    deploymentId: r[DEPLOY_COL.deploymentId] ?? '',
+    locationId: r[DEPLOY_COL.locationId] ?? '',
+    locationName: r[DEPLOY_COL.locationName] ?? '',
+    longitude: numberOrNull(r[DEPLOY_COL.longitude]),
+    latitude: numberOrNull(r[DEPLOY_COL.latitude]),
+    elevation: numberOrNull(r[DEPLOY_COL.cameraHeight]),
     timestampIssues: r[DEPLOY_COL.timestampIssues] === 'true',
   }));
 }

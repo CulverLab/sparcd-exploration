@@ -22,6 +22,27 @@ export type ConnectionProps = {
    *  into a caller's own layout (e.g. mid-wizard, asking to connect only once
    *  a step needs it) instead of taking over the whole viewport. */
   embedded?: boolean;
+  /** Wording a caller can change. Each defaults to the text every tool shows today. */
+  labels?: ConnectionLabels;
+};
+
+export type ConnectionLabels = {
+  /** Default "Endpoint". */
+  endpoint?: string;
+  /** Default "host[:port] or https://host". */
+  endpointPlaceholder?: string;
+  /** Default "Access key". */
+  accessKey?: string;
+  /** Default "Secret key". */
+  secretKey?: string;
+  /** The line under the brand. Default "Connect to an S3-compatible endpoint to begin." */
+  intro?: string;
+  /** Default "Remember endpoint & access key on this device". */
+  remember?: string;
+  /** The note under the remember box. Default "(Don't set remember endpoint & access key if on a public computer)". */
+  rememberHelp?: string;
+  /** Default "Connect". */
+  submit?: string;
 };
 
 const fieldLabel = 'block font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
@@ -34,7 +55,7 @@ const textInput =
  * The shared credentials/connection screen for every SPARC'd JS tool. Three
  * fields — endpoint, access key, secret key — with region / path-style /
  * secure inferred from the endpoint and exposed only behind "Advanced".
- * Parameterized solely by `toolName`.
+ * Parameterized by `toolName`, with optional `labels` for its wording.
  */
 export function Connection({
   toolName,
@@ -42,6 +63,7 @@ export function Connection({
   onConnect,
   onSkip,
   embedded,
+  labels,
 }: ConnectionProps) {
   const rememberHelpId = useId();
   const [endpoint, setEndpoint] = useState(initialConfig?.endpoint ?? '');
@@ -106,7 +128,7 @@ export function Connection({
           <BrandSwitcher toolName={toolName} />
         </div>
         <p className="font-body text-[14px] text-inkSoft mb-6">
-          Connect to an S3-compatible endpoint to begin.
+          {labels?.intro ?? 'Connect to an S3-compatible endpoint to begin.'}
         </p>
 
         <div className="mb-4">
@@ -116,13 +138,13 @@ export function Connection({
         <div className="space-y-4">
           <div>
             <label htmlFor="endpoint" className={fieldLabel}>
-              Endpoint
+              {labels?.endpoint ?? 'Endpoint'}
             </label>
             <input
               id="endpoint"
               name="endpoint"
               className={textInput}
-              placeholder="host[:port] or https://host"
+              placeholder={labels?.endpointPlaceholder ?? 'host[:port] or https://host'}
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               autoComplete="url"
@@ -131,7 +153,7 @@ export function Connection({
           </div>
           <div>
             <label htmlFor="accessKey" className={fieldLabel}>
-              Access key
+              {labels?.accessKey ?? 'Access key'}
             </label>
             <input
               id="accessKey"
@@ -145,7 +167,7 @@ export function Connection({
           </div>
           <div>
             <label htmlFor="secretKey" className={fieldLabel}>
-              Secret key
+              {labels?.secretKey ?? 'Secret key'}
             </label>
             <input
               id="secretKey"
@@ -165,10 +187,11 @@ export function Connection({
               aria-describedby={rememberHelpId}
               onChange={(e) => setRemember(e.target.checked)}
             />
-            Remember endpoint &amp; access key on this device
+            {labels?.remember ?? 'Remember endpoint & access key on this device'}
           </label>
           <p id={rememberHelpId} className="font-body text-[13px] text-inkMute italic">
-            (Don't set remember endpoint &amp; access key if on a public computer)
+            {labels?.rememberHelp ??
+              "(Don't set remember endpoint & access key if on a public computer)"}
           </p>
         </div>
 
@@ -225,7 +248,7 @@ export function Connection({
           title={!online ? "You're offline" : undefined}
           className="mt-7 w-full bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          Connect
+          {labels?.submit ?? 'Connect'}
         </button>
 
         {onSkip && (

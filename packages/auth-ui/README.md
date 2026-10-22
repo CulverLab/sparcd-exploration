@@ -51,10 +51,15 @@ cross-version sign-out at the cost of allowing a delayed old logout to sign
 out a newer session conservatively. Do not stamp an
 old reply with a new revision or automatically trust it as a new login.
 
+Builds before 14d65907 also saved `secretKey` in `sparcd-connection`.
+`loadPersistedConnection` never returns it and rewrites the entry without it
+the first time it reads one.
+
 ## Verification
 
 Uploader `test/session.test.ts` covers ordering, duplicate and stale replies,
 logout, same-tab migration, synchronized state, and credential storage.
+This package's `test/session.test.ts` covers the legacy secret scrub.
 `features/shared-session.feature` exercises real Uploader/Tagger navigation
 through the unified dev origin, refused-then-corrected endpoints, Remember
 on/off, reloads, and deterministic stale-sibling delivery. The cross-tool suite
