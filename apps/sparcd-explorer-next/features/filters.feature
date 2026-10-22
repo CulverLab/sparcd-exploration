@@ -53,13 +53,28 @@ Feature: Filter the photos in view
     Then the species filter reads "Species"
     And the photo count reads "11 photos"
 
-  Scenario: With nothing selected, the table offers Select all
+  Scenario: Closing a list with nothing ticked shows everything again, and Undo empties it
     When I open the species filter
     And I press "Clear all" in the species filter
-    And I press Escape
-    And I press the big "Select all" button
+    Then I see "Pick at least one species"
+    When I press Escape
     Then the species filter reads "Species"
     And the photo count reads "11 photos"
+    And I see the note "No species were picked, so all are shown again" with Undo
+    When I press Undo
+    Then the species filter reads "Species: none"
+    And the table says "No species selected"
+    When I press the big "Select all" button
+    Then the species filter reads "Species"
+    And the photo count reads "11 photos"
+
+  Scenario: The locations list does the same when its button closes it
+    When I open the locations filter
+    And I press "Clear all" in the locations filter
+    Then I see "Pick at least one location"
+    When I close the locations filter with its button
+    Then the locations filter reads "Locations"
+    And I see the note "No locations were picked, so all are shown again" with Undo
 
   Scenario: Select all and Clear all act on the species a search finds
     When I open the species filter

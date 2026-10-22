@@ -29,6 +29,7 @@ export function CollectionsPicker() {
   return (
     <ListPicker
       title="Collections"
+      noun="collection"
       rows={model.collections.map((c, i) => ({
         key: c.key,
         name: c.name,

@@ -27,6 +27,7 @@ export function LocationsPicker() {
   return (
     <ListPicker
       title="Locations"
+      noun="location"
       search={{ label: 'Search locations', placeholder: 'Search ID or name' }}
       rows={all.map((r) => {
         const n = counts.get(r.key) ?? 0;

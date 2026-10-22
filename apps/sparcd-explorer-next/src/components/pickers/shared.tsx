@@ -32,12 +32,15 @@ export type PickRow = {
  */
 export function ListPicker({
   title,
+  noun,
   search,
   rows,
   onTick,
   onOnly,
 }: {
   title: string;
+  /** One item, as "Pick at least one species" names it. */
+  noun: string;
   search?: { label: string; placeholder: string };
   rows: PickRow[];
   onTick: (rows: PickRow[], on: boolean) => void;
@@ -92,6 +95,11 @@ export function ListPicker({
         ))}
         {shown.length === 0 && <p className="fine px-1 py-2">Nothing matches that search.</p>}
       </div>
+      {rows.every((r) => r.ticked === false) && (
+        <p className="fine" role="status">
+          Pick at least one {noun}
+        </p>
+      )}
     </>
   );
 }

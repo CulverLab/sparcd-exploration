@@ -16,6 +16,7 @@ export function RangePicker() {
   return (
     <ListPicker
       title="Mountain range"
+      noun="mountain range"
       rows={listKeys(model, 'ranges').map((range) => ({
         key: range,
         name: range,

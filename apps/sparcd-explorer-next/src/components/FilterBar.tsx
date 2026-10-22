@@ -1,5 +1,5 @@
-import type { FilterDimension } from '@/data';
-import { filterButtons, photoCountLabel, type FilterButton } from '@/lib/filterLabels';
+import type { FilterDimension, ListDimension } from '@/data';
+import { LIST_NOUNS, filterButtons, nothingTicked, photoCountLabel, type FilterButton } from '@/lib/filterLabels';
 import { useTableView } from '@/lib/useTableView';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
@@ -24,6 +24,15 @@ function FilterButtonView({ button }: { button: FilterButton }) {
   const pop = usePopover();
   const clear = useStore((s) => s.clearFilter);
   const Picker = PICKERS[button.dim];
+  // A list closed with nothing ticked shows everything again; Undo puts the empty list back.
+  const close = (refocus: boolean) => {
+    pop.close(refocus);
+    const { model, filters, separate } = useStore.getState();
+    const dim = button.dim as ListDimension;
+    if (dim in LIST_NOUNS && nothingTicked(model!, filters, dim, separate)) {
+      clear(dim, `No ${LIST_NOUNS[dim]} were picked, so all are shown again`);
+    }
+  };
   return (
     <span className={button.active ? 'fb on' : 'fb'}>
       <button
@@ -32,7 +41,13 @@ function FilterButtonView({ button }: { button: FilterButton }) {
         className="btn fbtn"
         aria-haspopup={Picker ? 'dialog' : undefined}
         aria-expanded={Picker ? pop.open : undefined}
-        onClick={Picker ? pop.toggle : () => document.getElementById(button.dim === 'area' ? 'map' : 'table')?.scrollIntoView({ block: 'nearest' })}
+        onClick={
+          Picker
+            ? pop.open
+              ? () => close(false)
+              : pop.toggle
+            : () => document.getElementById(button.dim === 'area' ? 'map' : 'table')?.scrollIntoView({ block: 'nearest' })
+        }
       >
         <span className="lbl">{button.label}</span>
         {!button.active && <span className="caret" />}
@@ -51,7 +66,7 @@ function FilterButtonView({ button }: { button: FilterButton }) {
         </button>
       )}
       {pop.open && Picker && (
-        <Popover anchor={pop.anchor} label={button.name} onClose={pop.close}>
+        <Popover anchor={pop.anchor} label={button.name} onClose={close}>
           <Picker />
         </Popover>
       )}

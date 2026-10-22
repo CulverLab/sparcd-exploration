@@ -117,10 +117,15 @@ function speciesWords(model: Model, f: FilterState): string | null {
   return untagged ? value.text : `${value.text}, no untagged photos`;
 }
 
-/** The list filter, if any, with nothing at all ticked, so nothing can match. */
+/** Whether a list filter has nothing at all ticked, so nothing can match. */
+export function nothingTicked(model: Model, f: FilterState, dim: ListDimension, separate = false): boolean {
+  return activeFilters(f).includes(dim) && listFilterValue(model, f, dim, separate) === 'none';
+}
+
+/** The list filter, if any, with nothing at all ticked. */
 export function noneTicked(model: Model, f: FilterState, separate = false): ListDimension | null {
   const lists: ListDimension[] = ['collections', 'species', 'locations', 'ranges'];
-  return lists.find((dim) => activeFilters(f).includes(dim) && listFilterValue(model, f, dim, separate) === 'none') ?? null;
+  return lists.find((dim) => nothingTicked(model, f, dim, separate)) ?? null;
 }
 
 const lastDayOf = (date: string): number =>

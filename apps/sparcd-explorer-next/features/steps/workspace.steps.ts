@@ -98,6 +98,13 @@ When(/^I (tick|untick) "(.*)" in the (species|locations|mountain range|collectio
   await (verb === 'tick' ? box.check() : box.uncheck());
 });
 
+When(/^I close the (species|locations|mountain range|collections) filter with its button$/, async ({ page }, filter: string) => {
+  const button = filterButton(page, new RegExp(`^${FILTER_NAMES[filter]}`));
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
+  await button.click();
+  await expect(popover(page, FILTER_NAMES[filter])).toHaveCount(0);
+});
+
 When(/^I press "(Select all|Clear all)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, label: string, filter: string) => {
   await popover(page, FILTER_NAMES[filter]).getByRole('button', { name: label, exact: true }).click();
 });

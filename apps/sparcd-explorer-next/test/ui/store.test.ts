@@ -229,6 +229,18 @@ describe('Undo', () => {
     const { model, filters } = useStore.getState();
     expect(fileNames(model!, applyFilters(model!, filters).photos)).toEqual(['a.jpg']);
   });
+
+  it('puts back a list left with nothing ticked, which closing it had filled again', () => {
+    const s = useStore.getState();
+    s.enterWorkspace(s.beginOpen(), [collectionRef('Herd', 'hhh')], [herd(false)], NONE);
+    s.setFilters((f) => ({ ...f, species: onlySpecies(useStore.getState().model!, []) }));
+    const empty = useStore.getState().filters;
+    s.clearFilter('species', 'No species were picked, so all are shown again');
+    expect(useStore.getState().filters.species).toEqual({ hidden: [], hideUntagged: false });
+    expect(useStore.getState().toast?.message).toBe('No species were picked, so all are shown again');
+    useStore.getState().toast!.undo!();
+    expect(useStore.getState().filters).toEqual(empty);
+  });
 });
 
 describe('Back, after a row or data-check action', () => {

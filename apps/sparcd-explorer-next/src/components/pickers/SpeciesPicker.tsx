@@ -53,6 +53,7 @@ export function SpeciesPicker() {
   return (
     <ListPicker
       title="Species"
+      noun="species"
       search={{ label: 'Search species', placeholder: 'Search common or scientific name' }}
       rows={rows}
       onTick={(picked, on) =>

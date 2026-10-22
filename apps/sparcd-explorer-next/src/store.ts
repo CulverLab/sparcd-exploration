@@ -102,7 +102,8 @@ type State = {
   /** A read found this photo file gone (404 or NoSuchKey). */
   markGone: (key: string) => void;
   setFilters: (change: (f: FilterState) => FilterState) => void;
-  clearFilter: (dim: FilterDimension) => void;
+  /** A filter button's ×, and the other clears of one dimension. With `undo`, says so in a toast whose Undo puts the filter back. */
+  clearFilter: (dim: FilterDimension, undo?: string) => void;
   /** The Tagged switch over the photos, which keeps Back: it looks at what a drill-down showed. */
   setPhotoTag: (photoTag: FilterState['photoTag']) => void;
   /** Apply a change to filters and view state with an Undo toast. */
@@ -335,7 +336,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setFilters: (change) => set({ filters: change(get().filters), back: null }),
-  clearFilter: (dim) => set({ filters: clearFilter(get().filters, dim), back: null }),
+  clearFilter: (dim, undo) => {
+    if (!undo) return set({ filters: clearFilter(get().filters, dim), back: null });
+    set({ back: null });
+    get().withUndo(undo, (s) => ({ ...s, filters: clearFilter(s.filters, dim) }));
+  },
   setPhotoTag: (photoTag) => set({ filters: { ...get().filters, photoTag } }),
 
   withUndo: (message, change) => {
