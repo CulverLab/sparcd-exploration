@@ -99,6 +99,16 @@ describe('opening collections', () => {
     open(alpha, bravo);
     expect(readLast(useStore.getState().account)).toEqual([alpha.ref.key, bravo.ref.key]);
   });
+  it('opens each new set of collections on Locations, and keeps the view of the same set reopened', () => {
+    open(alpha);
+    useStore.getState().setView('photos');
+    useStore.getState().showChooser();
+    expect(useStore.getState().resumeWorkspace([alpha.ref])).toBe(true);
+    expect(useStore.getState().view).toBe('photos');
+    open(alpha, bravo);
+    expect(useStore.getState().view).toBe('locations');
+    expect(localStorage.getItem('sparcd-explorer-view')).toBeNull();
+  });
 });
 
 describe('changing collections', () => {

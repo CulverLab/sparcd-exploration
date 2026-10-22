@@ -7,6 +7,15 @@ Feature: Tables of locations, species and photos
     Then the Locations table lists "AB01", "AB02", "AB03", "AB-03" and "0000"
     And the row "0000" reads "No location set" and is flagged
 
+  Scenario: Every visit and every new set of collections opens on the Locations table
+    When I show the Photos table
+    And I reload and reopen "Alpha Basin"
+    Then the view switch shows "Locations"
+    When I show the Photos table
+    And I go back to choose collections
+    And I open "Alpha Basin" and "Bravo Flats" together
+    Then the view switch shows "Locations"
+
   Scenario: Species read as common names
     When I show the Species table
     Then the "Common name" column lists "Bobcat", "Deer (Mule)", "Coyote" and "Gray Fox"

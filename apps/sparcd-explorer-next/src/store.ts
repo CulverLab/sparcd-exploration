@@ -125,9 +125,9 @@ type State = {
 };
 
 const DISPLAY_KEY = 'sparcd-explorer-display';
-const VIEW_KEY = 'sparcd-explorer-view';
 const LAYOUT_KEY = 'sparcd-explorer-photo-layout';
-const VIEWS: View[] = ['locations', 'species', 'photos', 'charts'];
+// Every visit opens on Locations; a table view older builds remembered goes.
+writeStored('sparcd-explorer-view', null);
 
 export const DEFAULT_SORTING: Record<TableView, Sorting> = {
   locations: [{ id: 'id', desc: false }],
@@ -201,7 +201,7 @@ export const useStore = create<State>((set, get) => ({
   gone: NONE,
   filters: NO_FILTERS,
   separate: false,
-  view: readStored<View>(VIEW_KEY, 'locations', (v): v is View => VIEWS.includes(v as View)),
+  view: 'locations',
   photoLayout: readStored<PhotoLayout>(LAYOUT_KEY, 'grid', (v): v is PhotoLayout => v === 'grid' || v === 'list'),
   sorting: DEFAULT_SORTING,
   display: readStored(DISPLAY_KEY, DEFAULT_DISPLAY, isDisplay),
@@ -285,6 +285,7 @@ export const useStore = create<State>((set, get) => ({
       filesUnchecked: 0,
       filters: carried.state,
       separate: before ? separate : false,
+      view: 'locations',
       toast: null,
       back: null,
     });
@@ -385,10 +386,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setSeparate: (separate) => set({ separate }),
-  setView: (view) => {
-    writeStored(VIEW_KEY, view);
-    set({ view });
-  },
+  setView: (view) => set({ view }),
   setPhotoLayout: (photoLayout) => {
     writeStored(LAYOUT_KEY, photoLayout);
     set({ photoLayout });
