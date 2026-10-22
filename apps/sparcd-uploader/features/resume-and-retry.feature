@@ -89,6 +89,14 @@ Feature: Resume an interrupted upload and retry a failed one
     And the deployment, uploader identity and description are taken from the recorded session, not re-entered
     And the resumed upload's observations.csv matches what a fresh upload would have written
 
+  @unmapped
+  Scenario: A resumed upload keeps its recorded identity after the connected login changes
+    Given an open upload is listed in History
+    When the connected login changes to Login B
+    And it is resumed
+    Then the upload continues from where it stopped
+    And the deployment, uploader identity and description are taken from the recorded session, not re-entered
+
   @AL2 @AL2-1
   Scenario Outline: A resumed upload names its saved destination and metadata on the Upload step
     Given an open upload is listed in History

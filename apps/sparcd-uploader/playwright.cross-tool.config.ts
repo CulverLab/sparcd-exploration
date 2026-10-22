@@ -26,6 +26,7 @@ export default defineConfig({
     locale: 'en-US',
     trace: 'off',
     ...devices['Desktop Chrome'],
+    ...(process.env.SPARCD_USE_SYSTEM_CHROME === '1' ? { channel: 'chrome' as const } : {}),
   },
   webServer: [
     {

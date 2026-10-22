@@ -1,5 +1,8 @@
 # Corrections found by making the as-built features executable
 
+> Historical findings from the manual Sync/Snapshots workflow. #518 replaces
+> those user workflows; current executable coverage is mapped in [NOTES.md](./NOTES.md).
+
 DRAFT — for review alongside `NOTES.md`. The eleven `.feature` files were
 written by reading `apps/sparcd-tagger/src`. Running them against the real app
 (Playwright + playwright-bdd, all storage traffic mocked — see

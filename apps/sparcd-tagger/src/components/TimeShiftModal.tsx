@@ -77,7 +77,7 @@ export function TimeShiftModal({
             Camera clocks drift — wrong timezone, DST, dead RTC battery. Shift every frame in this
             upload by a signed offset. This is a{' '}
             <strong className="text-ink">non-destructive correction</strong>: the original capture
-            time is preserved; the shift is stored alongside it and drives the displayed and synced
+            time is preserved; the shift is stored alongside it and drives the displayed and saved
             time.
           </p>
 

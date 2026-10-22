@@ -1,4 +1,5 @@
 import { Given, When, Then, expect } from './fixtures';
+import { loginIdentityPreferenceKey } from '../../../../packages/auth-ui/src/loginIdentity';
 import { ACCESS_KEY, type App } from './app';
 import { clipVideo, jpegAt, jpegNoTime, standardBatch } from './batches';
 import { expectStoredAtLocation, publishedUploads, reconnectAndReturnToAssign, rescanFromAssign } from './helpers';
@@ -72,11 +73,51 @@ Then('the Continue gate never has to ask for a collection', async ({ app }) => {
 
 Given('the uploader identity is empty', async ({ app }) => {
   await app.chooseDeployment('Bear Canyon');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
   await app.setUploader('');
+  await expect(app.page.getByPlaceholder('e.g. John Doe').first()).toHaveValue('');
 });
 
 Then('it states that an uploader identity must be set first', async ({ app }) => {
   await expect(app.continueButton()).toHaveAttribute('title', 'Set an uploader identity first');
+});
+
+When('the blank Assign identity field loses focus', async ({ app }) => {
+  await app.page.getByPlaceholder('e.g. John Doe').first().press('Tab');
+});
+
+Then('Assign restores the confirmed connected account default', async ({ app }) => {
+  await expect(app.page.getByPlaceholder('e.g. John Doe').first()).toHaveValue(ACCESS_KEY);
+  expect(app.s3.whoamiRequests).toBeGreaterThan(0);
+  expect(app.s3.whoamiResponse.body).toContain('<Code>NoSuchKey</Code>');
+});
+
+When('the account-name lookup completes while the Assign identity is blank and focused', async ({ app }) => {
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const reached = new Promise<void>(resolve => { entered = resolve; });
+  await app.page.route('**/-/whoami', async route => {
+    entered(); await gate;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'person', name: 'Resolved Researcher' }) });
+  });
+  await app.page.getByRole('button', { name: 'Retry account-name lookup' }).click(); await reached;
+  const input = app.page.locator('#uploaderUser'); await input.fill('');
+  release();
+  await expect.poll(() => app.page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? 'null')?.defaultIdentity, loginIdentityPreferenceKey(ACCESS_KEY))).toBe('Resolved Researcher');
+  await expect(input).toBeFocused(); await expect(input).toHaveValue('');
+});
+Then('the Assign identity remains blank until blur after a shared preference update', async ({ app }) => {
+  await app.page.evaluate(key => {
+    const preference = JSON.parse(localStorage.getItem(key)!);
+    const oldValue = JSON.stringify(preference);
+    const newValue = JSON.stringify({ ...preference, identity: 'Shared Researcher' });
+    localStorage.setItem(key, newValue);
+    window.dispatchEvent(new StorageEvent('storage', { key, oldValue, newValue, storageArea: localStorage }));
+  }, loginIdentityPreferenceKey(ACCESS_KEY));
+  const input = app.page.locator('#uploaderUser');
+  await expect(input).toBeFocused(); await expect(input).toHaveValue('');
+  await input.press('Tab'); await expect(input).toHaveValue('Shared Researcher');
 });
 
 // --- the collection list ---------------------------------------------------
@@ -631,6 +672,8 @@ Then('Describe help can be opened and dismissed on a touch screen', async ({ app
 When('the blank Describe identity field loses focus', async ({ app }) => {
   await app.page.locator('#uploaderUser').press('Tab');
 });
-Then('Describe restores the connected default identity', async ({ app }) => {
+Then('Describe restores the confirmed connected account default', async ({ app }) => {
   await expect(app.page.locator('#uploaderUser')).toHaveValue(ACCESS_KEY);
+  expect(app.s3.whoamiRequests).toBeGreaterThan(0);
+  expect(app.s3.whoamiResponse.body).toContain('<Code>NoSuchKey</Code>');
 });

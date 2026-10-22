@@ -12,7 +12,7 @@ Feature: Assign species to images in an upload
   be selected by clicking its tile and applied with its add control, by
   drag-and-drop, or by pressing the key bound to it. An
   identification applies to the focused image, or to every selected image when
-  a selection exists. Identifications are held locally until they are synced.
+  a selection exists. Completed identifications save automatically.
 
   Background:
     Given an upload is open in the tagging workspace
@@ -63,6 +63,12 @@ Feature: Assign species to images in an upload
     Then the image is recorded as an empty or false-trigger frame
     And any real species previously on that image is removed
     And applying a real species afterwards removes the Ghost label
+
+  @H2
+  Scenario: An explicit no-species classification counts as Has species like a real identification
+    Then "IMG002.JPG" shows no Has species badge
+    When an unclassified image is classified as Ghost
+    Then the Ghost-classified image shows a Has species badge
 
   @H2
   Scenario: The species list can be narrowed by typing
@@ -376,11 +382,9 @@ Feature: Assign species to images in an upload
     And any real species previously on that image is removed
 
   @H2
-  Scenario: New identifications are held locally until they are synced
+  Scenario: New identifications automatically reach shared storage
     When species are applied to images
-    Then the identifications are kept in this browser
-    And the workspace reports how many local edits are unsaved
-    And the collection's stored files are unchanged until a sync is run
+    Then both completed identifications are automatically saved to storage
 
   @H2 @H2-6
   Scenario: An image left without a species stays untagged after moving on and syncing
@@ -389,7 +393,7 @@ Feature: Assign species to images in an upload
     And its first image is focused
     When focus moves on to the next image without a species being applied
     And a species is applied to that next image
-    And the sync is run
+    And the upload is saved automatically
     Then the image left behind still reads as untagged
     And the stored observations record no species for the image left behind
 

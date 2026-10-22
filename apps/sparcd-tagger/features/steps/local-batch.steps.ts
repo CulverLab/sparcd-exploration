@@ -188,9 +188,9 @@ Then('"Done · back to Uploader" is enabled', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Done · back to Uploader' })).toBeEnabled();
 });
 
-Then('there is no Browse, History, Sync or Snapshots', async ({ page }) => {
+Then('there is no Browse, Recovery, Sync or Snapshots', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Browse', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Recovery', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Sync…' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Snapshots…' })).toHaveCount(0);
 });
@@ -279,32 +279,7 @@ Then('the returned batch remains untagged with a blank identity', async ({ page 
   expect(Object.values(batch?.tags ?? {}).every(tags => tags.length === 0)).toBe(true);
 });
 
-Given('the next local {word} save fails', async ({ page }, stage: string) => {
-  if (stage === 'draft') {
-    await page.evaluate(async () => {
-      const path = '/sparcd-exploration/tagger/src/lib/drafts.ts';
-      const { useDraftStore } = await import(/* @vite-ignore */ path);
-      const original = useDraftStore.getState().flushSaves;
-      useDraftStore.setState({ flushSaves: async () => {
-        useDraftStore.setState({ flushSaves: original });
-        throw new DOMException('Draft save failed', 'QuotaExceededError');
-      } });
-    });
-  } else {
-    // Fail the actual shared-record transaction, after the debounced tag write
-    // has settled, then restore storage so the next activation can succeed.
-    await page.evaluate(() => {
-      const original = IDBObjectStore.prototype.put;
-      IDBObjectStore.prototype.put = function (...args) {
-        if (this.name === 'records' && this.transaction.db.name === 'sparcd-flip') {
-          IDBObjectStore.prototype.put = original;
-          throw new DOMException('Shared record save failed', 'QuotaExceededError');
-        }
-        return original.apply(this, args);
-      };
-    });
-  }
-});
+
 
 When('Done is attempted while saving fails', async ({ page }) => {
   await page.getByRole('button', { name: 'Done · back to Uploader', exact: true }).click();
@@ -345,4 +320,31 @@ Then('only one handoff is started and the batch returns with its tags', async ({
   expect(page.url()).toContain(RETURN_URL);
   const batch = await readBatch(page);
   expect(batch?.tags['SDCARD/IMG002.JPG'][0].commonName).toBe('Coyote');
+});
+
+Given('the next local {word} save fails', async ({ page }, stage: string) => {
+  if (stage === 'draft') {
+    await page.evaluate(async () => {
+      const path = '/sparcd-exploration/tagger/src/lib/drafts.ts';
+      const { useDraftStore } = await import(/* @vite-ignore */ path);
+      const original = useDraftStore.getState().flushSaves;
+      useDraftStore.setState({ flushSaves: async () => {
+        useDraftStore.setState({ flushSaves: original });
+        throw new DOMException('Draft save failed', 'QuotaExceededError');
+      } });
+    });
+  } else {
+    // Fail the actual shared-record transaction, after the debounced tag write
+    // has settled, then restore storage so the next activation can succeed.
+    await page.evaluate(() => {
+      const original = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        if (this.name === 'records' && this.transaction.db.name === 'sparcd-flip') {
+          IDBObjectStore.prototype.put = original;
+          throw new DOMException('Shared record save failed', 'QuotaExceededError');
+        }
+        return original.apply(this, args);
+      };
+    });
+  }
 });

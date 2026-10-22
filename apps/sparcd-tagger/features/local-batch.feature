@@ -38,7 +38,7 @@ Feature: Tag a batch that has not been uploaded yet
 
   @unmapped
   Scenario: Collection-only tools are absent, not disabled
-    Then there is no Browse, History, Sync or Snapshots
+    Then there is no Browse, Recovery, Sync or Snapshots
     # They all act on a collection, and these images are not in one yet.
 
   @A1

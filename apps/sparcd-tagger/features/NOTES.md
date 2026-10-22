@@ -1,138 +1,43 @@
-# As-built tagger features — review notes
+# Tagger executable coverage
 
-DRAFT — for review, not yet agreed. Generated 2026-08-06 from
-`apps/sparcd-tagger` source (P0–P6 complete per its README) and the agreed
-story set in `docs/user-stories.md`.
+Feature files exercise the standalone collection workflow and the unchanged
+Uploader local-batch workflow. All storage writes use the in-process mock S3
+fixture. Browser verification uses independent Google Chrome sessions.
 
-## What these files are
+| Feature group | Coverage |
+| --- | --- |
+| `automatic-saving.feature` | Saving/Saved/offline states, in-flight edits, reload Undo, reviews, location reversal, completed/invalid count input, partial-save and Undo retries, explicit conflict resolution, unrelated remote edits, #463, actual cross-tab recovery and duplicate Undo protection |
+| `sync-identifications-to-the-collection.feature` | Automatic detag publication, bulk species/time target sets and Undo, shared Need expert and unsupported conditional storage |
+| `legacy-save-recovery.feature` | Explicit account adoption and idempotent pre-upgrade manual Sync/snapshot-restore recovery, including a PUT whose local receipt was interrupted; historical objects retained |
+| `local-drafts-and-recovery.feature` | Immediate image/section navigation, upload-switch flush/wait/failure, unload-warning registration, logout guard, same-account credential repair and Recovery listing |
+| `need-expert-retry.feature` | New actions accepted during an earlier save, partial failure/reload, no lost expert/species/time/removal edits or duplicate audit events |
+| `s3-read-errors.feature` | Transient reads recover; permission failures retain actionable diagnostics and credential repair |
+| H2, H3 and identity features | Real mutation/save paths, counts, corrections/removals, immutable originals, distinct original/review attribution and per-action identity |
+| H1, navigation, display preferences | Examination, responsive layouts, keyboard/popup behavior, image loading and transient display controls |
+| Browse and collection visibility | Listing, metadata, filtering, permission/loading states, responsive columns and accessible explanations |
+| Location/time correction | Registry-only location selection, targeted correction, timestamp eligibility, bulk targets and automatic publication |
+| Classification/expert badges | Grid/List/Focus, coexistence, accessibility, touch, fresh sessions and fullscreen exclusion |
+| `local-batch.feature` | No online collection controls, offline tagging, attribution and Done return |
 
-Twelve `.feature` files describing what `apps/sparcd-tagger` **does today**, not
-what it should do. Every scenario is traceable to code that exists; nothing
-was written from the plan or the README where the code disagrees. Scenarios
-that map to an agreed story carry its ID; the rest carry `@unmapped`.
+The reviewed #518 policy supersedes manual Sync preview/dry-run and the user
+snapshot browser/restore workflow. Their former UI scenarios are replaced by
+publication, conflict, Undo and upgrade-recovery scenarios. The legacy planning,
+restore and journal unit tests remain: compatibility removal belongs to #519.
 
-| File | Covers | Tags |
-| --- | --- | --- |
-| `connect-and-session.feature` | Credential gate, cross-tab session, Settings, disconnect | `@unmapped` |
-| `browse-collections-and-uploads.feature` | Collection rail, upload list, progress tallies, entry to Tag | `@unmapped` |
-| `H1-examine-images-closely.feature` | Zoom, pan, fullscreen, per-image reset, video, display adjustments | `@H1` |
-| `H2-assign-species-to-images.feature` | Species panel, multi-species, Ghost, key bindings, bulk apply | `@H2` |
-| `H3-review-existing-identifications.feature` | Existing identifications shown, corrected, removed; attribution | `@H3` |
-| `navigate-and-select-images.feature` | Keyboard navigation, sort, find, selection, bursts, cheatsheet | `@unmapped` |
-| `local-drafts-and-recovery.feature` | Local drafts, unsaved counts, History recovery, discard | `@unmapped` |
-| `sync-identifications-to-the-collection.feature` | Preview, dry-run gate, conflict, snapshot, conditional write, resume | `@H2` `@H3` + `@unmapped` |
-| `restore-a-previous-snapshot.feature` | Snapshot listing and restore (supports the M2 constraint) | `@unmapped` |
-| `correct-capture-times.feature` | Whole-upload and selection time correction; direct single-image selection in grid/list and narrow touch controls, deselection, timestamp eligibility, and filtered targets (#521) | `@unmapped` |
-| `F4-location-visibility.feature` | What the tool actually reveals about camera locations | `@F4` |
-| `local-batch.feature` | Tagging a batch the Uploader handed over, with no connection | `@A1` `@unmapped` |
+Original media and the immutable original metadata baseline remain indefinitely.
+Automatic edits and Undo create no per-edit snapshot sets and do not remove
+historical snapshots. Journals are recovery state until every required write
+completes. Undo changes affected values, retains audit history, is scoped to the
+account/upload/browser, and has no application Redo. See
+[the policy and implementation notes](../../../docs/issue-518-automatic-saving.md).
 
-## Coverage against the agreed stories
+Focused unit coverage includes deterministic 500 ms idle/one-second maximum
+queueing, action/Undo boundaries, serialization, stale-tab CAS protection,
+conditional-write races, preservation of unknown columns, time-source reversal,
+legacy journal planning, original baseline guarantees, attribution and #463.
+Browser checks cannot promise that an actual browser close displays or honors
+an unload warning; they verify registration and durable reload recovery.
 
-- **H1 — met.** Zoom to 6× in the pane and 10× fullscreen, drag-to-pan bounded
-  to the image, reset-to-fit, and a hard reset of zoom/pan on every image
-  change. Responsiveness is addressed structurally (virtualized strip,
-  per-image subscriptions, a key handler bound once) but is not measured; the
-  "responsive on a small, low-powered laptop" criterion needs a real test on
-  target hardware, not a code reading.
-- **H2 — met, with one caveat.** Multi-species per image, counts, Ghost for
-  empty frames, requested-species free text, per-species keys (including keys
-  inherited from `species.json`), and bulk apply across a selection. The
-  caveat is attribution: connected sessions derive the classifier from the
-  storage username (the access key) and stamp it into new observation rows,
-  the snapshot path and the `UploadMeta.json` edit comment. A disconnected
-  local Uploader handoff uses its session-scoped handoff identity instead.
-- **H3 — met for review provenance.** Existing identifications from any source
-  (Java desktop app, sparcd-web, an earlier tagger sync) are shown with counts,
-  and can be corrected or removed. Re-applying an identical identification
-  preserves the original `classified_by` and `classification_timestamp` and
-  appends a separate repeatable `[REVIEWED_BY:…][REVIEWED_AT:…]` event. The
-  review event survives sync and the Uploader-to-Tagger handoff.
-- **F4 — not addressed by this tool.** No sensitive-species concept exists
-  anywhere in the tagger. Locations are shown to any connected user. Captured
-  honestly in `F4-location-visibility.feature` so the gap is on the record.
-- **M2 (constraint) — largely supported.** Original files are never destroyed:
-  the first live edit also creates an immutable original-upload baseline. Every
-  later write is preceded by an immutable snapshot, replacement is conditional
-  on the version read, conflicts refuse the write outright, and snapshots can
-  be restored. Traceability exists at upload granularity (identity + timestamp
-  in the edit comment and snapshot path), not per identification.
-
-## Not covered, because the tagger does not do it
-
-- **F1, F2, A2, AL1, AL2** — all upload-side stories. This app never uploads
-  images; it reads uploads that already exist, or tags a batch the Uploader
-  hands it. Those belong to `apps/sparcd-uploader`.
-- **A1** is the exception: the tagging half of "identify species before
-  uploading" happens here, in local-batch mode. The upload itself still belongs
-  to `apps/sparcd-uploader`.
-- **F3** — no announcement, notification or messaging surface exists.
-- **H4, H5, HA1–HA3, JN1–JN2** — no messaging, help-request, expert-hand-off
-  or outside-expert path exists.
-- **T1–T3, J1–J4** — no permission, user, collection or vocabulary
-  administration. The species vocabulary and locations are read-only inputs
-  from the settings bucket.
-- **FR1–FR3** — no reporting or export surface. Nothing in the tagger produces
-  a document, table or file for an audience.
-
-## Ambiguities and things a reviewer should decide
-
-1. **The questionable flag never leaves the browser.** It is stored in local
-   drafts, shown as a marker, and toggled per image or across a selection —
-   but the sync writes only observations and capture times, so it is never
-   published. Its drafts also stay listed as "unsaved" after a sync, because
-   only the drafts actually written are cleared. Is a local-only flag the
-   intent, or should it become part of the canonical record?
-2. **Review provenance is separate from original attribution.** H3-6 covers
-   repeatable review markers and their preservation through sync and local
-   handoff; the canonical contract is documented in issue #371.
-3. **Connected identity follows credentials.** The connected storage username
-   becomes attribution and the snapshot folder name, and the Settings field is
-   read-only. Disconnected local Uploader handoffs retain a separate,
-   session-scoped handoff identity because no storage account is connected.
-4. **Dry-run defaults to off, per session.** It is a shared preference for
-   syncs and snapshot restores and is not persisted; a page reload restores
-   the live-write default.
-5. **"Done" in Browse means every image carries a species**, computed from
-   the upload's own stored tally. An upload where every image is legitimately
-   an empty frame counts as done only if those frames carry the Ghost label.
-6. **The Ghost key.** `g` is the built-in key for the Ghost label, but a
-   species carrying `g` in `species.json` — or assigned `g` locally — takes
-   the key over it, silently. Worth confirming that Ghost should be
-   displaceable.
-7. **Burst grouping is off by default** ("our cameras shoot no bursts"). With
-   it off, the whole upload behaves as one burst for select-all purposes, so
-   the select-current-burst accelerator selects the entire upload. Confirm
-   that is acceptable.
-
-## Paths noted as possibly unreachable in normal use
-
-Marked with trailing comments in the feature files:
-
-- **Resuming a partially written sync** — only reachable if a write sequence
-  is interrupted between files (tab closed, connection dropped mid-sequence).
-  The code path and its tests exist; ordinary use will not hit it.
-- **A store that does not honour conditional replacement** — depends entirely
-  on the S3-compatible backend; not reachable against one that does.
-- **Adopting a live connection from a sibling tab** — requires another tab of
-  a SPARC'd tool to be open and connected at the same moment.
-- **Not documented at all:** the "Tag workspace / choose an upload in Browse"
-  placeholder screen. The Tag tab is disabled whenever no upload is selected,
-  and clearing the selection routes back to Browse, so the placeholder appears
-  to be unreachable. Left out rather than described as behaviour.
-
-## Things verified in code that surprised the reading
-
-- The read path and the write path use **separate clients**; the write-capable
-  one is only constructed inside the live-write closures, so a dry-run never
-  builds it.
-- The version a sync writes against is **pinned once local edits exist** — a
-  background refresh cannot advance it — so a change made elsewhere always
-  surfaces as a conflict rather than being absorbed.
-- A snapshot is only recoverable once its `manifest.json` is written, and the
-  manifest is written last. Interrupted snapshots are invisible by design.
-- A successful live sync **clears the whole-upload time shift**, because the
-  shift has been baked into the stored capture times; leaving it would shift
-  them twice on the next sync.
-
-Sync-state explanations (#525/#528): header and Browse row native hover titles are supplemented by keyboard-visible, Escape-dismissible descriptions. Coverage exercises all seven header states, dry-run progress with no writes, and completed sync with questionable-only drafts still pending; Browse checks local-only/unsynced/synced help at 375px and 1440px. Sync semantics are unchanged.
-Collection rail ID help (#523): Browse BDD covers per-collection hover and keyboard descriptions, Escape/pointer dismissal, keyboard selection, matching names, single-tooltip ownership across focus/hover, non-obstructing narrow-row help with selection-changing click-through at 320px/375px, separate desktop tooltip clicks that preserve selection at 1280px/1440px, and viewport bounds at 375px/1280px/1440px.
+The full Tagger BDD run, relevant shared/Uploader units, and cross-tool handoff
+checks are completion gates. A successful focused subset does not substitute
+for these gates. No production backend is mutated by these tests.

@@ -6,10 +6,10 @@ import { useFocusExplanation } from './useFocusExplanation';
 // read-only so the live value is `local-only`; the full set is wired now so P4
 // only has to flip the store value.
 const PILLS: Record<SyncState, { label: string; glyph: string }> = {
-  'local-only': { label: 'local-only', glyph: '○' },
-  unsynced: { label: 'unsynced edits', glyph: '◔' },
-  syncing: { label: 'syncing…', glyph: '◐' },
-  synced: { label: 'synced', glyph: '●' },
+  'local-only': { label: 'stored data', glyph: '○' },
+  unsynced: { label: 'pending save', glyph: '◔' },
+  syncing: { label: 'saving…', glyph: '◐' },
+  synced: { label: 'saved', glyph: '●' },
   conflict: { label: 'conflict', glyph: '▲' },
   'dry-run': { label: 'dry-run', glyph: '◇' },
   error: { label: 'error', glyph: '✕' },
@@ -28,7 +28,7 @@ export function StatePill({ state }: { state: SyncState }) {
         title={explanation}
         aria-describedby={help.id}
         {...help.triggerProps}
-        aria-label={`Sync status: ${p.label}`}
+        aria-label={`Save status: ${p.label}`}
       >
         <span aria-hidden>{p.glyph}</span>
         {p.label}

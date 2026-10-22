@@ -6,8 +6,7 @@ Feature: Connect the tagger to a collection store and manage the session
   """
   As-built flow: before any tagging is possible the tagger must be given
   S3-compatible credentials. The tool is a static, bring-your-own-credentials
-  page — it holds no accounts of its own. Session-level choices (whether writes
-  are real and how images are grouped) live in Settings. Connected attribution
+  page — it holds no accounts of its own. Session-level display choices (including how images are grouped) live in Settings. Connected attribution
   comes from the storage username.
   """
 
@@ -66,14 +65,14 @@ Feature: Connect the tagger to a collection store and manage the session
     Given the tagger is connected
     When no upload has been opened from Browse
     Then the "Tag" section tab is disabled
-    And Browse, History and Settings remain available
+    And Browse, Recovery and Settings remain available
 
   @unmapped
   Scenario: Connected storage username supplies Tagger attribution
     Given the tagger is connected
     When Settings is opened
     Then Settings shows the connected storage username
-    And the connected identity cannot be edited
+    And the connected identity can be edited independently of credentials
 
   @H2 @H2-3
   Scenario: A connected-account change updates future attribution
@@ -86,11 +85,10 @@ Feature: Connect the tagger to a collection store and manage the session
     Then the new identification is attributed to "otherkey"
 
   @unmapped
-  Scenario: Real writes are the default; dry-run is opt-in
+  Scenario: Completed work saves without a manual or dry-run preference
     Given the tagger is connected
-    When Settings is opened for the first time in a session
-    Then "Dry-run (log writes, change nothing)" is switched off
-    And Sync writes for real unless dry-run is switched on
+    When Settings is opened
+    Then no manual Sync or dry-run preference is offered
 
   @unmapped
   Scenario: Burst grouping is off by default and its window is adjustable
@@ -101,18 +99,13 @@ Feature: Connect the tagger to a collection store and manage the session
     And switching it on reveals a threshold between 5 and 600 seconds
 
   @unmapped
-  Scenario: Disconnecting with unsynced edits asks before discarding them
-    Given there are unsaved local edits in this browser
-    When Disconnect is chosen in Settings
-    Then the tagger reports how many unsynced edits exist
-    And it offers to cancel, to review the unsynced edits in History, or to discard them and disconnect
-
-  @unmapped
-  Scenario: Disconnecting clears this browser's local tagger data
-    Given there are no unsaved local edits
+  Scenario: Disconnecting preserves completed work's scoped Undo
+    Given a completed automatic action exists for this account
     When Disconnect is chosen
-    Then local work is cleared while scoped keybinding profiles are retained
-    And the tagger returns to the connection screen ready for the next person
+    Then the tagger returns to the connection screen ready for the next person
+    And the completed Undo remains scoped in this browser
+    When the same account reconnects
+    Then its completed Undo is available again
 
   @unmapped
   Scenario: The workspace can be switched between light and dark

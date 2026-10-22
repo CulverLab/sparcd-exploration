@@ -9,3 +9,7 @@ Given('the uploader is connected', async ({ app }) => {
 Then('the Continue button is disabled', async ({ app }) => {
   await expect(app.continueButton()).toBeDisabled();
 });
+
+Then('the Continue button is enabled', async ({ app }) => {
+  await expect(app.continueButton()).toBeEnabled();
+});

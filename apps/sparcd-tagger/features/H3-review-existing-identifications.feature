@@ -12,8 +12,7 @@ Feature: Review, correct and remove identifications that already exist
   As-built: opening an upload reads the identifications already stored for it
   — whether they came from the desktop app, sparcd-web or an earlier tagger
   sync — and shows them on each image. They can be corrected, re-counted or
-  removed; the changes reach the stored files only through a sync, which is
-  stamped with the connected account that performs the sync.
+  removed; the completed changes save automatically with their acting-user attribution.
 
   Background:
     Given an upload with existing identifications is open in the tagging workspace
@@ -44,7 +43,7 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: Replacing an existing species records the correction
     Given the focused image carries an existing species to correct
     When the existing species is replaced with another species
-    And a live sync is run
+    And automatic saving finishes
     Then the stored replacement records the previous species as corrected
 
   @H3
@@ -58,7 +57,7 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: Removing an existing species records the removal
     Given the focused image carries several species
     When one of them is removed
-    And a live sync is run
+    And automatic saving finishes
     Then the removed species is absent from the stored image and marked as removed
 
   @H3
@@ -82,16 +81,60 @@ Feature: Review, correct and remove identifications that already exist
     Then the image's tile carries a questionable marker
     And the marker can be toggled off again
     And a selection of images can be marked in one action
-    # As-built: the questionable flag stays in this browser. It is not part of
-    # the canonical files a sync writes, so it does not travel to other users
-    # and its drafts stay listed as unsaved after a sync. Flag for review.
+    # Need expert is stored in media.csv and shared after automatic saving.
+
+  @H3
+  Scenario: Need expert is a compact shared status in Overview and Focus
+    Given an image is focused
+    Then the compact Need expert control is accessible in Overview
+    When Need expert is enabled from the compact control
+    And the Need expert change finishes automatic saving
+    And automatic saving finishes
+    Then media.csv stores Need expert without rewriting observations
+    And the Need expert marker returns after a reload
+    And a new browser session sees the saved Need expert status
+    And the compact Need expert control is accessible in Focus
+    When Need expert is cleared from Focus
+    And automatic saving finishes
+    Then media.csv no longer stores Need expert
+
+  @H3
+  Scenario: Need expert remains keyboard reachable in narrow Overview and Focus
+    Given an image is focused
+    When the workspace is narrowed to a phone width
+    Then Need expert can be toggled from the keyboard in Overview
+    And Need expert fits and remains keyboard reachable in Focus
+
+  @H3
+  Scenario: A mixed selection shows its target and one action applies the focused state
+    Given an image is focused
+    When one image is marked Need expert and three images are selected
+    Then the compact toggle describes the mixed selection and marks it in one activation
+
+  @H3
+  Scenario: A touch activation changes Need expert exactly once
+    Then a touch user can mark and clear Need expert with one tap each
+
+  @H3
+  Scenario: Reversing an unsynced Need expert status resolves the local edit
+    Given an image is focused
+    When Need expert is enabled from the compact control
+    And Need expert is toggled off before the save debounce
+    Then the image has no pending Need expert edit
+
+  @H3
+  Scenario: A concurrent media edit blocks a pending Need expert status
+    Given an image is focused
+    When Need expert is enabled from the compact control
+    And another writer changes media.csv
+    Then automatic saving reports a media conflict and retains the expert edit
 
   @H3 @H3-2
   Scenario: A confirmation records who reviewed it and when, even though nothing changes
     Given an existing identification is re-applied unchanged
-    When a sync is previewed
-    Then the preview reports one confirmed image and no other change
-    When that sync is run live
+    When the automatic review save completes
+    Then the automatic review retains the original species and count
+    When the automatic review is fully saved
     Then the confirmed image's stored identification is stamped with the reviewer and the time of the review
     # #368 (Q12): a review records the reviewer and the date even when
     # nothing changes. Re-applying an already-present species — the existing
@@ -100,15 +143,15 @@ Feature: Review, correct and remove identifications that already exist
   @H3
   Scenario: A correction is attributed to the person who synced it
     Given identifications were corrected locally
-    When a live sync is run
+    When automatic saving finishes
     Then the upload's metadata gains an edit comment carrying the connected account and the time of the edit
-    And the pre-change snapshot of the upload is filed under that same identity
+    And the automatic action audit records that same identity without a per-edit snapshot
 
   @H3 @H3-5
   Scenario: Both a confirmation and a correction record their own reviewer and timestamp
     Given an existing identification is re-applied unchanged
     And identifications were corrected locally
-    When a live sync is run
+    When automatic saving finishes
     Then the confirmed image's stored identification is stamped with the reviewer and the time of the review
     And the corrected image's stored identification is stamped with the reviewer and the time of the review
 
@@ -116,14 +159,14 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: A review keeps original attribution separate from the review event
     Given an existing identification has original attribution
     And an existing identification is re-applied unchanged
-    When a live sync is run
+    When automatic saving finishes
     Then the original identifier and separate review remain visible in the stored image
 
   @H3 @H3-7
   Scenario: A correction preserves the immutable original upload baseline
     Given the original upload data is captured before a review
     And identifications were corrected locally
-    When a live sync is run
+    When automatic saving finishes
     Then the original uploaded data remains byte-for-byte intact
     And the live audit records the correction identity and time
 
@@ -132,7 +175,7 @@ Feature: Review, correct and remove identifications that already exist
     Given the original upload data is captured before a review
     And the focused image carries at least one species
     When Clear Species is used
-    And a live sync is run
+    And automatic saving finishes
     Then the original uploaded data remains byte-for-byte intact
     And the live audit records the removal identity and time
 
@@ -140,9 +183,9 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: Repeated reviews do not duplicate the original upload baseline
     Given the original upload data is captured before a review
     And identifications were corrected locally
-    When a live sync is run
+    When automatic saving finishes
     And another review is made locally
-    And a live sync is run
+    And automatic saving finishes
     Then the original uploaded data remains byte-for-byte intact
     And the live audit records the correction identity and time
 
@@ -158,7 +201,7 @@ Feature: Review, correct and remove identifications that already exist
   Scenario: An image edited locally is distinguishable from one that is not
     Given an image's identifications were changed in this browser
     Then its tile carries an unsaved-edit marker
-    And the marker is cleared for that image once its change has been synced
+    And the marker clears after the automatic save completes
 
   @H3
   Scenario: Identifications are shown even when the producer never wrote observation_type
@@ -179,5 +222,5 @@ Feature: Review, correct and remove identifications that already exist
   @H3
   Scenario: A blank-row upload reports nothing to sync before any identifications are made
     Given an upload with only uploader-written blank rows is open in the tagging workspace
-    When the Sync dialog is opened for a blank-row upload
-    Then the sync reports there is nothing to sync
+    When an untouched blank-row upload is checked for pending work
+    Then the blank-row upload is Saved without any write

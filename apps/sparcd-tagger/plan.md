@@ -1,5 +1,9 @@
 # sparcd-tagger — implementation plan
 
+> Historical phase plan. The standalone manual Sync/Snapshots workflow is
+> superseded by [the #518 automatic saving, recovery and Undo policy](../../docs/issue-518-automatic-saving.md).
+> Uploader local-batch behavior remains unchanged.
+
 A static, browser-based tagging interface for SPARC'd camera-trap images.
 Tags persist locally in IndexedDB and sync to S3-compatible storage as
 canonical Camtrap-DP metadata updates under each upload prefix.

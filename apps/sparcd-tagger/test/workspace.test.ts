@@ -100,6 +100,17 @@ describe('buildTagImages', () => {
     expect(images[1].baseObservations).toEqual([]);
   });
 
+  it('reads the shared Need expert marker from media comments independently of species', () => {
+    const rows = [
+      mediaRow('Collections/c/Uploads/u/IMG001.JPG', 'c:loc-a', '2024-01-01T08:00:00', 'IMG001.JPG'),
+      mediaRow('Collections/c/Uploads/u/IMG002.JPG', 'c:loc-a', '2024-01-01T08:01:00', 'IMG002.JPG'),
+    ];
+    rows[1][10] = '[TIMESTAMP:spread][NEED_EXPERT:true]';
+    const updated = buildTagImages({ mediaCsv: serializeCsvRows(rows), observationsCsv: obsCsv });
+    expect(updated.map((image) => image.baseQuestionable)).toEqual([false, true]);
+    expect(updated[1].baseObservations).toEqual([]);
+  });
+
   it('exposes BOTH observation rows for a multi-species image, in CSV order', () => {
     const multi = buildTagImages({ mediaCsv: multiMediaCsv, observationsCsv: multiObsCsv });
     expect(multi[0].baseObservations.map((o) => o.scientificName)).toEqual([

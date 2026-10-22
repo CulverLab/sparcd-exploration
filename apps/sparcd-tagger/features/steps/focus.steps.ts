@@ -223,6 +223,8 @@ Then('the species panel keeps the width that was chosen', async ({ page, scratch
 });
 
 When("the species panel's divider is dragged shorter", async ({ page, scratch }) => {
+  // The media-query event commits the vertical layout after viewport resizing.
+  await expect(page.getByRole('separator')).toHaveAttribute('aria-orientation', 'horizontal');
   scratch.speciesSizeBefore = (await page.getByTestId('focus-species-pane').boundingBox())!.height;
   scratch.canvasSizeBefore = (await page.getByTestId('focus-drop-zone').boundingBox())!.height;
   await dragDivider(page, 0, 80);
@@ -536,6 +538,38 @@ When('Escape is pressed in the fullscreen viewer', async ({ page }) => {
 
 Then('the fullscreen viewer is closed', async ({ page }) => {
   await expect(lightbox(page)).toHaveCount(0);
+});
+
+Then(
+  'the Focus view shows Has species and Questionable badges for the focused image',
+  async ({ page }) => {
+    const pane = page.getByTestId('focus-drop-zone');
+    await expect(pane.getByLabel('Has species', { exact: false })).toBeVisible();
+    await expect(pane.getByLabel('Needs expert opinion', { exact: true })).toBeVisible();
+  },
+);
+
+When('Focus is resized to a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the status badges do not overlap the Adjust or image-navigation controls', async ({ page }) => {
+  const badges = page.getByTestId('focus-image-status-badges').locator('[role="img"]');
+  await expect(badges).toHaveCount(2);
+  for (const badge of await badges.all()) {
+    const box = (await badge.boundingBox())!;
+    for (const name of [/^Adjust/, /^Previous image$/, /^Next image$/]) {
+      const control = page.getByRole('button', { name });
+      if (!await control.count()) continue;
+      const c = (await control.boundingBox())!;
+      expect(box.x < c.x + c.width && box.x + box.width > c.x && box.y < c.y + c.height && box.y + box.height > c.y, JSON.stringify({ badge: await badge.getAttribute('aria-label'), control: String(name), box, controlBox: c })).toBe(false);
+    }
+  }
+});
+
+Then('no status badges are shown in the fullscreen viewer', async ({ page }) => {
+  await expect(lightbox(page).getByLabel('Has species', { exact: false })).toHaveCount(0);
+  await expect(lightbox(page).getByLabel('Needs expert opinion', { exact: true })).toHaveCount(0);
 });
 
 Then('it fills the window over a dimmed background', async ({ page }) => {
@@ -1040,7 +1074,7 @@ Then('Tab wraps between the Focus viewer and the adjustment panel', async ({ pag
   await page.keyboard.press('Shift+Tab');
   await expect(keepValues).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(focusDialog.getByRole('button', { name: "Toggle needing an expert's opinion" })).toBeFocused();
   await adjustToggle(page).click();
   await expect(brightness).toBeFocused();
   await expect(focusDialog).toBeVisible();
@@ -1236,53 +1270,7 @@ Given('auto-advance is disabled for adjustment shortcut checks', async ({ page }
   await sectionTab(page, 'Tag').click();
 });
 
-Then('Keep values supports {word} toggling without blocking workspace shortcuts', async ({ page }, activation: string) => {
-  const image = page.locator('.react-transform-component img');
-  const originalSrc = await image.getAttribute('src');
-  const originalName = await image.getAttribute('alt');
-  expect(originalSrc).toBeTruthy();
-  expect(originalName).toBeTruthy();
-  const count = page.getByRole('spinbutton', { name: 'Count for Mule Deer', exact: true });
-  let expectedCount = Number(await count.inputValue());
 
-  for (const checked of [true, false]) {
-    await adjustToggle(page).click();
-    await expect(page.getByLabel('Brightness', { exact: true })).toBeFocused();
-    await page.getByLabel('Contrast', { exact: true }).fill('90');
-    const checkbox = page.getByRole('checkbox', { name: 'Keep values', exact: true });
-    if (activation === 'pointer') {
-      await page.getByText('Keep values', { exact: true }).click();
-    } else {
-      await page.getByLabel('Brightness', { exact: true }).focus();
-      for (let tab = 0; tab < 4; tab++) await page.keyboard.press('Tab');
-      await expect(checkbox).toBeFocused();
-      await page.keyboard.press('Space');
-    }
-    await expect(checkbox).toBeFocused();
-    await expect(checkbox).toBeChecked({ checked });
-    await expect(image).toHaveAttribute('src', originalSrc!);
-    await expect(count).toHaveValue(String(expectedCount));
-    await page.keyboard.press('Enter');
-    await expect(checkbox).toBeFocused();
-    await expect(checkbox).toBeChecked({ checked });
-
-    await page.keyboard.press('d');
-    await expect(count).toHaveValue(String(++expectedCount));
-    await expect(checkbox).toBeFocused();
-    await expect(checkbox).toBeChecked({ checked });
-    await page.keyboard.press('ArrowRight');
-    await expect(image).not.toHaveAttribute('src', originalSrc!);
-    await expect(image).not.toHaveAttribute('alt', originalName!);
-    await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
-    await expect(adjustmentPanel(page)).toHaveCount(0);
-    await page.keyboard.press('ArrowLeft');
-    await expect(image).toHaveAttribute('src', originalSrc!);
-    await expect(image).toHaveAttribute('alt', originalName!);
-    await expect(count).toHaveValue(String(expectedCount));
-    const style = await image.getAttribute('style');
-    expect(style).toContain(checked ? 'contrast(180%)' : 'contrast(100%)');
-  }
-});
 
 Then('split preferences survive resizing and reload without hiding controls', async ({ page }) => {
   const divider = page.getByRole('separator'), pane = page.getByTestId('focus-species-pane');
@@ -1354,4 +1342,52 @@ Then('canceled and unmounted drags stop resizing', async ({ page }) => {
   await page.mouse.move(10, 10); await page.mouse.up();
   expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger:focus-split:w'))).toBe(saved);
   await enterFocusView(page); await expect(divider).toBeVisible();
+});
+
+Then('Keep values supports {word} toggling without blocking workspace shortcuts', async ({ page }, activation: string) => {
+  const image = page.locator('.react-transform-component img');
+  const originalSrc = await image.getAttribute('src');
+  const originalName = await image.getAttribute('alt');
+  expect(originalSrc).toBeTruthy();
+  expect(originalName).toBeTruthy();
+  const count = page.getByRole('spinbutton', { name: 'Count for Mule Deer', exact: true });
+  let expectedCount = Number(await count.inputValue());
+
+  for (const checked of [true, false]) {
+    await adjustToggle(page).click();
+    await expect(page.getByLabel('Brightness', { exact: true })).toBeFocused();
+    await page.getByLabel('Contrast', { exact: true }).fill('90');
+    const checkbox = page.getByRole('checkbox', { name: 'Keep values', exact: true });
+    if (activation === 'pointer') {
+      await page.getByText('Keep values', { exact: true }).click();
+    } else {
+      await page.getByLabel('Brightness', { exact: true }).focus();
+      for (let tab = 0; tab < 4; tab++) await page.keyboard.press('Tab');
+      await expect(checkbox).toBeFocused();
+      await page.keyboard.press('Space');
+    }
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+    await expect(image).toHaveAttribute('src', originalSrc!);
+    await expect(count).toHaveValue(String(expectedCount));
+    await page.keyboard.press('Enter');
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+
+    await page.keyboard.press('d');
+    await expect(count).toHaveValue(String(++expectedCount));
+    await expect(checkbox).toBeFocused();
+    await expect(checkbox).toBeChecked({ checked });
+    await page.keyboard.press('ArrowRight');
+    await expect(image).not.toHaveAttribute('src', originalSrc!);
+    await expect(image).not.toHaveAttribute('alt', originalName!);
+    await expect.poll(() => image.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+    await expect(adjustmentPanel(page)).toHaveCount(0);
+    await page.keyboard.press('ArrowLeft');
+    await expect(image).toHaveAttribute('src', originalSrc!);
+    await expect(image).toHaveAttribute('alt', originalName!);
+    await expect(count).toHaveValue(String(expectedCount));
+    const style = await image.getAttribute('style');
+    expect(style).toContain(checked ? 'contrast(180%)' : 'contrast(100%)');
+  }
 });

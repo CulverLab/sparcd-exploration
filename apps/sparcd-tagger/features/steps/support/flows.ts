@@ -54,12 +54,10 @@ export async function waitForSyncDialogClosed(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Sync to S3' })).toHaveCount(0, { timeout: 3000 });
 }
 
-export async function runLiveSync(page: Page): Promise<void> {
-  await openSyncDialog(page);
-  await setSyncDryRun(page, false);
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await waitForSyncDialogClosed(page);
+/** Finish the current valid editor and wait until every automatic write commits. */
+export async function waitForAutomaticSave(page: Page): Promise<void> {
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('automatic-save').getByRole('status')).toHaveText('Saved');
 }
 
 export async function closeDialog(page: Page): Promise<void> {

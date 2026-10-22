@@ -230,6 +230,21 @@ Then('applying a real species afterwards removes the Ghost label', async ({ page
   await expect(gridCell(page, 'IMG001.JPG')).not.toContainText('Ghost');
 });
 
+Then('{string} shows no Has species badge', async ({ page }, fileName: string) => {
+  await expect(gridCell(page, fileName)).not.toHaveAccessibleName(/Has species/);
+});
+
+Then('the Ghost-classified image shows a Has species badge', async ({ page }) => {
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAccessibleName(/Has species/);
+});
+
+When('an unclassified image is classified as Ghost', async ({ page }) => {
+  await focusFrame(page, 'IMG002.JPG');
+  await ghostRow(page)
+    .locator('button[title^="Apply"], button[title$="already applied"]')
+    .click();
+});
+
 // --- Filtering --------------------------------------------------------------
 
 When('text is typed into the species filter', async ({ page }) => {
@@ -1074,21 +1089,11 @@ When('species are applied to images', async ({ page }) => {
   await speciesApply(page, 'Pecari tajacu').click();
 });
 
-Then('the identifications are kept in this browser', async ({ page }) => {
-  await waitForDirtyDrafts(page, 2);
-  const drafts = (await readStore(page, 'drafts')) as { observations: unknown[] }[];
-  expect(drafts.filter((d) => d.observations.length > 0)).toHaveLength(2);
-});
 
-Then('the workspace reports how many local edits are unsaved', async ({ page }) => {
-  await expect(page.getByText(/2 unsaved · discard/)).toBeVisible();
-});
 
-Then("the collection's stored files are unchanged until a sync is run", async ({ page, s3 }) => {
-  expect(s3.puts).toHaveLength(0);
-  expect(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).toBe(observationsCsv(PREFIX_A, OBS_A));
-  await expect(positionReadout(page)).toBeVisible();
-});
+
+
+
 
 // --- Leaving an image untagged ----------------------------------------------
 
@@ -1206,4 +1211,15 @@ When('the count-preview upload changes', async ({ page }) => {
   await sectionTab(page, 'Browse').click();
   await openUpload(page, 'fielduser');
   await expect.poll(selectedPrefix).toBe(PREFIX_B);
+});
+
+Then('both completed identifications are automatically saved to storage', async ({ page, s3 }) => {
+  const { waitForAutomaticSave } = await import('./support/flows'); await waitForAutomaticSave(page);
+  const { parseObservations } = await import('@sparcd/camtrap');
+  const rows = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`));
+  expect(rows.find(row => row.mediaId === `${PREFIX_A}IMG002.JPG`)?.scientificName).toBe('Canis latrans');
+  expect(rows.find(row => row.mediaId === `${PREFIX_A}IMG005.JPG`)?.scientificName).toBe('Pecari tajacu');
+});
+When('the upload is saved automatically', async ({ page }) => {
+  const { waitForAutomaticSave } = await import('./support/flows'); await waitForAutomaticSave(page);
 });

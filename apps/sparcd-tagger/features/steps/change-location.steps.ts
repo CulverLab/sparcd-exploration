@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { Given, When, Then, expect, enterFocusView, sectionTab } from './support/world';
 import { BUCKET, PREFIX_A, LOCATION_NAME, NEW_LOCATION_NAME, NEW_LOCATION_ID, SAME_ID_LOCATION_NAME } from './support/data';
-import { openSyncDialog, runLiveSync, writeStore, makeLocalEdit, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
+import { openSyncDialog, waitForAutomaticSave, writeStore, makeLocalEdit, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
 
 const statePill = (page: Page) => page.getByRole('status', { name: /^Sync status: / });
 
@@ -60,13 +60,7 @@ When('a different location is picked and applied', async ({ page }) => {
   await expect(changeLocationDialog(page)).toHaveCount(0);
 });
 
-Then('the workspace toolbar shows the pending location change', async ({ page }) => {
-  await expect(changeLocationButton(page)).toContainText(`location → ${NEW_LOCATION_NAME}`);
-  await expect(changeLocationButton(page)).toHaveAttribute(
-    'title',
-    `Pending location change to ${NEW_LOCATION_NAME} — click to edit`,
-  );
-});
+
 
 When('the current location is picked again', async ({ page }) => {
   const dialog = changeLocationDialog(page);
@@ -86,21 +80,11 @@ When('a same-id alternate location is picked and applied', async ({ page }) => {
   await changeLocationDialog(page).getByRole('button', { name: /^Apply to all/ }).click();
 });
 
-Then('the workspace toolbar shows the same-id pending location change', async ({ page }) => {
-  await expect(changeLocationButton(page)).toContainText(`location → ${SAME_ID_LOCATION_NAME}`);
-});
 
-Given('a location change is pending', async ({ page }) => {
-  await openChangeLocation(page);
-  await pickLocation(page, NEW_LOCATION_NAME);
-  await changeLocationDialog(page).getByRole('button', { name: /^Apply to all/ }).click();
-  await expect(changeLocationButton(page)).toContainText('location →');
-});
 
-When('the pending change is cleared', async ({ page }) => {
-  await openChangeLocation(page);
-  await changeLocationDialog(page).getByRole('button', { name: 'Clear pending change' }).click();
-});
+
+
+
 
 Then('the workspace toolbar no longer shows a pending location change', async ({ page }) => {
   await expect(changeLocationButton(page)).toHaveAttribute(
@@ -109,27 +93,15 @@ Then('the workspace toolbar no longer shows a pending location change', async ({
   );
 });
 
-When('the sync dialog is opened', async ({ page }) => {
-  await openSyncDialog(page);
-});
 
-Then('the preview states the pending location change', async ({ page }) => {
-  await expect(page.getByText(new RegExp(`Location → ${NEW_LOCATION_NAME}`))).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
-});
 
-Then('the top-bar sync status shows unsynced edits', async ({ page }) => {
-  await expect(statePill(page)).toHaveAttribute('aria-label', 'Sync status: unsynced edits');
-});
 
-When('Browse is reopened', async ({ page }) => {
-  await sectionTab(page, 'Browse').click();
-});
 
-When('the sync is run live', async ({ page }) => {
-  await runLiveSync(page);
-  await waitForSyncDialogClosed(page);
-});
+
+
+
+
+
 
 Then("every image's deployment is the new location", async ({ page, s3 }) => {
   await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
@@ -177,8 +149,10 @@ Given(
   },
 );
 
-Then('no conflict is reported', async ({ page }) => {
-  await expect(page.getByText(/Conflict —/)).toHaveCount(0);
-  await expect(page.getByText(/Would write \d+ file\(s\)/)).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+
+Then('the same-id alternate registry location is stored', async ({ s3 }) => {
+  expect(s3.text(BUCKET, `${PREFIX_A}deployments.csv`)).toContain(SAME_ID_LOCATION_NAME);
+});
+Then('the automatic save completed without a false deployment conflict', async ({ page }) => {
+  await expect(page.getByTestId('automatic-save').getByRole('status')).toHaveText('Saved');
 });

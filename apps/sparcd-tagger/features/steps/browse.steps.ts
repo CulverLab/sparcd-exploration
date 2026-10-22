@@ -32,7 +32,7 @@ import {
   MEDIA_A,
   deploymentsCsv,
 } from './support/data';
-import { makeLocalEdit, runLiveSync, waitForDirtyDrafts } from './support/flows';
+import { makeLocalEdit, waitForAutomaticSave, waitForDirtyDrafts } from './support/flows';
 
 // --- Collection rail --------------------------------------------------------
 
@@ -311,9 +311,7 @@ Then(
   },
 );
 
-Then('it shows the deployment location name\\(s\\) recorded for that upload', async ({ page }) => {
-  await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
-});
+
 
 Then(
   'it shows the image count and how many of those images already carry a species',
@@ -412,7 +410,7 @@ Then('the missing collected date is explained on keyboard focus', async ({ page 
     await page.keyboard.press('Tab');
   }
   await expect(row).toBeFocused();
-  await expect(row).toHaveAccessibleDescription(/Not yet synced.*Date collected is missing or not in a recognized format/);
+  await expect(row).toHaveAccessibleDescription(/Stored collection data.*Date collected is missing or not in a recognized format/);
   await expect(row.locator('[data-collected-help]')).toBeVisible();
 });
 
@@ -444,12 +442,12 @@ Then('mobile upload rows label their fields and explain unavailable collection d
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 950 });
     const row = uploadRow(page, 'priortagger');
-    for (const label of ['Uploaded:', 'Upload:', 'Location:', 'Tagged/Total:', 'Collected:', 'Sync:']) {
+    for (const label of ['Uploaded:', 'Upload:', 'Location:', 'Tagged/Total:', 'Collected:', 'Save:']) {
       await expect(row.getByText(label, { exact: true })).toBeVisible();
     }
     await expect(row.getByText('Not recorded or unrecognized', { exact: true })).toBeVisible();
-    await expect(row).toHaveAccessibleName(/Uploaded:.*Upload:.*Location:.*Tagged\/Total:.*3 \/ 6.*Collected:.*Not recorded or unrecognized.*Sync:/);
-    await expect(row).toHaveAccessibleDescription(/Not yet synced.*Date collected is missing or not in a recognized format/);
+    await expect(row).toHaveAccessibleName(/Uploaded:.*Upload:.*Location:.*Tagged\/Total:.*3 \/ 6.*Collected:.*Not recorded or unrecognized.*Save:/);
+    await expect(row).toHaveAccessibleDescription(/Stored collection data.*Date collected is missing or not in a recognized format/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
 });
@@ -501,7 +499,7 @@ Then('a compact Browse at an 853px effective viewport keeps Upload and Sync avai
   await expect(row.locator('[data-column="tagged-total"]')).toBeVisible();
   await expect(row.locator('[data-column="collected"]')).toBeVisible();
   await expect(sync).toBeVisible();
-  await expect(sync).toContainText('local-only');
+  await expect(sync).toContainText('stored data');
   await expect.poll(async () => (await upload.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(160);
   await expect.poll(async () => (await sync.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(124);
   expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
@@ -647,7 +645,9 @@ Then('it indicates while tallies are still being counted', async ({ page, s3 }) 
 
 // --- Per-upload sync state --------------------------------------------------
 
-Given('local edits were made to an upload in this browser', async ({ page }) => {
+Given('local edits were made to an upload in this browser', async ({ page, scratch }) => {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; }); scratch.browseRelease = release;
+  await page.route('**/*', async route => { if (route.request().method() === 'PUT' && decodeURIComponent(new URL(route.request().url()).pathname).endsWith(`/${PREFIX_A}observations.csv`)) await gate; await route.fallback(); });
   await openAppConnected(page);
   await selectCollection(page);
   await openUpload(page);
@@ -669,7 +669,7 @@ async function expectRowPill(
         const content = await uploadRow(page, user).locator('[data-column="sync"]').evaluate((cell) => {
           const copy = cell.cloneNode(true) as HTMLElement;
           copy.querySelectorAll('[aria-hidden="true"]').forEach((glyph) => glyph.remove());
-          return copy.textContent?.replace(/^Sync:\s*/, '').trim() ?? '';
+          return copy.textContent?.replace(/^Save:\s*/, '').trim() ?? '';
         });
         if (content === text) return text;
         await sectionTab(page, 'Settings').click();
@@ -682,20 +682,21 @@ async function expectRowPill(
 }
 
 Then("that upload's row is marked as having unsynced edits", async ({ page }) => {
-  await expectRowPill(page, 'priortagger', 'unsynced edits');
+  await expectRowPill(page, 'priortagger', 'pending save');
 });
 
-Then('an upload whose local edits have all been synced is marked as synced', async ({ page }) => {
+Then('an upload whose local edits have all been synced is marked as synced', async ({ page, scratch }) => {
+  (scratch.browseRelease as (() => void) | undefined)?.();
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
-  await runLiveSync(page);
+  await waitForAutomaticSave(page);
   await sectionTab(page, 'Browse').click();
-  await expectRowPill(page, 'priortagger', 'synced');
+  await expectRowPill(page, 'priortagger', 'saved');
 });
 
 Then('an upload never edited on this machine is marked local-only', async ({ page }) => {
-  await expect(uploadRow(page, 'fielduser')).toContainText('local-only');
+  await expect(uploadRow(page, 'fielduser')).toContainText('stored data');
 });
 
 async function checkSyncExplanation(page: import('@playwright/test').Page, user: string, explanation: string) {
@@ -728,13 +729,13 @@ function escapeRegExp(value: string): string {
 }
 
 Then('its unsynced explanation is available on hover and keyboard focus', async ({ page }) => {
-  await checkSyncExplanation(page, 'priortagger', "This upload has edits that haven't been synced to the collection yet");
+  await checkSyncExplanation(page, 'priortagger', "This upload has pending changes awaiting automatic saving");
 });
 Then('its synced explanation is available on hover and keyboard focus', async ({ page }) => {
-  await checkSyncExplanation(page, 'priortagger', 'The last sync completed');
+  await checkSyncExplanation(page, 'priortagger', 'All required writes to storage completed');
 });
 Then('its local-only explanation is available on hover and keyboard focus', async ({ page }) => {
-  await checkSyncExplanation(page, 'fielduser', 'Not yet synced — edits stay in this browser until you sync');
+  await checkSyncExplanation(page, 'fielduser', 'Stored collection data; no pending edits in this browser');
 });
 
 // --- Entering the workspace -------------------------------------------------
@@ -751,7 +752,7 @@ When('an upload is opened', async ({ page }) => {
 
 Then('the tagger switches to the Tag section for that upload', async ({ page }) => {
   await expect(sectionTab(page, 'Tag')).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
+  await expect(page.getByTestId('automatic-save')).toBeVisible();
 });
 
 Then(
@@ -916,3 +917,7 @@ Then(
     s3.delays.clear();
   },
 );
+
+Then('it shows the deployment location name\\(s\\) recorded for that upload', async ({ page }) => {
+  await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
+});

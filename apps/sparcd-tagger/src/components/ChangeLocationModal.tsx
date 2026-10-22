@@ -165,7 +165,7 @@ export function ChangeLocationModal({
           )}
 
           <p className="mt-3 font-mono text-[11.5px] text-inkSoft">
-            <span className="text-inkMute">note</span> This only takes effect at the next sync —
+            <span className="text-inkMute">note</span> The completed change saves automatically —
             nothing is rewritten locally.
           </p>
         </div>

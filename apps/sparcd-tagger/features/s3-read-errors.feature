@@ -1,19 +1,16 @@
-# Regression coverage for transient canonical reads and actionable S3 errors.
-
 @unmapped
-Feature: Canonical S3 read diagnostics
-
+Feature: Automatic save preserves actionable S3 read diagnostics
   Background:
-    Given an upload with local edits is open in the tagging workspace
-    And the connected account is ready for attribution
+    Given an upload with existing identifications is open in the tagging workspace
 
-  Scenario: An unnamed transient HEAD denial recovers before the sync preview is shown
+  Scenario: An unnamed transient HEAD denial recovers during automatic saving
     Given the next canonical media HEAD fails without an S3 error code
-    When the Sync dialog is opened
-    Then the pending change is computed against the currently stored files
-    And the Sync dialog does not show an access-denied error
+    When Coyote is applied for automatic saving
+    And the automatic save completes
+    Then automatic saving does not show an access-denied error
 
-  Scenario: A confirmed media permission denial remains actionable
+  Scenario: A confirmed media permission denial retains actionable work
     Given the next canonical media GET is denied with AccessDenied
-    When the Sync dialog is opened
-    Then the Sync dialog shows the confirmed access-denied error
+    When Coyote is applied for automatic saving
+    Then automatic saving shows the confirmed media access-denied error
+    And credentials can be repaired without discarding pending work

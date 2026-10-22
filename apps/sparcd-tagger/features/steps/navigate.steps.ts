@@ -16,7 +16,7 @@ import {
   focusFrame,
   enterFocusView,
 } from './support/world';
-import { COLLECTION_NAME, STAMP_A } from './support/data';
+import { BUCKET, PREFIX_A, COLLECTION_NAME, STAMP_A } from './support/data';
 import { readStore } from './support/flows';
 
 const TOUCH = { width: 900, height: 860 };
@@ -38,6 +38,73 @@ Then('the Overview can be switched between a grid of tiles and a list of rows', 
 
 Then('the collection name and upload name are shown', async ({ page }) => {
   await expect(page.getByText(`${COLLECTION_NAME} / ${STAMP_A}`)).toBeVisible();
+});
+
+Then('its grid tile shows Has species and Questionable badges', async ({ page }) => {
+  const tile = gridCell(page, 'IMG001.JPG');
+  await expect(tile).toHaveAccessibleName(/Has species.*Needs expert opinion/);
+  await expect(tile.locator('[title^="Has species"]')).toBeVisible();
+  await expect(tile.locator('[title="Needs expert opinion"]')).toBeVisible();
+});
+
+When('the Overview is switched to the list view', async ({ page }) => {
+  await page.getByRole('button', { name: '☰ List' }).click();
+});
+
+Then('its list row shows Has species and Questionable badges', async ({ page }) => {
+  const row = listRow(page, 'IMG001.JPG');
+  const filename = row.locator('[data-column="filename"]');
+  await expect(filename.locator('[title^="Has species"]')).toBeVisible();
+  await expect(filename.locator('[title="Needs expert opinion"]')).toBeVisible();
+  await expect(row).toHaveAccessibleName(/Has species.*Needs expert opinion/);
+});
+
+When('the Overview is resized to a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+});
+
+Then('the list badges follow the filename and fit inside their row', async ({ page }) => {
+  const row = listRow(page, 'IMG001.JPG');
+  const filename = row.locator('[data-column="filename"]');
+  await expect(filename.locator('[title^="Has species"]')).toBeVisible();
+  await expect.poll(async () => (await filename.boundingBox())?.width ?? 0).toBeGreaterThan(80);
+  const column = await filename.boundingBox();
+  const badge = await filename.getByTestId('classification-checkmark').boundingBox();
+  expect(badge!.x).toBeGreaterThan(column!.x);
+  expect(badge!.x + badge!.width).toBeLessThanOrEqual(column!.x + column!.width);
+  await expect(row.getByTestId('image-thumbnail').locator('[role="img"]')).toHaveCount(0);
+});
+
+Given('image {string} is focused', async ({ page }, fileName: string) => {
+  await focusFrame(page, fileName);
+});
+
+Then('the focused tile is named Questionable and not Has species', async ({ page }) => {
+  const tile = gridCell(page, 'IMG002.JPG');
+  await expect(tile).toHaveAccessibleName(/Needs expert opinion/);
+  await expect(tile).not.toHaveAccessibleName(/Has species/);
+  await expect(tile.locator('[title="Needs expert opinion"]')).toBeVisible();
+  await expect(tile.locator('[title^="Has species"]')).toHaveCount(0);
+});
+
+Then('the focused tile announces its species and review status', async ({ page }) => {
+  await expect(gridCell(page, 'IMG004.JPG')).toHaveAccessibleName(
+    /Species: Mountain Lion \+1; Review status: Mixed review/,
+  );
+});
+
+When('the image filter limits Tag state to Questionable only', async ({ page }) => {
+  if (!(await page.getByLabel('Tag state').isVisible())) await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Tag state').selectOption('questionable');
+});
+
+When('the image filter limits Tag state to Not questionable only', async ({ page }) => {
+  if (!(await page.getByLabel('Tag state').isVisible())) await page.getByRole('button', { name: 'Filter' }).click();
+  await page.getByLabel('Tag state').selectOption('not-questionable');
+});
+
+Then('IMG001.JPG is absent from the Overview', async ({ page }) => {
+  await expect(gridCell(page, 'IMG001.JPG')).toHaveCount(0);
 });
 
 When('the image filter is opened and searches species for {string}', async ({ page }, query: string) => {
@@ -254,16 +321,7 @@ Then('image and video rows identify their media type', async ({ page }) => {
     .toHaveAttribute('aria-label', 'Media type: video');
 });
 
-Then('capture timestamps show corrected and unavailable values accurately', async ({ page }) => {
-  const corrected = listRow(page, 'IMG002.JPG').locator('[data-column="timestamp"]');
-  await expect(corrected).toContainText('2023-12-24');
-  await expect(corrected).toContainText('18:45');
-  await expect(corrected).toHaveAttribute('aria-label', /Capture time: 2023-12-24T18:45:10/);
 
-  const unavailable = listRow(page, 'VID001.MP4').locator('[data-column="timestamp"]');
-  await expect(unavailable).toHaveText('—');
-  await expect(unavailable).toHaveAttribute('aria-label', 'Capture time unavailable');
-});
 
 Then('long column values preserve their full accessible text', async ({ page }) => {
   const row = listRow(page, 'IMG004.JPG');
@@ -281,10 +339,10 @@ Then('row numbers and the old species indicator are absent', async ({ page }) =>
 });
 
 Then('meaningful edit and questionable markers remain accessible', async ({ page }) => {
-  const markers = listRow(page, 'IMG002.JPG').locator('[data-column="markers"]');
-  await expect(markers.getByLabel('Unsaved edit')).toBeVisible();
-  await expect(markers.getByLabel('Questionable')).toBeVisible();
-  await expect(markers.locator('[title]')).toHaveCount(2);
+  const row = listRow(page, 'IMG002.JPG');
+  await expect(row.locator('[data-column="markers"]').getByLabel('Unsaved edit')).toBeVisible();
+  await expect(row.getByLabel('Needs expert opinion', { exact: true })).toBeVisible();
+  await expect(row.locator('[data-column="markers"]').locator('[title]')).toHaveCount(1);
 });
 
 Then('a narrow Overview keeps filenames visible in its compact rows', async ({ page }) => {
@@ -413,7 +471,7 @@ Then('Tab wraps within the Focus viewer at both boundaries', async ({ page }) =>
   const last = focusable.last();
   await last.focus();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Close Focus' })).toBeFocused();
+  await expect(first).toBeFocused();
   await first.focus();
   await page.keyboard.press('Shift+Tab');
   await expect(last).toBeFocused();
@@ -835,13 +893,14 @@ Then(
 
 Then(
   'pressing Enter in the image search moves to the next match instead of tagging',
-  async ({ page }) => {
+  async ({ page, s3 }) => {
     await imageSearch(page).fill('IMG00');
     await expect(page.getByText('1/5')).toBeVisible();
-    const dirtyBefore = await page.getByText(/unsaved · discard/).textContent();
+    const { waitForAutomaticSave } = await import('./support/flows'); await waitForAutomaticSave(page);
+    const before = s3.text(BUCKET, `${PREFIX_A}observations.csv`);
     await imageSearch(page).press('Enter');
     await expect(page.getByText('2/5')).toBeVisible();
-    await expect(page.getByText(/unsaved · discard/)).toHaveText(dirtyBefore!);
+    await waitForAutomaticSave(page); expect(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).toBe(before);
   },
 );
 
@@ -871,15 +930,14 @@ Then('its own playback keys work and no tagging keystroke fires', async ({ page 
 });
 
 Then(
-  'while the sync, snapshots or time-shift dialog is open no image behind it is tagged or navigated',
+  'while location or time-shift dialogs are open no image behind them is tagged or navigated',
   async ({ page }) => {
     await page.getByRole('button', { name: 'Overview', exact: true }).click();
     await focusFrame(page, 'IMG002.JPG');
     const position = await positionReadout(page).textContent();
 
     for (const [open, close] of [
-      ['Sync…', 'Cancel'],
-      ['Snapshots…', 'Close'],
+      ['Change location', 'Cancel'],
       ['Time shift', 'Cancel'],
     ] as const) {
       await page.getByRole('button', { name: open, exact: true }).click();
@@ -969,7 +1027,7 @@ Then('Home, End, Page Up, Page Down, and arrow keys adjust the slider rather tha
 
 Then('command- or control-S still saves while the slider is focused', async ({ page }) => {
   await page.keyboard.press('ControlOrMeta+s');
-  await expect(page.getByText('saved ✓').first()).toBeVisible();
+  await expect(page.getByTestId('automatic-save').getByRole('status')).toHaveText('Saved');
   await expect(page.getByLabel('Brightness')).toBeFocused();
 });
 

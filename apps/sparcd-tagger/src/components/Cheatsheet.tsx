@@ -1,3 +1,4 @@
+import { localBatchId } from '../lib/localBatch';
 import { useEffect, useRef } from 'react';
 
 // The `?` keyboard cheatsheet. Mirrors the plan's "Keyboard shortcuts (initial
@@ -26,7 +27,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
       { keys: ['Enter'], action: 'Add top filter match (add-only)' },
       { keys: ['key'], action: 'Add the species bound to that key' },
       { keys: ['✕'], action: 'Chip ✕ removes one; Clear Species clears all' },
-      { keys: ['⇧Space'], action: 'Mark questionable' },
+      { keys: ['⇧Space'], action: 'Toggle Need expert' },
     ],
   },
   {
@@ -34,13 +35,16 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
     rows: [
       { keys: ['⌘A', '^A'], action: 'Select the current burst' },
       { keys: ['Esc'], action: 'Clear selection / blur filter' },
-      { keys: ['⌘S', '^S'], action: 'Save draft now' },
+      { keys: ['⌘S', '^S'], action: 'Finish valid input and flush or retry automatic saving' },
+      { keys: ['⌘Z', '^Z'], action: 'Undo the latest completed action outside text editors' },
       { keys: ['?'], action: 'Toggle this cheatsheet' },
     ],
   },
 ];
 
 export function Cheatsheet({ onClose }: { onClose: () => void }) {
+  const automatic = !localBatchId;
+  const groups = automatic ? GROUPS : GROUPS.map(group => ({ ...group, rows: group.rows.filter(row => !row.keys.includes('⌘Z')).map(row => row.keys.includes('⌘S') ? { ...row, action: 'Save local work in this browser' } : row) }));
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -94,7 +98,7 @@ export function Cheatsheet({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 p-5">
-          {GROUPS.map((g) => (
+          {groups.map((g) => (
             <section key={g.title} className="min-w-0">
               <h3 className="font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft mb-2">
                 {g.title}

@@ -8,7 +8,7 @@ Feature: Correct capture times on an upload whose camera clock was wrong
   clock battery. The tagger can shift the capture time of a whole upload or a
   selection of frames. Focus does not provide an absolute per-image timestamp
   editor; its supported correction actions are the whole-upload and selection
-  shifts. Corrections are held locally until a sync writes them; the original
+  shifts. Completed corrections save automatically; the immutable original
   capture data is never rewritten locally.
   """
 
@@ -23,26 +23,15 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     And applying it shifts every frame in the upload
 
   @unmapped
-  Scenario: An active whole-upload shift is always visible
-    Given a whole-upload shift is in effect
-    Then the workspace toolbar shows the shift and its size
-
-  @unmapped
-  Scenario: A whole-upload shift can be removed
-    Given a whole-upload shift is in effect
-    When the shift is cleared
-    Then the images show their original capture times again
+  Scenario: A completed whole-upload shift can be undone
+    Given a whole-upload shift is automatically saved
+    When the latest automatic action is undone
+    Then all original capture times are restored
 
   @unmapped
   Scenario: The whole-upload time shift is unavailable with nothing to shift
     Given an upload with no capture times is open in the tagging workspace
     Then the whole-upload time shift is disabled with an explanation
-
-  @unmapped
-  Scenario: An active whole-upload shift remains clearable with nothing to shift
-    Given a persisted whole-upload shift exists for an upload with no capture times
-    When the shift is cleared
-    Then the standing shift is cleared afterwards
 
   @unmapped
   Scenario: Time shift selection requires an explicit selection
@@ -101,7 +90,7 @@ Feature: Correct capture times on an upload whose camera clock was wrong
 
   @unmapped
   Scenario: A synced whole-upload shift is not applied twice
-    Given a whole-upload shift was written to the stored files by a sync
+    Given a whole-upload shift is automatically saved
     Then the standing shift is cleared afterwards
     And the images show their now-corrected stored times without a further shift
 

@@ -1,3 +1,5 @@
+import { useStore } from '../store';
+import { accountScope } from './automaticModel';
 // TanStack Query wrappers. Every key is scoped by `connectionId` (not raw
 // credentials), and the client cache is cleared on connect/disconnect, so
 // reconnecting with new credentials never serves a previous connection's data.
@@ -26,6 +28,7 @@ import { fetchSpecies, type SpeciesResult } from './species';
 import { fetchLocations, type LocationsResult } from './locations';
 import { buildTagImages, type TagImage } from './workspace';
 import {
+  db,
   groundUpload,
   getUpload,
   hasDirtyDraftsForUpload,
@@ -34,6 +37,13 @@ import {
   type UploadDraftState,
 } from './db';
 import { useDraftStore, dirtyCount } from './drafts';
+
+const canonicalSnapshots = new Map<string, import('./sync').CanonicalState>();
+const canonicalKey = (connection: number, collection: string, prefix: string) => JSON.stringify([connection, collection, prefix]);
+export const canonicalSnapshot = (connection: number, collection: string, prefix: string) => canonicalSnapshots.get(canonicalKey(connection, collection, prefix));
+export function rememberCanonical(connection: number, collection: string, prefix: string, state: import('./sync').CanonicalState): void {
+  canonicalSnapshots.set(canonicalKey(connection, collection, prefix), state);
+}
 
 /** Upload prefixes are stamped `YYYY.MM.DD.HH.MM.SS_user` — the folder name
  *  under Uploads/ is the closest thing this data model has to an upload name. */
@@ -98,7 +108,7 @@ export function useUploadSummaries(
 export function useUploadDraftStates(connectionId: number, collectionKey: string | null) {
   return useQuery<Map<string, UploadDraftState>>({
     queryKey: ['uploadDraftStates', connectionId, collectionKey],
-    queryFn: () => uploadDraftStates(parseCollectionKey(collectionKey!).bucket),
+    queryFn: () => uploadDraftStates(parseCollectionKey(collectionKey!).bucket, useStore.getState().s3Config ? accountScope(useStore.getState().s3Config!) : undefined),
     enabled: !!collectionKey,
     staleTime: 5 * 1000,
   });
@@ -137,6 +147,7 @@ export function useTagImages(
     queryFn: async () => {
       const { bucket } = parseCollectionKey(collectionKey!);
       const state = await loadCanonicalState(cfg!, bucket, uploadPrefix!);
+      rememberCanonical(connectionId, collectionKey!, uploadPrefix!, state);
       // Pin the conflict base to the session: only (re-)ground when the upload
       // has no base yet or no unsaved edits. Once edits exist the base is frozen,
       // so a background refetch can't silently absorb a remote change — drift
@@ -150,7 +161,8 @@ export function useTagImages(
       const store = useDraftStore.getState();
       const memDirty = store.loadedKey === uploadId(bucket, uploadPrefix!)
         && (dirtyCount(store.drafts) > 0 || store.pendingLocation !== null);
-      if (shouldGroundUpload(existing, memDirty, await hasDirtyDraftsForUpload(bucket, uploadPrefix!))) {
+      const recovery = await db.automatic.where('[bucket+uploadPrefix]').equals([bucket, uploadPrefix!]).toArray();
+      if (shouldGroundUpload(existing, memDirty || recovery.some(r => r.actions.length || r.flight || r.adoptionRequired), await hasDirtyDraftsForUpload(bucket, uploadPrefix!))) {
         await groundUpload(bucket, uploadPrefix!, state);
       }
       return buildTagImages({

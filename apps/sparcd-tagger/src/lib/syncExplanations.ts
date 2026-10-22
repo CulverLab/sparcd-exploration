@@ -1,13 +1,12 @@
 import type { SyncState } from '../store';
 
-// Explain the existing states without promising that every local draft was
-// written: a successful sync can intentionally leave questionable-only edits.
+// Legacy state keys remain compatible with stored upload summaries.
 export const SYNC_EXPLANATIONS: Record<SyncState, string> = {
-  'local-only': 'Not yet synced — edits stay in this browser until you sync',
-  unsynced: "This upload has edits that haven't been synced to the collection yet",
-  syncing: 'Sync in progress',
-  synced: 'The last sync completed',
-  conflict: 'The collection changed elsewhere since your last sync — resolve this before syncing again',
-  'dry-run': 'Previewed what a sync would write, without writing anything',
-  error: 'The last sync attempt failed',
+  'local-only': 'Stored collection data; no pending edits in this browser',
+  unsynced: 'This upload has pending changes awaiting automatic saving',
+  syncing: 'Saving changes to storage',
+  synced: 'All required writes to storage completed',
+  conflict: 'Stored data changed elsewhere. Review retained changes before continuing.',
+  'dry-run': 'A legacy preview did not change stored data',
+  error: 'Saving failed. Pending work is retained for retry.',
 };

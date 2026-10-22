@@ -24,10 +24,10 @@ export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
-  // Seed on login/restoration; edits use blur so typing may stay temporarily blank.
+  // Restore once on mount; direct and shared connections start their own lookup.
   useEffect(() => {
     ensureUploaderIdentity();
-  }, [s3Config, ensureUploaderIdentity]);
+  }, [ensureUploaderIdentity]);
   const loginDeferred = useStore((s) => s.loginDeferred);
   const setLoginDeferred = useStore((s) => s.setLoginDeferred);
   const section = useStore((s) => s.section);

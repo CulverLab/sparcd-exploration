@@ -245,7 +245,7 @@ export function shouldRetryCanonicalRead(err: unknown): boolean {
   if (code && CLOCK_SKEW_CODES.has(code)) return true;
   if (status === undefined) return true; // network/CORS/DNS failure
   if (status >= 500 || status === 429) return true;
-  return status === 403 && !code;
+  return status === 403 && (!code || code === 'Unknown');
 }
 
 /**

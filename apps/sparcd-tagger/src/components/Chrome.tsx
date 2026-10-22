@@ -1,16 +1,16 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { BrandSwitcher, ConnectionChip } from '@sparcd/auth-ui';
 import { useStore, type Section } from '../store';
-import { useDraftStore, dirtyCount } from '../lib/drafts';
+import { useDraftStore } from '../lib/drafts';
+import { AutomaticSaveStatus, useAutomaticSave } from './AutomaticSave';
 import { finishLocalBatch, useLocalBatch } from '../lib/localBatch';
-import { StatePill } from './StatePill';
 
 // Reuses the uploader's section-tab chrome treatment so the tools read as
 // family; the tabs drive this tool's own internal navigation (no cross-app nav).
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'browse', label: 'Browse' },
   { id: 'tag', label: 'Tag' },
-  { id: 'history', label: 'History' },
+  { id: 'history', label: 'Recovery' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -109,15 +109,9 @@ function CollectionChrome({ children }: { children: ReactNode }) {
   const setSection = useStore((s) => s.setSection);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
-  const syncState = useStore((s) => s.syncState);
   const hasUpload = useStore((s) => !!s.selectedUploadPrefix);
   const disconnect = useStore((s) => s.disconnect);
-  // Local-only in P1: surface unsaved edits so the pill is honest before the P4
-  // write path exists. `syncState` stays the source of truth once sync ships.
-  // A pending whole-upload location correction is unsaved too, even when no
-  // per-image draft is dirty (#301 review).
-  const hasDirty = useDraftStore((s) => dirtyCount(s.drafts) > 0 || s.pendingLocation !== null);
-  const displayState = syncState === 'local-only' && hasDirty ? 'unsynced' : syncState;
+  const pending = useAutomaticSave(s => s.view.pending);
 
   return (
     <div className="h-[100dvh] flex flex-col bg-paper">
@@ -149,14 +143,10 @@ function CollectionChrome({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
-          {/* Sync pill is textual; drop it below sm so the right cluster stays icon-only on phones. */}
-          <span className="hidden sm:flex items-center">
-            <StatePill state={displayState} />
-          </span>
           {/* The connected access key is the attribution identity internally,
               but ConnectionChip already renders only its masked form. Do not
               pass the raw key into the header as a second identity label. */}
-          <ConnectionChip onDisconnect={disconnect} />
+          <ConnectionChip onDisconnect={disconnect} disconnectDisabled={pending} disconnectExplanation={pending ? "Finish pending saves before disconnecting. Use Repair credentials if this account needs a new secret key." : undefined} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 md:w-8 md:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
@@ -193,6 +183,7 @@ function CollectionChrome({ children }: { children: ReactNode }) {
         })}
       </nav>
 
+      <AutomaticSaveStatus />
       <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
     </div>
   );

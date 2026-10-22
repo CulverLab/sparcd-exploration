@@ -1,3 +1,4 @@
+import { connectionChangeAllowed, navigateAfterSave } from './lib/saveNavigation';
 import { create } from 'zustand';
 import type { S3Config } from '@sparcd/types';
 import {
@@ -8,6 +9,13 @@ import {
   loadSharedTheme,
   saveSharedTheme,
   type Theme,
+  loadLoginIdentityPreference,
+  loginIdentityPreferenceKey,
+  saveLoginIdentity,
+  saveLoginIdentityDefault,
+  subscribeLoginIdentityChanges,
+  fetchWhoAmI,
+  type LoginIdentityPreference,
 } from '@sparcd/auth-ui';
 import { clearClientCache } from './lib/s3';
 import { localBatchId } from './lib/localBatch';
@@ -39,14 +47,19 @@ type TaggerState = {
   selectedCollectionKey: string | null; // `${bucket}::${uuid}`
   selectedUploadPrefix: string | null; // full `Collections/<uuid>/Uploads/<stamp>/`
 
-  // Set when History routes to an upload to restore a snapshot: the Tag
-  // workspace consumes it once to auto-open its Snapshots dialog, then clears it.
-  pendingSnapshots: boolean;
-
-  // Connected storage username used for attribution and audit paths. Local
+  // Active login’s display identity used for attribution and audit paths. Local
   // batch mode may carry its handoff identity separately because it has no S3.
   taggerUser: string;
-  dryRun: boolean; // off by default; on to preview a sync without writing anything
+  identityPersistenceError: boolean;
+  identityEditing: boolean;
+  identityResolvedDefault: string | null;
+  identityDefaultSource: 'whoami' | 'access-key' | null;
+  beginTaggerIdentityEdit: () => void;
+  identityUnsavedCustom: string | null;
+  identityResolutionStatus: 'idle' | 'loading' | 'ready' | 'error';
+  identityResolutionError: string | null;
+  ensureTaggerIdentity: () => void;
+  refreshTaggerIdentity: () => Promise<void>;
   burstGroupingEnabled: boolean; // off by default — our cameras shoot no bursts
   burstThresholdSec: number; // sequence grouping threshold (5–600s), used when enabled
   dateFormat: DateFormat; // display only — media.csv col 4 is always stored as full ISO
@@ -60,12 +73,9 @@ type TaggerState = {
   toggleTheme: () => void;
   selectCollection: (key: string | null) => void;
   selectUpload: (prefix: string | null) => void;
-  openUploadForSnapshots: (collectionKey: string, uploadPrefix: string) => void;
-  clearPendingSnapshots: () => void;
   setSyncState: (state: SyncState) => void;
-  /** Local-batch fallback only; connected sessions derive identity from S3. */
+  /** Custom identity for this login, or the disconnected local batch. */
   setTaggerUser: (value: string) => void;
-  setDryRun: (value: boolean) => void;
   setBurstGrouping: (value: boolean) => void;
   setBurstThreshold: (value: number) => void;
   setDateFormat: (value: DateFormat) => void;
@@ -171,12 +181,13 @@ function clearLocalBatchIdentity(): void {
 }
 
 // A local-batch handoff has no storage account to provide attribution, so its
-// identity survives a reload in this tab only. Connected sessions never use
-// this value: their attribution always comes from the active S3 access key.
+// identity survives a reload in this tab only. Connected sessions instead
+// use the shared custom identity or resolved account default for their login.
 const initialDisplayPreferences = loadDisplayPreferences();
 
 export function connectedIdentity(config: S3Config | null): string {
-  return config?.accessKey?.trim() ?? '';
+  const preference = loadLoginIdentityPreference(config?.accessKey);
+  return preference.customIdentity ?? preference.defaultIdentity ?? '';
 }
 
 /** The choice this tool persisted for itself before the shared home existed. */
@@ -199,6 +210,32 @@ function initialTheme(): Theme {
   return legacy ?? 'light';
 }
 
+function effectiveIdentity(
+  state: Pick<TaggerState, 'identityEditing' | 'taggerUser' | 'identityUnsavedCustom' | 'identityResolvedDefault' | 'identityDefaultSource' | 'identityResolutionStatus'>,
+  preference: LoginIdentityPreference,
+  defaultIdentity = state.identityResolutionStatus === 'error'
+    ? (state.identityDefaultSource === 'whoami' ? state.identityResolvedDefault : null)
+      ?? (preference.defaultSource === 'whoami' ? preference.defaultIdentity : null) ?? ''
+    : state.identityResolvedDefault ?? preference.defaultIdentity ?? '',
+): string {
+  if (state.identityEditing) return state.taggerUser;
+  if (state.identityUnsavedCustom !== null) {
+    return state.identityUnsavedCustom.trim() ? state.identityUnsavedCustom : defaultIdentity;
+  }
+  return preference.customIdentity ?? defaultIdentity;
+}
+
+let identityLookupGeneration = 0;
+const emptyIdentityState = {
+  identityPersistenceError: false,
+  identityEditing: false,
+  identityResolvedDefault: null,
+  identityDefaultSource: null,
+  identityUnsavedCustom: null,
+  identityResolutionStatus: 'idle' as const,
+  identityResolutionError: null,
+};
+
 export const useStore = create<TaggerState>()(
   // The secret key never reaches localStorage — only non-secret connection
   // fields live there (see @sparcd/auth-ui's session module), to pre-fill the
@@ -210,7 +247,7 @@ export const useStore = create<TaggerState>()(
   // shared home every SPARC'd tool reads; date/time/distance display prefs,
   // auto-advance persist to their own localStorage keys (see the loaders
   // above); attribution comes from the active connection. Everything else —
-  // selection, sync state, pendingSnapshots, dryRun — is transient and dropped
+  // selection and save state — is transient and dropped
   // on reload by design.
   (set, get) => ({
     s3Config: initialSession,
@@ -220,15 +257,18 @@ export const useStore = create<TaggerState>()(
     syncState: 'local-only',
     selectedCollectionKey: null,
     selectedUploadPrefix: null,
-    pendingSnapshots: false,
     taggerUser: initialSession ? connectedIdentity(initialSession) : loadLocalBatchIdentity(),
-    dryRun: false,
+    ...emptyIdentityState,
     burstGroupingEnabled: false,
     burstThresholdSec: 60,
     ...initialDisplayPreferences,
     autoAdvanceOnTag: loadAutoAdvance(),
 
     connect: (config, remember) => {
+      if (!connectionChangeAllowed(config)) return;
+      const current = get();
+      const sameLogin = current.s3Config?.accessKey.trim() === config.accessKey.trim();
+      const transient = sameLogin ? current.identityUnsavedCustom : null;
       clearClientCache();
       saveSharedConnection(config, remember);
       set((s) => ({
@@ -236,10 +276,18 @@ export const useStore = create<TaggerState>()(
         connectionId: s.connectionId + 1,
         selectedCollectionKey: null,
         selectedUploadPrefix: null,
-        taggerUser: connectedIdentity(config),
+        ...emptyIdentityState,
+        taggerUser: sameLogin && current.identityEditing ? current.taggerUser : transient ?? connectedIdentity(config),
+        identityEditing: sameLogin && current.identityEditing,
+        identityUnsavedCustom: transient,
+        identityPersistenceError: transient !== null,
+        identityResolvedDefault: sameLogin ? current.identityResolvedDefault : null,
+        identityDefaultSource: sameLogin ? current.identityDefaultSource : null,
       }));
+      void get().refreshTaggerIdentity();
     },
     disconnect: () => {
+      if (!connectionChangeAllowed(null)) return;
       clearClientCache();
       clearSharedConnection();
       clearAutoAdvance();
@@ -251,6 +299,7 @@ export const useStore = create<TaggerState>()(
         selectedCollectionKey: null,
         selectedUploadPrefix: null,
         taggerUser: '',
+        ...emptyIdentityState,
         autoAdvanceOnTag: true,
       }));
     },
@@ -261,29 +310,81 @@ export const useStore = create<TaggerState>()(
         saveSharedTheme(theme);
         return { theme };
       }),
-    selectCollection: (key) =>
-      set({ selectedCollectionKey: key, selectedUploadPrefix: null, syncState: 'local-only' }),
-    selectUpload: (prefix) =>
+    selectCollection: (key) => key === get().selectedCollectionKey ? set({ section: 'browse' }) : navigateAfterSave(() =>
+      set({ selectedCollectionKey: key, selectedUploadPrefix: null, section: 'browse', syncState: 'local-only' })),
+    selectUpload: (prefix) => prefix === get().selectedUploadPrefix ? set({ section: prefix ? 'tag' : 'browse' }) : navigateAfterSave(() =>
       set({
         selectedUploadPrefix: prefix,
         section: prefix ? 'tag' : 'browse',
         syncState: 'local-only',
-      }),
-    openUploadForSnapshots: (collectionKey, uploadPrefix) =>
-      set({
-        selectedCollectionKey: collectionKey,
-        selectedUploadPrefix: uploadPrefix,
-        section: 'tag',
-        syncState: 'local-only',
-        pendingSnapshots: true,
-      }),
-    clearPendingSnapshots: () => set({ pendingSnapshots: false }),
+      })),
     setSyncState: (state) => set({ syncState: state }),
+    beginTaggerIdentityEdit: () => set({ identityEditing: true }),
     setTaggerUser: (value) => {
-      if (!get().s3Config) saveLocalBatchIdentity(value);
-      set({ taggerUser: value });
+      const { s3Config } = get();
+      if (!s3Config) saveLocalBatchIdentity(value);
+      const saved = s3Config ? saveLoginIdentity(s3Config.accessKey, value) : true;
+      set({
+        taggerUser: value,
+        identityPersistenceError: !!s3Config && !saved,
+        identityUnsavedCustom: s3Config && !saved ? value : null,
+      });
     },
-    setDryRun: (value) => set({ dryRun: value }),
+    ensureTaggerIdentity: () => {
+      const state = get();
+      if (!state.s3Config) return;
+      const preference = loadLoginIdentityPreference(state.s3Config.accessKey);
+      set({
+        identityEditing: false,
+        taggerUser: effectiveIdentity({ ...state, identityEditing: false }, preference),
+      });
+      if (state.identityResolutionStatus === 'idle') void get().refreshTaggerIdentity();
+    },
+    refreshTaggerIdentity: async () => {
+      const { s3Config, connectionId } = get();
+      if (!s3Config) return;
+      const login = s3Config.accessKey.trim();
+      const requestGeneration = ++identityLookupGeneration;
+      const initialPreference = loadLoginIdentityPreference(login);
+      set({
+        taggerUser: effectiveIdentity(get(), initialPreference),
+        identityResolutionStatus: 'loading',
+        identityResolutionError: null,
+      });
+      try {
+        const result = await fetchWhoAmI(s3Config);
+        const current = get();
+        if (requestGeneration !== identityLookupGeneration || current.connectionId !== connectionId || current.s3Config?.accessKey.trim() !== login) return;
+        const identity = result.kind === 'unsupported' ? login : result.name;
+        const source = result.kind === 'unsupported' ? 'access-key' : 'whoami';
+        const saved = saveLoginIdentityDefault(login, identity, source);
+        const preference = loadLoginIdentityPreference(login);
+        set({
+          taggerUser: effectiveIdentity(current, preference, identity),
+          identityResolvedDefault: identity,
+          identityDefaultSource: source,
+          identityPersistenceError: current.identityUnsavedCustom !== null || !saved,
+          identityResolutionStatus: 'ready',
+          identityResolutionError: null,
+        });
+      } catch (error) {
+        const current = get();
+        if (requestGeneration !== identityLookupGeneration || current.connectionId !== connectionId || current.s3Config?.accessKey.trim() !== login) return;
+        const preference = loadLoginIdentityPreference(login);
+        const priorName = current.identityDefaultSource === 'whoami'
+          ? current.identityResolvedDefault
+          : preference.defaultSource === 'whoami' ? preference.defaultIdentity : null;
+        set({
+          taggerUser: effectiveIdentity(current, preference, priorName ?? ''),
+          identityResolvedDefault: priorName,
+          identityDefaultSource: priorName ? 'whoami' : null,
+          identityResolutionStatus: 'error',
+          identityResolutionError: error instanceof Error
+            ? error.message
+            : 'The account name could not be loaded. Check the connection and retry.',
+        });
+      }
+    },
     setBurstGrouping: (value) => set({ burstGroupingEnabled: value }),
     setBurstThreshold: (value) => set({ burstThresholdSec: value }),
     setDateFormat: (dateFormat) =>
@@ -316,12 +417,25 @@ export const useStore = create<TaggerState>()(
 // connectionId so client-side caches scoped to a connection are invalidated.
 // Also answers a sibling tab's own request with our current s3Config, if any.
 subscribeSharedConnection((cfg) => {
-  if (localBatchId) return;
+  if (localBatchId || !connectionChangeAllowed(cfg)) return;
+  const currentState = useStore.getState();
+  const current = currentState.s3Config;
+  if (cfg && current && cfg.accessKey === current.accessKey && cfg.endpoint === current.endpoint &&
+      cfg.secretKey === current.secretKey && cfg.region === current.region &&
+      cfg.secure === current.secure && cfg.forcePathStyle === current.forcePathStyle) return;
+  const sameLogin = !!cfg && !!current && cfg.accessKey.trim() === current.accessKey.trim();
+  const transient = sameLogin ? useStore.getState().identityUnsavedCustom : null;
   clearClientCache();
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
-    taggerUser: connectedIdentity(cfg),
+    ...emptyIdentityState,
+    taggerUser: sameLogin && currentState.identityEditing ? currentState.taggerUser : transient ?? connectedIdentity(cfg),
+    identityEditing: sameLogin && currentState.identityEditing,
+    identityUnsavedCustom: transient,
+    identityPersistenceError: transient !== null,
+    identityResolvedDefault: sameLogin ? currentState.identityResolvedDefault : null,
+    identityDefaultSource: sameLogin ? currentState.identityDefaultSource : null,
     ...(cfg
       ? {}
       : {
@@ -330,4 +444,20 @@ subscribeSharedConnection((cfg) => {
           selectedUploadPrefix: null,
         }),
   }));
+  if (cfg) void useStore.getState().refreshTaggerIdentity();
 }, () => (localBatchId ? null : useStore.getState().s3Config));
+
+subscribeLoginIdentityChanges(({ preferenceKey }) => {
+  const state = useStore.getState();
+  if (!state.s3Config || localBatchId) return;
+  if (preferenceKey !== null && preferenceKey !== loginIdentityPreferenceKey(state.s3Config.accessKey.trim())) return;
+  const preference = loadLoginIdentityPreference(state.s3Config.accessKey);
+  const acceptDefault = preference.defaultSource === 'whoami' || state.identityResolutionStatus !== 'error';
+  const defaultIdentity = acceptDefault ? preference.defaultIdentity ?? state.identityResolvedDefault : state.identityResolvedDefault;
+  useStore.setState({
+    taggerUser: effectiveIdentity(state, preference, defaultIdentity ?? ''),
+    identityResolvedDefault: defaultIdentity,
+    identityDefaultSource: acceptDefault ? preference.defaultSource ?? state.identityDefaultSource : state.identityDefaultSource,
+  });
+  if (!state.identityEditing && !useStore.getState().taggerUser.trim()) void state.refreshTaggerIdentity();
+});

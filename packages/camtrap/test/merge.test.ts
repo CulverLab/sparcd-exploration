@@ -13,6 +13,8 @@ import {
   serializeCsvRows,
   buildObservationComments,
   removedSpeciesFromComments,
+  needExpertFromComments,
+  MEDIA_COL,
   reviewEventsFromComments,
 } from '../src/index';
 import { fixture } from './fixtures';
@@ -54,6 +56,35 @@ const EDITS: MediaEdit[] = [
   },
 ];
 
+describe('Need expert media marker', () => {
+  const source = fixture('java-v016', 'media.csv');
+  const statusEdit = (value: boolean): MediaEdit => ({
+    mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+    observations: [], needExpert: value,
+  });
+
+  it('adds, reads, clears, and preserves unrelated comments without touching other rows', () => {
+    const original = parseCsvRows(source);
+    original[0][MEDIA_COL.comments] = 'field note [TIMESTAMP:spread][FUTURE:yes]';
+    const withNote = serializeCsvRows(original);
+    const marked = parseCsvRows(mergeMedia(withNote, [statusEdit(true)]));
+    expect(needExpertFromComments(marked[0][MEDIA_COL.comments])).toBe(true);
+    expect(marked[0][MEDIA_COL.comments]).toBe('field note [TIMESTAMP:spread][FUTURE:yes][NEED_EXPERT:true]');
+    expect(marked.slice(1)).toEqual(original.slice(1));
+    const cleared = parseCsvRows(mergeMedia(serializeCsvRows(marked), [statusEdit(false)]));
+    expect(needExpertFromComments(cleared[0][MEDIA_COL.comments])).toBe(false);
+    expect(cleared[0][MEDIA_COL.comments]).toBe(original[0][MEDIA_COL.comments]);
+  });
+
+  it('combines status and time edits for one media row', () => {
+    const rows = parseCsvRows(mergeMedia(source, [
+      { ...statusEdit(true), mediaTimestamp: '2024-01-10T09:00:00', timestampSource: 'manual' },
+    ]));
+    expect(rows[0][MEDIA_COL.timestamp]).toBe('2024-01-10T09:00:00');
+    expect(needExpertFromComments(rows[0][MEDIA_COL.comments])).toBe(true);
+  });
+});
+
 describe('tagger merge contract → tagger-edited-v016 golden', () => {
   it('observations merge is byte-for-byte', () => {
     const out = mergeObservations(fixture('java-v016', 'observations.csv'), EDITS);
@@ -79,6 +110,10 @@ describe('tagger merge contract → tagger-edited-v016 golden', () => {
 });
 
 describe('no accidental data loss', () => {
+  it('leaves observation bytes untouched when a media-only status changes', () => {
+    const original = fixture('java-v016', 'observations.csv').trimEnd();
+    expect(mergeObservations(original, [])).toBe(original);
+  });
   const merged = parseObservations(mergeObservations(fixture('java-v016', 'observations.csv'), EDITS));
 
   it('keeps the unrelated IMG004 survivor row untouched', () => {

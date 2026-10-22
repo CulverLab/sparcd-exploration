@@ -21,12 +21,7 @@ Given('the tagger is connected with credentials that can read a collection', asy
   await openAppConnected(page);
 });
 
-Then(
-  'each upload shows the location name\\(s\\) recorded in its deployment file',
-  async ({ page }) => {
-    await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
-  },
-);
+
 
 Then('no location is withheld on the grounds of the species in the images', async ({ page }) => {
   // The upload carries a Mountain Lion identification; its location is shown in
@@ -159,15 +154,10 @@ Then('no species is treated as sensitive', async ({ page }) => {
   const surfaces: string[] = [];
   surfaces.push(await page.locator('body').innerText());
 
-  await page.getByRole('button', { name: 'Sync…' }).click();
-  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible();
+  await page.getByRole('button', { name: 'Time shift', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Time shift', exact: true })).toBeVisible();
   surfaces.push(await page.locator('body').innerText());
-  await page.getByRole('button', { name: 'Cancel' }).click();
-
-  await page.getByRole('button', { name: 'Snapshots…' }).click();
-  await expect(page.getByRole('heading', { name: 'Snapshots' })).toBeVisible();
-  surfaces.push(await page.locator('body').innerText());
-  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
 
   await sectionTab(page, 'Settings').click();
   surfaces.push(await page.locator('body').innerText());
@@ -222,3 +212,10 @@ Then('it grants whatever the connected credentials already grant, no less', asyn
   ]);
   expect(new URL(src!).searchParams.get('X-Amz-Security-Token')).toBeNull();
 });
+
+Then(
+  'each upload shows the location name\\(s\\) recorded in its deployment file',
+  async ({ page }) => {
+    await expect(uploadRow(page, 'priortagger')).toContainText(LOCATION_NAME);
+  },
+);

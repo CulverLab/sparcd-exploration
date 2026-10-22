@@ -14,6 +14,8 @@ export type ConnectionChipProps = {
   /** Optional human identity, e.g. the SPARC'd username stamped on writes. */
   identity?: string;
   onDisconnect: () => void;
+  disconnectDisabled?: boolean;
+  disconnectExplanation?: string;
 };
 
 /** "https://wildcats.sparcd.arizona.edu:9000" → "wildcats.sparcd.arizona.edu". */
@@ -34,7 +36,7 @@ function maskKey(key: string): string {
  * Live status chip for the active shared session. Renders nothing when there
  * is no session (the app shows its login gate instead).
  */
-export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) {
+export function ConnectionChip({ identity, onDisconnect, disconnectDisabled, disconnectExplanation }: ConnectionChipProps) {
   // Only ever displays endpoint/accessKey — never the secret — so the
   // non-persisted (secret-included) shape from a live cross-tab connect and
   // the persisted (secret-less) shape read back after a reload both work
@@ -89,7 +91,9 @@ export function ConnectionChip({ identity, onDisconnect }: ConnectionChipProps) 
       <button
         type="button"
         onClick={onDisconnect}
-        title="End this session and log out"
+        disabled={disconnectDisabled}
+        aria-description={disconnectExplanation}
+        title={disconnectExplanation ?? "End this session and log out"}
         className="ml-1 shrink-0 border border-rule px-2 py-0.5 text-[11px] font-body text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
       >
         Logout

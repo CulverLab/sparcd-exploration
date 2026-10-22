@@ -14,9 +14,11 @@ import {
   enterFocusView,
   selectCollection,
   openUpload,
+  ENDPOINT,
 } from './support/world';
+import { installS3Mock } from './support/s3mock';
 import { BUCKET, PREFIX_A, MEDIA_A } from './support/data';
-import { openSyncDialog, setSyncDryRun, readStore, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
+import { waitForAutomaticSave, readStore, waitForDirtyDrafts, waitForSyncDialogClosed } from './support/flows';
 
 /** One cell of the preview's Added / Changed / Removed / Time-corrected / Confirmed grid. */
 const summaryCell = (page: Page, label: string) =>
@@ -173,6 +175,7 @@ Then('the stored replacement records the previous species as corrected', async (
 
 When('the count is changed', async ({ page }) => {
   await appliedChip(page, 'Mule Deer').locator('input[type="number"]').fill('5');
+  await appliedChip(page, 'Mule Deer').locator('input[type="number"]').press('Enter');
 });
 
 Then('the new count is held against that species for that image', async ({ page }) => {
@@ -194,7 +197,10 @@ Then('a count below one is not accepted', async ({ page }) => {
   const input = appliedChip(page, 'Mule Deer').locator('input[type="number"]');
   await expect(input).toHaveAttribute('min', '1');
   await input.fill('0');
-  await expect(input).toHaveValue('1');
+  await input.press('ControlOrMeta+s');
+  await expect(input).toHaveValue('0'); await expect(input).toBeFocused();
+  expect(await input.evaluate(el => (el as HTMLInputElement).validity.valid)).toBe(false);
+  await input.fill('5'); await input.press('Enter');
   await expect(gridCell(page, 'IMG001.JPG')).not.toContainText('×0');
 });
 
@@ -280,12 +286,14 @@ When('it is marked questionable', async ({ page }) => {
 });
 
 Then("the image's tile carries a questionable marker", async ({ page }) => {
-  await expect(gridCell(page, 'IMG002.JPG').locator('[title="questionable"]')).toBeVisible();
+  await expect(gridCell(page, 'IMG002.JPG').locator('[title="Needs expert opinion"]')).toBeVisible();
+  await expect(gridCell(page, 'IMG002.JPG')).toHaveAccessibleName(/Needs expert opinion/);
 });
 
 Then('the marker can be toggled off again', async ({ page }) => {
   await page.keyboard.press('Shift+Space');
-  await expect(gridCell(page, 'IMG002.JPG').locator('[title="questionable"]')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG002.JPG').locator('[title="Needs expert opinion"]')).toHaveCount(0);
+  await expect(gridCell(page, 'IMG002.JPG')).not.toHaveAccessibleName(/Needs expert opinion/);
 });
 
 Then('a selection of images can be marked in one action', async ({ page }) => {
@@ -293,8 +301,162 @@ Then('a selection of images can be marked in one action', async ({ page }) => {
   await gridCell(page, 'IMG003.JPG').click({ modifiers: ['Shift'] });
   await page.keyboard.press('Shift+Space');
   for (const f of ['IMG001.JPG', 'IMG002.JPG', 'IMG003.JPG']) {
-    await expect(gridCell(page, f).locator('[title="questionable"]')).toBeVisible();
+    await expect(gridCell(page, f).locator('[title="Needs expert opinion"]')).toBeVisible();
   }
+});
+
+const expertToggle = (page: Page) => page.getByRole('button', { name: "Toggle needing an expert's opinion" });
+
+Then('the compact Need expert control is accessible in Overview', async ({ page, s3, scratch }) => {
+  scratch.originalObservations = s3.text(BUCKET, `${PREFIX_A}observations.csv`);
+  const control = expertToggle(page);
+  await expect(control).toBeVisible();
+  await control.hover();
+  await expect(page.getByRole('tooltip', { name: "Toggle needing an expert's opinion" })).toBeVisible();
+  await page.mouse.move(0, 0);
+  await control.focus();
+  await expect(page.getByRole('tooltip', { name: "Toggle needing an expert's opinion" })).toBeVisible();
+  await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'false');
+});
+
+When('Need expert is enabled from the compact control', async ({ page }) => {
+  await expertToggle(page).click();
+  await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'true');
+});
+
+When('the Need expert change finishes automatic saving', async ({ page }) => { await waitForAutomaticSave(page);
+});
+
+Then('media.csv stores Need expert without rewriting observations', async ({ s3, scratch }) => {
+  const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
+  expect(media.find((row) => row.fileName === 'IMG002.JPG')?.comments).toContain('[NEED_EXPERT:true]');
+  expect(parseCsvRows(s3.text(BUCKET, `${PREFIX_A}observations.csv`))).toEqual(parseCsvRows(scratch.originalObservations as string));
+});
+
+Then('the Need expert marker returns after a reload', async ({ page }) => {
+  await waitForSyncDialogClosed(page);
+  await page.reload();
+  await openWorkspace(page);
+  await focusFrame(page, 'IMG002.JPG');
+  await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'true');
+  await expect(gridCell(page, 'IMG002.JPG').locator('[title="Needs expert opinion"]')).toBeVisible();
+});
+
+Then('a new browser session sees the saved Need expert status', async ({ browser, s3 }) => {
+  const context = await browser.newContext({ baseURL: ENDPOINT });
+  const fresh = await context.newPage();
+  try {
+    await installS3Mock(fresh, s3);
+    await openWorkspace(fresh);
+    await focusFrame(fresh, 'IMG002.JPG');
+    await expect(expertToggle(fresh)).toHaveAttribute('aria-pressed', 'true');
+  } finally {
+    await context.close();
+  }
+});
+
+Then('the compact Need expert control is accessible in Focus', async ({ page }) => {
+  await enterFocusView(page);
+  await expect(expertToggle(page)).toBeVisible();
+  await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'true');
+});
+
+When('Need expert is cleared from Focus', async ({ page }) => {
+  await expertToggle(page).click();
+  await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'false');
+});
+
+Then('media.csv no longer stores Need expert', async ({ s3 }) => {
+  const media = parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`));
+  expect(media.find((row) => row.fileName === 'IMG002.JPG')?.comments).not.toContain('[NEED_EXPERT:true]');
+});
+
+When('the workspace is narrowed to a phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+});
+
+Then('Need expert can be toggled from the keyboard in Overview', async ({ page }) => {
+  const control = expertToggle(page);
+  await control.focus();
+  await page.keyboard.press('Enter');
+  await expect(control).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Space');
+  await expect(control).toHaveAttribute('aria-pressed', 'false');
+});
+
+Then('Need expert fits and remains keyboard reachable in Focus', async ({ page }) => {
+  await enterFocusView(page);
+  const control = expertToggle(page);
+  const box = await control.boundingBox();
+  expect(box).toBeTruthy();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+  await control.focus();
+  await page.keyboard.press('Enter');
+  await expect(control).toHaveAttribute('aria-pressed', 'true');
+  await expect(control).toBeFocused();
+});
+
+When('one image is marked Need expert and three images are selected', async ({ page }) => {
+  await expertToggle(page).click();
+  await gridCell(page, 'IMG001.JPG').click();
+  await gridCell(page, 'IMG003.JPG').click({ modifiers: ['Shift'] });
+});
+
+Then('the compact toggle describes the mixed selection and marks it in one activation', async ({ page }) => {
+  const control = expertToggle(page);
+  await expect(control).toHaveAttribute('aria-pressed', 'mixed');
+  const description = await control.getAttribute('aria-describedby');
+  expect(description).toBeTruthy();
+  const text = await page.locator(description!.split(' ').map((id) => `[id="${id}"]`).join(',')).allTextContents();
+  expect(text.join(' ')).toContain('Applies to 3 selected images.');
+  expect(text.join(' ')).toContain('Selected statuses are mixed.');
+  expect(text.join(' ')).toContain('Activating will mark all selected images');
+  await control.click();
+  for (const name of ['IMG001.JPG', 'IMG002.JPG', 'IMG003.JPG']) {
+    await expect(gridCell(page, name).locator('[title="Needs expert opinion"]')).toBeVisible();
+  }
+});
+
+Then('a touch user can mark and clear Need expert with one tap each', async ({ browser, s3 }) => {
+  const context = await browser.newContext({ baseURL: ENDPOINT, hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  const touchPage = await context.newPage();
+  try {
+    await installS3Mock(touchPage, s3);
+    await openWorkspace(touchPage);
+    await focusFrame(touchPage, 'IMG002.JPG');
+    const control = expertToggle(touchPage);
+    await control.tap();
+    await expect(control).toHaveAttribute('aria-pressed', 'true');
+    await control.tap();
+    await expect(control).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    await context.close();
+  }
+});
+
+When('Need expert is toggled off before the save debounce', async ({ page }) => {
+  await expertToggle(page).click();
+});
+
+Then('the image has no pending Need expert edit', async ({ page }) => {
+  await waitForAutomaticSave(page); await expect(expertToggle(page)).toHaveAttribute('aria-pressed', 'false');
+  await expect(gridCell(page, 'IMG002.JPG').locator('[title="unsaved edit"]')).toHaveCount(0);
+});
+
+When('another writer changes media.csv', async ({ s3 }) => {
+  const key = `${PREFIX_A}media.csv`;
+  const rows = parseCsvRows(s3.text(BUCKET, key));
+  rows[0][10] = `${rows[0][10] ?? ''}[OTHER_WRITER:kept]`;
+  s3.put(BUCKET, key, serializeCsvRows(rows), 'text/csv');
+});
+
+Then('automatic saving reports a media conflict and retains the expert edit', async ({ page, s3 }) => {
+  await expect(page.getByTestId('automatic-save')).toContainText('Save conflict');
+  await expect(page.getByTestId('automatic-save')).toContainText('media');
+  const records = await readStore(page, 'automatic') as { actions: { changes: { field: string }[] }[] }[];
+  expect(records[0].actions.some(action => action.changes.some(field => field.field === 'expert'))).toBe(true);
+  expect(s3.text(BUCKET, `${PREFIX_A}media.csv`)).not.toContain('[NEED_EXPERT:true]');
 });
 
 // --- Confirmation records a review (#368) -----------------------------------
@@ -333,21 +495,15 @@ Given('the original upload data is captured before a review', async ({ s3, scrat
   };
 });
 
-When('a sync is previewed', async ({ page }) => {
-  await openSyncDialog(page);
+When('the automatic review save completes', async ({ page }) => { await waitForAutomaticSave(page);
 });
 
-Then('the preview reports one confirmed image and no other change', async ({ page }) => {
-  await expect(summaryCell(page, 'Added')).toHaveText('0Added');
-  await expect(summaryCell(page, 'Changed')).toHaveText('0Changed');
-  await expect(summaryCell(page, 'Removed')).toHaveText('0Removed');
-  await expect(summaryCell(page, 'Confirmed')).toHaveText('1Confirmed');
+Then('the automatic review retains the original species and count', async ({ s3 }) => {
+  const row = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).find(row => row.mediaId === `${PREFIX_A}IMG001.JPG`)!;
+  expect(row.scientificName).toBe('Odocoileus hemionus'); expect(row.count).toBe(2); expect(row.reviewEvents).toHaveLength(1);
 });
 
-When('that sync is run live', async ({ page }) => {
-  await setSyncDryRun(page, false);
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
+When('the automatic review is fully saved', async ({ page }) => { await waitForAutomaticSave(page);
 });
 
 Then(
@@ -397,28 +553,23 @@ When('another review is made locally', async ({ page }) => {
   await speciesApply(page, 'Canis latrans').click();
 });
 
-function expectAuditSnapshot(s3: { puts: { key: string; body: string }[] }): void {
-  const manifests = s3.puts.filter((put) =>
-    put.key.includes('.sparcd-tagger-snapshots/testkey/') && put.key.endsWith('manifest.json'),
-  );
-  expect(manifests.length).toBeGreaterThan(0);
-  for (const item of manifests) {
-    const manifest = JSON.parse(item.body) as { user?: string; editStamp?: string };
-    expect(manifest.user).toBe('testkey');
-    expect(manifest.editStamp).toMatch(/^\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{2}$/);
-  }
+function expectAutomaticAudit(s3: { puts: { key: string; body: string }[]; text: (bucket: string, key: string) => string }): void {
+  expect(s3.puts.filter(put => put.key.includes('.sparcd-tagger-snapshots/'))).toEqual([]);
+  const actions = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)).taggerActions as { user: string; at: string }[];
+  expect(actions.length).toBeGreaterThan(0);
+  for (const action of actions) { expect(action.user).toBe('testkey'); expect(Number.isNaN(Date.parse(action.at))).toBe(false); }
 }
 
 Then('the live audit records the correction identity and time', async ({ s3 }) => {
   const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)) as { editComments: string[] };
   expect(meta.editComments.some((comment) => comment.includes('testkey'))).toBe(true);
-  expectAuditSnapshot(s3);
+  expectAutomaticAudit(s3);
 });
 
 Then('the live audit records the removal identity and time', async ({ s3 }) => {
   const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)) as { editComments: string[] };
   expect(meta.editComments.some((comment) => comment.includes('testkey'))).toBe(true);
-  expectAuditSnapshot(s3);
+  expectAutomaticAudit(s3);
 });
 
 Then(
@@ -438,18 +589,14 @@ Then(
 
 Given('identifications were corrected locally', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
   await focusFrame(page, 'IMG002.JPG');
   await speciesApply(page, 'Canis latrans').click();
   await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
 });
 
-When('a live sync is run', async ({ page }) => {
-  await openSyncDialog(page);
-  await setSyncDryRun(page, false);
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
+When('automatic saving finishes', async ({ page }) => { await waitForAutomaticSave(page);
 });
 
 Then(
@@ -464,18 +611,21 @@ Then(
   },
 );
 
-Then('the pre-change snapshot of the upload is filed under that same identity', async ({ s3 }) => {
-  const snapshots = s3.puts.filter((p) => p.key.includes('.sparcd-tagger-snapshots/'));
-  expect(snapshots.length).toBeGreaterThan(0);
-  for (const p of snapshots) expect(p.key).toContain('.sparcd-tagger-snapshots/testkey/');
-  expect(snapshots.some((p) => p.key.endsWith('manifest.json'))).toBe(true);
+Then('the automatic action audit records that same identity without a per-edit snapshot', async ({ s3 }) => {
+  expect(JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`)).taggerActions.at(-1).user).toBe('testkey');
+  expect(s3.puts.filter(p => p.key.includes('.sparcd-tagger-snapshots/'))).toEqual([]);
 });
 
 // --- Unsaved-edit marker ----------------------------------------------------
 
-Given("an image's identifications were changed in this browser", async ({ page }) => {
-  await focusFrame(page, 'IMG002.JPG');
-  await speciesApply(page, 'Canis latrans').click();
+Given("an image's identifications were changed in this browser", async ({ page, scratch }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; }); scratch.markerRelease = release;
+  await page.route('**/*', async route => {
+    if (route.request().method() === 'PUT' && decodeURIComponent(new URL(route.request().url()).pathname).endsWith(`/${PREFIX_A}observations.csv`)) await gate;
+    await route.fallback();
+  });
+  await focusFrame(page, 'IMG002.JPG'); await speciesApply(page, 'Canis latrans').click();
   await expect(gridCell(page, 'IMG002.JPG')).toContainText('Coyote');
 });
 
@@ -484,15 +634,9 @@ Then('its tile carries an unsaved-edit marker', async ({ page }) => {
   await expect(gridCell(page, 'IMG005.JPG').locator('[title="unsaved edit"]')).toHaveCount(0);
 });
 
-Then('the marker is cleared for that image once its change has been synced', async ({ page }) => {
-  await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
-  await sectionTab(page, 'Tag').click();
-  await openSyncDialog(page);
-  await setSyncDryRun(page, false);
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await waitForSyncDialogClosed(page);
+Then('the marker clears after the automatic save completes', async ({ page, scratch }) => {
+  (scratch.markerRelease as (() => void) | undefined)?.();
+  await waitForAutomaticSave(page);
   await expect(gridCell(page, 'IMG002.JPG').locator('[title="unsaved edit"]')).toHaveCount(0);
 });
 
@@ -524,12 +668,9 @@ Then('the list view labels every image "untagged"', async ({ page }) => {
   }
 });
 
-When('the Sync dialog is opened for a blank-row upload', async ({ page }) => {
-  await openSyncDialog(page);
+When('an untouched blank-row upload is checked for pending work', async ({ page }) => { await waitForAutomaticSave(page);
 });
 
-Then('the sync reports there is nothing to sync', async ({ page }) => {
-  await expect(
-    page.getByText('No local edits to sync — everything matches the canonical files.'),
-  ).toBeVisible();
+Then('the blank-row upload is Saved without any write', async ({ page, s3 }) => {
+  await expect(page.getByTestId('automatic-save').getByRole('status')).toHaveText('Saved'); expect(s3.puts).toHaveLength(0);
 });

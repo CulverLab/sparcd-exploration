@@ -27,17 +27,12 @@ Given('several images are selected', async ({ page }) => {
 
 Given('the connected account is ready for attribution', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await expect(page.locator('#user')).toHaveValue('tes…key');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
+  await expect(page.getByTestId('automatic-save')).toBeVisible();
 });
 
-Given('the dry-run setting has been switched off', async ({ page }) => {
-  await sectionTab(page, 'Settings').click();
-  await settingsDryRunCheckbox(page).uncheck();
-  await sectionTab(page, 'Tag').click();
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
-});
+
 
 Given('burst grouping is switched on in Settings', async ({ page }) => {
   await sectionTab(page, 'Settings').click();

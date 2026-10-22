@@ -1,13 +1,14 @@
+import { useAutomaticSave, FocusSaveControls } from '../components/AutomaticSave';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
 import { useStore } from '../store';
+import { attributionAvailable, IDENTITY_REQUIRED } from '../lib/attribution';
 import {
   useTagImages,
   useSpecies,
   useCollections,
   uploadNameOf,
-  useUploadSnapshots,
   useLocations,
   useCurrentDeployment,
 } from '../lib/queries';
@@ -19,9 +20,8 @@ import { DisabledActionHint } from '../components/DisabledActionHint';
 import { SpeciesPanel } from '../components/SpeciesPanel';
 import { ResizableSplit } from '../components/ResizableSplit';
 import { AppliedSpecies } from '../components/AppliedSpecies';
+import { NeedExpertToggle } from '../components/NeedExpertToggle';
 import { Cheatsheet } from '../components/Cheatsheet';
-import { SyncDialog } from '../components/SyncDialog';
-import { SnapshotsDialog } from '../components/SnapshotsDialog';
 import { DiscardConfirmDialog } from '../components/DiscardConfirmDialog';
 import { buildDiscardSummaries } from '../lib/discardSummary';
 import { TimeShiftModal } from '../components/TimeShiftModal';
@@ -33,6 +33,7 @@ import { ImageAdjustments } from '../components/ImageAdjustments';
 import { PawTrail } from '../components/Paw';
 import { cssFilter, NEUTRAL, type Adjustments } from '../lib/adjustments';
 import { Overview, type PickMods, type ViewKind } from '../components/Overview';
+import { ImageStatusBadges } from '../components/ImageStatusBadges';
 import { groupBursts, type BurstGrouping } from '../lib/bursts';
 import { offsetActive, formatOffsetDelta, earliestCorrected } from '../lib/timeshift';
 import {
@@ -44,7 +45,7 @@ import {
   nextVisibleIndex,
   nearestVisibleIndex,
 } from '../lib/selection';
-import { effectiveOf } from '../lib/effective';
+import { effectiveOf, hasSpecies } from '../lib/effective';
 import { focusLocationLabel } from '../lib/focusLocation';
 import { sortIndices, type SortField, type SortDir } from '../lib/sortImages';
 import { findFilenameMatches } from '../lib/imageSearch';
@@ -97,11 +98,12 @@ export function Tag() {
   const connectionId = useStore((s) => s.connectionId);
   const collectionKey = useStore((s) => s.selectedCollectionKey);
   const uploadPrefix = useStore((s) => s.selectedUploadPrefix);
+  const canAutoEdit = useAutomaticSave(s => s.view.canEdit && s.saver?.record.uploadPrefix === uploadPrefix);
+  const editingUnavailable = useAutomaticSave(s => s.view.message);
+  const identityReady = !cfg || (!!taggerUser.trim() && canAutoEdit);
   const burstGroupingEnabled = useStore((s) => s.burstGroupingEnabled);
   const burstThreshold = useStore((s) => s.burstThresholdSec);
   const autoAdvanceOnTag = useStore((s) => s.autoAdvanceOnTag);
-  const pendingSnapshots = useStore((s) => s.pendingSnapshots);
-  const clearPendingSnapshots = useStore((s) => s.clearPendingSnapshots);
 
   // A local batch bypasses the connection entirely, so both S3 queries below
   // are disabled (`cfg` is null) and their data comes from the record instead.
@@ -119,8 +121,6 @@ export function Tag() {
     : undefined;
   const collections = useCollections(cfg, connectionId);
   const collection = collections.data?.find((c) => c.key === collectionKey);
-  const snapshots = useUploadSnapshots(cfg, connectionId, collectionKey, uploadPrefix);
-  const hasSnapshot = (snapshots.data?.length ?? 0) > 0;
 
   const localImages = useMemo(
     () => (localRecord ? localTagImages(localRecord) : EMPTY),
@@ -299,8 +299,6 @@ export function Tag() {
   const [pendingKeyConflict, setPendingKeyConflict] = useState<PendingKeyConflict | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const [showCheatsheet, setShowCheatsheet] = useState(false);
-  const [showSync, setShowSync] = useState(false);
-  const [showSnapshots, setShowSnapshots] = useState(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [showTimeShift, setShowTimeShift] = useState(false);
   const [showChangeLocation, setShowChangeLocation] = useState(false);
@@ -352,6 +350,7 @@ export function Tag() {
   // so ordering lives entirely here. Species count is draft-aware (effective), so
   // re-sorting by species stays live as tags change.
   const base = localRecord ? localImages : images.data ?? EMPTY;
+  const imageKeys = useMemo(() => base.map(image => image.key).join('\0'), [base]);
   const speciesCountOf = (img: TagImage) => effectiveOf(img, drafts[img.key]).observations.length;
   const order = useMemo(
     () => sortIndices(base, speciesCountOf, sortField, sortDir),
@@ -377,13 +376,6 @@ export function Tag() {
   const [speciesCountPrefix, setSpeciesCountPrefix] = useState('');
   const [matchPos, setMatchPos] = useState(0);
   const imgSearchRef = useRef<HTMLInputElement>(null);
-  const syncButtonRef = useRef<HTMLButtonElement>(null);
-
-  const closeSync = () => {
-    setShowSync(false);
-    requestAnimationFrame(() => syncButtonRef.current?.focus());
-  };
-
   useEffect(() => {
     if (selected.size > 1) setSpeciesCountPrefix('');
   }, [selected.size]);
@@ -395,19 +387,24 @@ export function Tag() {
     setSpeciesCountPrefix('');
   }, [focusedImageKey, uploadPrefix]);
   const matches = useMemo(() => findFilenameMatches(list, imgQuery), [list, imgQuery]);
+  const matchPositions = matches.join(',');
   const [imageFilter, setImageFilter] = useState<ImageFilter>(EMPTY_IMAGE_FILTER);
   const exhaustedFocusRef = useRef<{ key: string; filter: ImageFilter } | null>(null);
   const [showImageFilter, setShowImageFilter] = useState(false);
   const imageFilterButtonRef = useRef<HTMLButtonElement>(null);
   const imageFilterTextRef = useRef<HTMLInputElement>(null);
-  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => matchesImageFilter(
-    {
-      fileName: image.fileName,
-      timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
-      observations: effectiveOf(image, draft).observations,
-    },
-    imageFilter,
-  );
+  const matchesCurrentFilter = (image: TagImage, draft: DraftRecord | undefined) => {
+    const effective = effectiveOf(image, draft);
+    return matchesImageFilter(
+      {
+        fileName: image.fileName,
+        timestamp: correctedTimestamp(image.baseTimestamp, timeOffset, draft?.timeOverride ?? null, captureTimeZone),
+        observations: effective.observations,
+        questionable: effective.questionable,
+      },
+      imageFilter,
+    );
+  };
   const visibleIndices = useMemo(
     () => list.flatMap((image, index) => matchesCurrentFilter(image, drafts[image.key]) ? [index] : []),
     [captureTimeZone, drafts, imageFilter, list, timeOffset],
@@ -478,7 +475,7 @@ export function Tag() {
     else setMatchPos(0);
     // jumpToMatch reads `matches`; depend on the query+matches, not the closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgQuery, matches]);
+  }, [imgQuery, matchPositions]);
 
   // An upload offset shifts every image equally, so it never changes a burst
   // gap — only the band labels. Feed the offset-corrected time so bands read the
@@ -503,7 +500,8 @@ export function Tag() {
     list,
   ]);
 
-  // Reset focus/selection when the upload changes / data arrives. Null the sort
+  // Reset focus/selection when the upload or its image identities change.
+  // Metadata acknowledgements from automatic saving retain the active workspace. Null the sort
   // permutation ref so the remap effect below treats the next `order` as a fresh
   // baseline rather than translating stale positions across a different upload.
   useEffect(() => {
@@ -514,7 +512,7 @@ export function Tag() {
     setImgQuery('');
     setMatchPos(0);
     prevOrderRef.current = null;
-  }, [uploadPrefix, images.data]);
+  }, [collectionKey, uploadPrefix, imageKeys]);
 
   // When only the sort order changes (a header click, or a draft edit while
   // sorting by species), the user's focus/anchor/selection are positions in the
@@ -537,14 +535,7 @@ export function Tag() {
     setSelected((sel) => (sel.size ? new Set([...sel].map(remap)) : sel));
   }, [order]);
 
-  // History routes here with `pendingSnapshots` set to jump straight into the
-  // recovery dialog for the chosen upload; consume the flag once.
-  useEffect(() => {
-    if (pendingSnapshots) {
-      setShowSnapshots(true);
-      clearPendingSnapshots();
-    }
-  }, [pendingSnapshots, clearPendingSnapshots]);
+
 
   const overrides = useKeyBindings((state) => activeKeyProfile(state).overrides);
   const assignKey = useKeyBindings((state) => state.assignKey);
@@ -630,7 +621,7 @@ export function Tag() {
         deploymentId: img.deploymentId,
         // Seed a fresh draft from the FULL canonical base set so a partial edit
         // (adding one species, toggling questionable) keeps every existing one.
-        base: { observations: img.baseObservations },
+        base: { observations: img.baseObservations, questionable: img.baseQuestionable },
       }));
   };
 
@@ -664,6 +655,7 @@ export function Tag() {
     effectiveOf(img, drafts[img.key]).observations.some((o) => o.scientificName === sci);
 
   const apply = (tag: AppliedTag) => {
+    if (!attributionAvailable()) return;
     const targets = targetsOf();
     if (!targets.length) return;
     // A bulk operation changes every selected image, but only the focused
@@ -678,6 +670,7 @@ export function Tag() {
   };
 
   const applyIncrementAt = (index: number, tag: AppliedTag) => {
+    if (!attributionAvailable()) return;
     // A drop is spatial: it updates only the image under the drop zone, even
     // if a multi-image selection still exists.
     const image = list[index];
@@ -691,7 +684,7 @@ export function Tag() {
         {
           mediaPath: image.key,
           deploymentId: image.deploymentId,
-          base: { observations: image.baseObservations },
+          base: { observations: image.baseObservations, questionable: image.baseQuestionable },
         },
       ],
       { ...tag, classifiedBy: taggerUser.trim() || undefined, classificationTimestamp: new Date().toISOString() },
@@ -701,6 +694,7 @@ export function Tag() {
   };
 
   const applyIncrement = (tag: AppliedTag) => {
+    if (!attributionAvailable()) return;
     // Keyboard bindings are selection-scoped, like the panel's explicit add
     // control. Keep this separate from spatial drag/drop targeting.
     const targets = targetsOf();
@@ -721,7 +715,7 @@ export function Tag() {
         .map((img) => ({
           mediaPath: img.key,
           deploymentId: img.deploymentId,
-          base: { observations: img.baseObservations },
+          base: { observations: img.baseObservations, questionable: img.baseQuestionable },
           currentCorrected: correctedTimestamp(
             img.baseTimestamp,
             timeOffset,
@@ -793,8 +787,27 @@ export function Tag() {
     ? nextVisibleIndex(visibleIndices, nextIndex, 1) != null
     : nextIndex < list.length - 1);
 
-  // On-screen questionable toggle mirrors Shift+Space: act on the selection
-  // (or the focused image), flipping off the focused image's current state.
+  // The compact controls and Shift+Space share the same selection semantics.
+  const toggleNeedExpert = () => {
+    if (!current) return;
+    const targets = targetsOf();
+    if (targets.length) setQuestionableManyFn(ctx, targets, !effectiveOf(current, drafts[current.key]).questionable);
+  };
+  const selectedExpertStates = selectedForActions
+    .map((index) => list[index]).filter((image): image is TagImage => !!image)
+    .map((image) => effectiveOf(image, drafts[image.key]).questionable);
+  const expertPressed: boolean | 'mixed' = selectedExpertStates.length &&
+    selectedExpertStates.some((value) => value !== selectedExpertStates[0])
+    ? 'mixed'
+    : selectedExpertStates[0] ?? (current ? effectiveOf(current, drafts[current.key]).questionable : false);
+  const expertToggle = (align: 'left' | 'right') => <NeedExpertToggle
+    pressed={expertPressed}
+    disabled={!current || !identityReady}
+    onClick={toggleNeedExpert}
+    selectionCount={selectedExpertStates.length}
+    nextState={current ? !effectiveOf(current, drafts[current.key]).questionable : undefined}
+    align={align}
+  />;
   // --- Global key handler: attached once, reads the latest state via a ref so
   // it never re-binds per render (plan perf requirement). ----------------------
   const stateRef = useRef<HandlerState>(null!);
@@ -835,9 +848,8 @@ export function Tag() {
     isModalOpen: () =>
       modalOpenRef.current ||
       showDiscard ||
-      showSync ||
-      showSnapshots ||
       showTimeShift ||
+      showChangeLocation ||
       pendingKeyConflict !== null,
   };
 
@@ -886,7 +898,7 @@ export function Tag() {
 
   const draft = current ? drafts[current.key] : undefined;
   const eff = current ? effectiveOf(current, draft) : null;
-  const currentBase = current ? { observations: current.baseObservations } : undefined;
+  const currentBase = current ? { observations: current.baseObservations, questionable: current.baseQuestionable } : undefined;
   const nDirty = dirtyCount(drafts);
   const discardDetails = discardSummaries.map(
     (summary) =>
@@ -896,7 +908,7 @@ export function Tag() {
   const hasUploadShift = offsetActive(timeOffset);
 
   return (
-    <div className="h-[100dvh] lg:h-full flex flex-col min-h-0" aria-hidden={view === 'focus'}>
+    <div data-testid="tag-workspace" data-upload-prefix={uploadPrefix ?? ''} className="h-[100dvh] lg:h-full flex flex-col min-h-0" aria-hidden={view === 'focus'}>
       {/* Reminds the user which collection and upload they're tagging — lost
           otherwise once Browse's own "Uploads in X" heading is left behind. */}
       {!localRecord && (
@@ -924,6 +936,7 @@ export function Tag() {
             ]}
           />
         )}
+        {view === 'overview' && expertToggle('left')}
 
         <span className="text-[12px] font-mono text-inkSoft">
           {selected.size > 0 ? (
@@ -951,6 +964,8 @@ export function Tag() {
             which has no connection to fetch the shared location registry. */}
         {!localRecord && (
           <button
+            disabled={!identityReady}
+            aria-describedby={!identityReady ? 'tagger-identity-required' : undefined}
             onClick={() => setShowChangeLocation(true)}
             className={`inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
               pendingLocation
@@ -971,10 +986,10 @@ export function Tag() {
         {/* Upload time-shift entry + persistent active-offset indicator (§08).
             Disabled when no image in the upload has a capture time to shift —
             unless a shift is already in effect, so it stays reachable to clear. */}
-        <DisabledActionHint label="Time shift" reason={!sampleTimestamp && !hasUploadShift ? 'No image in this upload has a capture time to shift' : undefined}>
+        <DisabledActionHint label="Time shift" reason={!identityReady ? IDENTITY_REQUIRED : !sampleTimestamp && !hasUploadShift ? 'No image in this upload has a capture time to shift' : undefined}>
         <button
           onClick={() => setShowTimeShift(true)}
-          disabled={!sampleTimestamp && !hasUploadShift}
+          disabled={!identityReady || (!sampleTimestamp && !hasUploadShift)}
           className={`inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:cursor-not-allowed ${
             hasUploadShift
               ? 'bg-mark border border-ink text-ink font-[600]'
@@ -997,10 +1012,10 @@ export function Tag() {
             mixed upload. Stored as per-image corrections, so it stacks on the
             upload offset. */}
         {!!current && (
-          <DisabledActionHint label="Time shift selection" reason={selected.size === 0 || scopedTimeApplicableCount === 0 ? scopedTimeUnavailableReason : undefined}>
+          <DisabledActionHint label="Time shift selection" reason={!identityReady ? IDENTITY_REQUIRED : selected.size === 0 || scopedTimeApplicableCount === 0 ? scopedTimeUnavailableReason : undefined}>
             <button
               onClick={openBulkTime}
-              disabled={selected.size === 0 || scopedTimeApplicableCount === 0}
+              disabled={!identityReady || selected.size === 0 || scopedTimeApplicableCount === 0}
               className="inline-flex items-center gap-1.5 text-[11.5px] font-mono px-2 py-1 border border-rule text-inkSoft hover:text-ink hover:border-ink disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               title={
                 selected.size === 0 || scopedTimeApplicableCount === 0
@@ -1144,6 +1159,8 @@ export function Tag() {
                   <option value="all">All images</option>
                   <option value="tagged">Tagged only</option>
                   <option value="untagged">Untagged only</option>
+                  <option value="questionable">Questionable only</option>
+                  <option value="not-questionable">Not questionable only</option>
                 </select>
               </label>
               <fieldset>
@@ -1202,7 +1219,7 @@ export function Tag() {
           >
             ?
           </button>
-          {nDirty > 0 && (
+          {localRecord && nDirty > 0 && (
             <button
               onClick={() => setShowDiscard(true)}
               className="text-[11px] font-mono text-inkMute hover:text-warn underline decoration-dotted"
@@ -1211,30 +1228,7 @@ export function Tag() {
               {nDirty} unsaved · discard
             </button>
           )}
-          {!localRecord && (
-            <>
-              <button
-                onClick={() => setShowSnapshots(true)}
-                disabled={!hasSnapshot}
-                className="text-[12px] font-mono border border-rule px-2.5 py-1 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-inkSoft disabled:hover:border-rule"
-                title={
-                  hasSnapshot
-                    ? 'Browse and restore prior canonical snapshots of this upload'
-                    : 'No snapshots yet — a snapshot is taken the first time this upload is synced'
-                }
-              >
-                Snapshots…
-              </button>
-              <button
-                onClick={() => setShowSync(true)}
-                ref={syncButtonRef}
-                className="text-[12px] font-mono border border-ink px-2.5 py-1 text-ink hover:bg-panelHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                title="Review and sync local edits to the canonical S3 files"
-              >
-                Sync…
-              </button>
-            </>
-          )}
+
         </div>
       </div>
 
@@ -1313,6 +1307,10 @@ export function Tag() {
                 EXIF Modified
               </span>
             )}
+            <div className="col-start-2 row-start-2 flex items-center gap-2">
+            {expertToggle('right')}
+            {cfg && <FocusSaveControls onReview={() => { closeFocus(); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[data-testid="automatic-save"] button:not([disabled])')?.focus()); }} />}
+            </div>
             <button
               ref={focusCloseRef}
               type="button"
@@ -1331,6 +1329,8 @@ export function Tag() {
               first={
                 <FocusPane
                   current={current}
+                  questionable={!!eff?.questionable}
+                  hasSpecies={!!eff && hasSpecies(eff)}
                   onPrev={() => gotoFilteredImage(-1)}
                   onNext={() => gotoFilteredImage(1)}
                   canPrev={canGoPrevious}
@@ -1355,10 +1355,6 @@ export function Tag() {
           onClose={() => setShowDiscard(false)}
         />
       )}
-      {showSync && (
-        <SyncDialog ctx={ctx} images={list} drafts={drafts} timeZone={captureTimeZone} onClose={closeSync} />
-      )}
-      {showSnapshots && <SnapshotsDialog ctx={ctx} onClose={() => setShowSnapshots(false)} />}
       {showTimeShift && (
         <TimeShiftModal
           offset={timeOffset}
@@ -1425,12 +1421,16 @@ export function Tag() {
       appliedSet: new Set(observations.map((o) => o.scientificName)),
       hasFocus: !!current,
       selectionCount: selected.size,
-      disabled: !current,
+      disabled: !current || !identityReady,
       // The compact applied-species strip edits the focused image only. Mounted
       // in the panel header so it covers both Overview and Focus layouts (the
       // same panel renders in both) with one site.
       headerSlot: (
         <div className="flex flex-wrap items-center gap-1.5">
+          {!identityReady && <div id="tagger-identity-required" role={taggerUser.trim() ? "note" : "status"} className="w-full border border-warn p-2 text-[13px]">
+            <p>{taggerUser.trim() ? editingUnavailable : IDENTITY_REQUIRED}</p>
+            {!taggerUser.trim() && <button type="button" className="min-h-11 underline" onClick={() => { closeFocus(); useStore.getState().setSection('settings'); }}>Set Tagger identity</button>}
+          </div>}
           {speciesCountPrefix && selected.size <= 1 && (
             <span
               className="border border-accent px-2 py-0.5 text-[12px] font-mono text-accent"
@@ -1440,8 +1440,9 @@ export function Tag() {
             </span>
           )}
           <AppliedSpecies
+            key={current?.key}
             observations={observations}
-            disabled={!current}
+            disabled={!current || !identityReady}
             onSetCount={(sci, n) =>
               current && setSpeciesCountFn(
                 ctx,
@@ -1468,23 +1469,6 @@ export function Tag() {
               ])
             }
           />
-          {current && (
-            <button
-              type="button"
-              aria-pressed={!!eff?.questionable}
-              aria-label={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
-              title={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
-              onClick={() => {
-                const targets = targetsOf();
-                if (targets.length) setQuestionableManyFn(ctx, targets, !eff?.questionable);
-              }}
-              className={`min-h-11 border px-2 text-[11px] font-mono focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                eff?.questionable ? 'border-warn text-warn' : 'border-rule text-inkMute hover:text-ink'
-              }`}
-            >
-              {eff?.questionable ? 'Questionable' : 'Mark questionable'}
-            </button>
-          )}
         </div>
       ),
     };
@@ -1494,6 +1478,8 @@ export function Tag() {
 // --- Focus view (single-image detail) ---------------------------------------
 function FocusPane({
   current,
+  questionable,
+  hasSpecies,
   onPrev,
   onNext,
   canPrev,
@@ -1503,6 +1489,8 @@ function FocusPane({
   onDropSpecies,
 }: {
   current: TagImage | undefined;
+  questionable: boolean;
+  hasSpecies: boolean;
   onPrev: () => void;
   onNext: () => void;
   canPrev: boolean;
@@ -1625,6 +1613,7 @@ function FocusPane({
             alt={current.fileName}
             isVideo={isVideo}
             filter={filter}
+            statusBadges={<ImageStatusBadges hasSpecies={hasSpecies} questionable={questionable} presentation="focus" />}
             adjust={adjustPanel}
           />
         )}
@@ -1735,12 +1724,14 @@ function FocusImage({
   alt,
   isVideo,
   filter,
+  statusBadges,
   adjust,
 }: {
   objectKey: string;
   alt: string;
   isVideo: boolean;
   filter?: string;
+  statusBadges?: React.ReactNode;
   adjust?: React.ReactNode;
 }) {
   const { url, isError, markLoaded } = useMediaUrl(objectKey, 'high');
@@ -1776,6 +1767,7 @@ function FocusImage({
             src={url}
             alt={alt}
             resetKey={objectKey}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             onError={onMediaError}
           />
@@ -1785,6 +1777,7 @@ function FocusImage({
             alt={alt}
             resetKey={objectKey}
             filter={filter}
+            statusBadges={statusBadges}
             onLoaded={onLoaded}
             adjust={adjust}
           />
@@ -1810,27 +1803,34 @@ function FocusVideo({
   src,
   alt,
   resetKey,
+  statusBadges,
   onLoaded,
   onError,
 }: {
   src: string;
   alt: string;
   resetKey: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   onError: () => void;
 }) {
+  const { paneRef, fitted, onImageLoad } = useFittedZoom(src);
   return (
-    <video
-      key={resetKey}
-      src={src}
-      aria-label={alt}
-      controls
-      playsInline
-      preload="metadata"
-      onLoadedData={onLoaded}
-      onError={onError}
-      className="w-full h-full object-contain"
-    />
+    <div ref={paneRef} className="absolute inset-4">
+      <video
+        key={resetKey}
+        src={src}
+        aria-label={alt}
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={onImageLoad}
+        onLoadedData={onLoaded}
+        onError={onError}
+        className="w-full h-full object-contain"
+      />
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
+    </div>
   );
 }
 
@@ -1873,11 +1873,39 @@ function useFittedZoom(src: string) {
     const zoom = zoomRef.current;
     if (fitted && zoom) zoom.centerView(1, 0);
   }, [pane?.w, pane?.h, fitted?.width, fitted?.height]);
-  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setLoaded({ src, w: img.naturalWidth, h: img.naturalHeight });
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
+    const media = e.currentTarget;
+    setLoaded({
+      src,
+      w: 'naturalWidth' in media ? media.naturalWidth : media.videoWidth,
+      h: 'naturalHeight' in media ? media.naturalHeight : media.videoHeight,
+    });
   };
   return { paneRef, zoomRef, fitted, onImageLoad };
+}
+
+// Keep badges at the fitted picture's corners, including letterboxed media,
+// without scaling them with zoom or copying them into the image-only Lightbox.
+function FittedStatusOverlay({ fitted, children }: {
+  fitted: { width: number; height: number } | undefined;
+  children: React.ReactNode;
+}) {
+  if (!fitted || !children) return null;
+  // On very short panoramas, keep the expert badge left of the 44px Next
+  // target while retaining its upper-right position within the picture.
+  const statusStyle = {
+    ...fitted,
+    '--expert-badge-inset': fitted.height < 88 ? '3rem' : '0.25rem',
+  } as React.CSSProperties;
+  return (
+    <div
+      data-testid="focus-image-status-badges"
+      className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10"
+      style={statusStyle}
+    >
+      {children}
+    </div>
+  );
 }
 
 function ZoomableImage({
@@ -1885,6 +1913,7 @@ function ZoomableImage({
   alt,
   resetKey,
   filter,
+  statusBadges,
   onLoaded,
   adjust,
 }: {
@@ -1892,6 +1921,7 @@ function ZoomableImage({
   alt: string;
   resetKey: string;
   filter?: string;
+  statusBadges?: React.ReactNode;
   onLoaded: () => void;
   adjust?: React.ReactNode;
 }) {
@@ -1941,6 +1971,7 @@ function ZoomableImage({
           </>
         )}
       </TransformWrapper>
+      <FittedStatusOverlay fitted={fitted}>{statusBadges}</FittedStatusOverlay>
       {expanded && <Lightbox src={src} alt={alt} filter={filter} onClose={() => setExpanded(false)} />}
     </div>
   );
@@ -2173,7 +2204,7 @@ type HandlerState = {
   setView: (v: View) => void;
   enterFocus: () => void;
   closeFocus: () => void;
-  isModalOpen: () => boolean; // an overlay (loupe, or the Sync/Snapshots/Time-shift dialogs) owns the keys
+  isModalOpen: () => boolean; // an overlay (loupe, time-shift or location dialog) owns the keys
 };
 
 function isTypingTarget(t: EventTarget | null): boolean {
@@ -2264,9 +2295,8 @@ function gotoBurst(s: HandlerState, dir: 1 | -1): void {
 
 function handleKey(e: KeyboardEvent, s: HandlerState): void {
   // An overlay owns the keyboard while open — the species loupe, or the
-  // Sync/Snapshots/Time-shift dialogs. Suppress all tagger hotkeys so nothing
-  // is tagged or navigated behind the modal; a keystroke landing on a frame
-  // mid-sync would create a draft edit the sync then silently clears.
+  // time-shift and location dialogs. Suppress tagging and navigation behind
+  // the topmost modal while it owns the keyboard.
   if (s.isModalOpen()) return;
 
   // Cheatsheet modal swallows everything but its own toggle / dismiss.
@@ -2300,6 +2330,9 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   // A focused video/audio control handles its own keys natively; don't let any
   // tagger hotkey fire while the user is scrubbing or playing.
   if (isMediaTarget(e.target)) return;
+  // Native activation owns Enter/Space while this compact button has focus.
+  if (e.target instanceof HTMLElement && e.target.matches('[data-need-expert-toggle]') &&
+      (e.key === 'Enter' || e.key === ' ')) return;
 
   // A focused range slider only needs arrow keys for its own navigation —
   // every other key, including species hotkeys, falls through below instead
@@ -2446,8 +2479,7 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
       if (e.shiftKey) {
         const targets = s.targetsOf();
         if (!targets.length || !current) return;
-        const anchorDraft = s.drafts[current.key];
-        s.setQuestionableMany(s.ctx, targets, !anchorDraft?.questionable);
+        s.setQuestionableMany(s.ctx, targets, !effectiveOf(current, s.drafts[current.key]).questionable);
         return;
       }
       s.filterRef.current?.focus();

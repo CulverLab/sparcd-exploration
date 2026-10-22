@@ -14,6 +14,25 @@ Coverage notes for the as-built uploader feature files.
   corresponds to that story's acceptance criteria. Everything else is
   `@unmapped` — most of this app is, which is the point of the exercise.
 
+## Issue #584 identity coverage
+
+- The shared `@sparcd/auth-ui` preference is keyed by the connected login and
+  stores the custom identity separately from the resolved default. Opaque hashed
+  preference keys and fallback markers keep raw login IDs out of these records;
+  the exposed v1 records are discarded. Unit tests
+  cover per-login isolation, reload persistence, blank-on-unresolved behavior,
+  default refresh, custom-value preservation, malformed storage, and unavailable
+  storage.
+- Uploader calls the signed `/-/whoami` endpoint and uses its `name` as the
+  access-service default. The Access-key fallback is used only after explicit
+  route-absence evidence; authorization failures, malformed responses, network
+  failures, timeouts, throttling, and server errors leave the value unresolved
+  unless this login already has a saved custom identity or resolved name.
+  Focused unit and Chrome BDD coverage is in `test/whoami.test.ts`,
+  `test/store.test.ts`, and `connect-and-session.feature`. The request-signing test
+  uses the production access-service signature verifier, and storage-failure tests
+  preserve a typed custom name across pending lookup completion and retry.
+
 ## Story mapping, honestly
 
 - **F1** (upload a batch once back online) — partly met: only image/video files

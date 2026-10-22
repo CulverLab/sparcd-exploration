@@ -9,6 +9,7 @@
 // edit fields. They live in the v1 shape now so P4 adds no schema bump.
 
 import Dexie, { type Table } from 'dexie';
+import type { AutomaticRecord } from './automaticModel';
 import type { Deployment } from '@sparcd/camtrap';
 import type { CanonicalState } from './sync';
 import type { SyncJournal } from './syncJournal';
@@ -23,6 +24,7 @@ export type DraftObservation = {
   count: number; // ≥1 always
   requestedSpecies: string; // free-text request → [REQUESTED_SPECIES:…]; '' otherwise
   freeTags: string; // extra raw markers, preserved verbatim (per-observation)
+  restorationRow?: string[]; // original row retained only for targeted species Undo
   classifiedBy?: string; // canonical attribution, preserved when rows are replaced
   classificationTimestamp?: string; // ISO; when the original identification was made
   reviewEvents?: ReviewEvent[];
@@ -46,6 +48,13 @@ export interface DraftRecord {
   /** Species explicitly removed since the last sync. */
   removedSpecies?: string[];
   questionable: boolean;
+  /** Canonical status when this draft began; distinguishes a status edit from a species-only draft. */
+  baseQuestionable?: boolean;
+  /** Explicit status intent, including a reversal while a sync is pending. */
+  questionableEdited?: boolean;
+  /** A journal may still publish this image's submitted state; reversals remain pending. */
+  pendingSync?: boolean;
+  timeSourceOverride?: import('@sparcd/camtrap').TimestampSource | null;
   timeOverride: string | null; // per-image corrected ISO timestamp; null when unset
 
   lastEdited: string; // ISO
@@ -102,6 +111,7 @@ export interface SessionRecord {
 }
 
 class TaggerDb extends Dexie {
+  automatic!: Table<AutomaticRecord, string>;
   drafts!: Table<DraftRecord, string>;
   uploads!: Table<UploadRecord, string>;
   sessions!: Table<SessionRecord, string>;
@@ -150,6 +160,7 @@ class TaggerDb extends Dexie {
             delete d.freeTags;
           });
       });
+    this.version(4).stores({ automatic: 'id, scope, [bucket+uploadPrefix]' });
   }
 }
 
@@ -206,7 +217,7 @@ export type UploadDraftState = 'unsynced' | 'synced';
  * A full scan of each table (no `bucket` index), but both are bounded by local
  * tagging work.
  */
-export async function uploadDraftStates(bucket: string): Promise<Map<string, UploadDraftState>> {
+export async function uploadDraftStates(bucket: string, scope?: string): Promise<Map<string, UploadDraftState>> {
   const out = new Map<string, UploadDraftState>();
   await db.drafts
     .filter((d) => d.bucket === bucket)
@@ -219,6 +230,8 @@ export async function uploadDraftStates(bucket: string): Promise<Map<string, Upl
     // property. Treat both that legacy `undefined` and null as no correction.
     .filter((u) => u.bucket === bucket && u.pendingLocation != null)
     .each((u) => out.set(u.uploadPrefix, 'unsynced'));
+  await db.automatic.filter(r => r.bucket === bucket && (!scope || r.scope === scope))
+    .each(r => { if (r.actions.length || r.flight || r.adoptionRequired || r.recoveryBranches?.length) out.set(r.uploadPrefix, 'unsynced'); });
   return out;
 }
 
@@ -240,23 +253,25 @@ export async function groundUpload(
   uploadPrefix: string,
   base: CanonicalState,
 ): Promise<void> {
-  const id = uploadId(bucket, uploadPrefix);
-  const existing = await db.uploads.get(id);
-  await db.uploads.put({
-    id,
-    bucket,
-    uploadPrefix,
-    loadedAt: new Date().toISOString(),
-    timeOffset: existing?.timeOffset ?? null,
-    pendingLocation: existing?.pendingLocation ?? null,
-    mediaETag: base.media.etag,
-    mediaHash: base.media.hash,
-    observationsETag: base.observations.etag,
-    observationsHash: base.observations.hash,
-    deploymentsETag: base.deployments.etag,
-    deploymentsHash: base.deployments.hash,
-    uploadMetaETag: base.uploadMeta.etag,
-    uploadMetaHash: base.uploadMeta.hash,
+  await db.transaction('rw', db.uploads, async () => {
+    const id = uploadId(bucket, uploadPrefix);
+    const existing = await db.uploads.get(id);
+    await db.uploads.put({
+      id,
+      bucket,
+      uploadPrefix,
+      loadedAt: new Date().toISOString(),
+      timeOffset: existing?.timeOffset ?? null,
+      pendingLocation: existing?.pendingLocation ?? null,
+      mediaETag: base.media.etag,
+      mediaHash: base.media.hash,
+      observationsETag: base.observations.etag,
+      observationsHash: base.observations.hash,
+      deploymentsETag: base.deployments.etag,
+      deploymentsHash: base.deployments.hash,
+      uploadMetaETag: base.uploadMeta.etag,
+      uploadMetaHash: base.uploadMeta.hash,
+    });
   });
 }
 
@@ -277,11 +292,13 @@ export async function setUploadTimeOffset(
   uploadPrefix: string,
   offset: TimeOffsetRecord | null,
 ): Promise<void> {
-  const id = uploadId(bucket, uploadPrefix);
-  const existing = await db.uploads.get(id);
-  await db.uploads.put({
-    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), pendingLocation: null }),
-    timeOffset: offset,
+  await db.transaction('rw', db.uploads, async () => {
+    const id = uploadId(bucket, uploadPrefix);
+    const existing = await db.uploads.get(id);
+    await db.uploads.put({
+      ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), pendingLocation: null }),
+      timeOffset: offset,
+    });
   });
 }
 
@@ -292,11 +309,13 @@ export async function setUploadPendingLocation(
   uploadPrefix: string,
   location: Deployment | null,
 ): Promise<void> {
-  const id = uploadId(bucket, uploadPrefix);
-  const existing = await db.uploads.get(id);
-  await db.uploads.put({
-    ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), timeOffset: null }),
-    pendingLocation: location,
+  await db.transaction('rw', db.uploads, async () => {
+    const id = uploadId(bucket, uploadPrefix);
+    const existing = await db.uploads.get(id);
+    await db.uploads.put({
+      ...(existing ?? { id, bucket, uploadPrefix, loadedAt: new Date().toISOString(), timeOffset: null }),
+      pendingLocation: location,
+    });
   });
 }
 

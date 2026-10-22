@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
-import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
+import { AutomaticSaveProvider } from './components/AutomaticSave';
+import { useEffect, useRef, useState } from 'react';
+import { Connection, loadPersistedConnection, useOnline } from '@sparcd/auth-ui';
 import { useStore } from './store';
 import { Chrome } from './components/Chrome';
 import { Browse } from './sections/Browse';
@@ -20,8 +21,13 @@ const persistedConnection = loadPersistedConnection();
 const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: devEndpoint } : {}) };
 
 export function App() {
+  const online = useOnline();
+  const enteredOnline = useRef(false);
+  const [connectionError, setConnectionError] = useState('');
   const s3Config = useStore((s) => s.s3Config);
   const section = useStore((s) => s.section);
+  const ensureTaggerIdentity = useStore((s) => s.ensureTaggerIdentity);
+  useEffect(() => { if (!localBatchId && online) ensureTaggerIdentity(); }, [ensureTaggerIdentity, online]);
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
   const selectedUploadPrefix = useStore((s) => s.selectedUploadPrefix);
@@ -53,11 +59,18 @@ export function App() {
 
   if (!s3Config) {
     return (
-      <Connection toolName="Tagger" initialConfig={connectPrefill} onConnect={connect} />
+      <><Connection toolName="Tagger" initialConfig={connectPrefill} onConnect={(config, remember) => {
+        if (!navigator.onLine) { setConnectionError('Connect to the network before opening standalone Tagger.'); return; }
+        connect(config, remember);
+      }} />{connectionError && <p role="alert">{connectionError}</p>}</>
     );
   }
 
+  if (online) enteredOnline.current = true;
+  if (!enteredOnline.current) return <main className="p-8"><h1>Standalone Tagger requires an online connection</h1><p role="status">Reconnect to open the collection. Offline preparation is available through Uploader.</p></main>;
+
   return (
+    <AutomaticSaveProvider>
     <SpeciesKeyBindingGate>
       <Chrome>
         {section === 'browse' && <Browse />}
@@ -73,6 +86,7 @@ export function App() {
         {section === 'settings' && <Settings />}
       </Chrome>
     </SpeciesKeyBindingGate>
+    </AutomaticSaveProvider>
   );
 }
 

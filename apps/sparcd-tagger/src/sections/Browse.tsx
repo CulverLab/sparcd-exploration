@@ -252,7 +252,7 @@ export function Browse() {
                       <span data-column="location">Location</span>
                       <span data-column="tagged-total" className={taggedCell}>Tagged/Total</span>
                       <span data-column="collected" className={taggedCell}>Collected</span>
-                      <span data-column="sync" className={syncCell}>Sync</span>
+                      <span data-column="sync" className={syncCell}>Save</span>
                       <span />
                     </div>
 
@@ -372,7 +372,7 @@ function UploadRow({
         </span>
 
         <span data-column="sync" className={syncCell}>
-          <span className="md:sr-only">Sync: </span>
+          <span className="md:sr-only">Save: </span>
           <SyncPill state={draftState ?? 'local-only'} />
         </span>
 
@@ -397,14 +397,14 @@ function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
         <span className="font-mono" aria-hidden>
           ○
         </span>
-        local-only
+        stored data
       </span>
     );
   }
   const spec =
     state === 'unsynced'
-      ? { bg: 'bg-accent', glyph: '●', label: 'unsynced edits', clip: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)' }
-      : { bg: 'bg-ok', glyph: '✓', label: 'synced', clip: 'polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%)' };
+      ? { bg: 'bg-accent', glyph: '●', label: 'pending save', clip: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)' }
+      : { bg: 'bg-ok', glyph: '✓', label: 'saved', clip: 'polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%)' };
   return (
     <span
       className={`inline-flex items-center gap-1.5 px-3.5 h-7 text-[12px] font-body font-[600] text-paper lowercase ${spec.bg}`}
