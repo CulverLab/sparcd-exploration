@@ -208,5 +208,9 @@ Feature: Describe a batch with its collection and a camera location
     Then Describe help is keyboard accessible and clamped at phone widths
 
   @unmapped
+  Scenario: Site ID help explains the field on hover and keyboard focus
+    Then Site ID help text is available on hover and keyboard focus
+
+  @unmapped
   Scenario: Describe help supports touch dismissal and viewport changes
     Then Describe help can be opened and dismissed on a touch screen

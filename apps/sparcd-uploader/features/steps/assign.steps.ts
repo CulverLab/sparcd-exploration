@@ -597,6 +597,27 @@ Then('Describe help is keyboard accessible and clamped at phone widths', async (
   await expect(tooltip).toHaveCount(0);
 });
 
+Then('Site ID help text is available on hover and keyboard focus', async ({ app }) => {
+  const expected =
+    "Choose or correct the Site ID for the location where this batch's images were collected. Previously used Site IDs are listed first.";
+  const button = app.page.getByRole('button', { name: 'About Site ID', exact: true });
+  const tooltip = app.page.getByRole('tooltip');
+
+  await button.hover();
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toHaveText(expected);
+  await app.page.mouse.move(0, 0);
+  await expect(tooltip).toHaveCount(0);
+
+  await button.focus();
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toHaveText(expected);
+  await app.page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await expect(button).toBeFocused();
+});
+
 Then('Describe help can be opened and dismissed on a touch screen', async ({ app, browser, s3 }) => {
   const { App } = await import('./app');
   const context = await browser.newContext({ hasTouch: true, viewport: { width: 375, height: 640 }, baseURL: new URL(app.page.url()).origin });

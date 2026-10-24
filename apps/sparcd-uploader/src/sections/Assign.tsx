@@ -305,7 +305,7 @@ export function Assign() {
       <section>
         <RefreshableLabel
           label="Site ID"
-          info="The camera location (deployment) this batch's SD card came from — previously used locations are listed first."
+          info="Choose or correct the Site ID for the location where this batch's images were collected. Previously used Site IDs are listed first."
           onRefresh={refreshDeployments}
           refreshing={isFetching || deployments.isFetching}
         />
