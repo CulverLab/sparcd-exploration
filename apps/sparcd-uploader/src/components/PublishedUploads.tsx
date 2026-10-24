@@ -339,7 +339,7 @@ export function PublishedUploads() {
       <div className="space-y-1">
         <p className="font-display text-[16px] text-ink">Published uploads</p>
         <p className="font-body text-[12px] text-inkSoft">
-          Correct a description or a misassigned deployment after publish.
+          Correct a description or an incorrectly assigned location after upload.
         </p>
       </div>
 
@@ -361,7 +361,7 @@ export function PublishedUploads() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search uploads by uploader, description, stamp, or deployment…"
+          placeholder="Search by uploader, description, upload folder, or location…"
           className="w-full border border-rule bg-paper px-2.5 py-1.5 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
       )}

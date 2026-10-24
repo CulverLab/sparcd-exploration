@@ -81,7 +81,7 @@ Then(
 );
 
 Then('the list can be filtered by uploader, description, upload folder or deployment', async ({ app }) => {
-  const search = app.page.getByPlaceholder(/Search uploads by uploader/);
+  const search = app.page.getByPlaceholder('Search by uploader, description, upload folder, or location…');
   await search.fill('otherperson');
   await expect(uploadCards(app)).toHaveCount(1);
   await search.fill('Original description');
