@@ -557,7 +557,7 @@ describe('required upload comment metadata', () => {
       ...input, startedAt: now, uploadPath,
       files: [{ fileName: 'IMG001.JPG', size: 12, sha256: 'sha-a', remoteKey: `${uploadPath}/IMG001.JPG` }],
     });
-    const expected = 'Santa Rita Mountains - San Pedro 15 - 1 image - uploaded 2026-10-13 - collected 2026-10-01 - Retrieved after rain';
+    const expected = 'Santa Rita Mountains - San Pedro 15 - SAN15 - 1 image - uploaded 2026-10-13 - collected 2026-10-01 - Retrieved after rain';
     expect(parseUploadMeta(live.uploadMetaJson).description).toBe(expected);
     expect(parseUploadMeta(resumed.uploadMetaJson).description).toBe(expected);
   });
@@ -584,7 +584,7 @@ describe('images counts all valid uploaded files', () => {
     for (const bundle of [live, resumed]) {
       const meta = parseUploadMeta(bundle.uploadMetaJson);
       expect(meta.imageCount).toBe(files.length);
-      expect(meta.description).toBe(`Santa Rita Mountains - San Pedro 15 - ${countText} - uploaded 2026-10-13 - collected 2026-10-01`);
+      expect(meta.description).toBe(`Santa Rita Mountains - San Pedro 15 - SAN15 - ${countText} - uploaded 2026-10-13 - collected 2026-10-01`);
       expect(parseMedia(bundle.mediaCsv)).toHaveLength(files.length);
     }
   });

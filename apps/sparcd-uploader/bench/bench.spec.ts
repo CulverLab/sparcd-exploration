@@ -132,7 +132,7 @@ test('uploads the fixed corpus through the real app', async ({ page }) => {
   expect(metadata).toHaveLength(5);
   const uploadMeta = await s3.send(new GetObjectCommand({ Bucket: COLLECTION_BUCKET, Key: `${uploadPrefix}/UploadMeta.json` }));
   const meta = JSON.parse(await uploadMeta.Body!.transformToString());
-  expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - 362 images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01$/);
+  expect(meta.description).toMatch(/^Santa Catalina Mountains - Bear Canyon - BEAR1 - 362 images - uploaded \d{4}-\d{2}-\d{2} - collected 2026-10-01$/);
   expect(meta.imageCount).toBe(362);
   // 360 single PUTs, 2x2 multipart parts, one listing page covering all 362
   // blobs, three spread-out HEAD samples for the digest contract, and 5 metadata PUTs.

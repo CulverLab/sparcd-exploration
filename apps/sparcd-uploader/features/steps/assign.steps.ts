@@ -451,7 +451,7 @@ When('the mountain range and collection date are entered with notes {string}', a
 
 Then('the required comment is previewed without changing the optional notes', async ({ app }) => {
   const notes = app.notes.optionalComments as string;
-  const prefix = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01';
+  const prefix = 'Santa Catalina Mountains - Bear Canyon - BEAR1 - 3 images - uploaded 2026-10-14 - collected 2026-10-01';
   const expected = notes ? `${prefix} - ${notes}` : prefix;
   app.notes.expectedComment = expected;
   await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
@@ -461,12 +461,26 @@ Then('the required comment is previewed without changing the optional notes', as
 Then('the generated comment and optional notes are written to upload metadata', async ({ app }) => {
   const expected = app.notes.expectedComment as string;
   await app.continueToUpload();
+  const notes = app.notes.optionalComments as string;
+  const preview = notes ? expected.slice(0, -(` - ${notes}`.length)) : expected;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(preview);
   await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   const meta = app.s3.puts.find((put) => put.key.endsWith('UploadMeta.json'));
   expect(meta).toBeDefined();
   expect(JSON.parse(meta!.body).description).toBe(expected);
+});
+
+When('a different site is selected for the generated comment', async ({ app }) => {
+  await app.chooseDeployment('Coyote Wash');
+});
+
+Then('the comment uses the newly selected site name and Site ID', async ({ app }) => {
+  const expected = 'Santa Catalina Mountains - Coyote Wash - COY2 - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Changed site';
+  app.notes.expectedComment = expected;
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(expected);
+  await expect(app.page.getByLabel('Comments (optional)', { exact: true })).toHaveValue('Changed site');
 });
 
 When('the other assignment fields are complete but both comment fields are empty', async ({ app }) => {
@@ -516,7 +530,7 @@ When('the next day arrives while Describe stays open', async ({ app }) => {
 
 Then("the comment preview keeps its original upload date", async ({ app }) => {
   await expect(app.page.getByLabel('Generated upload comment', { exact: true })).toHaveText(
-    'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch',
+    'Santa Catalina Mountains - Bear Canyon - BEAR1 - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch',
   );
 });
 
@@ -527,7 +541,7 @@ When('Upload is opened and another day arrives before starting', async ({ app })
 });
 
 Then('the Upload preview keeps the original preview date', async ({ app }) => {
-  const expected = 'Santa Catalina Mountains - Bear Canyon - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch';
+  const expected = 'Santa Catalina Mountains - Bear Canyon - BEAR1 - 3 images - uploaded 2026-10-14 - collected 2026-10-01 - Overnight batch';
   const preview = expected.replace(' - Overnight batch', '');
   app.notes.expectedComment = expected;
   app.notes.expectedPreview = preview;

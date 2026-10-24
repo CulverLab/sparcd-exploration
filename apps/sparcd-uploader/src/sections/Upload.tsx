@@ -407,7 +407,7 @@ export function Upload() {
           <h3 className={sectionLabel}>Generated upload comment</h3>
           <p aria-label="Generated upload comment" className="font-body text-[13px] text-inkSoft">
             {formatUploadComments({
-              required: { mountainRange, dateCollected, previewUploadDate: previewUploadDate ?? undefined }, siteName: location.name,
+              required: { mountainRange, dateCollected, previewUploadDate: previewUploadDate ?? undefined }, siteName: location.name, siteId: location.id,
               imageCount: files.length, uploadDate: new Date(), comments: '',
             })}
           </p>

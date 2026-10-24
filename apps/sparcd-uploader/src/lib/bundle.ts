@@ -313,7 +313,7 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       imagesWithSpecies: uploadItems.filter((it) => hasSpecies(it.preTags)).length,
       bucket,
       uploadPath,
-      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, imageCount: ready.length, uploadDate: now, comments: description }),
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, siteId: location.id, imageCount: ready.length, uploadDate: now, comments: description }),
       captureTimeZone: timeZone,
     }),
   );
@@ -456,7 +456,7 @@ export async function buildBundleFromRecords(input: {
       imagesWithSpecies: files.filter((f) => hasSpecies(f.preTags)).length,
       bucket,
       uploadPath,
-      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, imageCount: files.length, uploadDate: startedAt, comments: description }),
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, siteId: location.id, imageCount: files.length, uploadDate: startedAt, comments: description }),
       captureTimeZone: timeZone,
     }),
   );

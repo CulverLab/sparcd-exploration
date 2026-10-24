@@ -186,6 +186,14 @@ Feature: Describe a batch with its collection and a camera location
     Then Continue explains that a mountain range is required
 
   @unmapped
+  Scenario: Changing the selected site refreshes its name and Site ID in generated comments
+    When the mountain range and collection date are entered with notes "Changed site"
+    Then the required comment is previewed without changing the optional notes
+    When a different site is selected for the generated comment
+    Then the comment uses the newly selected site name and Site ID
+    And the generated comment and optional notes are written to upload metadata
+
+  @unmapped
   Scenario: The original preview date is preserved when upload starts after midnight
     When the mountain range and collection date are entered with notes "Overnight batch"
     Then the required comment is previewed without changing the optional notes

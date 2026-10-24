@@ -472,7 +472,7 @@ export function Assign() {
           <h3 className={sectionLabel}>Generated upload comment</h3>
           <p aria-label="Generated upload comment" className="font-body text-[13px] text-inkSoft">
             {location && mountainRange.trim() && dateCollected && previewUploadDate ? formatUploadComments({
-              required: { mountainRange, dateCollected, previewUploadDate }, siteName: location.name,
+              required: { mountainRange, dateCollected, previewUploadDate }, siteName: location.name, siteId: location.id,
               imageCount: files.length, uploadDate: new Date(), comments: description,
             }) : 'Enter a mountain range and date collected to preview the required comment.'}
           </p>
