@@ -1,0 +1,42 @@
+import { defineConfig } from '@playwright/test';
+import { defineBddConfig } from 'playwright-bdd';
+
+// The .feature files under `features/` describe what this app does. `bddgen`
+// turns them into Playwright specs against the step definitions in
+// `features/steps/`, which drive the real app.
+const testDir = defineBddConfig({
+  features: 'features/**/*.feature',
+  steps: 'features/steps/**/*.ts',
+  tags: 'not @manual',
+});
+const port = Number(process.env.SPARCD_E2E_PORT ?? '5314');
+const origin = `http://localhost:${port}`;
+
+export default defineConfig({
+  testDir,
+  fullyParallel: false,
+  workers: 1,
+  retries: 0,
+  timeout: 45_000,
+  expect: { timeout: 10_000 },
+  reporter: [['list']],
+  webServer: {
+    // Use the installed Vite binary directly so the browser harness does not
+    // trigger Corepack's package-manager resolution before starting the app.
+    command: `./node_modules/.bin/vite --port ${port} --strictPort`,
+    url: `${origin}/sparcd-exploration/explorer-next/`,
+    reuseExistingServer: false,
+    timeout: 120_000,
+    stdout: 'ignore',
+    stderr: 'pipe',
+    env: { VITE_SPARCD_S3_ENDPOINT: '' },
+  },
+  use: {
+    baseURL: origin,
+    headless: true,
+    viewport: { width: 1440, height: 950 },
+    trace: 'off',
+    video: 'off',
+    screenshot: 'off',
+  },
+});

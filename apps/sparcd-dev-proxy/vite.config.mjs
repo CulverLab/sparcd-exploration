@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 const DEFAULT_TARGETS = {
   uploader: process.env.SPARCD_UPLOADER_DEV_URL ?? 'http://localhost:5311',
   tagger: process.env.SPARCD_TAGGER_DEV_URL ?? 'http://localhost:5312',
+  explorerNext: process.env.SPARCD_EXPLORER_NEXT_DEV_URL ?? 'http://localhost:5314',
 };
 
 /**
@@ -27,12 +28,18 @@ export function createProxyConfig({ targets = DEFAULT_TARGETS, port = 5310 } = {
           ws: true,
           changeOrigin: true,
         },
+        '/sparcd-exploration/explorer-next': {
+          target: targets.explorerNext,
+          ws: true,
+          changeOrigin: true,
+        },
       },
     },
   });
 }
 
-// Single dev entry point that puts both Vite tools on one origin so they can
-// share IndexedDB, localStorage, and sessionStorage. Both backend servers must
-// already be running (or run `pnpm dev` from the repository root).
+// Single dev entry point that puts the Vite tools on one origin so they can
+// share IndexedDB, localStorage, and sessionStorage (one sign-in for all of
+// them). The backend servers must already be running (or run `pnpm dev` from
+// the repository root).
 export default createProxyConfig();

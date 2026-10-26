@@ -1,5 +1,5 @@
 export { Connection } from './Connection';
-export type { ConnectionProps } from './Connection';
+export type { ConnectionLabels, ConnectionProps } from './Connection';
 export { BrandSwitcher } from './BrandSwitcher';
 export type { BrandSwitcherProps } from './BrandSwitcher';
 export { ConnectionChip } from './ConnectionChip';
