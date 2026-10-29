@@ -49,7 +49,7 @@ const SHARD_PORTS = /:(84(4[3-9]|5\d|6[0-2]))(\/|$)/
 /** The known-harmless refusal every app earns on sign-in. See the note below. */
 const SETTINGS_PROBE = /sparcd-settings-[^/]*\/Collections\/settings-[^/]*\/collection\.json/
 
-/** The Tagger asks every visible bucket for the species and location lists. Only one has them. */
+/** The Tagger and the Uploader ask every visible bucket for the species and location lists. Only one has them. */
 const SPECIES_PROBE = /^404 HEAD .*\/Settings\/(species|locations)\.json$/
 
 async function invite(page: Page, person: { name: string; email: string; access: string }) {
@@ -110,14 +110,15 @@ async function driveUploader(page: Page) {
   } finally {
     setTimeout(() => rmSync(root, { recursive: true, force: true }), 30_000).unref()
   }
-  await expect(page.locator('[aria-label^="Scanned files"]')).toBeVisible({ timeout: 60_000 })
+  // The file list itself stays folded behind "Show files"; the count is always shown.
+  await expect(page.getByText(`${PHOTOS.length} of ${PHOTOS.length} files processed`)).toBeVisible({ timeout: 60_000 })
   await expect(async () => {
     const shown = await page.locator('body').innerText()
     expect(/\bprocessing\b|Processing…|Queued/i.test(shown)).toBe(false)
   }).toPass({ timeout: 60_000 })
 
   await page.getByRole('button', { name: 'Continue' }).click()
-  await expect(page.getByRole('heading', { name: 'Target collection' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Collection (required)', exact: true })).toBeVisible()
 
   // Only the collection this person was put in is ever on offer: the proxy
   // never named the other one to them.
@@ -132,6 +133,11 @@ async function driveUploader(page: Page) {
   await listbox(page, 1).click()
   await page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: LOCATION }).first().click()
   await page.getByPlaceholder('e.g. John Doe').first().fill(WHO)
+  // An upload-only person never sees coordinates, so nothing picks the zone for them.
+  const zone = page.getByLabel('Timezone of images (required)', { exact: true })
+  if (!(await zone.inputValue())) await zone.selectOption('America/Phoenix')
+  await page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains')
+  await page.getByLabel('Date collected (required)', { exact: true }).fill('2026-07-03')
 
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByRole('heading', { name: 'Upload', exact: true })).toBeVisible()
@@ -190,7 +196,7 @@ test('a person who can upload completes a real one in the Uploader', async ({ br
   // Refusals only. A write the browser aborted and the Uploader made good on
   // — which is what happens to a lane or two against slow storage — is its own
   // business, and the objects checked below are the proof it recovered.
-  expect(uploader.trouble.filter((line) => /^\d{3} /.test(line) && !SETTINGS_PROBE.test(line)),
+  expect(uploader.trouble.filter((line) => /^\d{3} /.test(line) && !SETTINGS_PROBE.test(line) && !SPECIES_PROBE.test(line)),
     'nothing she may do was refused').toEqual([])
   expect(uploader.trouble.filter((line) => line.startsWith('pageerror')), 'the Uploader never fell over').toEqual([])
   const uploaded = await keysUnder(asAdmin, sky.bucket, added[0])
@@ -262,22 +268,17 @@ test('a person who can identify tags an image in the Tagger, and still cannot up
   const row = page.locator('button').filter({ hasText: 'Open' }).filter({ hasText: 'nadia-rossi' }).first()
   await expect(row, 'the upload is listed').toBeVisible({ timeout: 60_000 })
   await row.click()
-  await expect(page.getByRole('button', { name: 'Sync\u2026' })).toBeVisible({ timeout: 30_000 })
 
   const tile = page.locator(`button[title="${PHOTOS[0]}"]`)
+  await expect(tile).toBeVisible({ timeout: 30_000 })
   await tile.click()
   await expect(tile).toHaveAttribute('aria-current', 'true')
   await page.locator('div.group').filter({ hasText: SPECIES }).first()
     .locator('button[title^="Apply"], button[title$="already applied"]').first().click()
   await expect(tile).toContainText(SPECIES_NAME)
 
-  await page.getByRole('button', { name: 'Sync\u2026' }).click()
-  await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible()
-  await expect(page.getByText('Checking the canonical base\u2026')).toBeHidden({ timeout: 60_000 })
-  await page.getByRole('button', { name: 'Sync now' }).click()
-  await expect(page.getByText('Synced \u2014 canonical files replaced.')).toBeVisible({ timeout: 60_000 })
-
-  await expect.poll(() => textOf(asAdmin, sky.bucket, `${prefix}observations.csv`)).toContain(SPECIES)
+  // The Tagger saves on its own; the tag reaching storage is the proof.
+  await expect.poll(() => textOf(asAdmin, sky.bucket, `${prefix}observations.csv`), { timeout: 60_000 }).toContain(SPECIES)
 
   expect(tagger.trouble.filter((line) => line.startsWith('pageerror')), 'the Tagger never fell over').toEqual([])
   expect(tagger.trouble.filter((line) => /^40\d/.test(line) && !SETTINGS_PROBE.test(line) && !SPECIES_PROBE.test(line)),
