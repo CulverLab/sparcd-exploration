@@ -168,3 +168,28 @@ describe('resolveSpeciesKeys', () => {
     expect(shared.size).toBe(0);
   });
 });
+
+describe('standalone modifier bindings', () => {
+  it.each([['SHIFT', 'Shift'], ['CONTROL', 'Control'], ['Ctrl', 'Control']])('normalizes named %s metadata to %s', (raw, key) => {
+    expect(normalizeJavaKeyCode(raw)).toBe(key);
+    expect(effectiveKey('Casper', raw, {})).toBe(key);
+    expect(effectiveKey('Casper', null, { Casper: raw })).toBe(key);
+  });
+  it('recognizes the modifier itself without accepting its combinations', () => {
+    const base = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+    expect(normalizeBindableEventKey({ ...base, key: 'Shift', shiftKey: true })).toBe('Shift');
+    expect(normalizeBindableEventKey({ ...base, key: 'Control', ctrlKey: true })).toBe('Control');
+    expect(normalizeBindableEventKey({ ...base, key: 'Control', ctrlKey: true, shiftKey: true })).toBeNull();
+    expect(normalizeBindableEventKey({ ...base, key: 'Shift', shiftKey: true, ctrlKey: true })).toBeNull();
+    expect(normalizeBindableEventKey({ ...base, key: 'Control', ctrlKey: true, altKey: true })).toBeNull();
+    for (const key of ['Tab', 'Enter', 'Escape', ' ', 'ArrowLeft', 'Alt', 'Meta']) expect(normalizeEventKey(key)).toBeNull();
+  });
+  it('uses the existing conflict resolution for canonical modifier names', () => {
+    const species = [
+      { key: 'Casper', scientificName: 'Casper', commonName: 'Ghost', iconUrl: '', keyBinding: 'SHIFT' },
+      { key: 'Canis latrans', scientificName: 'Canis latrans', commonName: 'Coyote', iconUrl: '', keyBinding: null },
+    ];
+    expect(conflictingKeyOwners(species, 'Canis latrans', 'Shift', {})).toEqual(['Casper']);
+    expect(resolveSpeciesKeys(species, { 'Canis latrans': 'Shift' }).shared.get('Shift')?.map(row => row.scientificName)).toEqual(['Casper', 'Canis latrans']);
+  });
+});

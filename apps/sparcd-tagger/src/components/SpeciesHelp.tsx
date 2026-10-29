@@ -112,7 +112,9 @@ export function SpeciesHelp({ onClose }: { onClose: () => void }) {
             </h3>
             <p>
               Hover (or focus) a row to assign or change its key, or to clear it. A
-              struck-through key means another species is already using it.
+              struck-through key means another species is already using it. Shift and Control
+              can also be assigned: tap either side by itself and release to tag. Using them
+              with another key or a mouse action keeps their normal behavior.
             </p>
           </section>
 

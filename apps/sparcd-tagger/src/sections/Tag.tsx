@@ -18,6 +18,7 @@ import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
 import tzlookup from 'tz-lookup';
 import { DisabledActionHint } from '../components/DisabledActionHint';
 import { SpeciesPanel } from '../components/SpeciesPanel';
+import { StandaloneModifierGesture } from '../lib/standaloneModifier';
 import { ResizableSplit } from '../components/ResizableSplit';
 import { AppliedSpecies } from '../components/AppliedSpecies';
 import { NeedExpertToggle } from '../components/NeedExpertToggle';
@@ -938,10 +939,65 @@ export function Tag() {
       pendingKeyConflict !== null,
   };
 
+  // Releasing a modifier must act on the same workspace, target, and binding
+  // that were active at keydown. A context transition cancels even if it returns.
+  const modifierSelection = JSON.stringify([...selected].map(index => list[index]?.key).sort());
+  const modifierContext = useMemo(() => ({ capturingFor, identityReady }),
+    [connectionId, taggerUser, ctx, current?.key, view, modifierSelection, capturingFor, identityReady,
+      keyMap, overviewDialogOpen, railVisible, railDocked]);
+  const modifierContextRef = useRef(modifierContext);
+  modifierContextRef.current = modifierContext;
+  const modifierGesture = useRef(new StandaloneModifierGesture<typeof modifierContext>());
+  useLayoutEffect(() => { modifierGesture.current.observe(modifierContext); }, [modifierContext]);
+
   useEffect(() => {
+    const gesture = modifierGesture.current;
+    const contextFor = (target: EventTarget | null) => {
+      const s = stateRef.current;
+      const typingTarget = isTypingTarget(target) && !isRangeTarget(target) && !isKeepValuesTarget(target);
+      if (s.isModalOpen() || s.showCheatsheet || typingTarget || isMediaTarget(target)) return null;
+      const context = modifierContextRef.current;
+      return s.capturingFor || context.identityReady ? context : null;
+    };
+    // Capture sees combinations even when a dialog or native control owns them.
+    const onKeyCapture = (e: KeyboardEvent) => gesture.keyDown(e, contextFor(e.target));
     const onKey = (e: KeyboardEvent) => handleKey(e, stateRef.current);
+    const onKeyUp = (e: KeyboardEvent) => {
+      const key = gesture.keyUp(e, contextFor(e.target));
+      if (!key) return;
+      const s = stateRef.current;
+      if (s.capturingFor) {
+        e.preventDefault();
+        s.captureKey(s.capturingFor, key);
+        s.setCapturingFor(null);
+      } else if (applySpeciesBinding(s, key)) e.preventDefault();
+    };
+    const cancel = () => gesture.cancel();
+    const reset = () => gesture.reset();
+    const pointerDown = (e: PointerEvent) => gesture.pointerDown(e.pointerId);
+    const pointerUp = (e: PointerEvent) => gesture.pointerUp(e.pointerId);
+    window.addEventListener('keydown', onKeyCapture, true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('pointerdown', pointerDown, true);
+    window.addEventListener('pointerup', pointerUp, true);
+    window.addEventListener('pointercancel', pointerUp, true);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+    const cancelEvents = ['click', 'auxclick', 'contextmenu', 'wheel', 'dragstart', 'focusin', 'compositionstart'] as const;
+    for (const name of cancelEvents) document.addEventListener(name, cancel, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('keydown', onKeyCapture, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('pointerdown', pointerDown, true);
+      window.removeEventListener('pointerup', pointerUp, true);
+      window.removeEventListener('pointercancel', pointerUp, true);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', reset);
+      for (const name of cancelEvents) document.removeEventListener(name, cancel, true);
+      reset();
+    };
   }, []);
 
   // Mirror the drafts into the shared record so the uploader reads the tags
@@ -2310,6 +2366,27 @@ function gotoBurst(s: HandlerState, dir: 1 | -1): void {
   }
 }
 
+/** Shared by printable keydown and standalone modifier release. */
+function applySpeciesBinding(s: HandlerState, key: string): boolean {
+  const action = s.keyMap.get(key);
+  if (action?.kind === 'conflict') return true;
+  const current = s.list[s.focus];
+  if (!action || !current) return false;
+  const prefix = speciesCountFromPrefix(s.speciesCountPrefix);
+  s.setSpeciesCountPrefix('');
+  const tag = {
+    scientificName: action.species.scientificName,
+    commonName: action.species.commonName,
+    count: prefix ?? 1,
+  };
+  const alreadyApplied = effectiveOf(current, s.drafts[current.key]).observations.some(
+    observation => observation.scientificName === tag.scientificName,
+  );
+  if (prefix && s.selected.size <= 1 && !alreadyApplied && tag.scientificName !== GHOST.label) s.apply(tag);
+  else s.applyIncrement({ ...tag, count: 1 });
+  return true;
+}
+
 function handleKey(e: KeyboardEvent, s: HandlerState): void {
   // An overlay owns the keyboard while open — the species loupe, or the
   // time-shift and location dialogs. Suppress tagging and navigation behind
@@ -2334,6 +2411,9 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
     }
     return;
   }
+
+  // Named modifiers are captured/applied only by the standalone keyup path.
+  if (e.key === 'Shift' || e.key === 'Control') return;
 
   // Key-capture mode for "assign key" — swallow the next printable key.
   if (s.capturingFor) {
@@ -2425,19 +2505,7 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
   if (speciesAction && current) {
     e.preventDefault();
     if (e.repeat) return;
-    const prefix = speciesCountFromPrefix(s.speciesCountPrefix);
-    s.setSpeciesCountPrefix('');
-    const tag = {
-      scientificName: speciesAction.species.scientificName,
-      commonName: speciesAction.species.commonName,
-      count: prefix ?? 1,
-    };
-    const alreadyApplied = effectiveOf(current, s.drafts[current.key]).observations.some(
-      (observation) => observation.scientificName === tag.scientificName,
-    );
-    if (prefix && s.selected.size <= 1 && !alreadyApplied && tag.scientificName !== GHOST.label)
-      s.apply(tag);
-    else s.applyIncrement({ ...tag, count: 1 });
+    applySpeciesBinding(s, printableKey!);
     return;
   }
 

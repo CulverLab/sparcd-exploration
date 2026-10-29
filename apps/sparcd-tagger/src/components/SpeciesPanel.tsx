@@ -274,7 +274,7 @@ function Row(p: RowProps) {
           from row to row. */}
       <div className="flex items-center gap-1.5 shrink-0">
         {p.capturing ? (
-          <span className="text-[11px] font-mono text-accent animate-pulse">press a key…</span>
+          <span className="text-[11px] font-mono text-accent animate-pulse">press a key, or tap Shift/Control…</span>
         ) : (
           <>
             {p.onStartCapture && (
