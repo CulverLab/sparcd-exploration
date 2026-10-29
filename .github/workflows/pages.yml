@@ -73,12 +73,18 @@ jobs:
 
       - name: Build uploader
         run: pnpm --filter sparcd-uploader build
+        env:
+          PAGES_ROOT: /${{ github.event.repository.name }}/
 
       - name: Build tagger
         run: pnpm --filter sparcd-tagger build
+        env:
+          PAGES_ROOT: /${{ github.event.repository.name }}/
 
       - name: Build coordinated offline release
         run: node scripts/build-offline.mjs
+        env:
+          PAGES_ROOT: /${{ github.event.repository.name }}/
 
       # --- Assemble combined site ---
       - name: Assemble site

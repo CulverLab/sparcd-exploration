@@ -11,7 +11,7 @@ async function walk(app, path = '') {
     if (entry.isDirectory()) await walk(app, relative + '/');
     else if (!['offline-worker.js', 'offline-release.json'].includes(relative)) {
       const bytes = await readFile(new URL(entry.name, dir));
-      assets.push({ url: `/sparcd-exploration/${app}/${relative}`, hash: createHash('sha256').update(bytes).digest('hex') });
+      assets.push({ url: `${process.env.PAGES_ROOT ?? '/sparcd-exploration/'}${app}/${relative}`, hash: createHash('sha256').update(bytes).digest('hex') });
     }
   }
 }
