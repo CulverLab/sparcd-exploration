@@ -60,6 +60,9 @@ absent, which keeps it out of shell history. It is never printed. The person is
 active straight away with no collections; an admin grants those in the admin
 app. A reset retires the imported key like any other.
 
+Run imports one at a time. The duplicate-key check reads the people it loaded
+at start, so two imports of the same key id racing each other could both land.
+
 `import` refuses a key id of fewer than 3 or more than 128 characters, or one
 holding a space or `/`; a secret under 8 characters; a key id or email that
 already belongs to a person; and a missing name or email.
