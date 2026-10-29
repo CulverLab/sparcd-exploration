@@ -39,11 +39,18 @@ type KeyBindingState = {
 
 const LEGACY_PROFILE = '__legacy__';
 
+function namedSpeciesKey(key: string): string | null {
+  const name = key.trim().toUpperCase();
+  return name === 'SHIFT' ? 'Shift' : name === 'CONTROL' || name === 'CTRL' ? 'Control' : null;
+}
+
 export function normalizeJavaKeyCode(code: string | null | undefined): string | null {
   if (!code) return null;
   const trimmed = code.trim();
   if (!trimmed) return null;
   if ([...trimmed].length === 1) return trimmed.toLocaleLowerCase();
+  const named = namedSpeciesKey(trimmed);
+  if (named) return named;
   const upper = trimmed.toUpperCase();
   const digit = /^(?:DIGIT|NUMPAD)([0-9])$/.exec(upper);
   if (digit) return digit[1];
@@ -64,13 +71,15 @@ export function normalizeJavaKeyCode(code: string | null | undefined): string | 
 }
 
 export function normalizeEventKey(key: string): string | null {
-  return [...key].length === 1 && !/^\s$/u.test(key) ? key.toLocaleLowerCase() : null;
+  return namedSpeciesKey(key) ?? ([...key].length === 1 && !/^\s$/u.test(key) ? key.toLocaleLowerCase() : null);
 }
 
 export function normalizeBindableEventKey(
   event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>,
 ): string | null {
-  return event.altKey || event.ctrlKey || event.metaKey ? null : normalizeEventKey(event.key);
+  if (event.altKey || event.metaKey) return null;
+  if (event.key === 'Control') return event.shiftKey ? null : 'Control';
+  return event.ctrlKey ? null : normalizeEventKey(event.key);
 }
 
 export function effectiveKey(
@@ -81,7 +90,7 @@ export function effectiveKey(
   let resolved: string | null;
   if (Object.prototype.hasOwnProperty.call(overrides, scientificName)) {
     const override = overrides[scientificName];
-    resolved = override === '' ? null : override;
+    resolved = override === '' ? null : namedSpeciesKey(override ?? '') ?? override;
   } else {
     resolved = normalizeJavaKeyCode(jsonKeyBinding);
   }

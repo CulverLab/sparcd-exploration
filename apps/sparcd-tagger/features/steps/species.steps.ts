@@ -524,7 +524,7 @@ Given('a species row is shown', async ({ page }) => {
 When('a key is assigned to it and that key is pressed with an image focused', async ({ page }) => {
   await focusFrame(page, 'IMG002.JPG');
   await speciesAssignKey(page, 'Pecari tajacu').click();
-  await expect(speciesRow(page, 'Pecari tajacu')).toContainText('press a key…');
+  await expect(speciesRow(page, 'Pecari tajacu')).toContainText('press a key, or tap Shift/Control…');
   await page.keyboard.press('v');
   await expect(speciesBadge(page, 'Pecari tajacu')).toHaveText('V');
   await page.keyboard.press('v');
@@ -581,7 +581,7 @@ When('a digit is pressed while assigning a species key', async ({ page }) => {
 });
 
 Then('key capture remains active and no key is assigned', async ({ page }) => {
-  await expect(speciesRow(page, 'Pecari tajacu')).toContainText('press a key…');
+  await expect(speciesRow(page, 'Pecari tajacu')).toContainText('press a key, or tap Shift/Control…');
   await expect(speciesBadge(page, 'Pecari tajacu')).toHaveCount(0);
 });
 
