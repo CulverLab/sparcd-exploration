@@ -173,6 +173,33 @@ describe('one person at a time (contract 1.1)', () => {
     expect(view.host.textContent).toContain("SPARC'd always needs at least one administrator.")
     expect(calls).toBeDefined()
   })
+
+  const soleRunner = {
+    people: [person('p1', 'Ana Morales')],
+    collections: [{
+      bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', organization: '', membersVersion: 'members-v1',
+      members: [{ personId: 'p1', name: 'Ana Morales', access: 'run' as const, exactLocations: false }],
+    }],
+  }
+  const SOLE_RUNNER = 'Ana Morales is the only person running one of their collections. Have someone else run it first.'
+
+  it('asks for another runner before pausing a collection's only one', async () => {
+    const { view } = await screen(soleRunner)
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Pause access'))
+    await click(button(view.host, 'Yes, pause access'))
+    await settle()
+    expect(view.host.textContent).toContain(SOLE_RUNNER)
+  })
+
+  it('says the same before resetting its only runner', async () => {
+    const { view } = await screen(soleRunner)
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(button(view.host, 'Reset access'))
+    await click(button(view.host, 'Yes, reset access'))
+    await settle()
+    expect(view.host.textContent).toContain(SOLE_RUNNER)
+  })
 })
 
 describe('if something is wrong', () => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { problemSentence, type Access, type AccessApi, type Invite, type Person } from './api'
+import { ApiError, problemSentence, type Access, type AccessApi, type Invite, type Person } from './api'
 import { AccessChoices, membershipSentence } from './AccessChoices'
 import { AddPerson } from './AddPerson'
 import { InviteLink, inviteLink } from './InviteLink'
@@ -69,25 +69,28 @@ export function PeopleScreen({ api, people, refresh, endpoint, collections, from
 
   const selected = people?.find((person) => person.id === selectedId) ?? null
 
-  const act = async (run: () => Promise<void>) => {
+  const act = async (run: () => Promise<void>, lastRunner?: string) => {
     setBusy(true)
     setProblem('')
     try {
       await run()
       await refresh()
     } catch (cause) {
-      setProblem(problemSentence(cause))
+      setProblem(lastRunner && cause instanceof ApiError && cause.code === 'last_runner' ? lastRunner : problemSentence(cause))
     } finally {
       setBusy(false)
       setConfirm(null)
     }
   }
 
+  const soleRunner = (person: Person) =>
+    `${person.name} is the only person running one of their collections. Have someone else run it first.`
+
   const pause = (person: Person, paused: boolean) =>
-    act(async () => { await api.updatePerson(person.id, { status: paused ? 'paused' : 'active' }) })
+    act(async () => { await api.updatePerson(person.id, { status: paused ? 'paused' : 'active' }) }, soleRunner(person))
 
   const reset = (person: Person) =>
-    act(async () => { setInvite({ person, invite: await api.resetPerson(person.id) }) })
+    act(async () => { setInvite({ person, invite: await api.resetPerson(person.id) }) }, soleRunner(person))
 
   // One person at a time: the service owns the member list, so nothing here
   // has to read it, rewrite it, and race whoever else is editing it.

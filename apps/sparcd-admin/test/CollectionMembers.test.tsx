@@ -67,8 +67,13 @@ describe('who runs the collection', () => {
   })
 
   it('knows the rule without a screen', () => {
-    expect(hasRunner([{ access: 'upload' }, { access: 'run' }])).toBe(true)
-    expect(hasRunner([{ access: 'upload' }])).toBe(false)
+    expect(hasRunner([{ personId: 'p1', access: 'upload' }, { personId: 'p2', access: 'run' }], people)).toBe(true)
+    expect(hasRunner([{ personId: 'p1', access: 'upload' }], people)).toBe(false)
+  })
+
+  it('does not count a runner who has not joined or is paused', () => {
+    const waiting = [person('p1', 'Ana Morales', { status: 'invited' }), person('p2', 'Luis Park', { status: 'paused' })]
+    expect(hasRunner([{ personId: 'p1', access: 'run' }, { personId: 'p2', access: 'run' }], waiting)).toBe(false)
   })
 })
 

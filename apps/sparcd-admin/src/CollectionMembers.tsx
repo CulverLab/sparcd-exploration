@@ -8,9 +8,11 @@ type Row = { personId: string; name: string; access: Access; exactLocations: boo
 /** One collection's people. The rows carry the bucket they were read from. */
 type Table = { bucket: string; rows: Row[]; saved: Row[]; version: string | null }
 
-export const RUNNER_SENTENCE = 'A collection always needs at least one person running it.'
+export const RUNNER_SENTENCE = 'A collection always needs at least one person running it who has joined and is not paused.'
 
-export const hasRunner = (rows: { access: Access }[]) => rows.some((row) => row.access === 'run')
+/** The service counts only runners who are active: invited or paused ones cannot run anything yet. */
+export const hasRunner = (rows: { personId: string; access: Access }[], people: Person[]) =>
+  rows.some((row) => row.access === 'run' && people.some((person) => person.id === row.personId && person.status === 'active'))
 
 export function CollectionMembers({ api, bucket, people }: {
   api: AccessApi
@@ -77,7 +79,7 @@ export function CollectionMembers({ api, bucket, people }: {
     // The rows carry the collection they were read from. Writing them anywhere
     // else would overwrite who can reach that other collection.
     if (table.bucket !== bucket) return
-    if (!hasRunner(rows)) {
+    if (!hasRunner(rows, people)) {
       setMessage(RUNNER_SENTENCE)
       return
     }
@@ -117,7 +119,7 @@ export function CollectionMembers({ api, bucket, people }: {
           ? <p className="m-0 text-sm text-inkSoft">Run by: {runners.map((row) => row.name).join(', ')}</p>
           : <p className="m-0 text-sm text-warn">Run by: nobody yet</p>}
       </div>
-      {runners.length === 0 && <p className="m-0 border-b border-rule px-4 py-2 text-sm text-warn">{RUNNER_SENTENCE}</p>}
+      {!hasRunner(rows, people) && <p className="m-0 border-b border-rule px-4 py-2 text-sm text-warn">{RUNNER_SENTENCE}</p>}
       <div className="overflow-x-auto p-4">
         <table className="w-full border-collapse text-sm">
           <thead>

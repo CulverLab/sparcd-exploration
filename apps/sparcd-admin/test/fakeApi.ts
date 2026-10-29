@@ -45,6 +45,16 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
   let nextToken = 0
   let version = 1
   const record = (name: string, ...args: unknown[]) => calls.push({ name, args })
+  // The service's rule: only an active person counts as running a collection.
+  const activeRunners = (members: { personId: string; access: string }[]) =>
+    members.filter((member) => member.access === 'run' && data.people.find((one) => one.id === member.personId)?.status === 'active')
+  const lastRunner = () => new ApiError(409, 'last_runner', 'the collection would have no active run member')
+  const leavesNoRunner = (before: CollectionAccess['members'], after: CollectionAccess['members']) =>
+    activeRunners(before).length > 0 && activeRunners(after).length === 0
+  const soleRunner = (id: string) => data.collections.some((entry) => {
+    const runners = activeRunners(entry.members)
+    return runners.length === 1 && runners[0].personId === id
+  })
   const api = {
     async whoami() { record('whoami'); return data.me },
     async listPeople() { record('listPeople'); return data.people },
@@ -56,11 +66,13 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
     },
     async updatePerson(id: string, patch: { status?: 'active' | 'paused' }) {
       record('updatePerson', id, patch)
+      if (patch.status === 'paused' && soleRunner(id)) throw lastRunner()
       data.people = data.people.map((one) => (one.id === id ? { ...one, ...patch } : one))
       return data.people.find((one) => one.id === id)!
     },
     async resetPerson(id: string) {
       record('resetPerson', id)
+      if (soleRunner(id)) throw lastRunner()
       data.people = data.people.map((one) => (one.id === id ? { ...one, status: 'invited' } : one))
       return { token: `reset-${++nextToken}`, expiresAt: '2026-10-01T00:00:00Z' }
     },
@@ -75,9 +87,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       if (membersVersion !== here.membersVersion) {
         throw new ApiError(412, 'changed_elsewhere', 'members changed elsewhere')
       }
-      if (!members.some((member) => member.access === 'run')) {
-        throw new ApiError(409, 'last_runner', 'at least one member must run it')
-      }
+      if (activeRunners(members).length === 0) throw lastRunner()
       here.members = members.map((member) => ({ ...member, access: member.access as never }))
       here.membersVersion = `members-v${++version}`
       return { members: here.members, membersVersion: here.membersVersion }
@@ -85,17 +95,21 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
     async setMember(bucket: string, personId: string, level: AccessLevel) {
       record('setMember', bucket, personId, level)
       const here = data.collections.find((entry) => entry.bucket === bucket)!
-      here.members = [
+      const next = [
         ...here.members.filter((member) => member.personId !== personId),
         { personId, name: data.people.find((one) => one.id === personId)?.name, ...level },
       ]
+      if (leavesNoRunner(here.members, next)) throw lastRunner()
+      here.members = next
       here.membersVersion = `members-v${++version}`
       return { members: here.members, membersVersion: here.membersVersion }
     },
     async removeMember(bucket: string, personId: string) {
       record('removeMember', bucket, personId)
       const here = data.collections.find((entry) => entry.bucket === bucket)!
-      here.members = here.members.filter((member) => member.personId !== personId)
+      const next = here.members.filter((member) => member.personId !== personId)
+      if (leavesNoRunner(here.members, next)) throw lastRunner()
+      here.members = next
       here.membersVersion = `members-v${++version}`
       return { members: here.members, membersVersion: here.membersVersion }
     },

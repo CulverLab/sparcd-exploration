@@ -42,7 +42,7 @@ describe('the capability check', () => {
 
 describe('what to say when it fails', () => {
   it('has one sentence per code', () => {
-    expect(problemSentence(new ApiError(409, 'last_runner', 'x'))).toBe('A collection always needs at least one person running it.')
+    expect(problemSentence(new ApiError(409, 'last_runner', 'x'))).toBe('A collection always needs at least one person running it who has joined and is not paused.')
     expect(problemSentence(new ApiError(409, 'last_admin', 'x'))).toBe("SPARC'd always needs at least one administrator.")
     expect(problemSentence(new ApiError(412, 'changed_elsewhere', 'x'))).toBe('Someone else changed this. Reload and try again.')
     expect(problemSentence(new ApiError(503, 'busy', 'x'))).toBe('The storage is not answering right now. Try again in a minute.')

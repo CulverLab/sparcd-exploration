@@ -116,7 +116,7 @@ export class ApiError extends Error {
 const NOT_ANSWERING = 'The storage is not answering right now. Try again in a minute.'
 
 const sentences: Partial<Record<ErrorCode, string>> = {
-  last_runner: 'A collection always needs at least one person running it.',
+  last_runner: 'A collection always needs at least one person running it who has joined and is not paused.',
   last_admin: "SPARC'd always needs at least one administrator.",
   changed_elsewhere: 'Someone else changed this. Reload and try again.',
   busy: NOT_ANSWERING,
