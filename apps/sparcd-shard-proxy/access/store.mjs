@@ -8,6 +8,7 @@
 // proxy that made it" means.
 
 import { makeNamespace } from './namespace.mjs';
+import { normalizeAccess } from './rules.mjs';
 
 export const GENERATION_KEY = 'Settings/access/generation.json';
 export const PEOPLE_PREFIX = 'Settings/access/people/';
@@ -118,7 +119,11 @@ export function makeStore({
         upstream.getJson(u, `Collections/${c.uuid}/collection.json`).catch(() => ({ status: 404 })),
       ]);
       if (members.status !== 404) {
-        c.members = members.value.members ?? [];
+        // Schema 1 stored one cumulative level; it reads as the set it meant.
+        // An entry that names nothing known grants nothing and is dropped.
+        c.members = (members.value.members ?? [])
+          .map((m) => ({ ...m, access: normalizeAccess(m.access) }))
+          .filter((m) => m.access.length > 0);
         c.membersEtag = members.etag;
       }
       if (meta.status !== 404) {
@@ -256,7 +261,7 @@ export function makeStore({
     async saveMembers(bucket, members, expect) {
       const c = state.collections.get(bucket);
       if (!c) throw new Error(`unknown collection bucket ${bucket}`);
-      const body = JSON.stringify({ schemaVersion: 1, members });
+      const body = JSON.stringify({ schemaVersion: 2, members });
       const guard = expect === null ? { ifNoneMatch: '*' } : { ifMatch: expect };
       const writtenEtag = await upstream.put(
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,

@@ -103,12 +103,25 @@ function encodeXmlText(value) {
   return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-function redactListingEntries(xml, shouldRedact, opaqueEtag) {
+// With `encoding-type=url` the upstream percent-encodes each key, slashes
+// included, so the key is decoded before the check. One that will not decode
+// is redacted.
+function listedKey(text, urlEncoded) {
+  if (!urlEncoded) return text;
+  try {
+    return decodeURIComponent(text.replaceAll('+', ' '));
+  } catch {
+    return null;
+  }
+}
+
+export function redactListingEntries(xml, shouldRedact, opaqueEtag) {
+  const urlEncoded = /<EncodingType>url<\/EncodingType>/.test(xml);
   return xml.replace(/<Contents>([\s\S]*?)<\/Contents>/g, (block) => {
     const keyMatch = /<Key>([\s\S]*?)<\/Key>/.exec(block);
     if (!keyMatch) return block;
-    const key = decodeXmlText(keyMatch[1]);
-    if (!shouldRedact(key)) return block;
+    const key = listedKey(decodeXmlText(keyMatch[1]), urlEncoded);
+    if (key !== null && !shouldRedact(key)) return block;
     const etagMatch = /<ETag>([\s\S]*?)<\/ETag>/.exec(block);
     const etag = etagMatch ? decodeXmlText(etagMatch[1]) : '';
     const safeEtag = '<ETag>' + encodeXmlText(opaqueEtag(etag)) + '</ETag>';
@@ -514,8 +527,12 @@ export async function createAccessProxy(input) {
     const op = classify({
       method: req.method, bucket: clientBucket, key, query: url.searchParams, headers,
     });
+    // A repeated `prefix` is one the upstream may read differently from here,
+    // so it counts as no prefix at all.
+    const prefixes = url.searchParams.getAll('prefix');
     const verdict = decide(person, {
-      op, key, isSettings, uuid: collection?.uuid, level: membership?.access ?? null,
+      op, key, isSettings, uuid: collection?.uuid, access: membership?.access ?? null,
+      prefix: prefixes.length === 1 ? prefixes[0] : '',
     });
     if (!verdict.allow) return denied(verdict.reason);
 
