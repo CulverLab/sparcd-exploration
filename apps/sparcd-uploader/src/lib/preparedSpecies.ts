@@ -1,7 +1,7 @@
 import { missingOfficialSpecies } from './officialSpecies';
 import { loadSpeciesVocabulary, type CollectionRef, type SpeciesResult } from '@sparcd/s3-safe';
 import { keyProfileId, useKeyBindings, activeKeyProfile } from '@sparcd/auth-ui';
-import { validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import type { S3Config } from '@sparcd/types';
 import { getClient } from './s3';
 
@@ -30,7 +30,7 @@ export async function snapshotPreparation(cfg: S3Config, collection: CollectionR
   }
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(speciesFingerprint(result.species)));
   const snapshot: PreparedSpecies = {
-    v: 1, endpoint: cfg.endpoint, account: cfg.accessKey,
+    v: 2, endpoint: cfg.endpoint, ownerScope: await deriveFlipOwnerScope(cfg),
     collectionKey: collection.key, collectionName: collection.name || collection.uuid,
     sourceBucket: result.sourceBucket, sourceKey: result.sourceKey,
     sourceHash: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
@@ -45,11 +45,11 @@ export function assertPreparedSpecies(snapshot: unknown): asserts snapshot is Pr
   if (!validPreparedSpecies(snapshot)) throw new Error('The species list is not available on this device. Connect online to download the Settings species list, then try tagging again. Your files are unchanged.');
 }
 
-export function assessPreparedAssignment(snapshot: PreparedSpecies, loaded: SpeciesResult, cfg: S3Config, collectionKey: string, tags: { scientificName: string; requestedSpecies?: string }[]) {
+export async function assessPreparedAssignment(snapshot: PreparedSpecies, loaded: SpeciesResult, cfg: S3Config, collectionKey: string, tags: { scientificName: string; requestedSpecies?: string }[]) {
   const allowed = new Set(loaded.species.map((s) => s.scientificName));
   return {
     missing: [...new Set(tags.filter((tag) => !allowed.has(tag.scientificName)).map((tag) => tag.scientificName))],
-    changed: snapshot.endpoint !== cfg.endpoint || snapshot.account !== cfg.accessKey || snapshot.collectionKey !== collectionKey || snapshot.sourceBucket !== loaded.sourceBucket || snapshot.sourceKey !== loaded.sourceKey || speciesFingerprint(snapshot.species) !== speciesFingerprint(loaded.species),
+    changed: snapshot.ownerScope !== await deriveFlipOwnerScope(cfg) || snapshot.collectionKey !== collectionKey || snapshot.sourceBucket !== loaded.sourceBucket || snapshot.sourceKey !== loaded.sourceKey || speciesFingerprint(snapshot.species) !== speciesFingerprint(loaded.species),
   };
 }
 

@@ -2,7 +2,7 @@ import { WorkflowNotice } from '../components/WorkflowNotice';
 import { checkOfficialSpecies } from '../lib/preparedSpecies';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOnline } from '@sparcd/auth-ui';
-import { deleteFlipRecord } from '@sparcd/flip';
+import { deleteFlipRecord, deriveFlipOwnerScope } from '@sparcd/flip';
 import { useStore } from '../store';
 import { useLocations } from '../lib/useLocations';
 import { findAllowedLocation } from '../lib/allowedLocations';
@@ -306,9 +306,16 @@ export function Upload() {
   // — a dry run wrote nothing, and discarding the batch (Verify's "Back") is
   // not the user saying they are finished with the tags.
   useEffect(() => {
-    if (!flipId || snap?.phase !== 'done' || snap.dryRun) return;
-    void deleteFlipRecord(flipId);
-  }, [flipId, snap?.phase, snap?.dryRun]);
+    if (!flipId || !s3Config || snap?.phase !== 'done' || snap.dryRun) return;
+    const expectedConfig = s3Config;
+    const expectedConnectionId = connectionId;
+    const expectedFlipId = flipId;
+    void deriveFlipOwnerScope(expectedConfig).then((ownerScope) => {
+      const current = useStore.getState();
+      if (current.connectionId !== expectedConnectionId || current.s3Config !== expectedConfig || current.flipId !== expectedFlipId) return;
+      return deleteFlipRecord(expectedFlipId, ownerScope);
+    });
+  }, [flipId, s3Config, connectionId, snap?.phase, snap?.dryRun]);
 
   const retryPending = useRef(false);
   const [retryError, setRetryError] = useState<string | null>(null);

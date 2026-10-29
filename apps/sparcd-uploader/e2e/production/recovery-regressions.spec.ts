@@ -75,7 +75,8 @@ test('a damaged sibling journal does not hide a healthy saved batch', async ({ p
   });
   await page.reload();
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
-  await expect(recovery.getByRole('alert')).toContainText('1 saved batch is damaged or from an unsupported version');
+  await expect(recovery.getByRole('alert')).toContainText('1 saved batch needs attention');
+  await expect(recovery.getByRole('alert')).toContainText('Saved data is damaged or from an unsupported version.');
   await expect(recovery.getByRole('button', { name: 'Reselect saved batch folder' })).toBeVisible();
   await app.seedPickedFolder([jpegAt('HEALTHY.JPG', '2026:07:01 12:00:00')]);
   await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();

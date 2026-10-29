@@ -15,6 +15,10 @@ import {
   pruneFlipRecords,
   updateFlipTags,
   finishFlipRecord,
+  snapshotOwnedFlipRecords,
+  discardOwnedFlipSnapshot,
+  deriveFlipOwnerScope,
+  canonicalFlipEndpoint,
   type FlipFile,
   type FlipObservation,
   type FlipRecord,
@@ -35,6 +39,9 @@ const ghost: FlipObservation = {
   requestedSpecies: '',
   freeTags: '',
 };
+
+const OWNER_A = `flip-owner-v1:${'a'.repeat(64)}`;
+const OWNER_B = `flip-owner-v1:${'b'.repeat(64)}`;
 
 /** A file carrying everything the uploader's Inspect pass establishes. */
 const inspected = (over: Partial<FlipFile> = {}): FlipFile => ({
@@ -59,6 +66,7 @@ const record = (over: Partial<FlipRecord> = {}): FlipRecord => ({
   returnUrl: '/sparcd-exploration/uploader/?flip=batch-1',
   files: [inspected(), { ...inspected(), relPath: 'SD/IMG_0002.JPG', fileName: 'IMG_0002.JPG' }],
   tags: {},
+  ownerScope: OWNER_A,
   ...over,
 });
 
@@ -108,7 +116,53 @@ describe('the record round trip', () => {
   it('reads back everything the uploader wrote', async () => {
     await writeFlipRecord(record());
     const back = await readFlipRecord('batch-1');
-    expect(back).toEqual({ ...record(), usedAt: expect.any(String) });
+    expect(back).toEqual({ ...record(), revision: 2, usedAt: expect.any(String) });
+  });
+
+  it('requires an owner scope for newly written handoffs', async () => {
+    await expect(writeFlipRecord(record({ ownerScope: undefined }))).rejects.toThrow('owner scope');
+    expect(await flipDb.records.count()).toBe(0);
+  });
+
+  it('does not read a handoff under another owner scope', async () => {
+    await writeFlipRecord(record());
+    expect(await readFlipRecord('batch-1', OWNER_B)).toBeUndefined();
+    expect((await flipDb.records.get('batch-1'))?.revision).toBe(1);
+    expect(await readFlipRecord('batch-1', OWNER_A)).toMatchObject({ ownerScope: OWNER_A, revision: 2 });
+  });
+
+  it('enumerates and discards only unchanged records owned by the confirmed login', async () => {
+    await writeFlipRecord(record({ id: 'keep-a' }));
+    await writeFlipRecord(record({ id: 'change-a' }));
+    await writeFlipRecord(record({ id: 'foreign', ownerScope: OWNER_B }));
+    await flipDb.records.put({ ...record({ id: 'unsupported-owned' }), v: 3 } as unknown as FlipRecord);
+    // Simulate a quarantined legacy row that has no proven owner.
+    await flipDb.records.put(record({ id: 'legacy', ownerScope: undefined }));
+
+    const snapshot = await snapshotOwnedFlipRecords(OWNER_A);
+    expect(snapshot.map(row => row.id).sort()).toEqual(['change-a', 'keep-a', 'unsupported-owned']);
+    const changed = await flipDb.records.get('change-a');
+    await flipDb.records.put({ ...changed!, tags: { newer: [coyote] }, revision: changed!.revision! + 1 });
+    await flipDb.records.put(record({ id: 'late-a' }));
+
+    const result = await discardOwnedFlipSnapshot(OWNER_A, snapshot);
+    expect(result).toEqual({ deleted: 2, retainedChanged: 1 });
+    expect(await flipDb.records.get('keep-a')).toBeUndefined();
+    expect(await flipDb.records.get('unsupported-owned')).toBeUndefined();
+    expect((await flipDb.records.get('change-a'))?.tags).toEqual({ newer: [coyote] });
+    expect((await flipDb.records.get('foreign'))?.ownerScope).toBe(OWNER_B);
+    expect((await flipDb.records.get('legacy'))?.ownerScope).toBeUndefined();
+    expect((await flipDb.records.get('late-a'))?.ownerScope).toBe(OWNER_A);
+  });
+
+  it('compares complete thumbnail bytes when an owner record changes during review', async () => {
+    const image = (text: string) => new Blob([text], { type: 'image/jpeg' });
+    await writeFlipRecord(record({ files: [inspected({ thumb: image('old') })] }));
+    const snapshot = await snapshotOwnedFlipRecords(OWNER_A);
+    const current = await flipDb.records.get('batch-1');
+    await flipDb.records.put({ ...current!, files: [inspected({ thumb: image('new') })] });
+    expect(await discardOwnedFlipSnapshot(OWNER_A, snapshot)).toEqual({ deleted: 0, retainedChanged: 1 });
+    expect(await flipDb.records.get('batch-1')).toBeDefined();
   });
 
   // The batch is rebuilt from this record on the way back, and there is no
@@ -149,6 +203,16 @@ describe('not keeping batches forever', () => {
     expect(await readFlipRecord('batch-1')).toBeUndefined();
   });
 
+  it('scopes completed-publication cleanup to the owning login', async () => {
+    await writeFlipRecord(record({ id: 'owned' }));
+    await writeFlipRecord(record({ id: 'foreign', ownerScope: OWNER_B }));
+    expect(await deleteFlipRecord('foreign', OWNER_A)).toBe(false);
+    expect(await flipDb.records.get('foreign')).toBeDefined();
+    expect(await deleteFlipRecord('owned', OWNER_A)).toBe(true);
+    expect(await flipDb.records.get('owned')).toBeUndefined();
+    expect(await flipDb.records.get('foreign')).toBeDefined();
+  });
+
   it('sweeps up hand-offs nobody came back for', async () => {
     const old = new Date('2026-01-01T00:00:00.000Z').toISOString();
     await writeFlipRecord(record({ id: 'stale', createdAt: old }));
@@ -164,6 +228,26 @@ describe('not keeping batches forever', () => {
     const fortnight = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
     await writeFlipRecord(record({ createdAt: fortnight }));
     expect(await pruneFlipRecords(now)).toBe(0);
+  });
+
+  it('prunes v1 records only after the strict 30-day boundary and retains unknown dates', async () => {
+    const now = Date.parse('2026-08-25T00:00:00.000Z');
+    const exact = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const before = new Date(now - 30 * 24 * 60 * 60 * 1000 + 1).toISOString();
+    const after = new Date(now - 30 * 24 * 60 * 60 * 1000 - 1).toISOString();
+    await flipDb.records.put(record({ id: 'before', ownerScope: OWNER_B, usedAt: before }));
+    await flipDb.records.put(record({ id: 'exact', ownerScope: OWNER_B, usedAt: exact }));
+    await flipDb.records.put(record({ id: 'after', ownerScope: OWNER_B, usedAt: after }));
+    await flipDb.records.put(record({ id: 'ownerless-old', ownerScope: undefined, usedAt: after }));
+    await flipDb.records.put(record({ id: 'invalid', ownerScope: undefined, usedAt: 'not-a-date' }));
+    await flipDb.records.put(record({ id: 'missing', ownerScope: undefined, createdAt: 'not-a-date', usedAt: undefined }));
+    expect(await pruneFlipRecords(now)).toBe(2);
+    expect(await flipDb.records.get('before')).toBeDefined();
+    expect(await flipDb.records.get('exact')).toBeDefined();
+    expect(await flipDb.records.get('after')).toBeUndefined();
+    expect(await flipDb.records.get('ownerless-old')).toBeUndefined();
+    expect(await flipDb.records.get('invalid')).toBeDefined();
+    expect(await flipDb.records.get('missing')).toBeDefined();
   });
 
   // A batch tagged over weeks and then carried until there is a connection is
@@ -214,8 +298,58 @@ describe('not keeping batches forever', () => {
   });
 });
 
+describe('Flip owner scope', () => {
+  it('canonicalizes configured endpoint spelling and drops query/fragment', () => {
+    expect(canonicalFlipEndpoint({ endpoint: 'HTTPS://EXAMPLE.ORG:443/api/./v1///?token=x#fragment', region: 'ignored' }))
+      .toBe('["url-v1","https","example.org","","/api/v1"]');
+    expect(canonicalFlipEndpoint({ endpoint: 'example.org:80/api', secure: false, region: 'ignored' }))
+      .toBe('["url-v1","http","example.org","","/api"]');
+  });
+
+  it('canonicalizes an implicit endpoint by provider and region', () => {
+    expect(canonicalFlipEndpoint({ endpoint: '', providerId: 'AWS-S3', region: 'US-WEST-2' }))
+      .toBe('["implicit-s3-v1","aws-s3","us-west-2"]');
+    expect(() => canonicalFlipEndpoint({ endpoint: '', region: 'us-east-1' })).toThrow('provider ID');
+  });
+
+  it('derives implicit endpoint ownership from provider and region', async () => {
+    const config = { endpoint: '', providerId: 'AWS-S3', region: 'US-WEST-2', accessKey: 'AccessId-A', secure: true };
+    const first = await deriveFlipOwnerScope(config);
+    expect(await deriveFlipOwnerScope({ ...config, providerId: 'aws-s3', region: 'us-west-2' })).toBe(first);
+    expect(await deriveFlipOwnerScope({ ...config, providerId: 'r2' })).not.toBe(first);
+    expect(await deriveFlipOwnerScope({ ...config, region: 'us-east-1' })).not.toBe(first);
+  });
+
+  it('derives stable scopes per endpoint and exact Access key without persisting the key', async () => {
+    const config = { endpoint: 'https://EXAMPLE.org:443/s3/', region: 'us-east-1', accessKey: 'AccessId-A', secure: true };
+    const first = await deriveFlipOwnerScope(config);
+    expect(await deriveFlipOwnerScope({ ...config, endpoint: 'https://example.org/s3' })).toBe(first);
+    expect(await deriveFlipOwnerScope({ ...config, accessKey: 'AccessId-B' })).not.toBe(first);
+    expect(await deriveFlipOwnerScope({ ...config, endpoint: 'https://other.example/s3' })).not.toBe(first);
+    expect(first).toMatch(/^flip-owner-v1:[0-9a-f]{64}$/);
+    expect(first).not.toContain(config.accessKey);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(
+      `${canonicalFlipEndpoint({ endpoint: config.endpoint, secure: config.secure, region: config.region })}\0${config.accessKey}`,
+    ));
+    const expected = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    expect(first).toBe(`flip-owner-v1:${expected}`);
+  });
+
+  it('does not change owner scope for editable attribution or other display metadata', async () => {
+    const config = { endpoint: 'https://storage.test', region: 'us-east-1', accessKey: 'AccessId-A', secure: true };
+    const first = await deriveFlipOwnerScope(config);
+    expect(await deriveFlipOwnerScope({ ...config, taggerUser: 'Anita', whoamiName: 'Another display name' })).toBe(first);
+  });
+});
+
 it('does not expire a prepared handoff while it may be carried offline', async () => {
   await writeFlipRecord(record({ v: 2, createdAt: '2000-01-01T00:00:00.000Z' }));
+  expect(await pruneFlipRecords()).toBe(0);
+  expect(await flipDb.records.get('batch-1')).toBeDefined();
+});
+
+it('does not age-prune a quarantined ownerless v2 handoff', async () => {
+  await flipDb.records.put(record({ v: 2, ownerScope: undefined, createdAt: '2000-01-01T00:00:00.000Z' }));
   expect(await pruneFlipRecords()).toBe(0);
   expect(await flipDb.records.get('batch-1')).toBeDefined();
 });
@@ -254,7 +388,7 @@ describe('the hand back', () => {
 
 it('reads old records and resolves optional estimated timestamps after camera and manual time', async () => {
   await writeFlipRecord(record());
-  expect(await readFlipRecord('batch-1')).toEqual({ ...record(), usedAt: expect.any(String) });
+  expect(await readFlipRecord('batch-1')).toEqual({ ...record(), revision: 2, usedAt: expect.any(String) });
   const f = inspected({ exifTimestamp: undefined, estimatedTimestamp: '2024-01-10T08:00:00', timestampSource: 'interpolated' });
   await writeFlipRecord(record({ files: [f] }));
   expect((await readFlipRecord('batch-1'))?.files[0]).toEqual(f);
@@ -265,19 +399,33 @@ it('reads old records and resolves optional estimated timestamps after camera an
 
 it('persists non-secret preparation with account isolation and an immutable handoff snapshot', async () => {
   const { savePreparedSpecies, loadPreparedSpecies, bindPreparedSpecies } = await import('../src/index');
+  const login = { endpoint: 'https://storage.test', region: 'us-east-1', accessKey: 'person', secure: true };
+  const ownerScope = await deriveFlipOwnerScope(login);
   const snapshot = {
-    v: 1 as const, endpoint: 'https://storage.test', account: 'person', collectionKey: 'bucket::one', collectionName: 'One',
+    v: 2 as const, endpoint: 'https://storage.test', ownerScope, collectionKey: 'bucket::one', collectionName: 'One',
     sourceBucket: 'bucket', sourceKey: 'Collections/one/species.json', sourceHash: 'a'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: { 'Canis latrans': 'y' },
     species: [{ key: 'Canis latrans', scientificName: 'Canis latrans', commonName: 'Coyote', iconUrl: '', keyBinding: 'C' }],
   };
-  await savePreparedSpecies({ ...snapshot, secretKey: 'MUST-NOT-PERSIST' } as typeof snapshot);
+  await savePreparedSpecies({ ...snapshot, secretKey: 'MUST-NOT-PERSIST-SECRET', accessKey: 'MUST-NOT-PERSIST-ACCESS-ID', sessionToken: 'MUST-NOT-PERSIST-TOKEN' } as typeof snapshot);
   expect(JSON.stringify(await flipDb.vocabularies.toArray())).not.toContain('MUST-NOT-PERSIST');
-  expect(await loadPreparedSpecies({ endpoint: snapshot.endpoint, accessKey: 'other' })).toBeNull();
-  expect(await loadPreparedSpecies({ endpoint: 'https://other.test', accessKey: snapshot.account })).toBeNull();
-  expect(await loadPreparedSpecies({ endpoint: snapshot.endpoint, accessKey: snapshot.account })).toEqual(snapshot);
+  expect(JSON.stringify(await flipDb.vocabularies.toArray())).not.toContain('MUST-NOT-PERSIST-ACCESS-ID');
+  expect(await loadPreparedSpecies({ ...login, accessKey: 'other' })).toBeNull();
+  expect(await loadPreparedSpecies({ ...login, endpoint: 'https://other.test' })).toBeNull();
+  expect(await loadPreparedSpecies(login)).toEqual(snapshot);
+  const legacySnapshot = { ...snapshot, v: 1, account: 'person' } as unknown as typeof snapshot;
+  const { validPreparedSpecies } = await import('../src/preparedSpecies');
+  expect(validPreparedSpecies(legacySnapshot)).toBe(false);
   await writeFlipRecord(record());
   await bindPreparedSpecies('batch-1', snapshot);
   expect((await readFlipRecord('batch-1'))?.v).toBe(2);
+  const persisted = {
+    records: await flipDb.records.toArray(),
+    vocabularies: await flipDb.vocabularies.toArray(),
+    keys: [...await flipDb.records.toCollection().primaryKeys(), ...await flipDb.vocabularies.toCollection().primaryKeys()],
+  };
+  for (const credential of ['person', 'MUST-NOT-PERSIST-SECRET', 'MUST-NOT-PERSIST-ACCESS-ID', 'MUST-NOT-PERSIST-TOKEN']) {
+    expect(JSON.stringify(persisted)).not.toContain(credential);
+  }
   snapshot.species[0].commonName = 'Later change';
   await savePreparedSpecies({ ...snapshot, collectionKey: 'bucket::two', collectionName: 'Two' });
   expect((await readFlipRecord('batch-1'))?.preparedSpecies?.collectionKey).toBe('bucket::one');
@@ -299,7 +447,7 @@ it('rejects invalid preparation and preserves the previously saved list on failu
 
 it('a failed preparation write leaves the previous accepted snapshot available', async () => {
   const { savePreparedSpecies, loadPreparedSpecies } = await import('../src/index');
-  const snapshot = { v: 1 as const, endpoint: 'https://storage.test', account: 'person', collectionKey: 'bucket::one', collectionName: 'One', sourceBucket: 'bucket', sourceKey: 'species.json', sourceHash: 'a'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: {}, species: [{ key: 'Coyote', scientificName: 'Coyote', commonName: 'Coyote', iconUrl: '', keyBinding: null }] };
+  const snapshot = { v: 2 as const, endpoint: 'https://storage.test', ownerScope: OWNER_A, collectionKey: 'bucket::one', collectionName: 'One', sourceBucket: 'bucket', sourceKey: 'species.json', sourceHash: 'a'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: {}, species: [{ key: 'Coyote', scientificName: 'Coyote', commonName: 'Coyote', iconUrl: '', keyBinding: null }] };
   await savePreparedSpecies(snapshot);
   const write = vi.spyOn(flipDb.vocabularies, 'put').mockRejectedValueOnce(new Error('QuotaExceededError'));
   try {

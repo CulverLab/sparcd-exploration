@@ -1,5 +1,5 @@
 import { InspectPreview } from './InspectPreview';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { FlipObservation } from '@sparcd/flip';
 import { useStore, type FileEntry } from '../store';
@@ -8,6 +8,7 @@ import { formatNaive, type NaiveDateTime } from '../lib/exifTime';
 import type { CaptureEstimate } from '../lib/estimateCaptureTime';
 import { useCaptureEstimates, effectiveTime, methodLine, sourceTag } from '../lib/useCaptureEstimates';
 import type { FileValidation, Severity } from '../lib/validation';
+import { isAnyMissingRemovalPending, isMissingRemovalPending, missingRemovalVersion, removeMissingOriginal, subscribeMissingRemoval } from '../lib/preparation';
 
 const ROW = 52;
 // A batch back from the tagger carries a species line under each filename.
@@ -115,6 +116,8 @@ function Row({
   timeZone,
   onSelect,
   onRemove,
+  previewButtonRef,
+  removeDisabled,
   onPreview,
 }: {
   entry: FileEntry;
@@ -125,6 +128,8 @@ function Row({
   timeZone: string;
   onSelect: () => void;
   onRemove: () => void;
+  previewButtonRef: (element: HTMLButtonElement | null) => void;
+  removeDisabled: boolean;
   onPreview: () => void;
 }) {
   const dims = entry.width && entry.height ? `${entry.width}×${entry.height}` : '—';
@@ -135,6 +140,7 @@ function Row({
   const how = source
     ? methodLine(entry, estimates.get(entry.id), timeZone)
     : undefined;
+  const removalDescriptionId = `remove-original-description-${encodeURIComponent(entry.id)}`;
   return (
     <div
       onClick={onSelect}
@@ -143,7 +149,7 @@ function Row({
         active ? 'bg-mark' : 'hover:bg-panelHover'
       }`}
     >
-      <button type="button" aria-label={`Preview ${entry.fileName}`} title="Preview file"
+      <button ref={previewButtonRef} type="button" aria-label={`Preview ${entry.fileName}`} title="Preview file"
         className="relative min-h-11 min-w-11 grid place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         onClick={(e) => { e.stopPropagation(); onPreview(); }}><Thumb blob={entry.thumbnail} isVideo={isVideo} /><span aria-hidden className="absolute bottom-0 right-0 bg-panel text-ink border border-rule text-[12px] px-0.5">↗</span></button>
       <span className="min-w-0">
@@ -193,22 +199,29 @@ function Row({
             e.stopPropagation();
             onRemove();
           }}
-          aria-label={`Remove ${entry.fileName}`}
-          className="sm:hidden shrink-0 min-h-11 min-w-11 grid place-items-center text-inkMute hover:text-warn"
+          aria-label={`${entry.needsOriginal ? 'Remove unavailable or changed original' : 'Remove'} ${entry.fileName}`}
+          aria-describedby={entry.needsOriginal ? removalDescriptionId : undefined}
+          title={entry.needsOriginal ? 'Remove this missing or changed original from the saved batch' : 'Remove file'}
+          disabled={removeDisabled}
+          className={`${entry.needsOriginal ? 'sm:inline-flex px-2 w-auto' : 'sm:hidden min-w-11'} shrink-0 min-h-11 grid place-items-center gap-1 text-inkMute hover:text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent`}
         >
-          ✕
+          {entry.needsOriginal ? <><span aria-hidden>×</span><span className="hidden sm:inline">Remove</span></> : '✕'}
         </button>
+        {entry.needsOriginal && <span id={removalDescriptionId} className="sr-only">Removes this file from the recovered batch and saved Tagger handoff. Does not delete the original file.</span>}
       </span>
     </div>
   );
 }
 
-export function FileList({ severityFilter = null }: { severityFilter?: Severity | null }) {
+export function FileList({ severityFilter = null, onEmptyRemovalFocus }: { severityFilter?: Severity | null; onEmptyRemovalFocus?: () => void }) {
   const allFiles = useStore((s) => s.files);
   const validations = useStore((s) => s.validations);
   const removeFile = useStore((s) => s.removeFile);
+  useSyncExternalStore(subscribeMissingRemoval, missingRemovalVersion);
   const showTags = useStore((s) => s.flipId !== null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const previewButtons = useRef(new Map<string, HTMLButtonElement>());
+  const removalFocus = useRef<{ removedId: string; fileId?: string; fallback: boolean } | null>(null);
   const [active, setActive] = useState(0);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -230,35 +243,60 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
         : allFiles,
     [allFiles, validations, severityFilter],
   );
+  const displayedFiles = files.filter(file => !isMissingRemovalPending(file.id));
+  const removeDisabled = isAnyMissingRemovalPending();
 
   const row = showTags ? ROW_TAGGED : ROW;
   const virtualizer = useVirtualizer({
-    count: files.length,
+    count: displayedFiles.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => row,
     overscan: 12,
   });
 
   useEffect(() => {
-    if (active < files.length) virtualizer.scrollToIndex(active, { align: 'auto' });
-  }, [active, files.length, virtualizer]);
+    if (active < displayedFiles.length) virtualizer.scrollToIndex(active, { align: 'auto' });
+  }, [active, displayedFiles.length, virtualizer]);
 
   useEffect(() => {
-    if (active >= files.length && files.length > 0) setActive(files.length - 1);
-  }, [files.length, active]);
+    if (active >= displayedFiles.length && displayedFiles.length > 0) setActive(displayedFiles.length - 1);
+  }, [displayedFiles.length, active]);
+
+  useEffect(() => {
+    const pending = removalFocus.current;
+    if (!pending) return;
+    if (displayedFiles.some(file => file.id === pending.removedId)) return;
+    if (pending.fileId) previewButtons.current.get(pending.fileId)?.focus();
+    else if (pending.fallback) onEmptyRemovalFocus?.();
+    removalFocus.current = null;
+  }, [displayedFiles, onEmptyRemovalFocus]);
+
+  function removeOriginalAndRestoreFocus(file: FileEntry, index: number): void {
+    const next = displayedFiles[index + 1] ?? displayedFiles[index - 1];
+    const nextIndex = index + 1 < displayedFiles.length ? index : index - 1;
+    removalFocus.current = { removedId: file.id, fileId: next?.id, fallback: !next };
+    if (next) setActive(Math.max(0, nextIndex));
+    void removeMissingOriginal(file.id).catch(() => {
+      // Before the intent is durable the row remains present; leave focus on
+      // its Remove control so the user can retry without hunting for it.
+      if (!isMissingRemovalPending(file.id)) removalFocus.current = null;
+    });
+  }
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (previewId || e.target !== e.currentTarget) return;
-    if (e.key === 'Enter' && files[active]) { e.preventDefault(); openPreview(files[active].id); }
+    if (e.key === 'Enter' && displayedFiles[active]) { e.preventDefault(); openPreview(displayedFiles[active].id); }
     else if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault();
-      setActive((i) => Math.min(i + 1, files.length - 1));
+      setActive((i) => Math.min(i + 1, displayedFiles.length - 1));
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
       e.preventDefault();
       setActive((i) => Math.max(i - 1, 0));
-    } else if (e.key === 'd' && files.length > 0) {
+    } else if (e.key === 'd' && displayedFiles.length > 0 && !removeDisabled) {
       e.preventDefault();
-      removeFile(files[active].id);
+      const activeFile = displayedFiles[active];
+      if (activeFile.needsOriginal) removeOriginalAndRestoreFocus(activeFile, active);
+      else removeFile(activeFile.id);
     }
   }
 
@@ -282,17 +320,17 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
           ref={parentRef}
           tabIndex={0}
           onKeyDown={onKeyDown}
-          aria-label="Scanned files. Enter previews, J and K move, D drops the active file."
+          aria-label="Scanned files. Enter previews, J and K move, D removes the active file."
           className="h-[60dvh] overflow-y-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2"
         >
-          {files.length === 0 && severityFilter && (
+          {displayedFiles.length === 0 && severityFilter && (
             <p className="px-3 py-3 font-body text-[13px] text-inkMute">
               No files match this filter.
             </p>
           )}
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualizer.getVirtualItems().map((vi) => {
-              const f = files[vi.index];
+              const f = displayedFiles[vi.index];
               return (
                 <div
                   key={f.id}
@@ -307,7 +345,12 @@ export function FileList({ severityFilter = null }: { severityFilter?: Severity 
                     estimates={estimates}
                     timeZone={timeZone}
                     onSelect={() => setActive(vi.index)}
-                    onRemove={() => removeFile(f.id)}
+                    previewButtonRef={(element) => {
+                      if (element) previewButtons.current.set(f.id, element);
+                      else previewButtons.current.delete(f.id);
+                    }}
+                    removeDisabled={removeDisabled}
+                    onRemove={() => f.needsOriginal ? removeOriginalAndRestoreFocus(f, vi.index) : removeFile(f.id)}
                     onPreview={() => openPreview(f.id)}
                   />
                 </div>

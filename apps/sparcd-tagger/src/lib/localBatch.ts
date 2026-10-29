@@ -13,7 +13,8 @@
 // exposed as an action the UI can offer rather than something that just fails.
 
 import { create } from 'zustand';
-import { hashOriginal, flipRecordUnavailableReason, readFlipRecord, finishFlipRecord, updateFlipTags, type FlipRecord } from '@sparcd/flip';
+import { hashOriginal, deriveFlipOwnerScope, flipRecordUnavailableReason, isValidFlipOwnerScope, readFlipRecord, finishFlipRecord, updateFlipTags, type FlipRecord } from '@sparcd/flip';
+import { loadSessionConnection } from '@sparcd/auth-ui';
 import type { DraftRecord } from './db';
 import { tagsFromDrafts } from './localWorkspace';
 import { safeReturnUrl } from './siblings';
@@ -24,6 +25,9 @@ import { safeReturnUrl } from './siblings';
 // missing window means ordinary connected mode rather than a local batch.
 export const localBatchId =
   typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('batch');
+/** Scope is carried from the connected Uploader handoff, not recomputed from Tagger attribution. */
+export const localBatchOwnerScope =
+  typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('ownerScope');
 
 export type LocalBatchStatus = 'loading' | 'ready' | 'missing' | 'error';
 
@@ -58,11 +62,27 @@ export const useLocalBatch = create<LocalBatchState>((set, get) => ({
   load: async () => {
     if (!localBatchId) return;
     let record;
-    try { record = await readFlipRecord(localBatchId); }
+    try {
+      if (!isValidFlipOwnerScope(localBatchOwnerScope)) {
+        set({ status: 'missing', loadError: 'This batch is not available for the connected login. Reopen it from Uploader using the login that started it; saved work has been kept.' });
+        return;
+      }
+      const connected = loadSessionConnection();
+      if (connected && await deriveFlipOwnerScope(connected) !== localBatchOwnerScope) {
+        set({ status: 'missing', loadError: 'This batch is not available for the connected login. Reopen it from Uploader using the login that started it; saved work has been kept.' });
+        return;
+      }
+      record = await readFlipRecord(localBatchId, localBatchOwnerScope);
+      const connectedAfterRead = loadSessionConnection();
+      if (connectedAfterRead && await deriveFlipOwnerScope(connectedAfterRead) !== localBatchOwnerScope) record = undefined;
+    }
     catch { set({ status: 'error', loadError: 'Local batch storage could not be read. Keep this window open, check browser storage, then reload to retry.' }); return; }
     if (!record) {
-      const message = await flipRecordUnavailableReason(localBatchId).catch(() => 'Local batch storage could not be read. Check browser storage and reload to retry.');
-      set({ status: 'missing', loadError: message });
+      const message = await flipRecordUnavailableReason(localBatchId, localBatchOwnerScope ?? undefined).catch(() => 'Local batch storage could not be read. Check browser storage and reload to retry.');
+      const scopedMessage = message.includes('unsupported app version')
+        ? message
+        : 'This batch is not available for the connected login. Reopen it from Uploader using the login that started it; saved work has been kept.';
+      set({ status: 'missing', loadError: scopedMessage });
       return;
     }
     const media: Record<string, Blob> = {};
@@ -121,8 +141,14 @@ async function walkDirectory(dir: FileSystemDirectoryHandle): Promise<Map<string
 // --- Saving back -----------------------------------------------------------
 
 export async function saveLocalTags(id: string, drafts: Record<string, DraftRecord>): Promise<void> {
-  try { await updateFlipTags(id, tagsFromDrafts(drafts)); useLocalBatch.setState({ saveError: '' }); }
-  catch { useLocalBatch.setState({ saveError: 'Tags could not be copied to the local batch. Keep this tab open, check browser storage, and retry saving tags.' }); }
+  try {
+    const ownerScope = useLocalBatch.getState().record?.ownerScope;
+    if (!ownerScope) throw new Error('The saved batch owner could not be verified.');
+    await assertLocalBatchOwner(useLocalBatch.getState().record!);
+    await updateFlipTags(id, tagsFromDrafts(drafts), ownerScope);
+    useLocalBatch.setState({ saveError: '' });
+  }
+  catch (error) { useLocalBatch.setState({ saveError: error instanceof Error ? error.message : 'Tags could not be copied to the local batch. Keep this tab open, check browser storage, and retry saving tags.' }); }
 }
 
 /** Hand the batch back: the final tags, who tagged them, and the return trip. */
@@ -131,6 +157,15 @@ export async function finishLocalBatch(
   drafts: Record<string, DraftRecord>,
   taggerUser: string,
 ): Promise<void> {
-  await finishFlipRecord(record.id, tagsFromDrafts(drafts), taggerUser);
+  if (!record.ownerScope) throw new Error('The saved batch owner could not be verified.');
+  await assertLocalBatchOwner(record);
+  await finishFlipRecord(record.id, tagsFromDrafts(drafts), taggerUser, record.ownerScope);
   window.location.href = safeReturnUrl(record.returnUrl, window.location.origin);
+}
+
+async function assertLocalBatchOwner(record: FlipRecord): Promise<void> {
+  const connected = loadSessionConnection();
+  if (connected && await deriveFlipOwnerScope(connected) !== record.ownerScope) {
+    throw new Error('The connected login changed. This batch is still saved for its original login; return to Uploader and reopen it with that login.');
+  }
 }

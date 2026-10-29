@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 
 const testDir = defineBddConfig({
-  features: ['features/tag-before-upload.feature', 'features/shared-session.feature'],
+  features: ['features/tag-before-upload.feature', 'features/shared-session.feature', 'features/missing-photo-removal.feature'],
   steps: 'features/steps/**/*.ts',
   outputDir: 'features/.features-gen-cross-tool',
   tags: '@cross-tool',

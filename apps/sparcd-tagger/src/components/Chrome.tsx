@@ -4,6 +4,7 @@ import { useStore, type Section } from '../store';
 import { useDraftStore } from '../lib/drafts';
 import { finishLocalBatch, useLocalBatch, saveLocalTags } from '../lib/localBatch';
 import { AutomaticSaveStatus, useAutomaticSave } from './AutomaticSave';
+import { DisconnectRequestProvider } from './DisconnectRequest';
 
 // Reuses the uploader's section-tab chrome treatment so the tools read as
 // family; the tabs drive this tool's own internal navigation (no cross-app nav).
@@ -116,10 +117,9 @@ function CollectionChrome({ children }: { children: ReactNode }) {
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const hasUpload = useStore((s) => !!s.selectedUploadPrefix);
-  const disconnect = useStore((s) => s.disconnect);
   const pending = useAutomaticSave(s => s.view.pending);
 
-  return (
+  return <DisconnectRequestProvider pendingSave={pending}>{(requestDisconnect) => (
     <div className="h-[100dvh] flex flex-col bg-paper">
       <header className="min-h-14 shrink-0 bg-panel border-b border-rule flex flex-wrap items-stretch px-4">
         <div className="flex items-center pr-6">
@@ -152,7 +152,7 @@ function CollectionChrome({ children }: { children: ReactNode }) {
           {/* The connected access key is the attribution identity internally,
               but ConnectionChip already renders only its masked form. Do not
               pass the raw key into the header as a second identity label. */}
-          <ConnectionChip onDisconnect={disconnect} disconnectDisabled={pending} disconnectExplanation={pending ? "Finish pending saves before disconnecting. Use Repair credentials if this account needs a new secret key." : undefined} />
+          <ConnectionChip onDisconnect={requestDisconnect} disconnectDisabled={pending} disconnectExplanation={pending ? "Finish pending saves before disconnecting. Use Repair credentials if this account needs a new secret key." : undefined} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 md:w-8 md:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
@@ -192,5 +192,5 @@ function CollectionChrome({ children }: { children: ReactNode }) {
       <AutomaticSaveStatus />
       <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
     </div>
-  );
+  )}</DisconnectRequestProvider>;
 }
