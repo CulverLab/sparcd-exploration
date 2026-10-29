@@ -24,6 +24,9 @@ const KNOWN_QUERY = new Set([
   'response-content-language', 'response-expires',
   'X-Amz-Algorithm', 'X-Amz-Credential', 'X-Amz-Date', 'X-Amz-Expires',
   'X-Amz-SignedHeaders', 'X-Amz-Signature', 'X-Amz-Security-Token',
+  // The AWS SDK presigner hoists its `UNSIGNED-PAYLOAD` declaration into the
+  // query, so every presigned URL from the browser apps carries it.
+  'X-Amz-Content-Sha256',
 ]);
 
 /**
@@ -95,6 +98,8 @@ const csvOrMeta = '(media\\.csv|observations\\.csv|deployments\\.csv|UploadMeta\
  *   apps/sparcd-tagger/src/lib/sync.ts — the canonical four, replaceIfUnchanged;
  *     `deployments.csv` since the Tagger corrects an upload's location
  *   apps/sparcd-tagger/src/lib/sync.ts — snapshotPrefixOf, writeImmutable
+ *   apps/sparcd-tagger/src/lib/s3.ts — ensureOriginalBaseline, the upload as it
+ *     arrived, written once before the first edit
  * The `<user>` snapshot segment is the one percent-encoded segment either app
  * produces, so it is matched as an opaque segment.
  */
@@ -104,6 +109,7 @@ export function taggerWriteKey(key, uuid) {
     `^Collections/${u}/Uploads/${SEG}/(`
     + `${csvOrMeta}`
     + `|\\.sparcd-tagger-snapshots/${SNAP}/(${csvOrMeta}|manifest\\.json)`
+    + `|\\.sparcd-tagger-original/(${csvOrMeta}|manifest\\.json)`
     + `)$`,
   ).test(key);
 }
@@ -220,7 +226,8 @@ function taggerMetadataLeaf(key) {
   const leaf = key.slice(key.lastIndexOf('/') + 1);
   return (leaf === 'media.csv' || leaf === 'observations.csv' || leaf === 'deployments.csv'
     || leaf === 'UploadMeta.json')
-    || key.includes('/.sparcd-tagger-snapshots/');
+    || key.includes('/.sparcd-tagger-snapshots/')
+    || key.includes('/.sparcd-tagger-original/');
 }
 
 /** The trees a listing may not enumerate, and who is entitled to each. */

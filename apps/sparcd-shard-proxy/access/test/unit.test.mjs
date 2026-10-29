@@ -3,6 +3,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { AwsClient } from 'aws4fetch';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { verifySignature, canonicalQueryString, encodeRfc3986, sha256hex } from '../sigv4.mjs';
 import {
@@ -147,6 +149,29 @@ describe('sigv4 presigned form', () => {
     const input = await presign('https://shard.example.org/t-sparcd/a/b.jpg', 900);
     input.url = new URL(input.url.toString().replace('/a/b.jpg', '/a/c.jpg'));
     assert.equal((await verifySignature(input)).error, 'signature mismatch');
+  });
+
+  // aws4fetch and the AWS SDK do not build the same query: the SDK adds
+  // X-Amz-Content-Sha256, and that is the URL the browser apps actually send.
+  test('a URL from the AWS SDK presigner verifies and classifies', async () => {
+    const client = new S3Client({
+      endpoint: 'https://shard.example.org', region: 'us-east-1', forcePathStyle: true,
+      credentials: KEY,
+      requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED',
+    });
+    const url = new URL(await getSignedUrl(
+      client, new GetObjectCommand({ Bucket: 't-sparcd', Key: 'a/b.jpg' }), { expiresIn: 3600 },
+    ));
+    assert.equal(url.searchParams.get('X-Amz-Content-Sha256'), 'UNSIGNED-PAYLOAD');
+    const headers = new Headers();
+    const out = await verifySignature({
+      method: 'GET', url, headers, lookupSecret: lookup, allowPresigned: true,
+    });
+    assert.equal(out.error, undefined);
+    assert.equal(
+      classify({ method: 'GET', bucket: 't-sparcd', key: 'a/b.jpg', query: url.searchParams, headers }),
+      'GetObject',
+    );
   });
 });
 
@@ -329,6 +354,19 @@ describe('the access table', () => {
     );
   });
 
+  test('identify writes the original baseline, and nothing else beside it', () => {
+    const original = `${base}/Uploads/2026.01.01.00.00.00_jo/.sparcd-tagger-original`;
+    for (const leaf of ['media.csv', 'observations.csv', 'deployments.csv', 'UploadMeta.json', 'manifest.json']) {
+      assert.equal(at('PutObject', `${original}/${leaf}`, 'identify').allow, true, leaf);
+    }
+    for (const key of [
+      `${original}/a.jpg`,
+      `${original}/sub/media.csv`,
+      `${original}/../media.csv`,
+    ]) assert.equal(at('PutObject', key, 'identify').allow, false, key);
+    assert.equal(at('PutObject', `${original}/media.csv`, 'look').allow, false);
+  });
+
   test('the rule itself refuses dot segments for every Tagger file', () => {
     const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
     for (const leaf of ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json']) {
@@ -454,6 +492,7 @@ describe('activity shaping', () => {
   test('writes split into identify, upload and list-change', () => {
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/media.csv' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'upload');
+    assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/.sparcd-tagger-original/manifest.json' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: true, key: 'Settings/locations.json' }), 'list-change');
     assert.equal(eventKind('DeleteObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'collection-change');
   });
