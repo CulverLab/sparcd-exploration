@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { parseObservations } from '@sparcd/camtrap';
 import {
-  Given, Then, expect, openWorkspace, openSettings, sectionTab, focusFrame, focusedTile,
+  Given, When, Then, expect, openWorkspace, openSettings, sectionTab, focusFrame, focusedTile,
   gridCell, selectedTiles, enterFocusView, closeFocusView, speciesAssignKey, speciesBadge, speciesFilter,
 } from './support/world';
 import { autoAdvanceCheckbox, waitForAutomaticSave } from './support/flows';
@@ -131,27 +131,35 @@ Then('{string} taps in text entry and help dialogs make no tag changes', async (
   expect(s3.text(BUCKET, csvKey)).toBe(before);
 });
 
-Then('a {string} interrupts {string} without tagging', async ({ page, context, s3 }, interruption: string, modifier: string) => {
+Then('a {string} interrupts {string} without tagging', async ({ page, s3 }, interruption: string, modifier: string) => {
   const before = s3.text(BUCKET, csvKey);
   await page.keyboard.down(keyCode(modifier));
   if (interruption === 'pointer') await gridCell(page, 'IMG004.JPG').click();
   else if (interruption === 'wheel') await page.mouse.wheel(0, 80);
   else {
-    // Playwright pins headless pages as focused. Disable that emulation while
-    // another tab is active so Chrome emits a genuine page blur transition.
-    const cdp = await context.newCDPSession(page);
-    const other = await context.newPage();
-    try {
-      await other.bringToFront();
-      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
-      await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
-    } finally {
-      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-      await cdp.detach(); await other.close(); await page.bringToFront();
-    }
+    // Dispatch the browser event directly: Playwright's headless focus
+    // emulation differs across CI platforms and may keep hasFocus() true.
+    await page.evaluate(() => window.dispatchEvent(new FocusEvent('blur')));
   }
   await page.keyboard.up(keyCode(modifier)); await waitForAutomaticSave(page);
   expect(s3.text(BUCKET, csvKey)).toBe(before);
+});
+
+When('the {string} Adjust control is focused', async ({ page }, control: string) => {
+  await page.getByRole('button', { name: 'Adjust ▾' }).click();
+  const target = control === 'Keep values' ? page.getByLabel('Keep values') : page.getByLabel('Brightness');
+  await target.focus();
+  await expect(target).toBeFocused();
+});
+
+Then('a standalone {string} tap tags Ghost once from the focused {string} control', async ({ page, s3 }, modifier: string, control: string) => {
+  const before = s3.text(BUCKET, csvKey);
+  const target = control === 'Keep values' ? page.getByLabel('Keep values') : page.getByLabel('Brightness');
+  await expect(target).toBeFocused();
+  await tap(page, modifier);
+  await waitForAutomaticSave(page);
+  expect(rowsFor(s3.text(BUCKET, csvKey), 'IMG002.JPG').map(row => [row.scientificName, row.count])).toEqual([['Casper', 1]]);
+  expect(s3.text(BUCKET, csvKey)).not.toBe(before);
 });
 
 Then('{string} applies Ghost to the selection once and advances once', async ({ page, s3 }, modifier: string) => {

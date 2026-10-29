@@ -72,8 +72,20 @@ Feature: Bind standalone Shift and Control without stealing combinations
       | Control  | pointer      |
       | Shift    | wheel        |
       | Control  | wheel        |
-      | Shift    | focus loss   |
-      | Control  | focus loss   |
+      | Shift    | blur event   |
+      | Control  | blur event   |
+
+  Scenario Outline: Modifier bindings work while Adjust controls are focused
+    Given a modifier tagging workspace in "Focus"
+    And "<modifier>" is assigned to Ghost with a standalone tap
+    When the "<control>" Adjust control is focused
+    Then a standalone "<modifier>" tap tags Ghost once from the focused "<control>" control
+    Examples:
+      | modifier | control     |
+      | Shift    | brightness |
+      | Control  | brightness |
+      | Shift    | Keep values |
+      | Control  | Keep values |
 
   Scenario Outline: Selected images and automatic advance retain their scope
     Given a modifier tagging workspace in "<view>"

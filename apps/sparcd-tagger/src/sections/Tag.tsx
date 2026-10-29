@@ -956,7 +956,8 @@ export function Tag() {
     const gesture = modifierGesture.current;
     const contextFor = (target: EventTarget | null) => {
       const s = stateRef.current;
-      if (s.isModalOpen() || s.showCheatsheet || isTypingTarget(target) || isMediaTarget(target)) return null;
+      const typingTarget = isTypingTarget(target) && !isRangeTarget(target) && !isKeepValuesTarget(target);
+      if (s.isModalOpen() || s.showCheatsheet || typingTarget || isMediaTarget(target)) return null;
       const context = modifierContextRef.current;
       return s.capturingFor || context.identityReady ? context : null;
     };
