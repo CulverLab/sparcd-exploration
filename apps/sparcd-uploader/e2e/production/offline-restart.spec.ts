@@ -102,6 +102,28 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     expect(record.tags['SDCARD/OFFLINE.JPG'][0].scientificName).toBe('Canis latrans');
     expect(record.preparedSpecies.species.length).toBeGreaterThan(0);
     expect(s3Requests).toEqual([]);
+    // A returned offline batch can reopen the same tagging session without login.
+    const edit = page.getByRole('button', { name: 'Edit tags', exact: true });
+    await expect(edit).toBeEnabled();
+    await edit.click();
+    await page.waitForURL(/\/tagger\/\?batch=/);
+    await expect(page.locator('button[title="OFFLINE.JPG"]')).toContainText('Coyote');
+    const [reopened] = await app.readFlipRecords();
+    expect(reopened.id).toBe(record.id);
+    expect(reopened.preparedSpecies).toEqual(record.preparedSpecies);
+    expect(reopened.tags).toEqual(record.tags);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.locator('#user').fill('offline-person');
+    await page.getByRole('button', { name: 'Tag', exact: true }).click();
+    await page.getByRole('button', { name: 'Done · back to Uploader' }).click();
+    await page.waitForURL(/\/uploader\/\?flip=/);
+    if (await later.isVisible()) await later.click();
+    await page.getByRole('button', { name: 'Reselect folder instead', exact: true }).click();
+    await app.seedPickedFolder(specs);
+    await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+    await app.waitForInspected();
+    expect((await app.readFlipRecords())[0].tags).toEqual(record.tags);
+    expect(s3Requests).toEqual([]);
     await verifyRecoveredUpload(app, context!, 'OFFLINE.JPG', 'offline-person', {
       mountainRange: 'Saved mountain range',
       dateCollected: '2026-07-01',

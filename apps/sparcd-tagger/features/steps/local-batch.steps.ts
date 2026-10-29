@@ -4,6 +4,7 @@
 
 import { DEFAULT_SPECIES } from '../../test/fixtures/defaultSpecies';
 import type { Page } from '@playwright/test';
+import { deriveFlipOwnerScope } from '@sparcd/flip';
 import {
   Given,
   When,
@@ -13,22 +14,27 @@ import {
   gridCell,
   speciesApply,
   speciesFilter,
+  ENDPOINT,
 } from './support/world';
 
 const BATCH_ID = 'handed-over-batch';
 const RETURN_URL = '/sparcd-exploration/uploader/?flip=' + BATCH_ID;
 const FILES = ['IMG001.JPG', 'IMG002.JPG', 'IMG003.JPG'];
+const batchOwnerScope = () => deriveFlipOwnerScope({ endpoint: ENDPOINT, region: 'us-east-1', accessKey: 'testkey', secure: false });
 
 type FlipRow = {
   id: string;
+  ownerScope?: string;
+  files: unknown[];
   tags: Record<string, { scientificName: string; commonName: string; count: number }[]>;
   taggerUser?: string;
 };
 
 /** Open the tagger on a batch id. The first visit also creates the shared
  *  database, which is what lets the seeding below open it by name. */
-async function openBatch(page: Page, id: string): Promise<void> {
-  await page.goto(`${APP_URL}?batch=${id}`);
+async function openBatch(page: Page, id: string, scope?: string): Promise<void> {
+  const ownerScope = scope ?? await batchOwnerScope();
+  await page.goto(`${APP_URL}?batch=${id}&ownerScope=${ownerScope}`);
 }
 
 /** Write the record the Uploader would have written. Thumbnails are real bytes
@@ -36,7 +42,7 @@ async function openBatch(page: Page, id: string): Promise<void> {
  *  the "thumbnails only" case a reselect-required batch lands in. */
 async function seedBatch(page: Page): Promise<void> {
   await page.evaluate(
-    async ({ id, returnUrl, files, species }) => {
+    async ({ id, returnUrl, files, species, ownerScope }) => {
       // A 1×1 GIF — the smallest thing a browser will decode.
       const gif = Uint8Array.from(
         atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
@@ -53,6 +59,7 @@ async function seedBatch(page: Page): Promise<void> {
           v: 2,
           createdAt: new Date().toISOString(),
           returnUrl,
+          ownerScope,
           // Everything the Uploader's Inspect pass would have established, so
           // the seed stays a faithful stand-in for a real hand-off.
           files: files.map((fileName, i) => ({
@@ -70,13 +77,13 @@ async function seedBatch(page: Page): Promise<void> {
             thumb: new Blob([gif], { type: 'image/gif' }),
           })),
           tags: {},
-          preparedSpecies: { v: 1, endpoint: 'https://prepared.test', account: 'prepared-user', collectionKey: 'bucket::prepared', collectionName: 'Prepared collection', sourceBucket: 'bucket', sourceKey: 'Collections/prepared/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'prepared', overrides: {}, species },
+          preparedSpecies: { v: 2, endpoint: 'https://prepared.test', ownerScope, collectionKey: 'bucket::prepared', collectionName: 'Prepared collection', sourceBucket: 'bucket', sourceKey: 'Collections/prepared/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'prepared', overrides: {}, species },
         });
         tx.oncomplete = () => resolve();
       });
       db.close();
     },
-    { id: BATCH_ID, returnUrl: RETURN_URL, files: FILES, species: DEFAULT_SPECIES },
+    { id: BATCH_ID, returnUrl: RETURN_URL, files: FILES, species: DEFAULT_SPECIES, ownerScope: await batchOwnerScope() },
   );
 }
 
@@ -119,6 +126,24 @@ async function patchBatch(page: Page, patch: Record<string, unknown>): Promise<v
   );
 }
 
+async function removeBatchOwner(page: Page): Promise<void> {
+  await page.evaluate(async (id: string) => {
+    const open = indexedDB.open('sparcd-flip');
+    const db: IDBDatabase = await new Promise((resolve) => { open.onsuccess = () => resolve(open.result); });
+    await new Promise<void>((resolve) => {
+      const store = db.transaction('records', 'readwrite').objectStore('records');
+      const get = store.get(id);
+      get.onsuccess = () => {
+        const row = get.result;
+        delete row.ownerScope;
+        store.put(row);
+      };
+      store.transaction.oncomplete = () => resolve();
+    });
+    db.close();
+  }, BATCH_ID);
+}
+
 // The Uploader is a different app on the same origin; stand in for it so the
 // Done button's navigation resolves.
 async function stubUploader(page: Page): Promise<void> {
@@ -151,11 +176,65 @@ Given('the batch points somewhere other than the Uploader to return to', async (
   await expect(gridCell(page, 'IMG001.JPG')).toBeVisible();
 });
 
+When('the batch is opened while a different login is connected', async ({ page }) => {
+  await page.evaluate(({ endpoint }) => {
+    sessionStorage.setItem('sparcd-connection-tab', JSON.stringify({
+      endpoint, accessKey: 'different-login', secretKey: 'test-secret', region: 'us-east-1', secure: false, forcePathStyle: true,
+    }));
+  }, { endpoint: ENDPOINT });
+  await openBatch(page, BATCH_ID);
+});
+
+When('the batch is opened at a different endpoint with the same login', async ({ page }) => {
+  await page.evaluate(() => {
+    sessionStorage.setItem('sparcd-connection-tab', JSON.stringify({
+      endpoint: 'https://other-storage.test', accessKey: 'testkey', secretKey: 'test-secret', region: 'us-east-1', secure: false, forcePathStyle: true,
+    }));
+  });
+  await openBatch(page, BATCH_ID);
+});
+
+When('a legacy handoff with no owner scope is opened', async ({ page }) => {
+  await removeBatchOwner(page);
+  await openBatch(page, BATCH_ID);
+});
+
+Then('the handoff is blocked with owner guidance and its stored Inspect data is unchanged', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'No such batch' })).toBeVisible();
+  await expect(page.getByText(/not available for the connected login/)).toBeVisible();
+  const row = await readBatch(page);
+  expect(row?.ownerScope).toBeDefined();
+  expect(row?.files).toHaveLength(FILES.length);
+  expect(JSON.stringify(row)).not.toContain('testkey');
+  expect(JSON.stringify(row)).not.toContain('test-secret');
+});
+
+Then('the legacy handoff stays quarantined and is not deleted', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'No such batch' })).toBeVisible();
+  const row = await readBatch(page);
+  expect(row?.ownerScope).toBeUndefined();
+  expect(row?.files).toHaveLength(FILES.length);
+});
+
 // --- opening ----------------------------------------------------------------
 
 Then('no connection screen is shown', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Connect' })).toHaveCount(0);
   await expect(page.locator('#endpoint')).toHaveCount(0);
+});
+
+Then('the local record contains its owner scope and no login credentials', async ({ page }) => {
+  const row = await readBatch(page);
+  expect(row?.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+  expect(JSON.stringify(row)).not.toContain('testkey');
+  expect(JSON.stringify(row)).not.toContain('testsecret');
+});
+
+Then('the owner scope survives local tagging unchanged', async ({ page }) => {
+  const row = await readBatch(page);
+  expect(row?.ownerScope).toBe(await batchOwnerScope());
+  expect(JSON.stringify(row)).not.toContain('testkey');
+  expect(JSON.stringify(row)).not.toContain('testsecret');
 });
 
 Given('the local batch identity is set to Anita', async ({ page }) => {

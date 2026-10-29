@@ -25,6 +25,8 @@ When('the live shared account changes during local tagging', async ({ app }) => 
   try {
     await app.s3.install(sibling, S3_ORIGIN);
     await sibling.goto('/sparcd-exploration/uploader/');
+    // A sibling inherits the shared session; end it before connecting another account.
+    await sibling.getByRole('button', { name: 'Logout', exact: true }).click();
     await expect(sibling.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
     await sibling.fill('#endpoint', S3_ORIGIN);
     await sibling.fill('#accessKey', 'other-person');
@@ -47,7 +49,7 @@ When('master refresh is attempted', async ({ app }) => {
   await app.page.context().setOffline(false);await response;
 });
 Then('the last valid catalog preserves Inspect and optional tagging',async({app})=>{
-  expect(await app.cachedSpecies()).toMatchObject({sourceHash:app.notes.originalMaster.sourceHash,species:app.notes.originalMaster.species,account:app.notes.originalMaster.account});
+  expect(await app.cachedSpecies()).toMatchObject({sourceHash:app.notes.originalMaster.sourceHash,species:app.notes.originalMaster.species,ownerScope:app.notes.originalMaster.ownerScope});
   await expect(app.page.getByRole('button',{name:'Tag species before upload',exact:true})).toBeEnabled();
   await expect(app.continueButton()).toBeEnabled();expect(await app.listedFiles()).toHaveLength(4);
 });

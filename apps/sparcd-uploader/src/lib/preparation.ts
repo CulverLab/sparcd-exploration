@@ -2,7 +2,7 @@ import { loadMasterSpecies } from './masterSpecies';
 // The pre-upload journal is separate from real-upload sessions and credentials.
 // A single IndexedDB transaction replaces the snapshot: interrupted writes keep
 // the previous version. Original File bytes never enter this record.
-import { flipDb, readFlipRecord, validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, flipDb, readFlipRecord, validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import { useStore, type FileEntry } from '../store';
 import { reconcileReselect, restoreFromHandle, type RestoreOk } from './resume';
 import type { ScannedFile } from './scanFiles';
@@ -209,7 +209,9 @@ export async function recoverPreparationFromHandle(saved: LocalPreparation): Pro
 }
 async function applyRecoveredPreparation(saved: LocalPreparation, result: Pick<RestoreOk, 'attached' | 'problems' | 'resolved'>, guard: () => void, dirHandle: FileSystemDirectoryHandle | null): Promise<void> {
   if (!result.attached.size && result.problems.length) throw new Error(result.problems.map(p => `${p.fileName}: ${p.reason}`).join('; ') + '. Your saved preparation is unchanged. Reselect the original folder.');
-  const flip = saved.flipId ? await readFlipRecord(saved.flipId) : null;
+  const recoveryConfig = useStore.getState().s3Config;
+  const ownerScope = recoveryConfig ? await deriveFlipOwnerScope(recoveryConfig) : undefined;
+  const flip = saved.flipId && ownerScope ? await readFlipRecord(saved.flipId, ownerScope) : null;
   guard();
   const files: FileEntry[] = saved.files.map(({ lastModified, ...entry }) => {
     const fresh = result.resolved.get(entry.relPath);

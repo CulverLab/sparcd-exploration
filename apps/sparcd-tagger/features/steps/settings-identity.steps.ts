@@ -27,7 +27,7 @@ Then('Settings has the required section order and disconnect guidance', async ({
   await expect(preferences).toHaveClass(/border-t/);
   await preferences.getByLabel('Group rapid sequences into bursts').check();
   await expect(preferences.locator('#burst')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Disconnect', exact: true })).toHaveAccessibleDescription("Logs you out after pending saves finish. Your saved Undo remains scoped to this account in this browser. Disconnect before leaving a shared or public computer.");
+  await expect(page.getByRole('button', { name: 'Disconnect', exact: true })).toHaveAccessibleDescription(/Disconnect ends this storage session.*Local handoffs can be kept/);
 });
 Then('the reordered Settings controls remain usable on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 860 });

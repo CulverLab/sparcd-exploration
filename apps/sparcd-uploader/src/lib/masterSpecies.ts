@@ -1,5 +1,5 @@
 import { loadSpeciesVocabulary, SPECIES_KEY } from '@sparcd/s3-safe';
-import { loadPreparedSpecies, savePreparedSpecies, validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, loadPreparedSpecies, savePreparedSpecies, validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import { keyProfileId, useKeyBindings } from '@sparcd/auth-ui';
 import type { S3Config } from '@sparcd/types';
 import { getClient } from './s3';
@@ -18,7 +18,7 @@ export async function refreshMasterSpecies(cfg: S3Config, current: () => boolean
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(speciesFingerprint(loaded.species)));
   const profileId = keyProfileId(cfg.endpoint, cfg.accessKey);
   const snapshot: PreparedSpecies = {
-    v: 1, endpoint: cfg.endpoint, account: cfg.accessKey, collectionKey: SPECIES_KEY, collectionName: 'Settings master list',
+    v: 2, endpoint: cfg.endpoint, ownerScope: await deriveFlipOwnerScope(cfg), collectionKey: SPECIES_KEY, collectionName: 'Settings master list',
     sourceBucket: loaded.sourceBucket, sourceKey: loaded.sourceKey,
     sourceHash: Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join(''),
     preparedAt: new Date().toISOString(), profileId,

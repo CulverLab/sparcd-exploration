@@ -129,6 +129,11 @@ Then('the real Tagger opens the batch written by the Uploader', async ({ app }) 
   const [record] = await app.readFlipRecords();
   expect(record.id).toBe(app.notes.flipId);
   expect(record.files).toHaveLength(4);
+  expect(record.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+  expect(new URL(app.page.url()).searchParams.get('ownerScope')).toBe(record.ownerScope);
+  expect(JSON.stringify(record)).not.toContain('testkey');
+  expect(JSON.stringify(record)).not.toContain('testsecret');
+  app.notes.ownerScope = record.ownerScope;
 });
 
 When('Coyote is applied in the real Tagger', async ({ app }) => {
@@ -165,6 +170,9 @@ Then('the Uploader receives Coyote from the shared hand-off record', async ({ ap
 Then('the hand-off records Anita as the tagger', async ({ app }) => {
   const [record] = await app.readFlipRecords();
   expect(record.taggerUser).toBe('anita');
+  expect(record.ownerScope).toBe(app.notes.ownerScope);
+  expect(JSON.stringify(record)).not.toContain('testkey');
+  expect(JSON.stringify(record)).not.toContain('testsecret');
 });
 
 // --- coming back ------------------------------------------------------------
