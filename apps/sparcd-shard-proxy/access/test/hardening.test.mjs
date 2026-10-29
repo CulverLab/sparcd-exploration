@@ -952,6 +952,20 @@ describe('a membership is a set of permissions', () => {
       name: 'Ana', email: 'ana@example.org', memberships: [{ bucket: COLLECTION, access: 'upload' }],
     }), { code: 'invalid' });
     assert.equal(store.people().length, before, 'no person was left behind');
+    for (const [memberships, code] of [
+      [[{ bucket: 'sparcd-nope', access: ['look'] }], 'not_found'],
+      [{}, 'invalid'],
+      [[null], 'invalid'],
+    ]) {
+      await assert.rejects(call('admin', 'POST', '/-/admin/people', {
+        name: 'Ana', email: 'ana@example.org', memberships,
+      }), { code }, JSON.stringify(memberships));
+    }
+    assert.equal(store.people().length, before, 'no person was left behind');
+    for (const members of [[null], [{ personId: 'r1', access: ['run'] }, { personId: 'r1', access: ['look'] }]]) {
+      await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, { members },
+        { 'if-match': '"members"' }), { code: 'invalid' }, JSON.stringify(members));
+    }
   });
 
   test('the last runner is whoever holds run, with or without anything else', async () => {

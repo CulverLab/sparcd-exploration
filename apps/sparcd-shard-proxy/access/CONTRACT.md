@@ -197,7 +197,8 @@ Admin only:
   `lastActiveAt` is an ISO 8601 instant or `null`.
 - `POST /-/admin/people` `{ name, email, admin?, memberships?: [{ bucket, access, exactLocations? }] }`
   → `{ person, invite: { token, expiresAt } }` (token valid 7 days, single use; the app builds the link).
-  Memberships are checked before the person is created.
+  Memberships are checked before the person is created: an unknown bucket is 404
+  `not_found`, a malformed entry 400 `invalid`.
 
 In every request body, `access` is a non-empty array of permission names. A string,
 an empty array, or an unknown name is 400 `invalid`. Repeats are dropped, the order is
@@ -216,6 +217,7 @@ made canonical, and `look` is added to `identify` and `run`.
 - `PUT /-/admin/collections/:bucket/members` `{ members: [{ personId, access, exactLocations }] }`
   → `{ members, membersVersion }`. Requires `If-Match: <membersVersion>`, or
   `If-None-Match: *` when it was `null`. A stale version is 412 `changed_elsewhere`.
+  A person may appear in the list once; a repeat is 400 `invalid`.
   People whose set on that collection includes `run` may call it too. At least one member with `run`
   whose person is active is required (409 `last_runner`): a list whose only runner is
   still `invited`, or `paused`, is refused.

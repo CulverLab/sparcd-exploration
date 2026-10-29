@@ -321,7 +321,12 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     // Checked before the person exists, so a bad membership cannot leave
     // behind an invited person nobody asked for.
+    if (input.memberships !== undefined && !Array.isArray(input.memberships)) {
+      fail('invalid', 'memberships must be a list');
+    }
     for (const m of input.memberships ?? []) {
+      if (!m || typeof m !== 'object') fail('invalid', 'each membership must be an object');
+      if (!store.collection(m.bucket)) fail('not_found', `no such collection ${m.bucket}`);
       parseAccess(m.access);
       parseExactLocations(m.exactLocations);
     }
@@ -455,6 +460,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   /** The member as it will be stored, or a 400. */
   function validMember(m) {
+    if (!m || typeof m !== 'object') fail('invalid', 'each member must be an object');
     if (!store.person(m.personId)) fail('invalid', `no such person ${m.personId}`);
     parseExactLocations(m.exactLocations);
     return { ...m, access: parseAccess(m.access) };
@@ -530,6 +536,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
     if (input.members !== undefined && !Array.isArray(input.members)) fail('invalid', 'members must be a list');
     const members = (input.members ?? []).map((m) => stamp(actor, validMember(m)));
+    // Rules read a person's first entry; a second one would only fool the runner check.
+    if (new Set(members.map((m) => m.personId)).size !== members.length) {
+      fail('invalid', 'a person may appear once');
+    }
     requireRunner(members);
 
     const before = collection.members;
