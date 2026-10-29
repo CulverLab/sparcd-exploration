@@ -80,6 +80,8 @@ jobs:
 
       - name: Build admin
         run: pnpm --filter sparcd-admin build
+        env:
+          PAGES_ROOT: /${{ github.event.repository.name }}/
 
       - name: Build coordinated offline release
         run: node scripts/build-offline.mjs

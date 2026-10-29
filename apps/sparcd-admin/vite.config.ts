@@ -6,7 +6,8 @@ const pkg = (name: string) => fileURLToPath(new URL(`../../packages/${name}/src/
 const page = (name: string) => fileURLToPath(new URL(name, import.meta.url))
 
 export default defineConfig({
-  base: '/sparcd-exploration/admin/',
+  // A fork with another repo name sets PAGES_ROOT.
+  base: `${process.env.PAGES_ROOT ?? '/sparcd-exploration/'}admin/`,
   plugins: [react()],
   resolve: {
     alias: {
