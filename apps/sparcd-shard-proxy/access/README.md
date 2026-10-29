@@ -23,7 +23,7 @@ which key pair a volunteer is given.
 | `store.mjs` | people and memberships, cached, reloaded on generation change |
 | `activity.mjs` | the batched NDJSON writer and the two activity queries |
 | `api.mjs` | the `/-/` JSON API |
-| `cli.mjs` | `init`, which writes the first admin |
+| `cli.mjs` | `init`, which writes the first admin, and `import`, which brings in an existing login |
 | `upstream.mjs` | the one upstream client |
 
 ## Run it locally
@@ -44,6 +44,26 @@ node access/server.mjs
 an admin exists. Everyone after that is invited through
 `POST /-/admin/people`, and joins with `POST /-/join`.
 
+## Keep an existing login
+
+People who already sign in to SPARC'd can keep the access key and secret they
+use today. `import` stores them as that person's key, wrapped under
+`ACCESS_MASTER_KEY` like an issued one, with the same environment as `init`:
+
+```sh
+IMPORT_SECRET='...' node access/cli.mjs import \
+  --name "Ana Pérez" --email ana@example.org --access-key <their key id> [--admin]
+```
+
+The secret comes from `--secret`, or from `IMPORT_SECRET` when the flag is
+absent, which keeps it out of shell history. It is never printed. The person is
+active straight away with no collections; an admin grants those in the admin
+app. A reset retires the imported key like any other.
+
+`import` refuses a key id of fewer than 3 or more than 128 characters, or one
+holding a space or `/`; a secret under 8 characters; a key id or email that
+already belongs to a person; and a missing name or email.
+
 ## Environment
 
 | variable | default | meaning |
@@ -55,7 +75,8 @@ an admin exists. Everyone after that is invited through
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | the upstream credential |
 | `BUCKET_NAMESPACE` | `` | prefix every upstream bucket carries |
 | `BUCKET_ALLOW` | `sparcd,sparcd-*` | globs a client bucket must match |
-| `ACCESS_MASTER_KEY` | — | 32 bytes, base64; wraps the issued secrets |
+| `ACCESS_MASTER_KEY` | — | 32 bytes, base64; wraps the issued and imported secrets |
+| `IMPORT_SECRET` | — | read by `cli.mjs import` when `--secret` is absent |
 | `PORT` | `8787` | loopback listen port |
 | `ALLOW_ORIGINS` | `*` | CORS; a comma-separated list pins it |
 | `MAX_BODY_BYTES` | `67108864` | the largest single request body |
