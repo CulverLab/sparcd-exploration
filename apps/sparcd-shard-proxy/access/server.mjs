@@ -514,8 +514,12 @@ export async function createAccessProxy(input) {
     const op = classify({
       method: req.method, bucket: clientBucket, key, query: url.searchParams, headers,
     });
+    // A repeated `prefix` is one the upstream may read differently from here,
+    // so it counts as no prefix at all.
+    const prefixes = url.searchParams.getAll('prefix');
     const verdict = decide(person, {
-      op, key, isSettings, uuid: collection?.uuid, level: membership?.access ?? null,
+      op, key, isSettings, uuid: collection?.uuid, access: membership?.access ?? null,
+      prefix: prefixes.length === 1 ? prefixes[0] : '',
     });
     if (!verdict.allow) return denied(verdict.reason);
 

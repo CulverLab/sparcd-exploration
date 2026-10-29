@@ -19,10 +19,7 @@ async function invite(page: import('@playwright/test').Page, person: {
   const form = page.getByRole('region', { name: 'Add a person' })
   await form.getByLabel('Name').fill(person.name)
   await form.getByLabel('Email').fill(person.email)
-  await form.getByLabel('Also add to a collection').selectOption({ label: person.collection })
-  // The label carries the choice and its one-line explanation, so the
-  // accessible name is both — match on the choice itself.
-  await form.getByRole('radio', { name: person.access }).check()
+  await form.getByRole('checkbox', { name: `${person.access} for ${person.collection}` }).check()
   await form.getByRole('button', { name: 'Add person' }).click()
   const link = await form.getByLabel('Link to send').inputValue()
   await form.getByRole('button', { name: 'Done' }).click()

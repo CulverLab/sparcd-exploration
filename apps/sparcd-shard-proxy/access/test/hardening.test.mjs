@@ -592,8 +592,8 @@ describe('a revocation is in force before the reload confirms it', () => {
     const bucket = `sparcd-${uuid}`;
     const { store, reads } = stubStore([`t-${bucket}`]);
     await store.reload();
-    await store.saveMembers(bucket, [{ personId: 'p1', access: 'run' }], null);
-    assert.equal(store.membership('p1', bucket)?.access, 'run', 'setup: the member is in');
+    await store.saveMembers(bucket, [{ personId: 'p1', access: ['look', 'run'] }], null);
+    assert.deepEqual(store.membership('p1', bucket)?.access, ['look', 'run'], 'setup: the member is in');
 
     reads.failing = true;
     await assert.rejects(() => store.saveMembers(bucket, [], store.collection(bucket).membersEtag),
@@ -871,8 +871,9 @@ function memoryUpstream(people, members) {
 async function accessApi(upstream) {
   const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
   await store.reload();
+  const events = [];
   const activity = {
-    record() {},
+    record(event) { events.push(event); },
     drain: async () => {},
     query: async () => ({ events: [], truncated: false }),
     downloads: async () => ({ events: [] }),
@@ -887,10 +888,101 @@ async function accessApi(upstream) {
       body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
     });
   };
-  return { store, call };
+  return { store, call, events };
 }
 
 const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
+
+describe('a membership is a set of permissions', () => {
+  const membersKey = `t-${COLLECTION}/Collections/${UUID}/members.json`;
+  const stored = (upstream) => JSON.parse(upstream.objects.get(membersKey).body);
+  const legacy = () => memoryUpstream(
+    [admin, { id: 'r1', status: 'active' }, { id: 'u1', status: 'active' }, { id: 'p3', status: 'active' }],
+    [{ personId: 'r1', access: 'run' }, { personId: 'u1', access: 'upload', exactLocations: true }],
+  );
+  const one = (target) => `/-/admin/collections/${COLLECTION}/members/${target}`;
+
+  test('a stored level reads as the set it used to include, everywhere it is shown', async () => {
+    const { call } = await accessApi(legacy());
+    const who = await call('u1', 'GET', '/-/whoami');
+    assert.deepEqual(who.body.collections.map((c) => [c.bucket, c.access, c.exactLocations]),
+      [[COLLECTION, ['look', 'identify', 'upload'], true]]);
+    const people = await call('admin', 'GET', '/-/admin/people');
+    assert.deepEqual(people.body.people.find((p) => p.id === 'r1').collections[0].access,
+      ['look', 'identify', 'upload', 'run']);
+    const collections = await call('admin', 'GET', '/-/admin/collections');
+    assert.deepEqual(collections.body.collections[0].members.map((m) => m.access),
+      [['look', 'identify', 'upload', 'run'], ['look', 'identify', 'upload']]);
+  });
+
+  test('a write stores arrays under schema 2, legacy entries included', async () => {
+    const upstream = legacy();
+    const { call } = await accessApi(upstream);
+    const res = await call('admin', 'PUT', one('p3'), { access: ['identify'] });
+    assert.equal(res.status, 200);
+    const file = stored(upstream);
+    assert.equal(file.schemaVersion, 2);
+    assert.deepEqual(file.members.map((m) => [m.personId, m.access]), [
+      ['r1', ['look', 'identify', 'upload', 'run']],
+      ['u1', ['look', 'identify', 'upload']],
+      ['p3', ['look', 'identify']],
+    ]);
+  });
+
+  test('the API adds look to identify and run, sorts, and drops repeats', async () => {
+    const upstream = legacy();
+    const { call } = await accessApi(upstream);
+    await call('admin', 'PUT', one('p3'), { access: ['run', 'upload', 'run'] });
+    assert.deepEqual(stored(upstream).members.find((m) => m.personId === 'p3').access, ['look', 'upload', 'run']);
+    await call('admin', 'PUT', one('p3'), { access: ['upload'] });
+    assert.deepEqual(stored(upstream).members.find((m) => m.personId === 'p3').access, ['upload']);
+  });
+
+  test('anything but a non-empty array of known permissions is a 400', async () => {
+    const upstream = legacy();
+    const { call, store } = await accessApi(upstream);
+    for (const access of ['look', 'run', [], ['owner'], ['look', 3], null, undefined, { look: true }]) {
+      await assert.rejects(call('admin', 'PUT', one('p3'), { access }), { code: 'invalid' }, JSON.stringify(access));
+      await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
+        members: [{ personId: 'r1', access: ['run'] }, { personId: 'p3', access }],
+      }, { 'if-match': '"members"' }), { code: 'invalid' }, JSON.stringify(access));
+    }
+    const before = store.people().length;
+    await assert.rejects(call('admin', 'POST', '/-/admin/people', {
+      name: 'Ana', email: 'ana@example.org', memberships: [{ bucket: COLLECTION, access: 'upload' }],
+    }), { code: 'invalid' });
+    assert.equal(store.people().length, before, 'no person was left behind');
+  });
+
+  test('the last runner is whoever holds run, with or without anything else', async () => {
+    const upstream = legacy();
+    const { call } = await accessApi(upstream);
+    // r1 keeps run alone and is still the runner.
+    assert.equal((await call('admin', 'PUT', one('r1'), { access: ['run'] })).status, 200);
+    await assert.rejects(call('admin', 'PUT', one('r1'), { access: ['look', 'identify', 'upload'] }),
+      { code: 'last_runner' });
+    await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
+      members: [{ personId: 'r1', access: ['look', 'upload'] }, { personId: 'u1', access: ['upload'] }],
+    }, { 'if-match': (await call('admin', 'GET', '/-/admin/collections')).body.collections[0].membersVersion }),
+    { code: 'last_runner' });
+    assert.equal((await call('admin', 'PUT', one('u1'), { access: ['upload', 'run'] })).status, 200);
+    assert.equal((await call('admin', 'PUT', one('r1'), { access: ['look'] })).status, 200);
+  });
+
+  test('a runner without admin may edit members; an uploader may not', async () => {
+    const { call } = await accessApi(legacy());
+    assert.equal((await call('r1', 'PUT', one('p3'), { access: ['look'] })).status, 200);
+    await assert.rejects(call('u1', 'PUT', one('p3'), { access: ['look'] }), { code: 'forbidden' });
+  });
+
+  test('an access change records the sets before and after', async () => {
+    const { call, events } = await accessApi(legacy());
+    await call('admin', 'PUT', one('u1'), { access: ['upload'], exactLocations: true });
+    const changed = events.find((e) => e.detail?.change === 'changed');
+    assert.deepEqual(changed.detail.before, { access: ['look', 'identify', 'upload'], exactLocations: true });
+    assert.deepEqual(changed.detail.after, { access: ['upload'], exactLocations: true });
+  });
+});
 
 describe('activity filters the API takes', () => {
   test('an unparseable or reversed date is invalid, not a server error', async () => {
@@ -921,7 +1013,7 @@ describe('a collection keeps a runner who can act on it', () => {
     );
     const { call } = await accessApi(upstream);
     await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
-      members: [{ personId: 'r1', access: 'look' }, { personId: 'r2', access: 'run' }],
+      members: [{ personId: 'r1', access: ['look'] }, { personId: 'r2', access: ['run'] }],
     }, { 'if-match': '"members"' }), { code: 'last_runner' });
   });
 
@@ -995,7 +1087,7 @@ describe('two proxies cannot strand a collection between them', () => {
     assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
     await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
       { code: 'last_runner' });
-    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access === 'run'),
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access.includes('run')),
       'the removal was not put back');
   });
 
@@ -1041,7 +1133,7 @@ describe('two proxies cannot strand a collection between them', () => {
     afterWrite(upstream, membersKey, async () => {
       await one.store.reload();
       assert.equal((await one.call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members/p3`,
-        { access: 'look' })).status, 200);
+        { access: ['look'] })).status, 200);
     });
     await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
       { code: 'last_runner' });

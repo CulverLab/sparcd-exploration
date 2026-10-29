@@ -10,13 +10,7 @@ import {
 } from '../lib'
 
 const people = (page: Page) => page.getByRole('region', { name: 'People' })
-// The person list names a person's collections too, so an access row is picked
-// out by the two buttons only it carries.
-const accessRow = (page: Page, where: string) =>
-  people(page).getByRole('listitem')
-    .filter({ has: page.getByRole('button', { name: 'Remove' }) })
-    .filter({ hasText: where })
-    .first()
+const box = (page: Page, name: string) => people(page).getByRole('checkbox', { name })
 
 /** The proxy that made the change applies it at once; this outlasts a hiccup. */
 async function statusWithin(request: () => Promise<unknown>, want: number) {
@@ -53,29 +47,33 @@ test('one person moved into a collection, changed, and taken back out', async ({
   await search.fill('')
 
   await people(page).getByRole('button', { name: /Luis Park/ }).first().click()
-  await expect(people(page).getByText('Sky Islands 2026 · Can identify')).toBeVisible()
+  await expect(box(page, 'Can identify for Sky Islands 2026')).toBeChecked()
+  await expect(box(page, 'Can look for Research 1')).not.toBeChecked()
 
-  // Into a second collection, at the narrowest level.
-  await page.getByRole('button', { name: 'Add to a collection' }).click()
-  await people(page).getByLabel('Collection', { exact: true }).selectOption({ label: 'Research 1' })
-  await people(page).getByRole('radio', { name: 'Can look' }).check()
-  await page.getByRole('button', { name: 'Add to collection' }).click()
-  await expect(people(page).getByText('Research 1 · Can look')).toBeVisible()
+  // Into a second collection, able only to look.
+  await box(page, 'Can look for Research 1').check()
+  await page.getByRole('button', { name: 'Save access' }).click()
+  await expect(page.getByRole('button', { name: 'Save access' })).toBeDisabled()
+  await expect(box(page, 'Can look for Research 1')).toBeChecked()
   expect(await statusWithin(read, 200)).toBe(200)
   expect(await statusOf(write())).toBe(403)
 
-  // Widened, and the extra choice beside the level comes with it.
-  await accessRow(page, 'Research 1').getByRole('button', { name: 'Change' }).click()
-  await people(page).getByRole('radio', { name: 'Can identify' }).check()
-  await people(page).getByRole('checkbox', { name: 'Sees exact camera locations' }).check()
+  // Widened, with the location box beside it.
+  await box(page, 'Can identify for Research 1').check()
+  await box(page, 'Sees exact camera locations for Research 1').check()
   await page.getByRole('button', { name: 'Save access' }).click()
-  await expect(people(page).getByText('Research 1 · Can identify · sees exact locations')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save access' })).toBeDisabled()
+  await expect(box(page, 'Sees exact camera locations for Research 1')).toBeChecked()
   expect(await statusWithin(write, 200)).toBe(200)
 
-  // And taken away again.
-  await accessRow(page, 'Research 1').getByRole('button', { name: 'Remove' }).click()
-  await expect(people(page).getByText('Research 1 · Can identify · sees exact locations')).toHaveCount(0)
-  await expect(people(page).getByText('Sky Islands 2026 · Can identify')).toBeVisible()
+  // And taken away again: unticking Can look takes identify with it.
+  await box(page, 'Can look for Research 1').uncheck()
+  await expect(box(page, 'Can identify for Research 1')).not.toBeChecked()
+  await expect(people(page).getByRole('row', { name: /Research 1/ })).toContainText('Will be removed')
+  await page.getByRole('button', { name: 'Save access' }).click()
+  await expect(page.getByRole('button', { name: 'Save access' })).toBeDisabled()
+  await expect(people(page).getByText('Will be removed')).toHaveCount(0)
+  await expect(box(page, 'Can identify for Sky Islands 2026')).toBeChecked()
   expect(await statusWithin(read, 403)).toBe(403)
 
   // Both dangerous buttons ask first, and backing out changes nothing.

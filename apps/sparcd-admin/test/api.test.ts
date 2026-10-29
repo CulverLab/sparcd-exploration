@@ -85,9 +85,9 @@ describe('member writes carry the version', () => {
 
   it('puts and deletes one person at a time', async () => {
     seen.length = 0
-    await api.setMember('sparcd-aaa', 'p1', { access: 'upload', exactLocations: true })
+    await api.setMember('sparcd-aaa', 'p1', { access: ['upload'], exactLocations: true })
     expect(seen[0].method).toBe('PUT')
-    expect(JSON.parse(seen[0].body as string)).toEqual({ access: 'upload', exactLocations: true })
+    expect(JSON.parse(seen[0].body as string)).toEqual({ access: ['upload'], exactLocations: true })
     await api.removeMember('sparcd-aaa', 'p1')
     expect(seen[1].method).toBe('DELETE')
   })

@@ -34,7 +34,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
       uuid: 'aaa',
       name: 'Sky Islands 2026',
       organization: 'Sky Island Alliance',
-      members: [{ personId: 'p1', name: 'Ana Morales', access: 'upload', exactLocations: true }],
+      members: [{ personId: 'p1', name: 'Ana Morales', access: ['look', 'identify', 'upload'], exactLocations: true }],
       membersVersion: 'members-v1',
     }],
     events: [],
@@ -46,8 +46,8 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
   let version = 1
   const record = (name: string, ...args: unknown[]) => calls.push({ name, args })
   // The service's rule: only an active person counts as running a collection.
-  const activeRunners = (members: { personId: string; access: string }[]) =>
-    members.filter((member) => member.access === 'run' && data.people.find((one) => one.id === member.personId)?.status === 'active')
+  const activeRunners = (members: { personId: string; access: string[] }[]) =>
+    members.filter((member) => member.access.includes('run') && data.people.find((one) => one.id === member.personId)?.status === 'active')
   const lastRunner = () => new ApiError(409, 'last_runner', 'the collection would have no active run member')
   const leavesNoRunner = (before: CollectionAccess['members'], after: CollectionAccess['members']) =>
     activeRunners(before).length > 0 && activeRunners(after).length === 0
@@ -79,7 +79,7 @@ export function fakeApi(state: Partial<FakeApiState> = {}) {
     async listCollectionAccess() { record('listCollectionAccess'); return data.collections },
     async setMembers(
       bucket: string,
-      members: { personId: string; access: string; exactLocations: boolean }[],
+      members: { personId: string; access: string[]; exactLocations: boolean }[],
       membersVersion: string | null,
     ) {
       record('setMembers', bucket, members, membersVersion)
