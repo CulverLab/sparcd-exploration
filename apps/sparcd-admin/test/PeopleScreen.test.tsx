@@ -183,7 +183,7 @@ describe('one person at a time (contract 1.1)', () => {
   }
   const SOLE_RUNNER = 'Ana Morales is the only person running one of their collections. Have someone else run it first.'
 
-  it('asks for another runner before pausing a collection's only one', async () => {
+  it("asks for another runner before pausing a collection's only one", async () => {
     const { view } = await screen(soleRunner)
     await click(rowFor(view.host, 'Ana Morales'))
     await click(button(view.host, 'Pause access'))
