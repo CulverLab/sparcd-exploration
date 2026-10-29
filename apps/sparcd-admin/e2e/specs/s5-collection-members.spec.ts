@@ -7,7 +7,7 @@ import {
   bytes, collectionNamed, openSection, recall, s3, signInAsAdmin, statusOf, type Connection,
 } from '../lib'
 
-const RUNNER_SENTENCE = 'A collection always needs at least one person running it.'
+const RUNNER_SENTENCE = 'A collection always needs at least one person running it who has joined and is not paused.'
 
 const collections = (page: Page) => page.getByRole('region', { name: 'Collections' })
 const members = (page: Page) => page.getByRole('region', { name: 'People in this collection' })
