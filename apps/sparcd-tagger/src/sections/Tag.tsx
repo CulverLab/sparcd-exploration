@@ -18,6 +18,7 @@ import { correctedTimestamp, shiftTimestamp } from '@sparcd/camtrap';
 import tzlookup from 'tz-lookup';
 import { DisabledActionHint } from '../components/DisabledActionHint';
 import { SpeciesPanel } from '../components/SpeciesPanel';
+import { useSpeciesResults } from '../lib/useSpeciesResults';
 import { ResizableSplit } from '../components/ResizableSplit';
 import { AppliedSpecies } from '../components/AppliedSpecies';
 import { NeedExpertToggle } from '../components/NeedExpertToggle';
@@ -622,6 +623,7 @@ export function Tag() {
   const clearKey = useKeyBindings((state) => state.clearKey);
   const keysUnsaved = useKeyBindings((state) => state.unsaved);
   const speciesList = localRecord ? localRecord.preparedSpecies?.species ?? [] : species.data?.species ?? [];
+  const displayedSpecies = useSpeciesResults(speciesList, filter, recent, sortSpeciesByRecent);
 
   const bindingFor = (sci: string): string | null => {
     const k = effectiveKey(sci, speciesJsonKey(speciesList, sci), overrides);
@@ -921,7 +923,7 @@ export function Tag() {
     setShowCheatsheet,
     filterRef,
     openFindImage: openImageFind,
-    speciesList,
+    displayedSpecies,
     filter,
     view,
     setView,
@@ -1334,6 +1336,7 @@ export function Tag() {
     const canDetag = detagTargets.length > 0;
     return {
       species: speciesList,
+      displayedSpecies,
       showHelp: showSpeciesHelp,
       onHelpOpen: openSpeciesHelp,
       onHelpClose: closeSpeciesHelp,
@@ -1353,8 +1356,6 @@ export function Tag() {
       onStartCapture: setCapturingFor,
       onClearKey: clearKey,
       keysUnsaved,
-      recent,
-      sortByRecent: sortSpeciesByRecent,
       appliedSet: new Set(observations.map((o) => o.scientificName)),
       hasFocus: !!current,
       selectionCount: selected.size,
@@ -2215,7 +2216,7 @@ type HandlerState = {
   setShowCheatsheet: (v: boolean) => void;
   filterRef: React.RefObject<HTMLInputElement>;
   openFindImage: () => void;
-  speciesList: Species[];
+  displayedSpecies: Species[];
   filter: string;
   view: View;
   setView: (v: View) => void;
@@ -2378,14 +2379,7 @@ function handleKey(e: KeyboardEvent, s: HandlerState): void {
       if (e.key === 'Escape') s.filterRef.current?.blur();
       if (e.key === 'Enter') {
         e.preventDefault();
-        const q = s.filter.trim().toLowerCase();
-        const match =
-          q &&
-          s.speciesList.find(
-            (sp) =>
-              sp.commonName.toLowerCase().includes(q) ||
-              sp.scientificName.toLowerCase().includes(q),
-          );
+        const match = s.filter.trim() ? s.displayedSpecies[0] : undefined;
         if (match)
           s.apply({ scientificName: match.scientificName, commonName: match.commonName, count: 1 });
         s.filterRef.current?.blur();

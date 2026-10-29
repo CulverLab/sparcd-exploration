@@ -1,5 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import Fuse from 'fuse.js';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Species } from '../lib/species';
 import type { AppliedTag } from '../lib/drafts';
 import { encodeSpeciesDrag, SPECIES_DRAG_TYPE } from '../lib/speciesDrag';
@@ -13,6 +12,7 @@ import { SpeciesHelp } from './SpeciesHelp';
 
 export type SpeciesPanelProps = {
   species: Species[];
+  displayedSpecies: Species[];
   showHelp: boolean;
   onHelpOpen: () => void;
   onHelpClose: () => void;
@@ -29,8 +29,6 @@ export type SpeciesPanelProps = {
   onStartCapture: (scientificName: string) => void;
   onClearKey: (scientificName: string) => void;
   keysUnsaved: boolean; // the last key-settings write to localStorage failed
-  recent: string[]; // scientificNames, most-recent first
-  sortByRecent: boolean; // off → always alphabetical by common name; on → recent float to top
   appliedSet: Set<string>; // scientificNames applied on the focused image (✓ + add-only NO-OP)
   hasFocus: boolean; // an image is focused
   selectionCount: number; // >0 → applying a species hits the whole selection
@@ -55,34 +53,6 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
       if (recovered && document.activeElement === retryRef.current) props.filterRef.current?.focus();
     } finally { setRetrying(false); }
   }
-
-  const fuse = useMemo(
-    () =>
-      new Fuse(species, {
-        keys: ['commonName', 'scientificName'],
-        threshold: 0.34,
-        ignoreLocation: true,
-      }),
-    [species],
-  );
-
-  const ordered = useMemo(() => {
-    // An active search ranks by text relevance regardless of the setting below
-    // — overriding what someone's actively typing to find with alphabetical
-    // order would fight the search, not help it.
-    if (filter.trim()) return fuse.search(filter.trim()).map((r) => r.item);
-    const base = props.sortByRecent
-      ? species
-      : [...species].sort((a, b) => a.commonName.localeCompare(b.commonName));
-    if (!props.sortByRecent || !props.recent.length) return base;
-    const rank = new Map(props.recent.map((s, i) => [s, i]));
-    // Stable float: recents to the top in recency order, everything else as-is.
-    return [...base].sort((a, b) => {
-      const ra = rank.has(a.scientificName) ? rank.get(a.scientificName)! : Infinity;
-      const rb = rank.has(b.scientificName) ? rank.get(b.scientificName)! : Infinity;
-      return ra - rb;
-    });
-  }, [species, filter, fuse, props.recent, props.sortByRecent]);
 
   const trimmed = filter.trim();
   const exact = species.some(
@@ -144,7 +114,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
       )}
       {props.speciesLoading && !retrying && <p role="status" className="px-3 py-2 text-[13px] text-inkSoft">Loading species…</p>}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {ordered.map((s) => (
+        {props.displayedSpecies.map((s) => (
           <Row
             key={s.key}
             iconUrl={s.iconUrl}
@@ -177,7 +147,7 @@ export function SpeciesPanel(props: SpeciesPanelProps) {
           />
         )}
 
-        {!ordered.length && !trimmed && !props.speciesLoading && !props.speciesLoadError && !retrying && (
+        {!props.displayedSpecies.length && !trimmed && !props.speciesLoading && !props.speciesLoadError && !retrying && (
           <p className="p-4 text-[13px] text-inkMute font-body">No species in the vocabulary.</p>
         )}
       </div>

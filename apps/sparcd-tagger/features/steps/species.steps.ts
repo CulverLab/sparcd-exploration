@@ -113,7 +113,7 @@ Then('a popup explains how to use the species list', async ({ page }) => {
   await expect(dialog).toContainText('Press its assigned key');
   await expect(dialog).toContainText('Drag it onto an image to add it there');
   await expect(dialog).toContainText('Type to filter the visible list');
-  await expect(dialog).toContainText('Enter adds the first species in the original list');
+  await expect(dialog).toContainText('Enter adds the top displayed result');
   await expect(dialog).toContainText('A ✓ means that species is already on the focused image');
   await expect(dialog.getByRole('heading', { name: 'Reference photos' })).toBeVisible();
   await expect(dialog).toContainText('Click a thumbnail to see the reference image enlarged.');
