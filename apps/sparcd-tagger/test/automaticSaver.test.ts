@@ -241,3 +241,131 @@ describe('reconnection does not bypass paused recovery', () => {
     await resumed.resolve(false); expect(resumed.view.phase).toBe('saved'); expect(resumed.record.actions).toEqual([]);
   });
 });
+
+describe('Browse failure reasons', () => {
+  it.each([
+    ['AccessDenied', 403, 'repair'], ['InvalidAccessKeyId', 403, 'repair'],
+    ['InvalidArgument', 400, 'retry'], ['InternalError', 500, 'retrying'],
+  ] as const)('retains %s without consuming pending work and clears it after a successful retry', async (name, status, expected) => {
+    const s = services();
+    s.save = vi.fn().mockRejectedValueOnce(Object.assign(new Error(name), { name, $metadata: { httpStatusCode: status } })).mockResolvedValue(remote);
+    const saver = await start(s);
+    saver.accept(action('pending'));
+    expect(await saver.flush()).toBe(false);
+    const stored = await db.automatic.get('auto');
+    expect(stored?.saveFailure).toBe(expected);
+    expect(stored?.actions.map(a => a.id)).toEqual(['pending']);
+    expect(stored?.flight?.ids).toEqual(['pending']);
+    expect(saver.view.failure).toBe(expected === 'repair' ? 'repair' : expected === 'retry' ? 'retry' : undefined);
+    expect(await saver.retry()).toBe(true);
+    expect((await db.automatic.get('auto'))?.saveFailure).toBeUndefined();
+    expect((await db.automatic.get('auto'))?.actions).toEqual([]);
+  });
+});
+
+it.each([['AccessDenied', 403], ['InternalError', 503]] as const)('keeps a concurrent recovery conflict visible when recording %s', async (name, status) => {
+  const s = services();
+  s.save = vi.fn(async () => {
+    const current = (await db.automatic.get('auto'))!;
+    await db.automatic.put({ ...current, version: (current.version ?? 0) + 1,
+      actions: [...current.actions, action('other-tab')] });
+    throw Object.assign(new Error('failed'), { name, $metadata: { httpStatusCode: status } });
+  });
+  const saver = await start(s); saver.accept(action('first'));
+  expect(await saver.flush()).toBe(false);
+  expect(saver.view.phase).toBe('conflict');
+  expect((await db.automatic.get('auto'))?.actions.map(a => a.id)).toEqual(['first', 'other-tab']);
+  expect(await saver.retry()).toBe(false);
+  expect(s.save).toHaveBeenCalledTimes(1);
+});
+
+describe('read-only status checks after an Undo read failure', () => {
+  async function failedUndo() {
+    const s = services(), saver = await start(s);
+    saver.accept(action('saved-action')); await saver.flush();
+    s.current = vi.fn().mockRejectedValueOnce(new Error('media read denied')).mockResolvedValue(remote);
+    expect(await saver.undo()).toBe(false);
+    expect(saver.view.pending).toBe(false);
+    return { s, saver };
+  }
+  it('rechecks without saving, reversing, resolving, or changing the durable Undo record', async () => {
+    const { s, saver } = await failedUndo();
+    const before = await db.automatic.get('auto');
+    expect(await saver.recheck()).toBe(true);
+    expect(saver.view.phase).toBe('saved'); expect(saver.view.canEdit).toBe(true);
+    expect(s.current).toHaveBeenCalledTimes(2);
+    expect(s.save).toHaveBeenCalledTimes(1);
+    expect(s.reverse).not.toHaveBeenCalled(); expect(s.resolve).not.toHaveBeenCalled();
+    expect(await db.automatic.get('auto')).toEqual(before);
+    expect(saver.record.undo?.id).toBe('saved-action'); expect(saver.view.undoReason).toBe('');
+  });
+  it('prevents save, retry, and Undo from starting while the read-only check is running', async () => {
+    const { s, saver } = await failedUndo();
+    let complete!: () => void;
+    s.current = vi.fn(() => new Promise(resolve => { complete = () => resolve(remote); }));
+    const checking = saver.recheck(); await settle();
+    expect(saver.view.phase).toBe('loading'); expect(saver.view.canEdit).toBe(false);
+    expect(await saver.retry()).toBe(false); expect(await saver.flush()).toBe(false);
+    expect(await saver.undo()).toBe(false); expect(await saver.recheck()).toBe(false);
+    complete(); expect(await checking).toBe(true);
+    expect(s.save).toHaveBeenCalledTimes(1); expect(s.reverse).not.toHaveBeenCalled();
+  });
+  it('remains failed after a repeated read denial, retaining the same completed action', async () => {
+    const { s, saver } = await failedUndo(); const before = await db.automatic.get('auto');
+    s.current = vi.fn().mockRejectedValue(new Error('still denied'));
+    expect(await saver.recheck()).toBe(false);
+    expect(saver.view.phase).toBe('failed'); expect(saver.view.pending).toBe(false);
+    expect(await db.automatic.get('auto')).toEqual(before); expect(s.reverse).not.toHaveBeenCalled();
+  });
+  it.each(['pending', 'conflict', 'recovery'] as const)('does not try to resolve %s work through Recheck', async mode => {
+    const s = services(); const r = { ...record(), actions: [action('retained')],
+      ...(mode === 'conflict' ? { conflictReason: 'changed' } : mode === 'recovery' ? { adoptionRequired: true } : {}) };
+    await db.automatic.put(r);
+    const saver = new AutomaticSaver(r, s); savers.push(saver); await saver.open();
+    const before = await db.automatic.get('auto');
+    expect(await saver.recheck()).toBe(false);
+    expect(s.current).not.toHaveBeenCalled(); expect(s.save).not.toHaveBeenCalled(); expect(s.resolve).not.toHaveBeenCalled();
+    expect(await db.automatic.get('auto')).toEqual(before);
+  });
+  it('detects another tab changing recovery during the read and never reports Saved', async () => {
+    const { s, saver } = await failedUndo();
+    s.current = vi.fn(async () => {
+      const current = (await db.automatic.get('auto'))!;
+      await db.automatic.put({ ...current, version: (current.version ?? 0) + 1, actions: [action('other-tab')] });
+      return remote;
+    });
+    expect(await saver.recheck()).toBe(false); expect(saver.view.phase).toBe('conflict');
+    expect((await db.automatic.get('auto'))?.actions.map(a => a.id)).toEqual(['other-tab']);
+    expect(s.save).toHaveBeenCalledTimes(1); expect(s.reverse).not.toHaveBeenCalled();
+  });
+  it('does not publish success if its workspace was disposed during the read', async () => {
+    const { s, saver } = await failedUndo();
+    s.current = vi.fn(async () => { saver.dispose(); return remote; });
+    expect(await saver.recheck()).toBe(false);
+    expect(saver.view.phase).not.toBe('saved'); expect(s.reverse).not.toHaveBeenCalled();
+  });
+});
+
+describe('check-only initialization', () => {
+  it.each([false, true])('retains pending work with flight=%s until explicit Retry save', async flight => {
+    const s = services();
+    const r = { ...record(), actions: [action('retained')], ...(flight ? { flight: { ids: ['retained'], user: 'Alice' } } : {}) };
+    await db.automatic.put(r);
+    const saver = new AutomaticSaver(r, s); savers.push(saver);
+    await saver.open({ checkOnly: true });
+    expect(saver.view.phase).toBe('failed'); expect(saver.view.pending).toBe(true);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    saver.setOnline(false);
+    expect(await saver.retry()).toBe(false);
+    expect(saver.view.phase).toBe('failed');
+    expect(saver.view.pending).toBe(true);
+    saver.setOnline(true);
+    expect(saver.view.phase).toBe('failed');
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(await saver.flush()).toBe(false);
+    expect(s.save).not.toHaveBeenCalled(); expect(await db.automatic.get('auto')).toEqual(r);
+    expect(await saver.retry()).toBe(true);
+    expect(s.save).toHaveBeenCalledTimes(1); expect(saver.view.phase).toBe('saved');
+    expect((await db.automatic.get('auto'))?.actions).toEqual([]);
+  });
+});

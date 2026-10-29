@@ -37,6 +37,8 @@ export type AutomaticRecord = {
   adoptionRequired?: boolean;
   /** Conflict review remains required after reload or a network outage. */
   conflictReason?: string;
+  /** Last unsuccessful attempt, for Browse after the workspace is closed. */
+  saveFailure?: 'repair' | 'retry' | 'retrying';
   reviewLegacyAfterFlight?: boolean;
   version?: number;
   archivedJournals?: import('./syncJournal').SyncJournal[];

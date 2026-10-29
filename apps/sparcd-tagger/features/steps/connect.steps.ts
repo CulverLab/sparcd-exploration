@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import {
   Given,
+  uploadRow,
   When,
   Then,
   expect,
@@ -444,7 +445,7 @@ Then(
 // --- helpers ----------------------------------------------------------------
 
 async function openWorkspaceFromBrowse(page: import('@playwright/test').Page): Promise<void> {
-  await page.locator('button').filter({ hasText: 'priortagger' }).filter({ hasText: 'Open →' }).click();
+  await uploadRow(page, 'priortagger').getByRole('button', { name: 'Open →', exact: true }).click();
   await expect(page.getByTestId('automatic-save')).toBeVisible();
   await expect(page.locator('button[title="IMG001.JPG"]')).toBeVisible();
 }

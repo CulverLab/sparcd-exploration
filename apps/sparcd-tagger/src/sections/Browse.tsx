@@ -1,19 +1,21 @@
 import { useId, useMemo, useState } from 'react';
 import { extractCollectedDate } from '../lib/collectedDate';
-import type { UseQueryResult } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useStore } from '../store';
 import {
   useCollections,
   useUploads,
   useSpecies,
   useUploadSummaries,
-  useUploadDraftStates,
   type UploadSummary,
-  type UploadDraftState,
 } from '../lib/queries';
 import { PawPads } from '../components/Paw';
 import { useFocusExplanation } from '../components/useFocusExplanation';
-import { SYNC_EXPLANATIONS } from '../lib/syncExplanations';
+import { browseSaveStatus, readBrowseSaveStates, SAVE_STATUS, type BrowseSaveStatus as SaveStatus } from '../lib/browseSaveStatus';
+import { BrowseSaveStatus } from '../components/BrowseSaveStatus';
+import { useAutomaticSave, retryAutomaticSave, retryAutomaticSetup } from '../components/AutomaticSave';
+import { accountScope } from '../lib/automaticModel';
+import { parseCollectionKey } from '../lib/s3';
 import { CollectionButton } from '../components/CollectionButton';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft';
@@ -59,6 +61,7 @@ function tabOf(s: UploadSummary | undefined): Tab | 'loading' {
 // Browse is the entry point: pick a collection in the rail, then pick one of its
 // uploads in the table — choosing an upload opens the Tag workspace.
 export function Browse() {
+  const client = useQueryClient();
   const cfg = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const collectionKey = useStore((s) => s.selectedCollectionKey);
@@ -69,7 +72,17 @@ export function Browse() {
   const uploads = useUploads(cfg, connectionId, collectionKey);
   const species = useSpecies(cfg, connectionId, collectionKey); // loaded for the selected collection
   const summaries = useUploadSummaries(cfg, connectionId, collectionKey, uploads.data);
-  const draftStates = useUploadDraftStates(connectionId, collectionKey);
+  const bucket = collectionKey ? parseCollectionKey(collectionKey).bucket : '';
+  const scope = cfg ? accountScope(cfg) : '';
+  const draftStates = useQuery({
+    queryKey: ['browseSaveStates', connectionId, scope, bucket],
+    queryFn: async () => ({ startedAt: Date.now(), states: await readBrowseSaveStates(bucket, scope) }),
+    enabled: !!collectionKey && !!cfg,
+    refetchInterval: query => query.state.status === 'error' ? false : 1000,
+    retry: false,
+  });
+  const { saver, view: saveView } = useAutomaticSave();
+  const activePrefix = useStore(s => s.selectedUploadPrefix);
 
   const [filter, setFilter] = useState('');
   const [tooltipCollectionKey, setTooltipCollectionKey] = useState<string | null>(null);
@@ -252,7 +265,7 @@ export function Browse() {
                       <span data-column="location">Location</span>
                       <span data-column="tagged-total" className={taggedCell}>Tagged/Total</span>
                       <span data-column="collected" className={taggedCell}>Collected</span>
-                      <span data-column="sync" className={syncCell}>Save</span>
+                      <span data-column="sync" className={syncCell}>Save Status</span>
                       <span />
                     </div>
 
@@ -263,7 +276,43 @@ export function Browse() {
                         key={u.prefix}
                         stamp={u.stamp}
                         query={query}
-                        draftState={draftStates.data?.get(u.prefix)}
+                        status={browseSaveStatus(
+                          { fetching: draftStates.isPending && draftStates.isFetching, failed: draftStates.isError, ready: draftStates.isSuccess },
+                          { fetching: query?.isFetching ?? false, failed: query?.isError ?? false, ready: query?.isSuccess ?? false },
+                          draftStates.data?.states.get(u.prefix),
+                          activePrefix === u.prefix && (!saver || saver.record.scope === scope && saver.record.collectionKey === collectionKey) ? saveView : undefined,
+                          draftStates.data?.startedAt,
+                        )}
+                        onRecheck={async () => {
+                          const checks: Promise<unknown>[] = [draftStates.refetch()];
+                          if (query) checks.push(query.refetch());
+                          const current = useStore.getState();
+                          if (current.connectionId === connectionId && current.selectedCollectionKey === collectionKey &&
+                              current.selectedUploadPrefix === u.prefix) {
+                            const activeSaver = useAutomaticSave.getState().saver;
+                            if (activeSaver?.record.scope === scope && activeSaver.record.collectionKey === collectionKey &&
+                                activeSaver.record.uploadPrefix === u.prefix) {
+                              // A failed Undo check can leave an otherwise saved
+                              // coordinator blocked. Recheck reads; it never retries Undo.
+                              checks.push(activeSaver.recheck());
+                            } else if (useAutomaticSave.getState().view.setupFailed) {
+                              retryAutomaticSetup({ scope, collectionKey: collectionKey!, prefix: u.prefix });
+                            } else if (!activeSaver) {
+                              retryAutomaticSetup({ scope, collectionKey: collectionKey!, prefix: u.prefix });
+                              // Opening can fail before a coordinator exists.
+                              checks.push(
+                                client.refetchQueries({ queryKey: ['tagImages', connectionId, collectionKey, u.prefix], exact: true, type: 'active' }),
+                                client.refetchQueries({ queryKey: ['currentDeployment', connectionId, collectionKey, u.prefix], exact: true, type: 'active' }),
+                              );
+                            }
+                          }
+                          await Promise.allSettled(checks);
+                        }}
+                        onRetry={() => {
+                          if (activePrefix === u.prefix && (!saver || saver.record.scope === scope && saver.record.collectionKey === collectionKey && saver.record.uploadPrefix === u.prefix))
+                            void retryAutomaticSave({ scope, collectionKey: collectionKey!, prefix: u.prefix });
+                          else selectUpload(u.prefix); // Opening starts this upload's guarded save coordinator.
+                        }}
                         onOpen={() => selectUpload(u.prefix)}
                       />
                     ))}
@@ -298,16 +347,22 @@ const taggedCell = 'md:hidden browse-compact:flex browse-sm:block';
 function UploadRow({
   stamp,
   query,
-  draftState,
+  status,
+  onRecheck,
+  onRetry,
   onOpen,
 }: {
   stamp: string;
   query: UseQueryResult<UploadSummary> | undefined;
-  draftState: UploadDraftState | undefined;
+  status: SaveStatus;
+  onRecheck: () => Promise<void>;
+  onRetry: () => void;
   onOpen: () => void;
 }) {
   const { date, time, user } = parseStamp(stamp);
-  const help = useFocusExplanation(SYNC_EXPLANATIONS[draftState ?? 'local-only']);
+  const [rechecking, setRechecking] = useState(false);
+  const shownStatus = rechecking ? 'checking' : status;
+  const help = useFocusExplanation(SAVE_STATUS[shownStatus].help);
   const s = query?.data;
   const loading = query?.isLoading ?? true;
   const pct = s && s.imageCount > 0 ? Math.round((s.imagesWithSpecies / s.imageCount) * 100) : 0;
@@ -318,10 +373,21 @@ function UploadRow({
 
   return (
     <>
-      <button
+      <div
+        data-upload-row
+        role="group"
+        aria-label={`Upload ${stamp}`}
+        tabIndex={0}
         onClick={onOpen}
         aria-describedby={[help.id, missingCollected ? collectedHelpId : ''].filter(Boolean).join(' ')}
         {...help.triggerProps}
+        onFocus={event => { if (event.target === event.currentTarget) help.triggerProps.onFocus(event); else help.hide(); }}
+        onKeyDown={event => {
+          help.triggerProps.onKeyDown(event);
+          if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault(); onOpen();
+          }
+        }}
         className={`w-full text-left grid ${uploadGrid} gap-2 md:gap-4 browse-compact:gap-1.5 items-center px-4 py-3 border-b border-ruleSoft border-l-2 border-l-transparent hover:bg-panelHover hover:border-l-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group`}
       >
         <span data-column="date" className="font-mono text-[12.5px] text-inkSoft"><span className="md:sr-only">Uploaded: </span>{date}</span>
@@ -372,50 +438,22 @@ function UploadRow({
         </span>
 
         <span data-column="sync" className={syncCell}>
-          <span className="md:sr-only">Save: </span>
-          <SyncPill state={draftState ?? 'local-only'} />
+          <span className="md:sr-only">Save Status: </span>
+          <BrowseSaveStatus status={shownStatus} onRetry={onRetry} onRecheck={() => {
+            setRechecking(true);
+            void onRecheck().finally(() => setRechecking(false));
+          }} />
         </span>
 
-        <span className="text-right text-accent font-[600] text-[13px] opacity-70 group-hover:opacity-100">
+        <button type="button" onClick={event => { event.stopPropagation(); onOpen(); }}
+          className="min-h-7 text-right text-accent font-[600] text-[13px] opacity-70 group-hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
           Open →
-        </span>
+        </button>
         {missingCollected && <span data-collected-help aria-hidden="true" className="hidden md:group-focus-visible:block col-span-full text-[12px] text-inkSoft">{collectedHelp}</span>}
-      </button>
+      </div>
       {help.explanation}
       {missingCollected && <span id={collectedHelpId} className="sr-only">{collectedHelp}</span>}
     </>
-  );
-}
-
-// Notched status pills, distinct by shape + glyph (not color alone). Browse only
-// produces the three states derivable from local drafts; conflict/error surface
-// at sync time in the Tag workspace.
-function SyncPill({ state }: { state: UploadDraftState | 'local-only' }) {
-  if (state === 'local-only') {
-    return (
-      <span className="inline-flex items-center gap-1.5 border border-rule px-3 h-7 text-[12px] font-body font-[600] text-inkSoft lowercase" title={SYNC_EXPLANATIONS['local-only']}>
-        <span className="font-mono" aria-hidden>
-          ○
-        </span>
-        stored data
-      </span>
-    );
-  }
-  const spec =
-    state === 'unsynced'
-      ? { bg: 'bg-accent', glyph: '●', label: 'pending save', clip: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)' }
-      : { bg: 'bg-ok', glyph: '✓', label: 'saved', clip: 'polygon(9px 0, 100% 0, 100% 100%, 9px 100%, 0 50%)' };
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-3.5 h-7 text-[12px] font-body font-[600] text-paper lowercase ${spec.bg}`}
-      style={{ clipPath: spec.clip }}
-      title={SYNC_EXPLANATIONS[state]}
-    >
-      <span className="font-mono" aria-hidden>
-        {spec.glyph}
-      </span>
-      {spec.label}
-    </span>
   );
 }
 
