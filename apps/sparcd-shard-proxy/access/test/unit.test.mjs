@@ -16,6 +16,7 @@ import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
   newInvite, inviteMatches, hashToken,
 } from '../keys.mjs';
+import { importProblem } from '../cli.mjs';
 import { makeUpstream, normalizeIfMatch } from '../upstream.mjs';
 import { makeStore, GENERATION_KEY, PEOPLE_PREFIX } from '../store.mjs';
 
@@ -499,6 +500,46 @@ describe('credential wrapping and invites', () => {
     assert.equal(inviteMatches(undefined, token), false);
     const expired = { tokenHash: hashToken(token), expiresAt: new Date(Date.now() - 1).toISOString() };
     assert.equal(inviteMatches(expired, token), false);
+  });
+});
+
+describe('importing an existing login', () => {
+  const ok = { name: 'Ana', email: 'ana@example.org', accessKey: 'ana.perez', secret: 'long-enough' };
+  const holder = (accessKeyId, extra = {}) => ({ email: 'x@example.org', keys: [{ accessKeyId, ...extra }], ...extra });
+
+  test('a MinIO-style id and secret are accepted', () => {
+    assert.equal(importProblem(ok, []), null);
+    assert.equal(importProblem({ ...ok, accessKey: 'abc' }, []), null);
+    assert.equal(importProblem({ ...ok, accessKey: 'A'.repeat(128) }, []), null);
+  });
+
+  test('ids a SigV4 credential cannot carry are refused', () => {
+    for (const accessKey of [undefined, '', 'ab', 'A'.repeat(129), 'has/slash', 'has space', 'tab\there']) {
+      assert.match(importProblem({ ...ok, accessKey }, []), /access key must be/, String(accessKey));
+    }
+  });
+
+  test('a short or missing secret is refused', () => {
+    for (const secret of [undefined, '', '1234567']) {
+      assert.match(importProblem({ ...ok, secret }, []), /secret must be/, String(secret));
+    }
+    assert.equal(importProblem({ ...ok, secret: '12345678' }, []), null);
+  });
+
+  test('a name and an email are both needed', () => {
+    assert.match(importProblem({ ...ok, name: '' }, []), /name and email/);
+    assert.match(importProblem({ ...ok, email: undefined }, []), /name and email/);
+  });
+
+  test('a key id any person holds, retired or not, is refused', () => {
+    assert.match(importProblem(ok, [holder('ana.perez')]), /access key already belongs/);
+    assert.match(
+      importProblem(ok, [holder('ana.perez', { retiredAt: '2026-01-01T00:00:00.000Z' })]),
+      /access key already belongs/);
+  });
+
+  test('an email a person already has is refused, whatever the case', () => {
+    assert.match(importProblem(ok, [{ email: ' Ana@Example.org ', keys: [] }]), /email already belongs/);
   });
 });
 
