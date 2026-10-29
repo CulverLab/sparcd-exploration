@@ -5,6 +5,11 @@ import { expect, type Page } from '@playwright/test';
 import { focusFrame, gridCell, speciesApply } from './world';
 
 export async function openSyncDialog(page: Page): Promise<void> {
+  const focusClose = page.getByRole('button', { name: 'Close Focus', exact: true });
+  if (await focusClose.count()) {
+    await focusClose.click();
+    await expect(page.getByRole('dialog', { name: 'Focus image viewer' })).toHaveCount(0);
+  }
   await page.getByRole('button', { name: 'Sync…' }).click();
   await expect(page.getByRole('heading', { name: 'Sync to S3' })).toBeVisible();
   await expect(page.getByText('Checking the canonical base…')).toBeHidden();
@@ -30,6 +35,12 @@ export const autoAdvanceCheckbox = (page: Page) =>
     .filter({ hasText: 'Move to the next image after assigning a species' })
     .locator('input[type="checkbox"]');
 
+export const sortSpeciesByRecentCheckbox = (page: Page) =>
+  page
+    .locator('label')
+    .filter({ hasText: 'Sort by latest species assigned' })
+    .locator('input[type="checkbox"]');
+
 export async function setSyncDryRun(page: Page, on: boolean): Promise<void> {
   const cb = syncDryRunCheckbox(page);
   if ((await cb.isChecked()) !== on) await cb.setChecked(on);
@@ -49,12 +60,10 @@ export async function waitForSyncDialogClosed(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Sync to S3' })).toHaveCount(0, { timeout: 3000 });
 }
 
-export async function runLiveSync(page: Page): Promise<void> {
-  await openSyncDialog(page);
-  await setSyncDryRun(page, false);
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-  await waitForSyncDialogClosed(page);
+/** Finish the current valid editor and wait until every automatic write commits. */
+export async function waitForAutomaticSave(page: Page): Promise<void> {
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('automatic-save').getByRole('status')).toHaveText('Saved');
 }
 
 export async function closeDialog(page: Page): Promise<void> {

@@ -14,10 +14,15 @@ export function adjustmentPopupPosition(
   const maxLeft = Math.max(gutter, viewport.width - panel.width - gutter);
   const top = Math.max(gutter, Math.min(media.top, viewport.height - panel.height - gutter));
   const left = media.left - panel.width - gap;
-  const isBlocked = (candidate: number) => {
-    const popup = { left: candidate, right: candidate + panel.width, top, width: panel.width, height: panel.height };
-    return blocked.some((rect) => overlaps(popup, rect));
-  };
+  const popupAt = (candidate: number, candidateTop = top) => ({
+    left: candidate,
+    right: candidate + panel.width,
+    top: candidateTop,
+    width: panel.width,
+    height: panel.height,
+  });
+  const isBlocked = (candidate: number, candidateTop = top) =>
+    blocked.some((rect) => overlaps(popupAt(candidate, candidateTop), rect));
   if (left >= gutter && !isBlocked(left)) return { left, top };
   const right = media.right + gap;
   if (right <= maxLeft && !isBlocked(right)) return { left: right, top };
@@ -32,20 +37,33 @@ export function adjustmentPopupPosition(
   const mediaOverlap = (candidate: number) =>
     Math.max(0, Math.min(candidate + panel.width, media.right) - Math.max(candidate, media.left)) * verticalOverlap;
   const blockedOverlap = (candidate: number) => {
-    const popup = { left: candidate, right: candidate + panel.width, top, width: panel.width, height: panel.height };
+    const popup = popupAt(candidate);
     return blocked.reduce((area, rect) => {
       const width = Math.max(0, Math.min(popup.right, rect.right) - Math.max(popup.left, rect.left));
       const height = Math.max(0, Math.min(popup.top + popup.height, rect.top + rect.height) - Math.max(popup.top, rect.top));
       return area + width * height;
     }, 0);
   };
-  return {
-    left: candidates.reduce((best, candidate) =>
-      blockedOverlap(candidate) < blockedOverlap(best) ||
-      (blockedOverlap(candidate) === blockedOverlap(best) && mediaOverlap(candidate) < mediaOverlap(best))
-        ? candidate
-        : best,
-    ),
-    top,
-  };
+  const bestLeft = candidates.reduce((best, candidate) =>
+    blockedOverlap(candidate) < blockedOverlap(best) ||
+    (blockedOverlap(candidate) === blockedOverlap(best) && mediaOverlap(candidate) < mediaOverlap(best))
+      ? candidate
+      : best,
+  );
+  const beside = { left: bestLeft, top };
+  if (blockedOverlap(bestLeft) === 0 && mediaOverlap(bestLeft) === 0) return beside;
+
+  // Beside the media it covers something, so leave the media's band: under the
+  // media when the viewport has the room, over it when it hasn't — a phone has
+  // room nowhere else. Failing both, sit as low as the viewport allows, which
+  // on a desktop clears the top of whichever rail it has to share.
+  const under = mediaBottom + gap;
+  const over = media.top - gap - panel.height;
+  const sides = [bestLeft, ...candidates.filter((candidate) => candidate !== bestLeft)];
+  for (const candidateTop of [under, over]) {
+    if (candidateTop < gutter || candidateTop + panel.height > viewport.height - gutter) continue;
+    const side = sides.find((candidate) => !isBlocked(candidate, candidateTop));
+    if (side !== undefined) return { left: side, top: candidateTop };
+  }
+  return { left: bestLeft, top: Math.max(gutter, Math.min(under, viewport.height - panel.height - gutter)) };
 }

@@ -10,8 +10,8 @@
 // Host is what the caller signed and what this process verifies against.
 
 import { createServer as createHttpServer } from 'node:http';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { Readable, pipeline } from 'node:stream';
-import { randomUUID } from 'node:crypto';
 
 import { verifySignature, peekAccessKeyId, escapeXml, DROP_FROM_CLIENT } from './sigv4.mjs';
 import {
@@ -27,6 +27,14 @@ import { makeActivity } from './activity.mjs';
 import { makeApi, ApiError } from './api.mjs';
 import { makeUpstream, normalizeIfMatch } from './upstream.mjs';
 import { loadMasterKey, unwrapSecret } from './keys.mjs';
+import {
+  coordinateObjectKind,
+  completeDeploymentsCoordinates,
+  isCoordinateFreeDeployments,
+  redactCoordinateBody,
+  sameUploadCompletePublicFields,
+  shouldRedactCoordinates,
+} from './redact.mjs';
 
 const ALLOW_METHODS = 'GET, HEAD, PUT, POST, DELETE, PATCH';
 
@@ -79,6 +87,42 @@ const RESPONSE_PREFIXES = ['x-amz-meta-', 'x-amz-checksum-'];
 
 const forwardableAmz = (name) =>
   AMZ_FORWARD_EXACT.has(name) || AMZ_FORWARD_PREFIXES.some((p) => name.startsWith(p));
+
+function decodeXmlText(value) {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, token) => {
+    if (token[0] === '#') {
+      const hex = token[1]?.toLowerCase() === 'x';
+      const number = Number.parseInt(token.slice(hex ? 2 : 1), hex ? 16 : 10);
+      return Number.isFinite(number) ? String.fromCodePoint(number) : entity;
+    }
+    return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[token.toLowerCase()] ?? entity;
+  });
+}
+
+function encodeXmlText(value) {
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function redactListingEntries(xml, shouldRedact, opaqueEtag) {
+  return xml.replace(/<Contents>([\s\S]*?)<\/Contents>/g, (block) => {
+    const keyMatch = /<Key>([\s\S]*?)<\/Key>/.exec(block);
+    if (!keyMatch) return block;
+    const key = decodeXmlText(keyMatch[1]);
+    if (!shouldRedact(key)) return block;
+    const etagMatch = /<ETag>([\s\S]*?)<\/ETag>/.exec(block);
+    const etag = etagMatch ? decodeXmlText(etagMatch[1]) : '';
+    const safeEtag = '<ETag>' + encodeXmlText(opaqueEtag(etag)) + '</ETag>';
+    const safeSize = '<Size>0</Size>';
+    let out = etagMatch
+      ? block.replace(etagMatch[0], safeEtag)
+      : block.replace('</Contents>', safeEtag + '</Contents>');
+    const sizeMatch = /<Size>[\s\S]*?<\/Size>/.exec(out);
+    out = sizeMatch
+      ? out.replace(sizeMatch[0], safeSize)
+      : out.replace('</Contents>', safeSize + '</Contents>');
+    return out;
+  });
+}
 
 export function configFromEnv(env = process.env) {
   return {
@@ -169,6 +213,36 @@ export async function createAccessProxy(input) {
     flushMs: config.flushMs,
   });
   const masterKey = await loadMasterKey(config.masterKey);
+  // Raw upstream ETags and metadata digests can be guessed offline from a
+  // redacted body. Give restricted callers a stable, keyed validator instead.
+  const coordinateMacKey = Buffer.from(config.masterKey, 'base64');
+  const opaqueValue = (purpose, value) => createHmac('sha256', coordinateMacKey)
+    .update(`sparcd-coordinate-v1:${purpose}\0`)
+    .update(String(value ?? ''))
+    .digest('hex');
+  const opaqueEtag = (etag) => `"spcd-${opaqueValue('etag', etag)}"`;
+
+  function parseLocationRegistry(text) {
+    const value = JSON.parse(text);
+    const entries = Array.isArray(value) ? value : value && Array.isArray(value.locations) ? value.locations : null;
+    if (!entries) throw new Error('location registry is not an array');
+    return entries;
+  }
+
+  async function exactLocationRegistry(collectionBucket, uuid) {
+    const assigned = await upstream.get(collectionBucket, `Collections/${uuid}/locations.json`);
+    if (assigned.status !== 404) {
+      if (assigned.text.trim() !== '') {
+        const entries = parseLocationRegistry(assigned.text);
+        if (entries.length > 0) return entries;
+      }
+    }
+    const settingsBucket = store.settingsBucketUpstream();
+    const fallback = await upstream.get(settingsBucket, 'Settings/locations.json');
+    if (fallback.status === 404) throw new Error('location registry is missing');
+    return parseLocationRegistry(fallback.text);
+  }
+
   const lastActive = new Map();
   const api = makeApi({
     store, activity, masterKey, lastActive, publicEndpoint: config.publicEndpoint,
@@ -277,6 +351,12 @@ export async function createAccessProxy(input) {
     // memory.
     let claimed = null;
     if (!open) {
+      // Fail closed while a change to who may do what is known and unloaded.
+      if (store.behind()) {
+        req.resume();
+        respondXml(res, 403, 'AccessDenied', 'access data could not be refreshed', origin);
+        return;
+      }
       claimed = peekAccessKeyId({ headers, url });
       const hit = claimed ? store.byAccessKey(claimed) : null;
       if (!hit) {
@@ -345,6 +425,12 @@ export async function createAccessProxy(input) {
           requestId, bucket: bucketFromPath(url.pathname), detail: verified.error,
         });
         respondXml(res, 403, 'SignatureDoesNotMatch', verified.error, origin);
+        return;
+      }
+      // Checked again: the body can take long enough to arrive that access
+      // data fell behind after the check above.
+      if (store.behind()) {
+        respondXml(res, 403, 'AccessDenied', 'access data could not be refreshed', origin);
         return;
       }
       signedHeaders = verified.signedHeaders;
@@ -422,6 +508,8 @@ export async function createAccessProxy(input) {
     const isSettings = store.isSettings(clientBucket);
     const collection = store.collection(clientBucket);
     const membership = store.membership(person.id, clientBucket);
+    const redactCoordinates = shouldRedactCoordinates({ person, isSettings, membership, key });
+    const coordinateKind = coordinateObjectKind(key);
 
     const op = classify({
       method: req.method, bucket: clientBucket, key, query: url.searchParams, headers,
@@ -430,6 +518,128 @@ export async function createAccessProxy(input) {
       op, key, isSettings, uuid: collection?.uuid, level: membership?.access ?? null,
     });
     if (!verdict.allow) return denied(verdict.reason);
+
+    // A byte range cannot be safely redacted without reconstructing the full
+    // object first. Refuse it rather than forwarding a coordinate fragment.
+    if (redactCoordinates && headers.has('range')) {
+      return denied('coordinate-protected objects do not support byte ranges', 416, 'InvalidRange');
+    }
+    let forwardedHeaders = headers;
+    let forwardedSignedHeaders = signedHeaders;
+    let forwardedBody = body;
+    const canonicalDeploymentWrite = /^Collections\/([^/]+)\/Uploads\/[^/]+\/deployments\.csv$/.exec(key);
+    const coordinateFreeDeploymentWrite = req.method === 'PUT'
+      && coordinateKind === 'deployments'
+      && canonicalDeploymentWrite?.[1] === collection?.uuid
+      && body
+      && isCoordinateFreeDeployments(body.toString('utf8'));
+    if ((redactCoordinates && coordinateKind) || coordinateFreeDeploymentWrite) {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        // These compare against upstream validators, which encode the private
+        // bytes. Always fetch and return the proxy's redacted representation.
+        forwardedHeaders = new Headers(headers);
+        for (const name of ['if-match', 'if-none-match', 'if-modified-since', 'if-unmodified-since']) {
+          forwardedHeaders.delete(name);
+        }
+      } else if (req.method === 'PUT' && coordinateKind === 'deployments') {
+        const uploadDeployment = /^Collections\/([^/]+)\/Uploads\/[^/]+\/deployments\.csv$/.exec(key);
+        const snapshotDeployment = /^Collections\/([^/]+)\/Uploads\/[^/]+\/\.sparcd-(?:tagger|uploader)-snapshots\/[^/]+\/[^/]+\/deployments\.csv$/.exec(key);
+        const guardIsCreate = headers.get('if-none-match') === '*'
+          && signedHeaders.has('if-none-match') && !headers.has('if-match');
+        const guardIsReplace = !!headers.get('if-match')
+          && signedHeaders.has('if-match') && !headers.has('if-none-match');
+        const isCanonicalDeployment = uploadDeployment?.[1] === collection?.uuid;
+        const isSnapshotDeployment = snapshotDeployment?.[1] === collection?.uuid;
+        if ((!isCanonicalDeployment && !isSnapshotDeployment)
+          || !body || !isCoordinateFreeDeployments(body.toString('utf8'))
+          || (!guardIsCreate && !guardIsReplace)) {
+          return denied('exact coordinate permission is required for this deployment write');
+        }
+
+        if (isCanonicalDeployment) {
+          try {
+            const registry = await exactLocationRegistry(upstreamBucket, collection.uuid);
+            forwardedBody = Buffer.from(
+              completeDeploymentsCoordinates(body.toString('utf8'), registry), 'utf8',
+            );
+          } catch (err) {
+            log('could not resolve a restricted deployment write against the location registry', err);
+            return denied('deployment location must match exactly one current registry entry');
+          }
+        }
+
+        forwardedHeaders = new Headers(headers);
+        forwardedSignedHeaders = new Set(signedHeaders);
+        if (guardIsReplace) {
+          let current;
+          try {
+            current = await upstream.head(upstreamBucket, key);
+          } catch (err) {
+            log('could not check the current deployment version', err);
+            return denied('the current deployment version could not be checked', 502, 'InternalError');
+          }
+          const currentEtag = current.etag;
+          if (current.status !== 200 || !currentEtag) {
+            return denied('the current deployment version could not be checked', 502, 'InternalError');
+          }
+          if (normalizeIfMatch(headers.get('if-match')) !== normalizeIfMatch(opaqueEtag(currentEtag))) {
+            return denied('the deployment changed since it was read', 412, 'PreconditionFailed');
+          }
+          // The client only knows the opaque ETag. Compare it locally, then
+          // let S3 enforce the corresponding raw validator against races.
+          forwardedHeaders.set('if-match', currentEtag);
+        }
+        // The proxy changed the body, so stale client checksums must not be
+        // written as if they described the exact stored bytes.
+        for (const name of ['x-amz-checksum-crc32', 'x-amz-checksum-sha256', 'x-amz-sdk-checksum-algorithm']) {
+          forwardedHeaders.delete(name);
+          forwardedSignedHeaders.delete(name);
+        }
+        if (forwardedHeaders.has('x-amz-meta-sha256')
+          && forwardedSignedHeaders.has('x-amz-meta-sha256')) {
+          forwardedHeaders.set(
+            'x-amz-meta-sha256',
+            createHash('sha256').update(forwardedBody).digest('hex'),
+          );
+        }
+      } else if (req.method === 'PUT' && coordinateKind === 'upload-complete') {
+        // UploadComplete carries a digest of the exact metadata bytes but no
+        // coordinate fields itself. Keep normal create/replace semantics while
+        // its response validator is still opaque to this caller.
+        forwardedHeaders = new Headers(headers);
+        forwardedSignedHeaders = new Set(signedHeaders);
+        const rawMatch = headers.get('if-match');
+        const rawNoneMatch = headers.get('if-none-match');
+        if (rawNoneMatch && (rawNoneMatch !== '*' || !signedHeaders.has('if-none-match') || rawMatch)) {
+          return denied('the upload completion precondition is invalid');
+        }
+        if (!rawMatch && !rawNoneMatch) {
+          return denied('the upload completion precondition is required');
+        }
+        if (rawMatch) {
+          if (!signedHeaders.has('if-match') || headers.has('if-none-match')) {
+            return denied('the upload completion precondition is invalid');
+          }
+          let current;
+          try {
+            current = await upstream.head(upstreamBucket, key);
+          } catch (err) {
+            log('could not check the current upload completion version', err);
+            return denied('the upload completion version could not be checked', 502, 'InternalError');
+          }
+          const currentEtag = current.etag;
+          if (current.status !== 200 || !currentEtag) {
+            return denied('the upload completion version could not be checked', 502, 'InternalError');
+          }
+          if (normalizeIfMatch(rawMatch) !== normalizeIfMatch(opaqueEtag(currentEtag))) {
+            return denied('the upload completion changed since it was read', 412, 'PreconditionFailed');
+          }
+          forwardedHeaders.set('if-match', currentEtag);
+        }
+      } else {
+        return denied('exact coordinate permission is required to change this object');
+      }
+    }
 
     if (op === 'ListObjectsV2' && isSettings) {
       return handleSettingsListing({
@@ -443,8 +653,32 @@ export async function createAccessProxy(input) {
     // path we are about to sign is not the path we just authorised.
     const rest = url.pathname.slice(1 + rawSegment.length);
     const upstreamPath = `/${upstreamBucket}${rest}`;
-    const upstreamRes = await proxyFetch(req, url, headers, signedHeaders, body, upstreamPath);
+    let upstreamRes = await proxyFetch(
+      req, url, forwardedHeaders, forwardedSignedHeaders, forwardedBody, upstreamPath,
+    );
     if (upstreamRes === null) return denied('request path is not canonical');
+
+    // An immutable publication can succeed upstream while its response is
+    // lost. On retry, the create-only PUT receives 412; treat it as success
+    // when the public completion fields match. Do not use the hidden metadata
+    // digest in this decision: otherwise 200 versus 412 becomes a digest oracle.
+    if (redactCoordinates && coordinateKind === 'upload-complete'
+      && req.method === 'PUT' && headers.get('if-none-match') === '*'
+      && signedHeaders.has('if-none-match') && upstreamRes.status === 412 && forwardedBody) {
+      try {
+        const existing = await upstream.get(upstreamBucket, key);
+        if (existing.status === 200 && existing.etag
+          && sameUploadCompletePublicFields(
+            existing.text,
+            Buffer.from(forwardedBody).toString('utf8'),
+          )) {
+          await upstreamRes.body?.cancel().catch(() => {});
+          upstreamRes = new Response(null, { status: 200, headers: { etag: existing.etag } });
+        }
+      } catch (err) {
+        log('could not verify an existing upload completion retry', err);
+      }
+    }
 
     if (upstreamRes.ok || upstreamRes.status === 206) {
       const kind = eventKind(op, { isSettings, key });
@@ -455,6 +689,39 @@ export async function createAccessProxy(input) {
           bytes: Number(upstreamRes.headers.get('content-length') ?? 0) || undefined,
           ip: clientIp(req),
         });
+      }
+    }
+
+    if (op === 'ListObjectsV2' && !isSettings && upstreamRes.ok) {
+      const xml = await upstreamRes.text();
+      const rewritten = rewriteBucketName(xml, upstreamBucket, clientBucket);
+      const safe = redactListingEntries(
+        rewritten,
+        (entryKey) => shouldRedactCoordinates({
+          person, isSettings, membership, key: entryKey,
+        }),
+        opaqueEtag,
+      );
+      return sendText(res, upstreamRes, safe, origin);
+    }
+
+    // Coordinate protection is selected by object key, before content type.
+    // A mislabeled protected object must not escape through the generic XML
+    // response path below.
+    if (redactCoordinates && req.method === 'GET' && upstreamRes.ok) {
+      try {
+        const redacted = redactCoordinateBody(
+          key,
+          await upstreamRes.text(),
+          (value) => opaqueValue('metadata-bundle', value),
+        );
+        return sendText(res, upstreamRes, redacted, origin, {
+          opaqueEtag: true, opaqueMetadataHash: true, dropContentRange: true,
+          dropChecksums: true,
+        });
+      } catch (err) {
+        log('coordinate redaction failed', err);
+        return respondXml(res, 502, 'InternalError', 'the upstream answer was unusable', origin);
       }
     }
 
@@ -469,9 +736,20 @@ export async function createAccessProxy(input) {
         log('upstream response named a bucket outside the caller\'s namespace', new Error(clientBucket));
         return respondXml(res, 502, 'InternalError', 'the upstream answer was unusable', origin);
       }
-      return sendText(res, upstreamRes, xml, origin);
+      return sendText(res, upstreamRes, xml, origin, {
+        opaqueEtag: redactCoordinates && !!coordinateKind,
+        opaqueMetadataHash: redactCoordinates && !!coordinateKind,
+        dropContentLength: req.method === 'HEAD' && redactCoordinates && !!coordinateKind,
+        dropChecksums: redactCoordinates && !!coordinateKind,
+      });
     }
-    return streamBack(res, upstreamRes, origin);
+    return streamBack(res, upstreamRes, origin, {
+      opaqueEtag: redactCoordinates && !!coordinateKind,
+      opaqueMetadataHash: redactCoordinates && !!coordinateKind,
+      dropContentLength: req.method === 'HEAD' && redactCoordinates && !!coordinateKind,
+      dropContentRange: req.method === 'GET' && redactCoordinates && !!coordinateKind,
+      dropChecksums: redactCoordinates && !!coordinateKind,
+    });
   }
 
   /**
@@ -553,11 +831,15 @@ export async function createAccessProxy(input) {
         bucket: upstreamBucket, prefix, delimiter, maxKeys, after, hidden, hiddenTrees,
       });
 
+      const safeKeys = page.keys.map((entry) =>
+        shouldRedactCoordinates({ person, isSettings: true, membership: null, key: entry.key })
+          ? { ...entry, etag: opaqueEtag(entry.etag), size: 0 }
+          : entry);
       const xml = buildListing({
         bucket: clientBucket,
         prefix,
         delimiter,
-        keys: page.keys,
+        keys: safeKeys,
         commonPrefixes: page.commonPrefixes,
         truncated: page.truncated,
         nextToken: page.nextToken,
@@ -627,17 +909,55 @@ export async function createAccessProxy(input) {
     return out;
   }
 
-  function sendText(res, upstreamRes, text, origin) {
+  function sendText(res, upstreamRes, text, origin, {
+    opaqueEtag: hideEtag = false,
+    opaqueMetadataHash: hideMetadataHash = false,
+    dropContentLength = false,
+    dropContentRange = false,
+    dropChecksums = false,
+  } = {}) {
     const headers = baseHeaders(upstreamRes, origin);
-    headers['content-length'] = Buffer.byteLength(text);
+    if (dropContentLength) delete headers['content-length'];
+    else headers['content-length'] = Buffer.byteLength(text);
+    if (hideEtag && upstreamRes.headers.get('etag')) {
+      headers.etag = opaqueEtag(upstreamRes.headers.get('etag'));
+    }
+    if (hideMetadataHash && headers['x-amz-meta-sha256']) {
+      headers['x-amz-meta-sha256'] = opaqueValue('object-sha256', headers['x-amz-meta-sha256']);
+    }
+    if (dropContentRange) delete headers['content-range'];
+    if (dropChecksums) {
+      for (const name of Object.keys(headers)) {
+        if (name.startsWith('x-amz-checksum-')) delete headers[name];
+      }
+    }
     res.writeHead(upstreamRes.status, headers);
     res.end(text);
   }
 
-  function streamBack(res, upstreamRes, origin) {
+  function streamBack(res, upstreamRes, origin, {
+    opaqueEtag: hideEtag = false,
+    opaqueMetadataHash: hideMetadataHash = false,
+    dropContentLength = false,
+    dropContentRange = false,
+    dropChecksums = false,
+  } = {}) {
     const headers = baseHeaders(upstreamRes, origin);
+    if (hideEtag && upstreamRes.headers.get('etag')) {
+      headers.etag = opaqueEtag(upstreamRes.headers.get('etag'));
+    }
+    if (hideMetadataHash && headers['x-amz-meta-sha256']) {
+      headers['x-amz-meta-sha256'] = opaqueValue('object-sha256', headers['x-amz-meta-sha256']);
+    }
+    if (dropContentLength) delete headers['content-length'];
+    if (dropContentRange) delete headers['content-range'];
+    if (dropChecksums) {
+      for (const name of Object.keys(headers)) {
+        if (name.startsWith('x-amz-checksum-')) delete headers[name];
+      }
+    }
     const length = upstreamRes.headers.get('content-length');
-    if (length) headers['content-length'] = length;
+    if (length && !dropContentLength) headers['content-length'] = length;
     res.writeHead(upstreamRes.status, headers);
     if (!upstreamRes.body) { res.end(); return; }
     // pipeline, not pipe: an upstream that resets mid-object has to tear down
@@ -833,34 +1153,52 @@ export async function listAroundProtectedTrees({
 
     // With a delimiter, folders and keys are two halves of one page and both
     // are entries as far as `max-keys` goes. Counting only the keys hands
-    // back a page of folders and calls it an empty listing.
-    for (const p of got.commonPrefixes) {
-      if (hidden(p)) continue;
-      if (entries() >= maxKeys) { truncated = true; break; }
-      commonPrefixes.push(p);
-      resumeAt = afterTree(p);
-    }
-    if (truncated) break;
+    // back a page of folders and calls it an empty listing. Both are taken in
+    // the order the upstream sorts them: every folder first and then a resume
+    // past the last one skips the keys that sorted between them. The upstream
+    // sorts UTF-8 bytes, which JS string comparison does not: it compares
+    // UTF-16 code units, and puts U+10000 and above before U+E000–U+FFFF.
+    const items = [
+      ...got.commonPrefixes.map((name) => ({ name })),
+      ...got.keys.map((entry) => ({ name: entry.key, entry })),
+    ].sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)));
 
     let jumpedTo = null;
-    for (const entry of got.keys) {
-      const tree = hiddenTrees.find((t) => entry.key.startsWith(t));
+    for (const { name, entry } of items) {
+      if (!entry) {
+        if (hidden(name)) { cursor = afterTree(name); continue; }
+        if (entries() >= maxKeys) { truncated = true; break; }
+        commonPrefixes.push(name);
+        resumeAt = afterTree(name);
+        cursor = resumeAt;
+        continue;
+      }
+      const tree = hiddenTrees.find((t) => name.startsWith(t));
       if (tree) { jumpedTo = afterTree(tree); break; }
       if (entries() >= maxKeys) { truncated = true; break; }
       keys.push(entry);
-      cursor = entry.key;
-      resumeAt = entry.key;
+      cursor = name;
+      resumeAt = name;
     }
     if (truncated) break;
-    if (jumpedTo) { cursor = jumpedTo; continue; }
-    if (!got.nextToken) break;
-    // A page of nothing but folders still has a position to go on from.
-    // Stopping there because it held no keys drops every page after it.
-    if (got.keys.length > 0) cursor = got.keys[got.keys.length - 1].key;
-    else if (got.commonPrefixes.length > 0) {
-      cursor = afterTree(got.commonPrefixes[got.commonPrefixes.length - 1]);
-    } else break;
+    if (jumpedTo) {
+      cursor = jumpedTo;
+      if (page === 19 && got.nextToken) {
+        truncated = true;
+        resumeAt = resumeAt ?? cursor ?? after ?? '';
+        break;
+      }
+      continue;
+    }
+    if (!got.nextToken || items.length === 0) break;
+    // `cursor` was advanced while consuming the merged key/prefix sequence.
+    // Replacing it with the last key from the unmerged S3 response can move
+    // backwards when a common prefix sorted after that key, repeating folders.
+    if (page === 19 && got.nextToken) {
+      truncated = true;
+      resumeAt = resumeAt ?? cursor ?? after ?? '';
+    }
   }
 
-  return { keys, commonPrefixes, truncated, nextToken: truncated ? resumeAt : null };
+  return { keys, commonPrefixes, truncated, nextToken: truncated && resumeAt ? resumeAt : null };
 }

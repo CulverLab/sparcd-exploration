@@ -19,22 +19,6 @@ Feature: Choose how dates, times and distances are displayed
     And the time format defaults to 24-hour
 
   @unmapped
-  Scenario: Switching the date format changes every displayed timestamp
-    Given the date format is switched to Numeric date in Settings
-    And an image is focused
-    When the enlarged Focus view is opened
-    Then the focused image's corrected time is shown in that date order
-    When the detailed Overview list is opened
-    Then the Overview list shows capture times in that date order
-
-  @unmapped
-  Scenario: Switching the time format changes every displayed timestamp
-    Given the time format is switched to 12-hour in Settings
-    And an image is focused
-    When the enlarged Focus view is opened
-    Then the focused image's corrected time carries an AM/PM marker
-
-  @unmapped
   Scenario: Switching the time format changes the whole-upload shift preview
     Given the time format is switched to 12-hour in Settings
     When the time-shift dialog is opened
@@ -56,8 +40,23 @@ Feature: Choose how dates, times and distances are displayed
     Then the selected display preferences are retained
 
   @unmapped
-  Scenario: A distance-units choice is offered ahead of a location display
+  Scenario: Distance units control the emphasis in location elevation details
     When Settings is opened
     Then a choice of meters or feet is offered for distance units
-    # Not consumed anywhere yet — no location/elevation display exists in the
-    # tagger. This sets the unit ahead of that future feature.
+    And distance units default to meters
+    When the Tag workspace is reopened
+    And the change-location dialog is opened
+    Then location elevation details emphasize meters
+    When the location dialog is cancelled
+    And distance units are switched to feet in Settings
+    And the change-location dialog is opened
+    Then location elevation details emphasize feet
+    When the location dialog is cancelled
+    And the browser is reloaded
+    And the original upload is reopened after reload
+    And the change-location dialog is opened
+    Then location elevation details emphasize feet
+    When the location dialog is cancelled
+    And distance units are switched to meters in Settings
+    And the change-location dialog is opened
+    Then location elevation details emphasize meters

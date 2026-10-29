@@ -158,13 +158,21 @@ async function seedNow(endpoint) {
   ]) await makeBucket(name);
 
   await root.put(CANARY, CANARY_KEY, CANARY_BODY, { contentType: 'text/plain' });
-  await root.put(`${NAMESPACE}${SETTINGS}`, 'Settings/locations.json', '{"locations":[]}');
+  await root.put(`${NAMESPACE}${SETTINGS}`, 'Settings/locations.json', JSON.stringify([
+    { idProperty: 'SET-1', nameProperty: 'Settings site', latProperty: 31.5, lngProperty: -110.2, elevationProperty: 900 },
+  ]));
   for (const [bucket, uuid, name] of [
     [BUCKET_A, UUID_A, 'Educational Test'], [BUCKET_B, UUID_B, 'Second Collection'],
   ]) {
     const b = `${NAMESPACE}${bucket}`;
     await root.put(b, `Collections/${uuid}/collection.json`,
       JSON.stringify({ name, organization: 'CulverLab' }));
+    await root.put(b, `Collections/${uuid}/locations.json`, JSON.stringify([
+      { idProperty: `LOC-${uuid.slice(0, 4)}`, nameProperty: `${name} site`, latProperty: 32.1, lngProperty: -111.1, elevationProperty: 1000 },
+    ]));
+    await root.put(b, `Collections/${uuid}/Uploads/2026.01.01.00.00.00_seed/deployments.csv`,
+      `deploymentID,locationID,locationName,longitude,latitude,elevation\nDEP-1,LOC-${uuid.slice(0, 4)},${name} site,-111.1,32.1,1000\n`,
+      { contentType: 'text/csv' });
     await root.put(b, `Collections/${uuid}/Uploads/2026.01.01.00.00.00_seed/media.csv`,
       'mediaID,filePath\n', { contentType: 'text/csv' });
     await root.put(b, `Collections/${uuid}/Uploads/2026.01.01.00.00.00_seed/a.jpg`,

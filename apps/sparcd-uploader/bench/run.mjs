@@ -9,7 +9,13 @@ const appDir = fileURLToPath(new URL('../', import.meta.url));
 const benchDir = fileURLToPath(new URL('./', import.meta.url));
 const resultsDir = path.join(benchDir, 'results');
 const containerName = `sparcd-uploader-bench-${process.pid}`;
+// Pin the MinIO-compatible image already exercised by the main-branch
+// performance guard, while allowing local runners to override the registry.
+const minioImage = process.env.MINIO_IMAGE
+  || 'docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372';
 const minioOrigin = 'http://127.0.0.1:19000';
+const appPort = Number(process.env.BENCH_APP_PORT ?? '5316');
+const appOrigin = `http://localhost:${appPort}`;
 const collectionUuid = '11111111-1111-1111-1111-111111111111';
 const collectionBucket = `sparcd-${collectionUuid}`;
 let preview;
@@ -65,8 +71,8 @@ try {
     'run', '-d', '--rm', '--name', containerName, '-p', '19000:9000',
     '-e', 'MINIO_ROOT_USER=minioadmin',
     '-e', 'MINIO_ROOT_PASSWORD=minioadmin',
-    '-e', 'MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:5316',
-    'quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z', 'server', '/data',
+    '-e', `MINIO_API_CORS_ALLOW_ORIGIN=${appOrigin}`,
+    minioImage, 'server', '/data',
   ]);
   containerStarted = true;
   await waitFor(`${minioOrigin}/minio/health/ready`, 'MinIO');
@@ -104,12 +110,12 @@ try {
   run('pnpm', ['exec', 'vite', 'build'], {
     env: { ...process.env, VITE_SPARCD_S3_ENDPOINT: '' },
   });
-  preview = spawn('pnpm', ['exec', 'vite', 'preview', '--port', '5316', '--strictPort'], {
+  preview = spawn('pnpm', ['exec', 'vite', 'preview', '--port', String(appPort), '--strictPort'], {
     cwd: appDir,
     env: { ...process.env, VITE_SPARCD_S3_ENDPOINT: '' },
     stdio: 'inherit',
   });
-  await waitFor('http://localhost:5316/sparcd-exploration/uploader/', 'Vite preview');
+  await waitFor(`${appOrigin}/sparcd-exploration/uploader/`, 'Vite preview');
 
   for (let runIndex = 1; runIndex <= 3; runIndex++) {
     const resultFile = path.join(resultsDir, `run-${runIndex}.json`);

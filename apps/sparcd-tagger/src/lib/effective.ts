@@ -5,6 +5,25 @@
 import type { TagImage } from './workspace';
 import type { DraftRecord, DraftObservation } from './db';
 
+export type ReviewStatus = 'reviewed' | 'unreviewed';
+export type ReviewSummary = ReviewStatus | 'mixed';
+
+/** An identification is reviewed only when a review event was recorded for it.
+ * Original attribution (`classifiedBy`) does not imply that anyone later
+ * reviewed the identification. */
+export function reviewStatus(observation: DraftObservation): ReviewStatus {
+  return observation.reviewEvents?.some(event => !event.reversedAt) ? 'reviewed' : 'unreviewed';
+}
+
+/** Summarize per-identification review state for an image-level indicator. */
+export function reviewSummary(observations: DraftObservation[]): ReviewSummary | null {
+  if (!observations.length) return null;
+  const reviewed = observations.filter((o) => reviewStatus(o) === 'reviewed').length;
+  if (reviewed === 0) return 'unreviewed';
+  if (reviewed === observations.length) return 'reviewed';
+  return 'mixed';
+}
+
 export type Effective = {
   observations: DraftObservation[];
   questionable: boolean;
@@ -16,9 +35,13 @@ export function effectiveOf(img: TagImage, draft: DraftRecord | undefined): Effe
   // by a prior sync) carries no pending intent, so defer to the canonical base
   // — otherwise a stale clean draft would shadow a later remote change.
   if (draft && draft.dirty)
-    return { observations: draft.observations, questionable: draft.questionable, source: 'draft' };
-  if (img.baseObservations.length)
-    return { observations: img.baseObservations, questionable: false, source: 'base' };
+    return {
+      observations: draft.observations,
+      questionable: draft.questionable !== !!draft.baseQuestionable ? draft.questionable : !!img.baseQuestionable,
+      source: 'draft',
+    };
+  if (img.baseObservations.length || img.baseQuestionable)
+    return { observations: img.baseObservations, questionable: !!img.baseQuestionable, source: 'base' };
   return { observations: [], questionable: false, source: 'none' };
 }
 

@@ -1,3 +1,6 @@
+import { localBatchId } from '../lib/localBatch';
+import { useEffect, useRef } from 'react';
+
 // The `?` keyboard cheatsheet. Mirrors the plan's "Keyboard shortcuts (initial
 // set)" table; the actual handling lives in Tag.tsx so this stays a passive
 // reference card. Closes on backdrop click, the × button, Escape, or `?` again
@@ -9,8 +12,8 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
   {
     title: 'Navigate',
     rows: [
-      { keys: ['↓'], action: 'Next image' },
-      { keys: ['↑'], action: 'Previous image' },
+      { keys: ['↓', '→'], action: 'Next image' },
+      { keys: ['↑', '←'], action: 'Previous image' },
       { keys: ['PgDn'], action: 'Next burst' },
       { keys: ['PgUp'], action: 'Previous burst' },
       { keys: ['Enter'], action: 'Open focused image (Overview)' },
@@ -24,7 +27,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
       { keys: ['Enter'], action: 'Add top filter match (add-only)' },
       { keys: ['key'], action: 'Add the species bound to that key' },
       { keys: ['✕'], action: 'Chip ✕ removes one; Clear Species clears all' },
-      { keys: ['⇧Space'], action: 'Mark questionable' },
+      { keys: ['⇧Space'], action: 'Toggle Need expert' },
     ],
   },
   {
@@ -32,16 +35,47 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
     rows: [
       { keys: ['⌘A', '^A'], action: 'Select the current burst' },
       { keys: ['Esc'], action: 'Clear selection / blur filter' },
-      { keys: ['⌘S', '^S'], action: 'Save draft now' },
+      { keys: ['⌘S', '^S'], action: 'Finish valid input and flush or retry automatic saving' },
+      { keys: ['⌘Z', '^Z'], action: 'Undo the latest completed action outside text editors' },
       { keys: ['?'], action: 'Toggle this cheatsheet' },
     ],
   },
 ];
 
 export function Cheatsheet({ onClose }: { onClose: () => void }) {
+  const automatic = !localBatchId;
+  const groups = automatic ? GROUPS : GROUPS.map(group => ({ ...group, rows: group.rows.filter(row => !row.keys.includes('⌘Z')).map(row => row.keys.includes('⌘S') ? { ...row, action: 'Save local work in this browser' } : row) }));
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const dialog = (event.target as Element | null)?.closest('[role="dialog"]');
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      previous?.focus();
+    };
+  }, []);
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-6"
+      className="fixed inset-0 z-[200] grid place-items-center bg-ink/40 p-6"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -54,6 +88,7 @@ export function Cheatsheet({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-rule px-5 py-3">
           <h2 className="font-display text-[18px] font-[600] text-ink">Keyboard shortcuts</h2>
           <button
+            ref={closeRef}
             onClick={onClose}
             className="w-11 h-11 md:w-7 md:h-7 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             aria-label="Close"
@@ -63,7 +98,7 @@ export function Cheatsheet({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 p-5">
-          {GROUPS.map((g) => (
+          {groups.map((g) => (
             <section key={g.title} className="min-w-0">
               <h3 className="font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft mb-2">
                 {g.title}

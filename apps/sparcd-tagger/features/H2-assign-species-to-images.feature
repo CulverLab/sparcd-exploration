@@ -12,7 +12,7 @@ Feature: Assign species to images in an upload
   be selected by clicking its tile and applied with its add control, by
   drag-and-drop, or by pressing the key bound to it. An
   identification applies to the focused image, or to every selected image when
-  a selection exists. Identifications are held locally until they are synced.
+  a selection exists. Completed identifications save automatically.
 
   Background:
     Given an upload is open in the tagging workspace
@@ -32,13 +32,42 @@ Feature: Assign species to images in an upload
     Then the species list is headed "Available species"
 
   @H2
+  Scenario: The species list's info control explains how to use it, and dismisses normally
+    Given an image is focused
+    And a species keyboard shortcut is configured
+    When the species list's info control is used
+    Then a popup explains how to use the species list
+    And clicking inside the popup does not dismiss it
+    And the popup blocks species and navigation shortcuts
+    And it can be dismissed with Escape, its close control, or a click outside
+
+  @H2
+  Scenario Outline: Species help keeps Focus keyboard ownership and returns focus
+    Given an image is focused
+    And a species keyboard shortcut is configured
+    And the help is opened from Focus at width <width>
+    Then the help owns focus and blocks Focus shortcuts
+    When help is dismissed back to Focus
+    Then the help trigger regains focus without closing Focus
+
+    Examples:
+      | width |
+      | 1440  |
+      | 390   |
+
+  @H2
+  Scenario: Species Add controls stay aligned when rows have different key controls
+    Given an image is focused
+    Then the Add controls align in Overview, Focus and narrow layouts
+
+  @H2
   Scenario: Clicking a species tile highlights it without identifying an image
     Given an image is focused
     When a species tile is selected
     Then that species tile remains highlighted
     And selecting the species has not changed the focused image
 
-  @H2
+  @H2 @H2-2
   Scenario: An image can carry more than one species
     Given the focused image already carries one species
     When a second species is applied to it
@@ -65,10 +94,22 @@ Feature: Assign species to images in an upload
     And applying a real species afterwards removes the Ghost label
 
   @H2
-  Scenario: The species list can be narrowed by typing
+  Scenario: An explicit no-species classification counts as Has species like a real identification
+    Then "IMG002.JPG" shows no Has species badge
+    When an unclassified image is classified as Ghost
+    Then the Ghost-classified image shows a Has species badge
+
+  @H2
+  Scenario Outline: The species list can be narrowed by typing under either sorting preference
+    Given species sorting preference is "<preference>"
     When text is typed into the species filter
     Then the list narrows to species matching that text by common or scientific name
     And close-but-inexact spellings still match
+
+    Examples:
+      | preference   |
+      | alphabetical |
+      | recent-first |
 
   @H2
   Scenario: A species not in the vocabulary can still be recorded as a request
@@ -77,10 +118,17 @@ Feature: Assign species to images in an upload
     And applying it records that free text against the image alongside the identification
 
   @H2
-  Scenario: Species used recently are easier to reach
-    Given several species have been applied during this session
+  Scenario: The species list stays alphabetical by common name by default
+    Then the species list is ordered alphabetically by common name
+    And applying a species does not reorder the list
+
+  @H2
+  Scenario: Sorting by latest assigned can be turned on in Settings
+    Given species sorting by recent is switched on in Settings
+    And several species have been applied during this session
     Then those species are listed first, most recently used first
     And their key bindings are unchanged by that reordering
+    And the species sorting preference survives reload and can be disabled
 
   @H2
   Scenario: A species can be given a key so it can be applied by keystroke
@@ -88,6 +136,14 @@ Feature: Assign species to images in an upload
     When a key is assigned to it and that key is pressed with an image focused
     Then that species is recorded on the image
     And the assigned key is shown on the species row
+
+  @H2
+  Scenario: A key assignment the browser cannot save says so
+    Given a species row is shown
+    And the browser has no room left to save key settings
+    When a key is assigned to it and that key is pressed with an image focused
+    Then the assigned key is shown on the species row
+    And a notice says the key settings will reset on reload
 
   @H2
   Scenario Outline: Printable bindings, including former shortcuts, take precedence
@@ -234,6 +290,17 @@ Feature: Assign species to images in an upload
     And the previous species is left without one
 
   @H2
+  Scenario: A key two species in the vocabulary both claim applies neither
+    Given the vocabulary gives two species the same key
+    And an image is focused
+    When the shared key is pressed
+    Then neither of the two species is recorded on the image
+    And both of their rows mark the key as shared
+    When one of the two is given a key of its own
+    Then the shared key applies the species that kept it
+    And no row marks a key as shared
+
+  @H2
   Scenario: A duplicate vocabulary key can be kept with its existing species
     Given the species vocabulary carries a key binding for a species
     When its key is assigned to a different species
@@ -261,6 +328,29 @@ Feature: Assign species to images in an upload
     Then the binding the user set for the removed species is kept and the message stays acknowledged
 
   @H2
+  Scenario: A collection's own species list is accepted quietly the first time it is opened
+    Given Backcountry Survey has its own species list
+    When Backcountry Survey is opened from Browse
+    Then no vocabulary-change message is shown
+
+  @H2
+  Scenario: Switching between collections with different species lists shows no message
+    Given Backcountry Survey has its own species list
+    When Backcountry Survey is opened from Browse
+    And Educational Test is opened from Browse
+    And Backcountry Survey is opened from Browse
+    Then no vocabulary-change message is shown
+
+  @H2
+  Scenario: A collection's species list that changes on the server is still reported
+    Given Backcountry Survey has its own species list
+    And Backcountry Survey is opened from Browse
+    When Backcountry Survey's species list gains Ringtail on the server
+    And the tagger is refreshed with its restored session
+    And Backcountry Survey is opened from Browse
+    Then a blocking message lists Ringtail as added
+
+  @H2
   Scenario: A stale vocabulary refresh reports a server change when the tab regains focus
     Given the server vocabulary gains Ringtail
     When the stale tagger tab regains focus
@@ -279,6 +369,7 @@ Feature: Assign species to images in an upload
     Given the server rejects species vocabulary reads
     When the stale tagger tab regains focus
     Then the existing species vocabulary remains available
+    And the species panel explains the failed refresh without hiding cached species
     And no vocabulary-change message is shown
 
   @H2
@@ -288,6 +379,29 @@ Feature: Assign species to images in an upload
     Then the reference image is shown enlarged over the workspace
     And no tagging keystroke takes effect while it is open
     And Escape, the close control or a click outside dismisses it
+
+  @H2
+  Scenario: The whole reference thumbnail opens the enlarged view, not just its corner
+    Given a species row carries a reference image
+    When the thumbnail is clicked away from its top-left corner
+    Then the reference image is shown enlarged over the workspace
+    And that species was not applied by the click
+    And the enlarge control shows no icon of its own
+    And the enlarge control exposes its hover text and accessible name
+
+  @H2
+  Scenario: Focus lists every applied species without a summary toggle to expand
+    Given the focused image carries several species
+    When Focus is entered to inspect applied species
+    Then every applied species is listed in Focus with no summary control to expand
+
+  @H2
+  Scenario: A long species list in Focus scrolls instead of growing the panel
+    Given auto-advance is switched off in Settings
+    And the focused image carries enough species to require scrolling
+    When Focus is entered to inspect applied species
+    And the species panel's divider is dragged as far narrow as it will go
+    Then the applied species list in Focus scrolls within a fixed height
 
   @H2
   Scenario: An upload with nothing to tag offers no species panel at all
@@ -300,7 +414,7 @@ Feature: Assign species to images in an upload
     # defaults to the first image and every path clamps it into range), and an
     # upload with no taggable images never renders the panel. See CORRECTIONS.md.
 
-  @H2
+  @H2 @H2-5
   Scenario: Dragging a species tile onto the focused image adds it at count one
     Given an image is focused
     When a species tile is dragged onto the image area in the Focus view
@@ -326,6 +440,19 @@ Feature: Assign species to images in an upload
     Then only the Overview image under the drop receives the species
 
   @H2
+  Scenario: Dropping a species on the applied-species strip tags the whole selection
+    Given several images are selected
+    When a species tile is dragged onto the applied-species strip
+    Then every selected image receives the dropped species
+
+  @H2
+  Scenario: Dropping a species on the applied-species strip with no selection tags the focused image
+    Given an image is focused
+    And the empty species strip is a visible drop target without a selection
+    When a species tile is dragged onto the applied-species strip
+    Then that species is recorded on the focused image with a count of one
+
+  @H2
   Scenario: Dragging the Ghost tile onto an image replaces its species with Ghost
     Given the focused image already carries one species
     When the Ghost tile is dragged onto the image area in the Focus view
@@ -333,8 +460,50 @@ Feature: Assign species to images in an upload
     And any real species previously on that image is removed
 
   @H2
-  Scenario: New identifications are held locally until they are synced
+  Scenario: New identifications automatically reach shared storage
     When species are applied to images
-    Then the identifications are kept in this browser
-    And the workspace reports how many local edits are unsaved
-    And the collection's stored files are unchanged until a sync is run
+    Then both completed identifications are automatically saved to storage
+
+  @H2 @H2-6
+  Scenario: An image left without a species stays untagged after moving on and syncing
+    Given an upload with only uploader-written blank rows is open in the tagging workspace
+    And the connected account is ready for attribution
+    And its first image is focused
+    When focus moves on to the next image without a species being applied
+    And a species is applied to that next image
+    And the upload is saved automatically
+    Then the image left behind still reads as untagged
+    And the stored observations record no species for the image left behind
+
+  @H2
+  Scenario Outline: Pending count stays in the species header across layouts
+    Given an image is focused
+    When the count preview layout is "<layout>" at width <width>
+    And the pending count is corrected from two to four
+    Then the species header alone announces pending count four
+    When the bound key is pressed once
+    Then the new species count is 4
+    And the pending species count is cleared
+
+    Examples:
+      | layout | width |
+      | grid   | 1440  |
+      | list   | 1440  |
+      | Focus  | 1440  |
+      | grid   | 390   |
+      | list   | 390   |
+      | Focus  | 390   |
+
+  @H2
+  Scenario: Navigating to another image clears the pending count
+    Given an image is focused
+    And count 15 is pending
+    When the count-preview image changes
+    Then no pending species count is shown
+
+  @H2
+  Scenario: Switching to a different upload clears the pending count
+    Given an image is focused
+    And count 15 is pending
+    When the count-preview upload changes
+    Then no pending species count is shown

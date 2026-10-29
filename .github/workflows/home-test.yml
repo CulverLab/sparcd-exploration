@@ -38,3 +38,9 @@ jobs:
 
       - name: Test Home
         run: pnpm --filter sparcd-home test
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter sparcd-home exec playwright install --with-deps chromium
+
+      - name: Test Home in Chromium
+        run: pnpm --filter sparcd-home test:browser

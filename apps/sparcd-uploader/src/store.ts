@@ -1,15 +1,21 @@
+import { uploadCommentDate } from './lib/uploadComments';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { S3Config } from '@sparcd/types';
 import {
-  loadPersistedConnection,
   loadSessionConnection,
   saveSharedConnection,
   clearSharedConnection,
   subscribeSharedConnection,
+  loadLoginIdentityPreference,
+  loginIdentityPreferenceKey,
+  saveLoginIdentity,
+  saveLoginIdentityDefault,
+  subscribeLoginIdentityChanges,
   loadSharedTheme,
   saveSharedTheme,
   type Theme,
+  type LoginIdentityPreference,
 } from '@sparcd/auth-ui';
 import type { FlipObservation } from '@sparcd/flip';
 import type { ScannedFile } from './lib/scanFiles';
@@ -28,6 +34,7 @@ import { localTimeZone, type NaiveDateTime } from './lib/exifTime';
 import type { ElevationUnit } from './lib/coords';
 import { loadSession } from './lib/db';
 import { resumeUpload } from './lib/upload';
+import { fetchWhoAmI } from './lib/whoami';
 
 export type { ElevationUnit };
 export type Section = 'new' | 'history' | 'settings';
@@ -72,10 +79,14 @@ export type FileEntry = ScannedFile & {
   thumbnail?: Blob;
   mimeType?: string; // worker-authoritative media type
   processError?: string;
+  /** Recovery retained this record, but its original bytes are not verified. */
+  needsOriginal?: boolean;
   // Species the tagger applied before this batch was ever uploaded. Carried
   // opaquely: the uploader displays it read-only and emits it as observation
   // rows, and never edits it.
   preTags?: FlipObservation[];
+  /** Person who applied the pre-upload tags in the Tagger. */
+  preTaggerUser?: string;
 };
 
 type UploaderState = {
@@ -102,8 +113,23 @@ type UploaderState = {
   // shared record's id, so "Edit tags" re-enters the same tagging session.
   flipId: string | null;
   uploaderUser: string; // free-text identity, normalized into a slug for keys
-  selectedLocationKey: string | null; // chosen deployment location key (Assign)
+  identityPersistenceError: boolean;
+  identityEditing: boolean;
+  identityResolvedDefault: string | null;
+  identityDefaultSource: 'whoami' | 'access-key' | null;
+  beginUploaderIdentityEdit: () => void;
+  identityUnsavedCustom: string | null; // current-login override when browser storage rejects a write
+  identityResolutionStatus: 'idle' | 'loading' | 'ready' | 'error';
+  identityResolutionError: string | null;
+  selectedLocationId: string | null; // chosen deployment location ID (Assign)
   selectedBucket: string | null; // selected collection key `${bucket}::${uuid}` (Assign)
+  requireCollectionSelection: boolean; // keep a new batch visibly unassigned
+  uploadCommentDate: string | null;
+  captureUploadCommentDate: () => void;
+  mountainRange: string;
+  dateCollected: string;
+  setMountainRange: (value: string) => void;
+  setDateCollected: (value: string) => void;
   uploadDescription: string; // free-text description for UploadMeta
   uploadTimeZone: string; // IANA zone EXIF naive times are interpreted in; default = browser zone
   dryRun: boolean; // off by default; when on, logs PUTs and writes nothing
@@ -168,7 +194,7 @@ type UploaderState = {
   /** Adopt a batch coming back from the tagger, already reattached to real
    *  Files and already carrying its Inspect results — nothing to re-process. */
   adoptTaggedBatch: (input: {
-    flipId: string;
+    flipId: string | null;
     files: FileEntry[];
     dirHandle: FileSystemDirectoryHandle | null;
   }) => void;
@@ -184,7 +210,9 @@ type UploaderState = {
   ) => void;
   resetBatch: () => void;
   setUploaderUser: (value: string) => void;
-  setSelectedLocationKey: (key: string | null) => void;
+  ensureUploaderIdentity: () => void;
+  refreshUploaderIdentity: () => Promise<void>;
+  setSelectedLocationId: (id: string | null) => void;
   setSelectedBucket: (bucket: string | null) => void;
   setUploadDescription: (value: string) => void;
   setUploadTimeZone: (value: string) => void;
@@ -212,9 +240,11 @@ function disconnectedState(s: UploaderState): Partial<UploaderState> {
     dirHandle: null,
     fileAccessMode: 'reselect-required',
     flipId: null,
-    selectedLocationKey: null,
+    selectedLocationId: null,
     selectedBucket: null,
+    requireCollectionSelection: false,
     uploaderUser: '',
+    ...emptyIdentityState,
     uploadTimeZone: localTimeZone(),
     pendingResume: null,
     activeRun: null,
@@ -227,6 +257,47 @@ function disconnectedState(s: UploaderState): Partial<UploaderState> {
     historyResumePreparation: null,
     attachedFiles: null,
   };
+}
+
+const emptyIdentityState = {
+  identityPersistenceError: false,
+  identityEditing: false,
+  identityResolvedDefault: null as string | null,
+  identityDefaultSource: null as 'whoami' | 'access-key' | null,
+  identityUnsavedCustom: null as string | null,
+  identityResolutionStatus: 'idle' as const,
+  identityResolutionError: null as string | null,
+};
+
+function effectiveIdentity(
+  state: Pick<UploaderState, 'identityEditing' | 'uploaderUser' | 'identityUnsavedCustom' | 'identityResolvedDefault' | 'identityDefaultSource' | 'identityResolutionStatus'>,
+  preference: LoginIdentityPreference,
+  defaultIdentity = state.identityResolutionStatus === 'error'
+    ? (state.identityDefaultSource === 'whoami' ? state.identityResolvedDefault : null)
+      ?? (preference.defaultSource === 'whoami' ? preference.defaultIdentity : null) ?? ''
+    : state.identityResolvedDefault ?? preference.defaultIdentity ?? '',
+): string {
+  if (state.identityEditing) return state.uploaderUser;
+  if (state.identityUnsavedCustom !== null) return state.identityUnsavedCustom.trim() ? state.identityUnsavedCustom : defaultIdentity;
+  return preference.customIdentity ?? defaultIdentity;
+}
+
+function connectionIdentity(state: UploaderState, cfg: S3Config) {
+  const sameLogin = state.s3Config?.accessKey.trim() === cfg.accessKey.trim();
+  return {
+    ...emptyIdentityState,
+    uploaderUser: sameLogin ? effectiveIdentity(state, loadLoginIdentityPreference(cfg.accessKey)) : savedIdentityFor(cfg.accessKey),
+    identityEditing: sameLogin && state.identityEditing,
+    identityUnsavedCustom: sameLogin ? state.identityUnsavedCustom : null,
+    identityPersistenceError: sameLogin && state.identityPersistenceError,
+    identityResolvedDefault: sameLogin ? state.identityResolvedDefault : null,
+    identityDefaultSource: sameLogin ? state.identityDefaultSource : null,
+  };
+}
+
+function savedIdentityFor(loginIdentifier: string | null | undefined): string {
+  const preference = loadLoginIdentityPreference(loginIdentifier);
+  return preference.customIdentity ?? preference.defaultIdentity ?? '';
 }
 
 function sameConnection(a: S3Config | null, b: S3Config): boolean {
@@ -251,6 +322,7 @@ const toEntry = (f: ScannedFile): FileEntry => ({ ...f, processState: 'queued' }
 let fileIndexById: Map<string, number> | null = null;
 let retryPartialRunGeneration = 0;
 let retryPartialRunPending: number | null = null;
+let identityLookupGeneration = 0;
 
 function invalidateRetryPartialRun(): void {
   retryPartialRunGeneration++;
@@ -268,10 +340,6 @@ function getFileIndex(files: FileEntry[]): Map<string, number> {
   }
   return fileIndexById;
 }
-
-// Read once at module init for the initial uploaderUser default below (the
-// access key is non-secret, so it's safe to have persisted).
-const initialPersisted = loadPersistedConnection();
 
 // This tab's own session, if it has one — same tab, so a BrandSwitcher hop to
 // another SPARC'd tool or a reload lands straight back in the app. Nothing is
@@ -330,12 +398,14 @@ export const useStore = create<UploaderState>()(
       dirHandle: null,
       fileAccessMode: 'reselect-required',
       flipId: null,
-      // Defaults to the connected access key (the closest thing to a "login
-      // name" this app has) — but only ever as a fill-in for blank; a value the
-      // user typed or already had is never overwritten.
-      uploaderUser: initialPersisted?.accessKey ?? '',
-      selectedLocationKey: null,
+      uploaderUser: savedIdentityFor(initialSession?.accessKey),
+      ...emptyIdentityState,
+      selectedLocationId: null,
       selectedBucket: null,
+      requireCollectionSelection: false,
+      uploadCommentDate: null,
+      mountainRange: '',
+      dateCollected: '',
       uploadDescription: '',
       uploadTimeZone: localTimeZone(),
       dryRun: false,
@@ -360,10 +430,12 @@ export const useStore = create<UploaderState>()(
           s3Config: config,
           connectionId: s.connectionId + 1,
           loginDeferred: false,
-          selectedLocationKey: null,
+          ...connectionIdentity(s, config),
+          selectedLocationId: null,
           selectedBucket: null,
-          uploaderUser: s.uploaderUser || config.accessKey,
+          requireCollectionSelection: false,
         }));
+        void get().refreshUploaderIdentity();
       },
       setLoginDeferred: (value) => set({ loginDeferred: value }),
       disconnect: () => {
@@ -499,6 +571,7 @@ export const useStore = create<UploaderState>()(
         invalidateFileIndex();
         set((s) => ({
           files: entries,
+          uploadCommentDate: null,
           validations: validateBatch(entries),
           step: entries.length > 0 ? 'inspect' : 'drop',
           batchToken: s.batchToken + 1,
@@ -632,6 +705,7 @@ export const useStore = create<UploaderState>()(
           files: [],
           validations: {},
           step: 'drop',
+          uploadCommentDate: null,
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
@@ -649,9 +723,76 @@ export const useStore = create<UploaderState>()(
       },
 
       // Stored raw; sanitizeUploaderUser derives the key-safe slug at point of use.
-      setUploaderUser: (value) => set({ uploaderUser: value }),
-      setSelectedLocationKey: (key) => set({ selectedLocationKey: key }),
-      setSelectedBucket: (bucket) => set({ selectedBucket: bucket }),
+      beginUploaderIdentityEdit: () => set({ identityEditing: true }),
+      setUploaderUser: (value) => {
+        const { s3Config } = get();
+        const saved = s3Config ? saveLoginIdentity(s3Config.accessKey, value) : true;
+        set({
+          uploaderUser: value,
+          identityPersistenceError: !!s3Config && !saved,
+          identityUnsavedCustom: s3Config && !saved ? value : null,
+        });
+      },
+      ensureUploaderIdentity: () => {
+        const state = get();
+        if (!state.s3Config) return;
+        set({
+          identityEditing: false,
+          uploaderUser: effectiveIdentity({ ...state, identityEditing: false }, loadLoginIdentityPreference(state.s3Config.accessKey)),
+        });
+        if (state.identityResolutionStatus === 'idle') void get().refreshUploaderIdentity();
+      },
+      refreshUploaderIdentity: async () => {
+        const { s3Config, connectionId } = get();
+        if (!s3Config) return;
+        const login = s3Config.accessKey.trim();
+        const requestGeneration = ++identityLookupGeneration;
+        const initialPreference = loadLoginIdentityPreference(login);
+        set({
+          uploaderUser: effectiveIdentity(get(), initialPreference),
+          identityResolutionStatus: 'loading',
+          identityResolutionError: null,
+        });
+        try {
+          const result = await fetchWhoAmI(s3Config);
+          const current = get();
+          if (requestGeneration !== identityLookupGeneration || current.connectionId !== connectionId || current.s3Config?.accessKey.trim() !== login) return;
+          const identity = result.kind === 'unsupported' ? login : result.name;
+          const source = result.kind === 'unsupported' ? 'access-key' : 'whoami';
+          const saved = saveLoginIdentityDefault(login, identity, source);
+          const preference = loadLoginIdentityPreference(login);
+          set({
+            uploaderUser: effectiveIdentity(current, preference, identity),
+            identityResolvedDefault: identity,
+            identityDefaultSource: source,
+            identityPersistenceError: current.identityUnsavedCustom !== null || !saved,
+            identityResolutionStatus: 'ready',
+            identityResolutionError: null,
+          });
+        } catch (error) {
+          const current = get();
+          if (requestGeneration !== identityLookupGeneration || current.connectionId !== connectionId || current.s3Config?.accessKey.trim() !== login) return;
+          const preference = loadLoginIdentityPreference(login);
+          const priorName = current.identityDefaultSource === 'whoami' ? current.identityResolvedDefault
+            : preference.defaultSource === 'whoami' ? preference.defaultIdentity : null;
+          set({
+            uploaderUser: effectiveIdentity(current, preference, priorName ?? ''),
+            identityResolvedDefault: priorName,
+            identityDefaultSource: priorName ? 'whoami' : null,
+            identityResolutionStatus: 'error',
+            identityResolutionError: error instanceof Error
+              ? error.message
+              : 'The account name could not be loaded. Check the connection and retry.',
+          });
+        }
+      },
+      setSelectedLocationId: (id) => set({ selectedLocationId: id }),
+      setSelectedBucket: (bucket) => set({ selectedBucket: bucket, requireCollectionSelection: false }),
+      captureUploadCommentDate: () => {
+        if (!get().uploadCommentDate) set({ uploadCommentDate: uploadCommentDate(new Date()) });
+      },
+      setMountainRange: (value) => set({ mountainRange: value }),
+      setDateCollected: (value) => set({ dateCollected: value }),
       setUploadDescription: (value) => set({ uploadDescription: value }),
       setUploadTimeZone: (value) => set({ uploadTimeZone: value }),
       setDryRun: (value) => set({ dryRun: value }),
@@ -699,9 +840,9 @@ export const useStore = create<UploaderState>()(
         }
       },
 
-      // Start a fresh batch after a completed upload, keeping the deployment,
-      // uploader, target collection, and description so a researcher can chain
-      // batches for the same site without re-entering everything.
+      // Start a fresh batch after a completed upload. Assignment values belong
+      // to the card that just finished and must not silently carry over to the
+      // next card; the uploader identity and run preferences remain available.
       nextBatch: () => {
         invalidateRetryPartialRun();
         invalidateFileIndex();
@@ -709,10 +850,18 @@ export const useStore = create<UploaderState>()(
           files: [],
           validations: {},
           step: 'drop',
+          uploadCommentDate: null,
           batchToken: s.batchToken + 1,
           dirHandle: null,
           fileAccessMode: 'reselect-required',
           flipId: null,
+          selectedLocationId: null,
+          selectedBucket: null,
+          mountainRange: '',
+          dateCollected: '',
+          uploadDescription: '',
+          uploadTimeZone: '',
+          requireCollectionSelection: true,
           activeRun: null,
           streamingRun: null,
           streamingQueueClosed: false,
@@ -728,19 +877,41 @@ export const useStore = create<UploaderState>()(
     {
       name: 'sparcd-uploader-session',
       storage: createJSONStorage(() => sessionStorage),
-      // Assign's controls (deployment, collection, uploader identity,
-      // timezone, description) are plain strings — safe to persist, unlike
-      // files/handles — and nextBatch() already keeps them in memory across
-      // batches with exactly this in mind; this just makes that survive a
-      // reload too. A stale selectedLocationKey/selectedBucket from a
-      // different connection is harmless: Assign already clears/reselects
-      // either one when it doesn't match the connected backend's data. The run
-      // options ride along for the same reason.
+      version: 1,
+      // Older versions stored a single uploaderUser in this tab's session.
+      // It has no reliable account owner, so discard it rather than assigning
+      // it to whichever login happens to be active during migration.
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState;
+        const { uploaderUser: _legacyIdentity, ...rest } = persistedState as Record<string, unknown>;
+        return rest;
+      },
+      // Assignment identity is stored in the shared per-login preference, not
+      // in this tab's session. Ignore any stale value even if a malformed or
+      // future session record still includes one.
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Partial<UploaderState>),
+        uploaderUser: currentState.uploaderUser,
+        identityPersistenceError: currentState.identityPersistenceError,
+        identityEditing: currentState.identityEditing,
+        identityResolvedDefault: currentState.identityResolvedDefault,
+        identityDefaultSource: currentState.identityDefaultSource,
+        identityUnsavedCustom: currentState.identityUnsavedCustom,
+        identityResolutionStatus: currentState.s3Config ? currentState.identityResolutionStatus : 'idle',
+        identityResolutionError: currentState.identityResolutionError,
+      }),
+      // Other Assign controls and run options remain tab-scoped and survive a
+      // reload. The login identity itself is account-scoped and shared with
+      // Tagger, so it is intentionally excluded here.
       partialize: (s) => ({
         elevationUnit: s.elevationUnit,
-        uploaderUser: s.uploaderUser,
-        selectedLocationKey: s.selectedLocationKey,
+        selectedLocationId: s.selectedLocationId,
         selectedBucket: s.selectedBucket,
+        requireCollectionSelection: s.requireCollectionSelection,
+        uploadCommentDate: s.uploadCommentDate,
+        mountainRange: s.mountainRange,
+        dateCollected: s.dateCollected,
         uploadDescription: s.uploadDescription,
         uploadTimeZone: s.uploadTimeZone,
         dryRun: s.dryRun,
@@ -767,15 +938,39 @@ subscribeSharedConnection((cfg) => {
     const run = current.activeRun;
     useStore.setState((s) => ({
       ...disconnectedState(s),
-      ...(cfg ? { s3Config: cfg, uploaderUser: cfg.accessKey } : {}),
+      ...(cfg
+        ? {
+            s3Config: cfg,
+            ...connectionIdentity(s, cfg),
+          }
+        : {}),
     }));
     run?.cancel();
+    if (cfg) void useStore.getState().refreshUploaderIdentity();
     return;
   }
   useStore.setState((s) => ({
     s3Config: cfg,
     connectionId: s.connectionId + 1,
     loginDeferred: false,
-    uploaderUser: s.uploaderUser || cfg.accessKey,
+    ...connectionIdentity(s, cfg),
   }));
+  void useStore.getState().refreshUploaderIdentity();
 }, () => useStore.getState().s3Config);
+
+subscribeLoginIdentityChanges(({ preferenceKey }) => {
+  const { s3Config } = useStore.getState();
+  if (!s3Config) return;
+  const activeLogin = s3Config.accessKey.trim();
+  if (preferenceKey !== null && preferenceKey !== loginIdentityPreferenceKey(activeLogin)) return;
+  const state = useStore.getState();
+  const preference = loadLoginIdentityPreference(activeLogin);
+  const acceptDefault = preference.defaultSource === 'whoami' || state.identityResolutionStatus !== 'error';
+  const defaultIdentity = acceptDefault ? preference.defaultIdentity ?? state.identityResolvedDefault : state.identityResolvedDefault;
+  useStore.setState({
+    uploaderUser: effectiveIdentity(state, preference, defaultIdentity ?? ''),
+    identityResolvedDefault: defaultIdentity,
+    identityDefaultSource: acceptDefault ? preference.defaultSource ?? state.identityDefaultSource : state.identityDefaultSource,
+  });
+  if (!state.identityEditing && !useStore.getState().uploaderUser.trim()) void state.refreshUploaderIdentity();
+});

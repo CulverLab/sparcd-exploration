@@ -10,7 +10,7 @@ import {
   rewriteBucketName, safeKeySegments,
 } from '../namespace.mjs';
 import {
-  classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey,
+  classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey, buildListing,
 } from '../rules.mjs';
 import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
@@ -562,6 +562,64 @@ describe('upstream signing', () => {
       { ifMatch: '"c1f2"' },
     ));
     assert.equal(request.headers.get('if-match'), 'c1f2');
+  });
+
+  test('an internal HEAD is signed with the upstream credential', async () => {
+    let result;
+    const { request, signedHeaders } = await capture(async (upstream) => {
+      result = await upstream.head('sparcd-coll', 'Collections/u/deployments.csv');
+    });
+    assert.equal(request.method, 'HEAD');
+    assert.ok(request.headers.get('authorization'));
+    assert.deepEqual(result, { status: 200, etag: '"x"', contentLength: null });
+    assert.ok(signedHeaders.includes('host'));
+  });
+});
+
+describe('upstream listings', () => {
+  /** Answers each request with the next page, and keeps the URLs asked for. */
+  async function listing(pages, run) {
+    const real = globalThis.fetch;
+    const asked = [];
+    globalThis.fetch = async (req) => {
+      asked.push(new URL(req.url));
+      return new Response(pages[asked.length - 1], {
+        status: 200, headers: { 'content-type': 'application/xml' },
+      });
+    };
+    try {
+      const out = await run(makeUpstream({
+        endpoint: 'https://rgw.example/', accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'b'.repeat(40),
+      }));
+      return { out, asked };
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  test('every page of day folders is read, not just the first', async () => {
+    const page = (day, next) => '<ListBucketResult>'
+      + `<CommonPrefixes><Prefix>Settings/activity/${day}/</Prefix></CommonPrefixes>`
+      + `<IsTruncated>${next ? 'true' : 'false'}</IsTruncated>`
+      + `${next ? `<NextContinuationToken>${next}</NextContinuationToken>` : ''}</ListBucketResult>`;
+    const { out, asked } = await listing([page('2026-01-01', 'abc'), page('2026-01-02')],
+      (upstream) => upstream.listCommonPrefixes('sparcd-settings', 'Settings/activity/'));
+    assert.deepEqual(out, ['Settings/activity/2026-01-01/', 'Settings/activity/2026-01-02/']);
+    assert.equal(asked[1].searchParams.get('continuation-token'), 'abc');
+  });
+
+  test('an entry is decoded once, so a rebuilt listing escapes it once', async () => {
+    // What MinIO writes: Go's encoder spells `"` and `'` as numeric references.
+    const xml = '<ListBucketResult><Contents><Key>Settings/it&#39;s &amp; more.json</Key>'
+      + '<LastModified>2026-01-01T00:00:00.000Z</LastModified>'
+      + '<ETag>&#34;0f343b0931126a20f133d67c2b018a3b&#34;</ETag><Size>2</Size></Contents>'
+      + '<IsTruncated>false</IsTruncated></ListBucketResult>';
+    const { out } = await listing([xml], (upstream) => upstream.listPage('sparcd-settings'));
+    assert.equal(out.keys[0].key, "Settings/it's & more.json");
+    assert.equal(out.keys[0].etag, '"0f343b0931126a20f133d67c2b018a3b"');
+    const rebuilt = buildListing({ bucket: 'sparcd-settings', keys: out.keys, commonPrefixes: [] });
+    assert.match(rebuilt, /<ETag>"0f343b0931126a20f133d67c2b018a3b"<\/ETag>/);
+    assert.match(rebuilt, /<Key>Settings\/it's &amp; more\.json<\/Key>/);
   });
 });
 

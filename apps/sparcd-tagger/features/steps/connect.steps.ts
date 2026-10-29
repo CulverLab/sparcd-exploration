@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {
   Given,
   When,
@@ -25,7 +26,6 @@ import {
   setSyncDryRun,
   readStore,
   waitForDirtyDrafts,
-  waitForSyncDialogClosed,
 } from './support/flows';
 
 // --- Background / shared givens ---------------------------------------------
@@ -119,6 +119,122 @@ When('the tab is closed and the tagger is opened in a new one', async ({ page })
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
+// --- Credential probe (#589) ------------------------------------------------
+
+When('valid-looking credentials are submitted', async ({ page }) => {
+  await page.locator('#endpoint').fill(ENDPOINT);
+  await page.locator('#accessKey').fill('testkey');
+  await page.locator('#secretKey').fill('testsecret');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+});
+
+Then(
+  'the credentials are checked against the server before the workspace opens',
+  async ({ page, s3 }) => {
+    await expect(sectionTab(page, 'Browse')).toBeVisible();
+    expect(s3.listBucketsCalls).toBeGreaterThan(0);
+  },
+);
+
+Given('the storage endpoint cannot be reached', async ({ s3 }) => {
+  s3.listBucketsAborts = true;
+});
+
+Given('the server will reject these credentials', async ({ s3 }) => {
+  s3.listBucketsFailure = { status: 403, code: 'InvalidAccessKeyId' };
+});
+
+Given('the server denies the credential check itself', async ({ s3 }) => {
+  s3.listBucketsFailure = { status: 403, code: 'AccessDenied' };
+});
+
+Given("the server reports this computer's clock is skewed", async ({ s3 }) => {
+  s3.listBucketsFailure = { status: 403, code: 'RequestTimeTooSkewed' };
+});
+
+Given('the credential check hangs instead of responding', async ({ s3 }) => {
+  s3.listBucketsHangs = true;
+});
+
+Given('the browser is offline', async ({ page }) => {
+  await page.context().setOffline(true);
+});
+
+Then('connecting is refused with a message that the endpoint could not be reached', async ({ page }) => {
+  await expect(page.getByTestId('connection-probe-failure')).toContainText("Couldn't reach");
+});
+
+Then('connecting is refused with a message that the credentials were rejected', async ({ page }) => {
+  await expect(page.getByTestId('connection-probe-failure')).toContainText(
+    'rejected this access key and secret key',
+  );
+});
+
+Then(
+  'connecting is refused with a message that the check could not confirm the credentials',
+  async ({ page }) => {
+    await expect(page.getByTestId('connection-probe-failure')).toContainText(
+      'Unable to confirm your credentials',
+    );
+  },
+);
+
+Then("connecting is refused with a message about the computer's clock", async ({ page }) => {
+  await expect(page.getByTestId('connection-probe-failure')).toContainText(
+    "computer's time is correct",
+  );
+});
+
+Then('connecting is refused with a message that the check was interrupted', async ({ page }) => {
+  await expect(page.getByTestId('connection-probe-failure')).toContainText(
+    'request was interrupted',
+  );
+});
+
+Then('the workspace does not open', async ({ page }) => {
+  await expect(sectionTab(page, 'Browse')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+});
+
+Then('the form is available to try again', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
+  await expect(page.locator('#endpoint')).toBeEnabled();
+});
+
+Then('standalone Tagger explains that an online connection is required', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'Connect to use standalone Tagger' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText(
+    'Offline tagging is available only for a batch prepared in Uploader',
+  );
+  await expect(page.locator('#endpoint')).toHaveCount(0);
+});
+
+Then('no credential check has been made', async ({ s3 }) => {
+  expect(s3.listBucketsCalls).toBe(0);
+});
+
+When('a different endpoint is entered and the field is left', async ({ page }) => {
+  await page.locator('#endpoint').fill('https://s3.us-west-2.amazonaws.com');
+  await page.locator('#endpoint').blur();
+});
+
+Then(
+  'the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over',
+  async ({ page }) => {
+    await page.getByRole('button', { name: '+ Advanced' }).click();
+    // ENDPOINT (the remembered connection) is plain-http MinIO-shaped:
+    // secure: false, forcePathStyle: true, region: us-east-1 — the opposite
+    // of this AWS host's own inferred values on every one of the three.
+    await expect(page.locator('#region')).toHaveValue('us-west-2');
+    await expect(
+      page.locator('label').filter({ hasText: 'Force path-style' }).locator('input'),
+    ).not.toBeChecked();
+    await expect(
+      page.locator('label').filter({ hasText: 'Secure (HTTPS)' }).locator('input'),
+    ).toBeChecked();
+  },
+);
+
 Then('the endpoint and access key are pre-filled from the previous connection', async ({ page }) => {
   await expect(page.locator('#endpoint')).toHaveValue(ENDPOINT);
   await expect(page.locator('#accessKey')).toHaveValue('testkey');
@@ -180,35 +296,9 @@ Then("it no longer shows the previous connection's collections or images", async
   await expect(second.getByText(COLLECTION_NAME)).toHaveCount(0);
 });
 
-When('a sibling tool disconnects the shared session', async ({ context }) => {
-  // A same-origin static page models another SPARC'd tool's disconnect relay
-  // without mounting a second Tagger that could answer the connection request
-  // and race the disconnect with a fresh connect message.
-  const sibling = await context.newPage();
-  await sibling.route('**/sibling-disconnect', (route) =>
-    route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
-  );
-  await sibling.goto(`${ENDPOINT}/sibling-disconnect`);
-  await sibling.evaluate(async () => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({ type: 'disconnect' });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  });
-});
 
-Then('the tagger returns to the connection screen', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-});
 
-Then('after reloading and reconnecting, it has no identity carried over', async ({ page }) => {
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-  await connect(page);
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
-});
+
 
 // --- Tag gate ---------------------------------------------------------------
 
@@ -220,45 +310,33 @@ Then('the {string} section tab is disabled', async ({ page }, label: string) => 
   await expect(sectionTab(page, label)).toBeDisabled();
 });
 
-Then('Browse, History and Settings remain available', async ({ page }) => {
-  for (const label of ['Browse', 'History', 'Settings']) {
+Then('Browse, Recovery and Settings remain available', async ({ page }) => {
+  for (const label of ['Browse', 'Recovery', 'Settings']) {
     await expect(sectionTab(page, label)).toBeEnabled();
   }
 });
 
 // --- Identity ---------------------------------------------------------------
 
-When('a tagger identity is entered in Settings', async ({ page }) => {
+Then('Settings shows the connected storage username', async ({ page }) => {
+  await expect(page.locator('#user')).toHaveValue('testkey');
+});
+
+Then('Settings shows connected storage username {string}', async ({ page }, username: string) => {
   await openSettings(page);
-  await page.locator('#user').fill('jgonzalez');
-  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue(username);
+  await sectionTab(page, 'Tag').click();
 });
 
-Then('that identity is retained in Settings', async ({ page }) => {
-  await expect(page.locator('#user')).toHaveValue('jgonzalez');
+Then('the connected identity can be edited independently of credentials', async ({ page }) => {
+  await expect(page.locator('#user')).toBeEditable();
+  await page.locator('#user').fill('Researcher Name');
+  await page.locator('#user').blur();
+  await expect(page.locator('#user')).toHaveValue('Researcher Name');
+  await expect(page.getByLabel('Connected Access key')).toHaveText('tes…key');
 });
 
-Then('a fresh connection starts with no identity carried over', async ({ page }) => {
-  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-  await connect(page);
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
-});
 
-When('the tagger is opened in a second tab of the same browser', async ({ context, s3, scratch }) => {
-  const second = await context.newPage();
-  await installS3Mock(second, s3);
-  await second.goto(APP_URL);
-  await expect(sectionTab(second, 'Browse')).toBeVisible();
-  scratch.second = second;
-});
-
-Then('that identity is retained in Settings of the second tab', async ({ scratch }) => {
-  const second = scratch.second as import('@playwright/test').Page;
-  await openSettings(second);
-  await expect(second.locator('#user')).toHaveValue('jgonzalez');
-});
 
 When('a sibling tool connects the shared session with different credentials', async ({ context }) => {
   // A same-origin static page models another SPARC'd tool relaying its own
@@ -269,94 +347,30 @@ When('a sibling tool connects the shared session with different credentials', as
     route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Sibling tool</title>' }),
   );
   await sibling.goto(`${ENDPOINT}/sibling-connect`);
-  await sibling.evaluate(async (endpoint) => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint,
-        region: 'us-east-1',
-        accessKey: 'otherkey',
-        secretKey: 'othersecret',
-        forcePathStyle: true,
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    channel.close();
-  }, ENDPOINT);
-});
-
-Then('Settings shows no tagger identity', async ({ page }) => {
-  await openSettings(page);
-  await expect(page.locator('#user')).toHaveValue('');
-  expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-identity'))).toBeNull();
-});
-
-Then(
-  'that identity is used for the audit-snapshot path and the edit comment of every sync',
-  async ({ page, s3 }) => {
-    await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
-    await collectionButton(page, COLLECTION_NAME).click();
-    await openWorkspaceFromBrowse(page);
-    await makeLocalEdit(page);
-    await openSyncDialog(page);
-    await setSyncDryRun(page, false);
-    await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-
-    const written = s3.puts.filter((p) => p.key.endsWith('UploadMeta.json'));
-    expect(written.length).toBeGreaterThan(0);
-    const meta = JSON.parse(written[written.length - 1].body) as { editComments: string[] };
-    expect(meta.editComments.join('\n')).toContain('jgonzalez');
-    expect(s3.puts.some((p) => p.key.includes('.sparcd-tagger-snapshots/jgonzalez/'))).toBe(true);
-  },
-);
-
-Then('a live sync or restore cannot be run while the identity is empty', async ({ page }) => {
-  await waitForSyncDialogClosed(page);
-  await openSettings(page);
-  await page.locator('#user').fill('');
-  await sectionTab(page, 'Tag').click();
-  await openSyncDialog(page);
-  await expect(page.getByText('Set a Tagger identity in Settings first')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Sync now|Run dry-run/ })).toBeDisabled();
+  await sibling.evaluate(async ({ endpoint, url }) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ url);
+    saveSharedConnection({
+      endpoint, region: 'us-east-1', accessKey: 'otherkey',
+      secretKey: 'othersecret', forcePathStyle: true,
+    }, false);
+  }, { endpoint: ENDPOINT, url: `/sparcd-exploration/tagger/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}` });
 });
 
 // --- Session defaults -------------------------------------------------------
 
-When('Settings is opened for the first time in a session', async ({ page }) => {
-  await openSettings(page);
-});
+
 
 When('Settings is opened', async ({ page }) => {
   await openSettings(page);
 });
 
-Then('{string} is switched on', async ({ page }, label: string) => {
-  await expect(page.locator('label').filter({ hasText: label }).locator('input')).toBeChecked();
-});
+
 
 Then('{string} is switched off', async ({ page }, label: string) => {
   await expect(page.locator('label').filter({ hasText: label }).locator('input')).not.toBeChecked();
 });
 
-Then(
-  'Sync writes for real unless dry-run is switched on',
-  async ({ page, s3 }) => {
-    await expect(settingsDryRunCheckbox(page)).not.toBeChecked();
-    // An identity is required before the dialog will run anything at all.
-    await page.locator('#user').fill('jgonzalez');
-    await sectionTab(page, 'Browse').click();
-    await collectionButton(page, COLLECTION_NAME).click();
-    await openWorkspaceFromBrowse(page);
-    await makeLocalEdit(page);
-    await openSyncDialog(page);
-    await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
-    await page.getByRole('button', { name: 'Sync now' }).click();
-    await expect(page.getByText('Synced — canonical files replaced.')).toBeVisible();
-    expect(s3.puts.length).toBeGreaterThan(0);
-  },
-);
+
 
 Then('the Overview shows a flat strip of images with no burst bands', async ({ page }) => {
   await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
@@ -380,58 +394,22 @@ Then('switching it on reveals a threshold between {int} and {int} seconds', asyn
 
 // --- Disconnect -------------------------------------------------------------
 
-Given('there are unsaved local edits in this browser', async ({ page }) => {
-  await openWorkspace(page);
-  await makeLocalEdit(page);
-  await expect(page.getByText(/1 unsaved · discard/)).toBeVisible();
-  await waitForDirtyDrafts(page, 1);
-});
 
-When('Disconnect is chosen in Settings', async ({ page }) => {
-  await openSettings(page);
-  await page.locator('main').getByRole('button', { name: 'Disconnect' }).click();
-});
 
-Then('the tagger reports how many unsynced edits exist', async ({ page }) => {
-  await expect(page.getByRole('heading', { name: 'Unsynced local edits' })).toBeVisible();
-  await expect(page.getByText(/You have\s*1\s*unsynced tag/)).toBeVisible();
-});
 
-Then(
-  'it offers to cancel, to review the unsynced edits in History, or to discard them and disconnect',
-  async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Review unsynced' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Discard & disconnect' })).toBeVisible();
-  },
-);
 
-Given('there are no unsaved local edits', async ({ page }) => {
-  await openAppConnected(page);
-  // Something local to prove the wipe actually happens.
-  await page.evaluate(() =>
-    localStorage.setItem(
-      'sparcd-tagger-keybindings',
-      JSON.stringify({ state: { overrides: { 'Canis latrans': 'c' } }, version: 0 }),
-    ),
-  );
-});
+
+
+
+
+
 
 When('Disconnect is chosen', async ({ page }) => {
-  await openSettings(page);
-  await page.locator('main').getByRole('button', { name: 'Disconnect' }).click();
+  await openSettings(page); await page.locator('main').getByRole('button', { name: 'Disconnect', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
 });
 
-Then(
-  'local work is cleared while scoped keybinding profiles are retained',
-  async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
-    expect(await page.evaluate(() => localStorage.getItem('sparcd-tagger-keybindings'))).not.toBeNull();
-    expect(await readStore(page, 'drafts')).toHaveLength(0);
-    expect(await readStore(page, 'uploads')).toHaveLength(0);
-    expect(await readStore(page, 'syncJournals')).toHaveLength(0);
-  },
-);
+
 
 Then('the tagger returns to the connection screen ready for the next person', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
@@ -467,6 +445,30 @@ Then(
 
 async function openWorkspaceFromBrowse(page: import('@playwright/test').Page): Promise<void> {
   await page.locator('button').filter({ hasText: 'priortagger' }).filter({ hasText: 'Open →' }).click();
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
+  await expect(page.getByTestId('automatic-save')).toBeVisible();
   await expect(page.locator('button[title="IMG001.JPG"]')).toBeVisible();
 }
+
+Then('the remember checkbox describes its public-computer warning', async ({ page }) => {
+  const checkbox = page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});
+
+Then('no manual Sync or dry-run preference is offered', async ({ page }) => {
+  await expect(page.getByRole('checkbox', { name: /Dry.run/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Sync|^Snapshots/ })).toHaveCount(0);
+});
+Given('a completed automatic action exists for this account', async ({ page }) => {
+  await openWorkspace(page); await makeLocalEdit(page); const { waitForAutomaticSave } = await import('./support/flows'); await waitForAutomaticSave(page);
+});
+Then('the completed Undo remains scoped in this browser', async ({ page }) => {
+  const records = await readStore(page, 'automatic') as { undo: { user: string }; scope: string }[];
+  expect(records).toHaveLength(1); expect(records[0].undo.user).toBe('testkey'); expect(records[0].scope).toContain('testkey');
+});
+When('the same account reconnects', async ({ page }) => { await connect(page); await openWorkspace(page); });
+Then('its completed Undo is available again', async ({ page }) => { await expect(page.getByTestId('automatic-save').getByRole('button', { name: 'Undo latest action' })).toBeEnabled(); });

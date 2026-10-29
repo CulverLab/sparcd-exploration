@@ -13,6 +13,35 @@ export type S3Config = {
   secure?: boolean; // used when `endpoint` carries no scheme
 };
 
+/**
+ * Outcome of a read-only connectivity/credential check against a submitted
+ * `S3Config`, before it's accepted. Lives here (not `@sparcd/s3-safe`) so
+ * `@sparcd/auth-ui` can type its `onTestConnection` prop without depending on
+ * the AWS SDK — the actual probe is implemented in `@sparcd/s3-safe`.
+ *
+ * `category` is deliberately not "invalid credentials" vs. "valid" alone:
+ * S3 rejects a bad access key or signature at the authentication layer
+ * (`credentials-rejected`) before any permission check runs, but an
+ * `AccessDenied` on this read-only probe (`probe-denied`) only means the
+ * check itself was refused — it cannot prove the credentials are wrong, only
+ * that the account lacks permission for this operation specifically.
+ */
+export type ConnectionProbeResult =
+  | { ok: true }
+  | {
+      ok: false;
+      category:
+        | 'unreachable' // no HTTP response at all — DNS/CORS/mixed-content/connection-refused
+        | 'credentials-rejected' // InvalidAccessKeyId / SignatureDoesNotMatch
+        | 'probe-denied' // AccessDenied or another authorization rejection
+        | 'clock-skew' // RequestTimeTooSkewed
+        | 'interrupted' // aborted / timed out
+        | 'unexpected'; // anything else
+      // A safe-to-display status/code for the 'unexpected' category. Never
+      // the secret key or raw SDK error details.
+      detail?: string;
+    };
+
 export type Collection = {
   bucket: string;
   uuid: string;

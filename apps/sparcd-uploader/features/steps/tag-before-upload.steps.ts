@@ -1,6 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
+import { COLLECTION_A_NAME } from './fixtures-data';
 import { APP_PATH, type App } from './app';
-import { writtenCsvRows } from './helpers';
+import { FAILING_FILE, expectStoredAtLocation, publishedUploads, writtenCsvRows } from './helpers';
 import { jpegModifyDateOnly } from './batches';
 
 // What the Tagger would have written back. Keys are the paths within the
@@ -15,7 +16,7 @@ const TAGS = {
   // IMG_0003.JPG is deliberately left alone.
 };
 
-const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag species first' });
+const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag species before upload' });
 
 /** Hand the batch over and stop at the Tagger's doorstep, holding its id. */
 async function handOff(app: App): Promise<string> {
@@ -32,25 +33,31 @@ async function handBack(app: App, id: string): Promise<void> {
 
 // --- offering the hand-off --------------------------------------------------
 
-Then('"Tag species first" sits between "Start over" and "Continue"', async ({ app }) => {
-  const row = app.page.locator('button', { hasText: 'Start over' }).locator('..');
-  const labels = await row.getByRole('button').allInnerTexts();
-  expect(labels).toEqual(['Start over', 'Tag species first', 'Continue']);
-});
+Then(
+  '"Tag species before upload" sits beside the step indicators, not with "Back" and "Continue"',
+  async ({ app }) => {
+    // #472: the hand-off action lives in the header, to the right of the step
+    // indicators — not grouped with the two batch-navigation buttons below.
+    const header = app.page.getByRole('list', { name: 'Upload steps' }).locator('..');
+    await expect(header.locator('> *').last()).toHaveText('Tag species before upload');
+    const actionsRow = app.page.getByRole('button', { name: 'Back', exact: true }).locator('..');
+    await expect(actionsRow.getByRole('button', { name: 'Tag species before upload' })).toHaveCount(0);
+  },
+);
 
 Then('it is available exactly when Continue is', async ({ app }) => {
   await expect(tagButton(app)).toBeEnabled();
   await expect(app.continueButton()).toBeEnabled();
 });
 
-Then('"Tag species first" is unavailable', async ({ app }) => {
+Then('"Tag species before upload" is unavailable', async ({ app }) => {
   await expect(tagButton(app)).toBeDisabled();
   await expect(app.continueButton()).toBeDisabled();
 });
 
 // --- handing over -----------------------------------------------------------
 
-When('"Tag species first" is chosen', async ({ app }) => {
+When('"Tag species before upload" is chosen', async ({ app }) => {
   app.notes.flipId = await handOff(app);
 });
 
@@ -96,9 +103,9 @@ Then("the browser goes to the Tagger carrying the batch's id", async ({ app }) =
 
 // --- real cross-tool hand-off through the issue #73 proxy ------------------
 
-When('"Tag species first" is chosen through the unified dev origin', async ({ app }) => {
+When('"Tag species before upload" is chosen through the unified dev origin', async ({ app }) => {
   await tagButton(app).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/tagger\/\?batch=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
 });
 
@@ -108,8 +115,9 @@ Given('a ModifyDate-only batch has been scanned', async ({ app }) => {
 });
 
 Then('the real Tagger labels the timestamp as EXIF Modified', async ({ app }) => {
-  await app.page.locator('button[title="MODIFIED.JPG"]').click();
-  await app.page.getByRole('button', { name: 'Focus', exact: true }).click();
+  const image = app.page.locator('button[title="MODIFIED.JPG"]');
+  await image.focus();
+  await image.press('Enter');
   await expect(app.page.getByText('EXIF Modified', { exact: true })).toBeVisible();
 });
 
@@ -131,35 +139,120 @@ When('Coyote is applied in the real Tagger', async ({ app }) => {
   await expect(image).toContainText('Coyote');
 });
 
+When('the real Tagger identity is set to Anita', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await app.page.locator('#user').fill('anita');
+  await app.page.getByRole('button', { name: 'Tag', exact: true }).click();
+});
+
 When('the real Tagger hands the batch back', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Done · back to Uploader' }).click();
-  await app.page.waitForURL(/localhost:5310\/sparcd-exploration\/uploader\/\?flip=/);
+  await app.page.waitForURL(/\/sparcd-exploration\/uploader\/\?flip=/);
   // A navigation resets the fake picker. Re-selecting the original dragged
   // folder is the real UI's expected return path and does not seed IndexedDB.
   await app.seedPickedFolder(app.lastSpecs);
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Then('the Uploader receives Coyote from the shared hand-off record', async ({ app }) => {
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   const rows = await app.listedFiles();
   const image = rows.find((row) => row.name === 'IMG_0002.JPG');
   expect(image?.species).toBe('Coyote×1');
 });
 
+Then('the hand-off records Anita as the tagger', async ({ app }) => {
+  const [record] = await app.readFlipRecords();
+  expect(record.taggerUser).toBe('anita');
+});
+
 // --- coming back ------------------------------------------------------------
 
-Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
-  const id = await handOff(app);
-  app.notes.flipId = id;
-  await app.patchFlipRecord(id, { tags: TAGS, taggerUser: 'anita' });
+/** Hand back and reattach the folder, ending on Inspect with the tags shown. */
+async function handBackAndReattach(app: App, id: string): Promise<void> {
   await handBack(app, id);
   // A dragged-in folder never had a durable handle, so the folder is chosen
   // again — and the fake picker is reset by the navigation, so re-seed it.
   await app.seedPickedFolder(app.lastSpecs);
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
+}
+
+Given('a batch was tagged in the Tagger and handed back', async ({ app }) => {
+  const id = await handOff(app);
+  app.notes.flipId = id;
+  await app.finishFlipRecord(id, TAGS, 'anita');
+  await handBackAndReattach(app, id);
+});
+
+// --- waiting for a connection ----------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The page clock is moved, not frozen: timers keep running, only the date the
+// app reads jumps. The last move lands back on the real date, so the upload
+// itself is signed with the time storage expects.
+Given('a batch was handed to the Tagger 40 days ago', async ({ app }) => {
+  app.notes.now = Date.now();
+  await app.page.clock.setSystemTime((app.notes.now as number) - 40 * DAY_MS);
+  app.notes.flipId = await handOff(app);
+});
+
+// The Tagger's write is the last thing to touch the record before the sweep,
+// so the batch survives only if tagging counts as use.
+Given('it was tagged in the Tagger 25 days later', async ({ app }) => {
+  await app.page.clock.setSystemTime((app.notes.now as number) - 15 * DAY_MS);
+  await app.finishFlipRecord(app.notes.flipId as string, TAGS, 'anita');
+});
+
+When('the batch is handed back 15 days after that', async ({ app }) => {
+  await app.page.clock.setSystemTime(app.notes.now as number);
+  // The same address the Tagger's hand-back leaves in the tab. Loading it runs
+  // the sweep of old hand-offs before the batch is read.
+  await handBack(app, app.notes.flipId as string);
+  await expect(app.page.getByRole('heading', { name: 'Choose the folder again' })).toBeVisible();
+  await app.seedPickedFolder(app.lastSpecs);
+  await app.page.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(app.fileListToggle()).toBeVisible();
+  expect(await app.batchSummary()).toContain('2 tagged');
+});
+
+// --- retrying a tagged batch -----------------------------------------------
+
+Given('its upload failed part-way', async ({ app }) => {
+  // See CORRECTIONS.md on the open-session/per-file-state race.
+  app.s3.putDelayMs = 150;
+  await app.walkToUploadStep();
+  app.s3.putHooks.push((_b, key) =>
+    key.endsWith(FAILING_FILE) ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
+  );
+  await (await app.dryRunCheckbox()).uncheck();
+  await app.startRun();
+  await app.waitForRunPhase('partial', 120_000);
+  expect(app.s3.puts.some((p) => p.key.endsWith('observations.csv'))).toBe(false);
+});
+
+When('the page is reloaded and the upload is resumed from History', async ({ app }) => {
+  app.s3.putHooks.length = 0;
+  // Nothing the hand-back put in memory survives this; only what the upload
+  // recorded on this machine does.
+  await app.reopen();
+  const visited: string[] = [];
+  app.page.on('framenavigated', (frame) => {
+    if (frame === app.page.mainFrame()) visited.push(frame.url());
+  });
+  app.notes.visited = visited;
+  await app.seedPickedFolder(app.lastSpecs);
+  await app.gotoSection('History');
+  await app.page.getByRole('button', { name: 'Resume' }).first().click();
+});
+
+Then('the upload finishes without going back to Inspect or the Tagger', async ({ app }) => {
+  await app.expectStep('Upload');
+  await expect(app.page.getByText(/Published \d+ files under/)).toBeVisible({ timeout: 120_000 });
+  expect((app.notes.visited as string[]).filter((u) => u.includes('/tagger/'))).toEqual([]);
+  await expect(app.page.getByRole('button', { name: /Tag species before upload|Edit tags/ })).toHaveCount(0);
 });
 
 Given('a batch tagged in the Tagger is handed back with no remembered folder', async ({ app }) => {
@@ -185,8 +278,8 @@ Given(
   },
 );
 
-Then('the wizard is on the Inspect step with the same files', async ({ app }) => {
-  await app.expectStep('Inspect');
+Then('the wizard is on the Verify step with the same files', async ({ app }) => {
+  await app.expectStep('Verify');
   expect(await app.fileCount()).toBe(4);
 });
 
@@ -221,7 +314,7 @@ Then('the summary says how many files are tagged', async ({ app }) => {
   expect(await app.batchSummary()).toContain('2 tagged');
 });
 
-Then('the action row offers "Edit tags" instead of "Tag species first"', async ({ app }) => {
+Then('the action row offers "Edit tags" instead of "Tag species before upload"', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Edit tags' })).toBeEnabled();
   await expect(tagButton(app)).toHaveCount(0);
 });
@@ -232,38 +325,36 @@ Then('choosing it returns to the Tagger with the same batch id', async ({ app })
   expect(new URL(app.page.url()).searchParams.get('batch')).toBe(app.notes.flipId);
 });
 
-Then('choosing the folder again puts the batch back on the Inspect step', async ({ app }) => {
+Then('choosing the folder again puts the batch back on the Verify step', async ({ app }) => {
   await expect(app.page.getByRole('heading', { name: 'Choose the folder again' })).toBeVisible();
   await app.page.getByRole('button', { name: 'Choose folder' }).click();
-  await app.expectStep('Inspect');
+  await app.expectStep('Verify');
   expect(await app.fileCount()).toBe(4);
 });
 
 Then('a "Reopen batch" button is offered instead of the file list', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Reopen batch' })).toBeVisible();
-  await expect(app.fileListPane()).toHaveCount(0);
+  await expect(app.fileListToggle()).toHaveCount(0);
 });
 
 // --- publishing what came back ---------------------------------------------
 
 When('it is published', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 When('a dry run of it is started', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 Then('all stored objects pass the final review', async ({ app }) => {
-  await expect(
-    app.page.getByText(/final review: all \d+ objects confirmed/),
-  ).toBeVisible();
+  await expect.poll(() => app.logText()).toMatch(/final review: all \d+ objects confirmed/);
 });
 
 Then('nothing about the hand-off is left on this machine', async ({ app }) => {
@@ -297,6 +388,12 @@ Then('each row carries the common name the tagger used', async ({ app }) => {
   expect(comments).toContain('[COMMONNAME:Ghost]');
 });
 
+Then('the pre-upload identifications are attributed to Anita', async ({ app }) => {
+  const animal = writtenCsvRows(app, 'observations.csv').filter((r) => r[5] === 'animal');
+  expect(animal.length).toBeGreaterThan(0);
+  expect(animal.every((row) => row[16] === 'anita')).toBe(true);
+});
+
 Then('the upload metadata counts every identified image, empty frames included', async ({ app }) => {
   const meta = JSON.parse(app.s3.puts.find((p) => p.key.endsWith('UploadMeta.json'))!.body);
   expect(meta.imageCount).toBe(4);
@@ -324,4 +421,19 @@ Then('every media row carries the media type the examination sniffed', async ({ 
   const byName = Object.fromEntries(writtenCsvRows(app, 'media.csv').map((r) => [r[6], r[7]]));
   expect(byName['IMG_0001.JPG']).toBe('image/jpeg');
   expect(byName['CLIP_0001.MP4']).toBe('video/mp4');
+});
+
+Then(
+  'every identification in observations.csv points at the location assigned to the batch',
+  async ({ app }) => {
+    const [upload] = publishedUploads(app);
+    const { observations } = expectStoredAtLocation(app, upload, 'Bear Canyon');
+    const identified = observations.filter((r) => r[5] === 'animal').map((r) => r[8]);
+    expect(identified.sort()).toEqual(['Canis latrans', 'Casper']);
+  },
+);
+
+
+Given('species have been prepared for local tagging', async ({ app }) => {
+  await app.waitForSpeciesCache();
 });

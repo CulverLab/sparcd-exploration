@@ -16,6 +16,9 @@ Runtime-discovered BYO-S3 uploader.
 - Tool chrome with section tabs (New upload · History · Settings), upload-state
   pill, and a light/walnut-dark theme toggle.
 - Four-step flow: Drop, Inspect, Assign, Upload.
+- Generated upload comments use `Mountain range - Site name - Site ID - Image count - Upload date - Collection date - Optional comments`
+  in Describe, Upload, and `UploadMeta.json`. Empty optional comments add no
+  trailing separator.
 - Drag-and-drop a folder (or "Choose folder"); recursive JPEG + MP4 scan via
   the File System Access entries API / `webkitdirectory`.
 - EXIF, SHA-256, and thumbnails run in Web Workers; validation runs on the

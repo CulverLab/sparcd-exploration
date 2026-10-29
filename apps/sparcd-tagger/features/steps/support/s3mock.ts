@@ -35,11 +35,39 @@ export class MockS3 {
   readonly buckets: string[] = [];
   private readonly objects = new Map<string, StoredObject>();
 
+  /** The browser's connected identity may read exact coordinates only when
+   * this permission is granted. The route below applies the same response
+   * boundary as the access proxy; fixture objects remain the unredacted source
+   * of truth. */
+  exactLocations = true;
+
+  /** Bodies sent to the page, useful for asserting the network boundary in
+   * BDD without exposing the mock's private object map to step code. */
+  private readonly served = new Map<string, string>();
+
   /** Every PUT the page issued, in order — the write-side assertions read this. */
   readonly puts: PutRecord[] = [];
 
   /** When set, the next canonical replace answers with this failure mode. */
   replaceMode: 'ok' | 'unsupported' = 'ok';
+
+  /** Makes the connect-time credential probe's ListBuckets call (#589) fail,
+   *  hang, or fail at the network level instead of succeeding — unset by
+   *  default, since every other scenario's `connect()` relies on it
+   *  succeeding. */
+  listBucketsFailure?: { status: number; code: string };
+  listBucketsHangs = false;
+  listBucketsAborts = false;
+  /** Every ListBuckets request this mock has answered, success or failure. */
+  listBucketsCalls = 0;
+
+  /** Deterministic GET gate for asserting a pending UI before releasing data. */
+  readonly heldGets = new Map<string, Promise<void>>();
+  holdGet(key: string): () => void {
+    let resolve!: () => void;
+    this.heldGets.set(key, new Promise<void>(done => { resolve = done; }));
+    return () => { this.heldGets.delete(key); resolve(); };
+  }
 
   /** Artificial latency per object key — lets a test observe loading states. */
   readonly delays = new Map<string, number>();
@@ -48,8 +76,13 @@ export class MockS3 {
   /** Persistent GET failures for error-state coverage. */
   private readonly failedReads = new Set<string>();
 
+  /** Temporary HEAD failures used to model a transient anonymous 403. */
+  readonly headFailures = new Map<string, { remaining: number; code?: string }>();
+
   /** Fail GETs after a fixed number of successful reads of an object. */
   readonly getFailures = new Map<string, { successfulReadsRemaining: number }>();
+  /** Optional status/code returned when a configured GET failure is reached. */
+  readonly getFailureResponses = new Map<string, { status: number; code: string }>();
 
   /** Delay one GET after a fixed number of successful reads of an object. */
   readonly delayedGets = new Map<string, { successfulReadsRemaining: number; ms: number }>();
@@ -62,12 +95,21 @@ export class MockS3 {
     this.failedReads.add(key);
   }
 
+  failHeads(key: string, remaining = 1, code?: string): void {
+    this.headFailures.set(key, { remaining, code });
+  }
+
   readCount(key: string): number {
     return this.reads.get(key) ?? 0;
   }
 
   failGetsAfter(key: string, successfulReads: number): void {
     this.getFailures.set(key, { successfulReadsRemaining: successfulReads });
+  }
+
+  failGetsWith(key: string, successfulReads: number, status: number, code: string): void {
+    this.failGetsAfter(key, successfulReads);
+    this.getFailureResponses.set(key, { status, code });
   }
 
   delayGetAfter(key: string, successfulReads: number, ms: number): void {
@@ -113,6 +155,14 @@ export class MockS3 {
     const o = this.get(bucket, key);
     if (!o) throw new Error(`mock S3: no object ${bucket}/${key}`);
     return o.body.toString('utf8');
+  }
+
+  servedBody(bucket: string, key: string): string | undefined {
+    return this.served.get(objKey(bucket, key));
+  }
+
+  recordServed(bucket: string, key: string, body: string): void {
+    this.served.set(objKey(bucket, key), body);
   }
 
   has(bucket: string, key: string): boolean {
@@ -190,6 +240,90 @@ function errorXml(code: string, message: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${xmlEscape(message)}</Message><RequestId>mock</RequestId></Error>`;
 }
 
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (ch === ',' && !quoted) {
+      cells.push(cell);
+      cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  cells.push(cell);
+  return cells;
+}
+
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/** Apply the access proxy's coordinate response policy to mock responses.
+ * Keep non-coordinate objects as bytes: image fixtures are binary and must
+ * not be round-tripped through UTF-8 just because the response is observed. */
+function responseBody(
+  s3: MockS3,
+  bucket: string,
+  key: string,
+  body: Buffer,
+): { body: Buffer; text: string } {
+  const text = body.toString('utf8');
+  // Match the access proxy: non-admins never get coordinates from the shared
+  // Settings registry, even when their collection membership grants
+  // exactLocations. Collection-scoped coordinate objects still honor the
+  // permission below.
+  const settingsLocations = bucket.startsWith('sparcd-settings-') && key === 'Settings/locations.json';
+  if (s3.exactLocations && !settingsLocations) return { body, text };
+
+  if (key.endsWith('locations.json')) {
+    try {
+      const entries = JSON.parse(text);
+      if (Array.isArray(entries)) {
+        const redacted = JSON.stringify(
+          entries.map((entry) =>
+            entry && typeof entry === 'object'
+              ? { ...(entry as Record<string, unknown>), latProperty: null, lngProperty: null }
+              : entry,
+          ),
+        );
+        return { body: Buffer.from(redacted, 'utf8'), text: redacted };
+      }
+    } catch {
+      // Preserve malformed data so the application reports the same parse
+      // error it would receive from storage.
+    }
+  }
+
+  if (key.endsWith('deployments.csv')) {
+    const redacted = text
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const cells = parseCsvLine(line);
+        // deployments.csv stores longitude in column 3 and latitude in 4.
+        if (cells.length > 4) {
+          cells[3] = '';
+          cells[4] = '';
+        }
+        return cells.map(csvCell).join(',');
+      })
+      .join('\n');
+    return { body: Buffer.from(redacted, 'utf8'), text: redacted };
+  }
+
+  return { body, text };
+}
+
 const XML = { 'content-type': 'application/xml' } as const;
 
 // --- The route handler ------------------------------------------------------
@@ -219,6 +353,10 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     }
 
     if (!sameOrigin) return route.fallback();
+    if (url.pathname === '/-/whoami') {
+      await route.fulfill({ status: 400, headers: XML, body: errorXml('InvalidBucketName', 'The specified bucket is not valid.') });
+      return;
+    }
 
     const segments = url.pathname.split('/').filter(Boolean);
     const auth = request.headers()['authorization'] ?? '';
@@ -228,6 +366,23 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     if (!isListBuckets && !s3.buckets.includes(bucket)) return route.fallback();
 
     if (isListBuckets) {
+      s3.listBucketsCalls++;
+      if (s3.listBucketsAborts) {
+        await route.abort('connectionrefused');
+        return;
+      }
+      if (s3.listBucketsHangs) {
+        await new Promise<void>(() => {}); // the probe's own client-side timeout wins
+        return;
+      }
+      if (s3.listBucketsFailure) {
+        await route.fulfill({
+          status: s3.listBucketsFailure.status,
+          headers: XML,
+          body: errorXml(s3.listBucketsFailure.code, s3.listBucketsFailure.code),
+        });
+        return;
+      }
       await route.fulfill({ status: 200, headers: XML, body: listBucketsXml(s3.buckets) });
       return;
     }
@@ -266,6 +421,19 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
     const existing = s3.get(bucket, key);
 
     if (request.method() === 'HEAD') {
+      const headFailure = s3.headFailures.get(key);
+      if (headFailure && headFailure.remaining > 0) {
+        headFailure.remaining -= 1;
+        if (headFailure.remaining === 0) s3.headFailures.delete(key);
+        await route.fulfill({
+          status: 403,
+          headers: XML,
+          // HEAD responses have no browser-readable body. The optional code is
+          // retained in the mock for future header-based diagnostics tests.
+          body: headFailure.code ? errorXml(headFailure.code, 'temporary HEAD failure') : '',
+        });
+        return;
+      }
       if (!existing) {
         await route.fulfill({ status: 404, headers: XML, body: '' });
         return;
@@ -280,6 +448,7 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
 
     if (request.method() === 'GET') {
       s3.reads.set(key, s3.readCount(key) + 1);
+      if (s3.heldGets.has(key)) await s3.heldGets.get(key);
       if (s3.failedReads.has(key)) {
         await route.fulfill({
           status: 500,
@@ -291,10 +460,14 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
       const getDelay = s3.consumeGetDelay(key);
       if (getDelay) await new Promise((r) => setTimeout(r, getDelay));
       if (s3.shouldFailGet(key)) {
-        await route.fulfill({
+        const response = s3.getFailureResponses.get(key) ?? {
           status: 503,
+          code: 'ServiceUnavailable',
+        };
+        await route.fulfill({
+          status: response.status,
           headers: XML,
-          body: errorXml('ServiceUnavailable', `temporary read failure for ${key}`),
+          body: errorXml(response.code, `temporary read failure for ${key}`),
         });
         return;
       }
@@ -306,6 +479,8 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
         });
         return;
       }
+      const response = responseBody(s3, bucket, key, existing.body);
+      s3.recordServed(bucket, key, response.text);
       await route.fulfill({
         status: 200,
         headers: {
@@ -313,7 +488,7 @@ export async function installS3Mock(page: Page | BrowserContext, s3: MockS3): Pr
           etag: `"${existing.etag}"`,
           'cache-control': 'no-store',
         },
-        body: existing.body,
+        body: response.body,
       });
       return;
     }

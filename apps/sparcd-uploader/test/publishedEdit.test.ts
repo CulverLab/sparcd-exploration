@@ -83,12 +83,12 @@ const mediaText = serializeCsvRows([
   mediaRow(K2, '2024-01-10T08:05:00', 'IMG_0002.JPG'),
 ]);
 
-function obsRow(key: string, species: string): string[] {
+function obsRow(key: string, species: string, timestamp = '2024-01-10T08:00:00'): string[] {
   const r = new Array<string>(OBS_COLUMN_COUNT).fill('');
   r[OBS_COL.observationId] = `${key}:0`;
   r[OBS_COL.deploymentId] = DEP_FROM;
   r[OBS_COL.mediaId] = key;
-  r[OBS_COL.timestamp] = '2024-01-10T08:00:00';
+  r[OBS_COL.timestamp] = timestamp;
   r[OBS_COL.scientificName] = species;
   r[OBS_COL.count] = '1';
   r[OBS_COL.comments] = '[COMMONNAME:Coyote]';
@@ -194,6 +194,52 @@ describe('buildDescriptionEdit', () => {
 });
 
 describe('restampDeployment scope', () => {
+  it('rebases media and observation timestamps when the location timezone changes', () => {
+    const target = locationToDeployment(
+      { key: 'NY|x', id: 'NY', name: 'New York', latitude: 40.7, longitude: -74, elevation: 10 },
+      UUID,
+    );
+    const mediaWithOffset = serializeCsvRows([mediaRow(K1, '2026-07-01T12:00:00.000-07:00', 'IMG_0001.JPG')]);
+    const obsWithOffset = serializeCsvRows([
+      obsRow(K1, 'Canis latrans', '2026-07-01T12:00:00.000-07:00'),
+    ]);
+    const next = restampDeployment(
+      { deployments: deploymentsText, media: mediaWithOffset, observations: obsWithOffset },
+      {
+        fromDeploymentId: DEP_FROM,
+        toDeploymentId: `${UUID}:NY`,
+        location: target,
+        fromTimeZone: 'America/Phoenix',
+        toTimeZone: 'America/New_York',
+      },
+    );
+    expect(parseCsvRows(next.media)[0][MEDIA_COL.timestamp]).toBe('2026-07-01T12:00:00.000-04:00');
+    expect(parseCsvRows(next.observations)[0][OBS_COL.timestamp]).toBe('2026-07-01T12:00:00.000-04:00');
+  });
+
+  it('uses the persisted capture zone when recovering a legacy Z timestamp', () => {
+    const target = locationToDeployment(
+      { key: 'NY|x', id: 'NY', name: 'New York', latitude: 40.7, longitude: -74, elevation: 10 },
+      UUID,
+    );
+    const next = restampDeployment(
+      {
+        deployments: deploymentsText,
+        media: serializeCsvRows([mediaRow(K1, '2026-01-15T17:00:00.000Z', 'IMG_0001.JPG')]),
+        observations: obsText,
+      },
+      {
+        fromDeploymentId: DEP_FROM,
+        toDeploymentId: `${UUID}:NY`,
+        location: target,
+        fromTimeZone: 'America/Phoenix',
+        legacyTimeZone: 'America/Los_Angeles',
+        toTimeZone: 'America/New_York',
+      },
+    );
+    expect(parseCsvRows(next.media)[0][MEDIA_COL.timestamp]).toBe('2026-01-15T09:00:00.000-05:00');
+  });
+
   it('updates deployment_id in all three CSVs and nowhere else', () => {
     const target = locationToDeployment(
       { key: 'SAN20|x', id: 'SAN20', name: 'San Pedro 20', latitude: 32.1, longitude: -111.3, elevation: 1300 },
@@ -234,6 +280,38 @@ describe('restampDeployment scope', () => {
         else expect(cell).toBe(beforeObs[i][col]);
       });
     });
+  });
+
+  it('does not rebase or repoint rows already carrying the target deployment', () => {
+    const target = locationToDeployment(
+      { key: 'NY|x', id: 'NY', name: 'New York', latitude: 40.7, longitude: -74, elevation: 10 },
+      UUID,
+    );
+    const targetId = `${UUID}:NY`;
+    const mediaTarget = mediaRow(`${PREFIX}TARGET.JPG`, '2026-07-01T12:00:00.000-04:00', 'TARGET.JPG');
+    mediaTarget[MEDIA_COL.deploymentId] = targetId;
+    const obsTarget = obsRow(`${PREFIX}TARGET.JPG`, 'Canis latrans', '2026-07-01T12:00:00.000-04:00');
+    obsTarget[OBS_COL.deploymentId] = targetId;
+    const next = restampDeployment(
+      {
+        deployments: serializeDeployments([sourceDeployment, target]),
+        media: serializeCsvRows([mediaRow(K1, '2026-07-01T12:00:00.000-07:00', 'IMG_0001.JPG'), mediaTarget]),
+        observations: serializeCsvRows([obsRow(K1, 'Canis latrans', '2026-07-01T12:00:00.000-07:00'), obsTarget]),
+      },
+      {
+        fromDeploymentId: DEP_FROM,
+        toDeploymentId: targetId,
+        location: target,
+        fromTimeZone: 'America/Phoenix',
+        toTimeZone: 'America/New_York',
+      },
+    );
+    const media = parseCsvRows(next.media);
+    const observations = parseCsvRows(next.observations);
+    expect(media[0][MEDIA_COL.timestamp]).toBe('2026-07-01T12:00:00.000-04:00');
+    expect(media[1][MEDIA_COL.timestamp]).toBe('2026-07-01T12:00:00.000-04:00');
+    expect(observations[1][OBS_COL.timestamp]).toBe('2026-07-01T12:00:00.000-04:00');
+    expect(parseDeployments(next.deployments).map((d) => d.deploymentId)).toEqual([targetId]);
   });
 
   it('leaves rows on an unrelated deployment untouched', () => {

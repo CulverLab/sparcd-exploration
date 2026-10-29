@@ -43,7 +43,7 @@ export function KeyConflictDialog({
   }, []);
 
   return createPortal(
-    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/70 p-4">
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-ink/70 p-4">
       <div
         role="alertdialog"
         aria-modal="true"

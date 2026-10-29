@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   SafeS3Client,
   BucketNotAllowedError,
+  S3ReadError,
   listCollections,
   parseCollectionKey,
+  readErrorDetails,
   translateReadError,
 } from '../src/index';
 
@@ -133,8 +135,79 @@ describe('translateReadError', () => {
   });
 
   it('maps 403 / AccessDenied to a permissions message', () => {
-    expect(translateReadError(meta(403), 'x').message).toMatch(/Access denied reading x/);
-    expect(translateReadError({ name: 'AccessDenied' }, 'x').message).toMatch(/Access denied/);
+    const err = translateReadError(
+      Object.assign(new Error('denied'), {
+        name: 'AccessDenied',
+        $metadata: { httpStatusCode: 403, requestId: 'req-1', extendedRequestId: 'ext-1' },
+      }),
+      'x',
+    );
+    expect(err.message).toMatch(/Access denied reading x/);
+    expect(err).toBeInstanceOf(S3ReadError);
+    expect(err).toMatchObject({ code: 'AccessDenied', status: 403, requestId: 'req-1', extendedRequestId: 'ext-1' });
+  });
+
+  it('preserves a non-permission 403 code instead of calling it access denied', () => {
+    const err = translateReadError(
+      Object.assign(new Error('signature'), {
+        name: 'SignatureDoesNotMatch',
+        $metadata: { httpStatusCode: 403, requestId: 'req-2' },
+      }),
+      'media.csv',
+    );
+    expect(err.message).toBe('S3 rejected reading media.csv: SignatureDoesNotMatch (HTTP 403).');
+    expect(err).toMatchObject({ code: 'SignatureDoesNotMatch', status: 403, requestId: 'req-2' });
+  });
+
+  it('preserves invalid credentials and clock-skew diagnostics', () => {
+    const invalidCredentials = Object.assign(new Error('invalid key'), {
+      name: 'InvalidAccessKeyId',
+      $metadata: { httpStatusCode: 403, requestId: 'req-credentials' },
+    });
+    const invalidError = translateReadError(invalidCredentials, 'media.csv');
+    expect(invalidError.message).toBe('S3 rejected reading media.csv: InvalidAccessKeyId (HTTP 403).');
+    expect(invalidError).toMatchObject({ code: 'InvalidAccessKeyId', status: 403, requestId: 'req-credentials' });
+
+    const clockSkew = Object.assign(new Error('clock'), {
+      name: 'RequestTimeTooSkewed',
+      $metadata: { httpStatusCode: 403, requestId: 'req-clock', extendedRequestId: 'ext-clock' },
+    });
+    expect(translateReadError(clockSkew, 'media.csv')).toMatchObject({
+      code: 'RequestTimeTooSkewed',
+      status: 403,
+      requestId: 'req-clock',
+      extendedRequestId: 'ext-clock',
+    });
+  });
+
+  it('retains the original SDK error as the translated error cause', () => {
+    const original = Object.assign(new Error('temporary failure'), {
+      name: 'ServiceUnavailable',
+      $metadata: { httpStatusCode: 503, requestId: 'req-cause' },
+    });
+    const translated = translateReadError(original, 'media.csv');
+    expect(translated).toMatchObject({ cause: original, code: 'ServiceUnavailable', status: 503 });
+  });
+
+  it('explains when a browser HEAD failure has no exposed S3 code', () => {
+    const err = translateReadError(
+      Object.assign(new Error('forbidden'), { name: 'UnknownError', $metadata: { httpStatusCode: 403 } }),
+      'media.csv',
+    );
+    expect(err.message).toBe(
+      'S3 returned HTTP 403 while reading media.csv, but the service did not expose an error code.',
+    );
+    expect(err).toMatchObject({ status: 403 });
+  });
+
+  it('extracts request identifiers exposed only as response headers', () => {
+    expect(
+      readErrorDetails({
+        name: 'UnknownError',
+        $metadata: { httpStatusCode: 403 },
+        $response: { headers: { 'x-amz-request-id': 'req-3', 'x-amz-id-2': 'ext-3' } },
+      }),
+    ).toEqual({ code: undefined, status: 403, requestId: 'req-3', extendedRequestId: 'ext-3' });
   });
 
   it('maps a status-less failure to the CORS / unreachable message', () => {

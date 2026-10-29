@@ -17,15 +17,14 @@ Feature: Move through an upload and choose which images an action applies to
   Scenario: The upload can be surveyed as a grid or as a list
     Then the Overview can be switched between a grid of tiles and a list of rows
     And the workspace shows the position of the focused image within the upload
-    And the Focus view keeps the list alongside the enlarged image
+    And the Focus view keeps the species picker beside the enlarged image
 
   @unmapped
   Scenario: List rows expose the useful image details without ambiguous status clutter
-    Given an image has a corrected timestamp and meaningful review markers
+    Given an image has meaningful review markers
     When the detailed Overview list is opened
     Then list columns follow the Name, Type, Date, Species sort-control order
     And image and video rows identify their media type
-    And capture timestamps show corrected and unavailable values accurately
     And long column values preserve their full accessible text
     And row numbers and the old species indicator are absent
     And meaningful edit and questionable markers remain accessible
@@ -37,9 +36,10 @@ Feature: Move through an upload and choose which images an action applies to
     Then the collection name and upload name are shown
 
   @unmapped
-  Scenario: Images can be stepped through from the keyboard
+  Scenario: Images can be stepped through from the keyboard in either view
     When the next-image or previous-image key is pressed
     Then focus moves one image in that direction
+    And Left and Right also move one image in that direction
     And it stops at the first and last image of the upload
     And any selection is cleared by the move
 
@@ -52,6 +52,34 @@ Feature: Move through an upload and choose which images an action applies to
   Scenario: The image filter combines capture date and untagged status
     When the image filter limits capture time to 2024-01-11 06 and untagged images
     Then only IMG005.JPG remains in the Overview
+
+  @unmapped
+  Scenario: The Tag state filter can isolate questionable or not-questionable images
+    Given it is marked questionable
+    When the image filter limits Tag state to Questionable only
+    Then only "IMG001.JPG" remains in the Overview
+    When the image filter limits Tag state to Not questionable only
+    Then IMG001.JPG is absent from the Overview
+
+  @unmapped
+  Scenario: An unclassified questionable image exposes only the Questionable status to assistive technology
+    Given image "IMG002.JPG" is focused
+    When it is marked questionable
+    Then the focused tile is named Questionable and not Has species
+
+  @unmapped
+  Scenario: Grid tile announcements include species and review status
+    Given image "IMG004.JPG" is focused
+    Then the focused tile announces its species and review status
+
+  @unmapped
+  Scenario: Image status badges appear on both grid tiles and list rows
+    When it is marked questionable
+    Then its grid tile shows Has species and Questionable badges
+    When the Overview is switched to the list view
+    Then its list row shows Has species and Questionable badges
+    When the Overview is resized to a narrow screen
+    Then the list badges follow the filename and fit inside their row
 
   @unmapped
   Scenario: Filtering clears a selection with no visible images
@@ -76,7 +104,7 @@ Feature: Move through an upload and choose which images an action applies to
     Then no images match the image filter
 
   @unmapped
-  Scenario: The image filter closes with Escape and returns focus to its control
+  Scenario: The overlay closes with Escape and returns focus to its control
     When the image filter is opened and dismissed with Escape
     Then the Filter control is collapsed and focused
 
@@ -85,6 +113,26 @@ Feature: Move through an upload and choose which images an action applies to
     When the image filter limits Focus to the 2024-01-11 06 images
     And the next filtered image key is pressed in Focus
     Then IMG005.JPG is the focused filtered image
+
+  @unmapped
+  Scenario: Arrow-key navigation in a filtered Overview advances by filtered position, not raw list position
+    When the image filter limits the Overview to untagged images
+    And the first untagged match is focused
+    And the next-image or previous-image key is pressed
+    Then the second untagged match is focused
+    # #442: the raw-list-order neighbors between the first and second untagged
+    # matches (IMG003, IMG004) are tagged and hidden by the filter — stepping
+    # by raw list position would land on one of them, outside the filter, and
+    # snap back to the first match instead.
+
+  @unmapped
+  Scenario: Auto-advance after tagging skips a raw-list neighbor the filter hides
+    When the image filter limits the Overview to tagged images
+    And the first matching image in the Overview is focused
+    And it is tagged with a species it doesn't already carry
+    Then the next matching image is focused, skipping the one the filter hides
+    # #442: auto-advance stepped by raw list position regardless of the
+    # filter, with the same consequence as the scenario above.
 
   @unmapped
   Scenario: The image filter panel fits a narrow viewport
@@ -96,7 +144,44 @@ Feature: Move through an upload and choose which images an action applies to
     Given the Overview is shown
     When the focused image is opened
     Then the Focus view shows that image
-    And on-screen previous and next controls move between images there
+    And on-screen previous and next controls move between images there at every viewport size
+
+  @unmapped
+  Scenario: Browser Back closes the Focus viewer before leaving the workspace
+    Given the Overview is shown
+    And the workspace has a browser history entry
+    When the focused image is opened
+    And the browser Back button is pressed
+    Then the Focus viewer is closed and the Overview is shown
+    And the image opener has focus again
+
+  @H1
+  Scenario: Focus traps keyboard navigation and Escape restores the opener
+    Given the Overview is shown
+    When the focused image is opened
+    Then Tab wraps within the Focus viewer at both boundaries
+    When Escape is pressed in Focus
+    Then the Focus viewer is closed and the Overview is shown
+    And the image opener has focus again
+
+  @H1
+  Scenario: Escape in Focus clears a pending count before closing the viewer
+    Given the Overview is shown
+    When the focused image is opened
+    And count 3 is pending
+    When Escape is pressed in Focus
+    Then no pending species count is shown
+    And the Focus viewer remains open
+    When the bound species key is pressed in Focus
+    Then the focused image carries that species at count one
+
+  @H1
+  Scenario: Closing Focus with its close control restores the opener
+    Given the Overview is shown
+    When the focused image is opened
+    And the Close Focus control is clicked
+    Then the Focus viewer is closed and the Overview is shown
+    And the image opener has focus again
 
   @unmapped
   Scenario: The upload can be ordered by name, type, date or species count
@@ -133,6 +218,13 @@ Feature: Move through an upload and choose which images an action applies to
     Then only that image is selected as the focus
     And shift-clicking another image selects the whole range between them
     And command- or control-clicking adds or removes a single image from the selection
+
+  @unmapped
+  Scenario: Starting an additive selection on another image keeps the focused image
+    Given the Overview is shown
+    When an image is clicked
+    Then only that image is selected as the focus
+    And an additive click on another image selects both images
 
   @unmapped
   Scenario: A selection can be built and cleared without a pointer
@@ -172,7 +264,7 @@ Feature: Move through an upload and choose which images an action applies to
   Scenario: Accelerators stand down while a video or a dialog has the keyboard
     Given a video is being played or scrubbed
     Then its own playback keys work and no tagging keystroke fires
-    And while the sync, snapshots or time-shift dialog is open no image behind it is tagged or navigated
+    And while location or time-shift dialogs are open no image behind them is tagged or navigated
 
   @unmapped
   Scenario: The Adjust popup reserves native range keys while Tagger shortcuts still work
@@ -187,3 +279,79 @@ Feature: Move through an upload and choose which images an action applies to
     Given a burst is selected and a slider in the Adjust popup is focused
     When Escape is pressed with the slider focused
     Then the Adjust popup closes and the same images are still selected
+
+  @unmapped
+  Scenario Outline: Filtered Overview crosses a hidden gap from the second match and back
+    Given three untagged matches have hidden images between them
+    When the image filter limits the Overview to untagged images
+    And the second separated match is chosen
+    And "<next>" is pressed in the filtered Overview
+    Then the third separated match is focused
+    When "<next>" is pressed in the filtered Overview
+    Then the third separated match is focused
+    When "<previous>" is pressed in the filtered Overview
+    Then the second separated match is focused
+
+    Examples:
+      | next       | previous  |
+      | ArrowDown  | ArrowUp   |
+      | ArrowRight | ArrowLeft |
+
+  @unmapped
+  Scenario: Auto-advance keeps list order when tagging removes the current match
+    When the image filter limits the Overview to untagged images
+    And the first untagged match is focused
+    And the focused untagged image is identified
+    Then the second untagged match is focused
+    And the identified image has disappeared from the filtered Overview
+
+  @unmapped
+  Scenario Outline: Exhausted auto-advance retains its position without jumping backward
+    When the image filter limits the Overview to untagged images
+    And the image filter excludes the video
+    And the final image match is opened in "<view>"
+    And the focused untagged image is identified
+    Then exhausted focus stays on the image just identified in "<view>"
+    When another species key is pressed after exhaustion
+    Then only the original identification was applied and earlier matches remain untouched
+    When the previous filtered match is requested in "<view>"
+    Then the earlier matching image is reachable in "<view>"
+
+    Examples:
+      | view     |
+      | Overview |
+      | Focus    |
+
+  @unmapped
+  Scenario: Changing the filter releases an exhausted focus hold
+    When the image filter limits the Overview to untagged images
+    And the image filter excludes the video
+    And the final image match is opened in "Overview"
+    And the focused untagged image is identified
+    Then exhausted focus stays on the image just identified in "Overview"
+    When the filter is narrowed to the earlier matching image
+    Then the earlier matching image is reachable in "Overview"
+
+  @unmapped
+  Scenario: A bulk edit does not advance into another match it just removed
+    When the image filter limits the Overview to untagged images
+    And the image filter excludes the video
+    And both image matches are selected with the earlier match focused
+    And the focused untagged image is identified
+    Then exhausted bulk focus stays at the earlier image and all matches are removed
+
+  @unmapped
+  Scenario Outline: Exhausted focus survives live Species sorting
+    When the images are sorted by Species ascending
+    And the image filter limits the Overview to untagged images
+    And the image filter excludes the video
+    And the final image match is opened in "<view>"
+    And the focused untagged image is identified
+    Then the sorted exhausted focus remains on IMG005 in "<view>"
+    When another species key is pressed after exhaustion
+    Then only the original identification was applied and earlier matches remain untouched
+
+    Examples:
+      | view     |
+      | Overview |
+      | Focus    |

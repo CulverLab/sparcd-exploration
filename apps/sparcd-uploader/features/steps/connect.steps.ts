@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import { loginIdentityPreferenceKey } from '../../../../packages/auth-ui/src/loginIdentity';
 import type { Page } from '@playwright/test';
 import { Given, When, Then, expect } from './fixtures';
 import { ACCESS_KEY, SECRET_KEY, S3_ORIGIN, type App } from './app';
@@ -65,6 +67,9 @@ Then('the New upload, History and Settings sections become reachable', async ({ 
 Then('a batch can be dropped and inspected with no connection', async ({ app }) => {
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
+  // Unfolding the file list draws the rows before their thumbnails; wait for
+  // those too, or the "intact" comparison later sees them appear.
+  await expect.poll(async () => (await app.listedFiles()).every((f) => f.hasThumbnail)).toBe(true);
   const files = await app.listedFiles();
   expect(files).toHaveLength(standardBatch().length);
   for (const file of files) {
@@ -76,20 +81,20 @@ Then('a batch can be dropped and inspected with no connection', async ({ app }) 
   expect(app.s3.puts).toHaveLength(0);
 });
 
-When('the Assign step is reached with no connection', async ({ app }) => {
+When('the Describe step is reached with no connection', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Continue' }).click();
 });
 
 Then('it shows the connection screen instead of a collection picker', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toHaveCount(0);
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toHaveCount(0);
 });
 
 Then('going back from it returns to Inspect with the batch intact', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Back' }).click();
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
   await expect.poll(() => app.listedFiles()).toEqual(app.notes.deferredFiles);
 });
 
@@ -167,6 +172,105 @@ Then('the uploader stays on the connection screen until the secret is re-entered
   await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
 });
 
+When('a different endpoint is entered and the field is left', async ({ app }) => {
+  await app.page.fill('#endpoint', AWS_ENDPOINT);
+  await app.page.locator('#endpoint').blur();
+});
+
+Then(
+  'the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over',
+  async ({ app }) => {
+    await app.page.getByRole('button', { name: '+ Advanced' }).click();
+    // S3_ORIGIN (the remembered connection) is plain-http MinIO-shaped:
+    // secure: false, forcePathStyle: true, region: us-east-1 — the opposite
+    // of AWS_ENDPOINT's own inferred values on every one of the three.
+    await expect(app.page.locator('#region')).toHaveValue('us-west-2');
+    await expect(app.page.getByLabel('Force path-style addressing (MinIO)')).not.toBeChecked();
+    await expect(app.page.getByLabel('Secure (HTTPS)')).toBeChecked();
+  },
+);
+
+// --- Credential probe (#589) ------------------------------------------------
+
+When('valid-looking credentials are submitted', async ({ app }) => {
+  await app.fillConnection();
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+});
+
+Then(
+  'the credentials are checked against the server before the workspace opens',
+  async ({ app }) => {
+    await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+    expect(app.s3.listBucketsCalls).toBeGreaterThan(0);
+  },
+);
+
+Given('the storage endpoint cannot be reached', async ({ app }) => {
+  app.s3.listBucketsAbort = true;
+});
+
+Given('the server will reject these credentials', async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'InvalidAccessKeyId', message: 'Invalid access key' };
+});
+
+Given('the server denies the credential check itself', async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'AccessDenied', message: 'Access Denied' };
+});
+
+Given("the server reports this computer's clock is skewed", async ({ app }) => {
+  app.s3.listBucketsError = { status: 403, code: 'RequestTimeTooSkewed', message: 'Clock skew' };
+});
+
+Given('the credential check hangs instead of responding', async ({ app }) => {
+  app.s3.listBucketsHang = true;
+});
+
+Then('connecting is refused with a message that the endpoint could not be reached', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText("Couldn't reach");
+});
+
+Then('connecting is refused with a message that the credentials were rejected', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    'rejected this access key and secret key',
+  );
+});
+
+Then(
+  'connecting is refused with a message that the check could not confirm the credentials',
+  async ({ app }) => {
+    await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+      'Unable to confirm your credentials',
+    );
+  },
+);
+
+Then("connecting is refused with a message about the computer's clock", async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    "computer's time is correct",
+  );
+});
+
+Then('connecting is refused with a message that the check was interrupted', async ({ app }) => {
+  await expect(app.page.getByTestId('connection-probe-failure')).toContainText(
+    'request was interrupted',
+  );
+});
+
+Then('the workspace does not open', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toHaveCount(0);
+  await expect(app.connectForm()).toBeVisible();
+});
+
+Then('the form is available to try again', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
+  await expect(app.page.locator('#endpoint')).toBeEnabled();
+});
+
+Then('the workspace opens without any credential check', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+  expect(app.s3.listBucketsCalls).toBe(0);
+});
+
 Given("one tab of a SPARC'd tool is already connected in this browser", async ({ app }) => {
   await app.connect();
 });
@@ -196,7 +300,7 @@ Given('two tabs are connected and one has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Cross-tab logout' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -206,7 +310,7 @@ Given('the connected uploader has a live upload', async ({ app }) => {
   await app.dropFolder(publishableBatch());
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'Connection replacement' });
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -224,7 +328,7 @@ Given('the connected uploader is inspecting a held file', async ({ app }) => {
   });
   await app.holdInspect('BIG_CLIP.MP4');
   await app.dropFolder(slowPublishableBatch());
-  await expect.poll(() => app.batchSummary()).toMatch(/processing/);
+  await expect.poll(() => app.pendingCount()).toBeGreaterThan(0);
 });
 
 When('one of them disconnects', async ({ app }) => {
@@ -233,21 +337,19 @@ When('one of them disconnects', async ({ app }) => {
 });
 
 When('another tab replaces the shared connection', async ({ app }) => {
-  await app.page.evaluate(() => {
-    const channel = new BroadcastChannel('sparcd-connection-live');
-    channel.postMessage({
-      type: 'connect',
-      config: {
-        endpoint: 'https://replacement.example',
-        region: 'us-west-2',
-        accessKey: 'AKIAREPLACEMENT',
-        secretKey: 'replacement-secret',
-        forcePathStyle: false,
-        secure: true,
-      },
-    });
-    channel.close();
-  });
+  const sibling = await app.page.context().newPage();
+  await sibling.route('**/session-replacement', (route) => route.fulfill({
+    contentType: 'text/html', body: '<title>Session replacement</title>',
+  }));
+  await sibling.goto(`${S3_ORIGIN}/session-replacement`);
+  await sibling.evaluate(async (moduleUrl) => {
+    const { saveSharedConnection } = await import(/* @vite-ignore */ moduleUrl);
+    saveSharedConnection({
+      endpoint: 'https://replacement.example', region: 'us-west-2',
+      accessKey: 'AKIAREPLACEMENT', secretKey: 'replacement-secret',
+      forcePathStyle: false, secure: true,
+    }, false);
+  }, `/sparcd-exploration/uploader/@fs${fileURLToPath(new URL('../../../../packages/auth-ui/src/session.ts', import.meta.url))}`);
 });
 
 Then('the other returns to the connection screen', async ({ app }) => {
@@ -257,8 +359,8 @@ Then('the other returns to the connection screen', async ({ app }) => {
 Then('its in-progress batch, chosen collection and chosen deployment are cleared', async ({ app }) => {
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+  await app.expectStep('Choose');
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
 
 Then('the live upload stops without publishing metadata', async ({ app }) => {
@@ -292,7 +394,10 @@ Then('the header shows the endpoint host and a masked form of the access key', a
 });
 
 Then('it shows the uploader identity when one has been set', async ({ app }) => {
-  await expect(app.page.locator('header')).toContainText(ACCESS_KEY);
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await app.setUploader('Ada Lovelace');
+  await expect(app.page.locator('header')).toContainText('Ada Lovelace');
 });
 
 Then('it never displays the secret key', async ({ app }) => {
@@ -346,23 +451,37 @@ When('a connection is made', async ({ app }) => {
   await app.connect();
 });
 
-Then('the uploader identity is pre-filled with the connected access key', async ({ app }) => {
-  await expect(app.page.locator('header')).toContainText(ACCESS_KEY);
+Then('the uploader identity defaults to the Access key after route absence is confirmed', async ({ app }) => {
   await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
   await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
+  expect(app.s3.whoamiRequests).toBeGreaterThan(0);
+  expect(app.s3.whoamiResponse.body).toContain('<Code>InvalidBucketName</Code>');
 });
 
-Then(
-  'an identity carried over from a previous connection in this browser is not overwritten by connecting',
-  async ({ app }) => {
-    await app.reopenInNewTab();
-    await app.fillConnection({ accessKey: 'AKIADIFFERENT002' });
-    await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
-    await app.gotoSection('Settings');
-    await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(ACCESS_KEY);
-  },
-);
+When('a legacy session-wide uploader identity is present and the page reloads', async ({ app }) => {
+  await app.page.evaluate(() => {
+    sessionStorage.setItem('sparcd-uploader-session', JSON.stringify({
+      state: { uploaderUser: 'Legacy unscoped identity' },
+    }));
+  });
+  await app.reopen();
+  await app.gotoSection('Settings');
+});
+
+Then('the legacy session-wide uploader identity is removed', async ({ app }) => {
+  const persisted = await app.page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem('sparcd-uploader-session') ?? '{}'),
+  );
+  expect(persisted.state).not.toHaveProperty('uploaderUser');
+});
+
+Then('the header shows the access key only in its masked form', async ({ app }) => {
+  const header = app.page.locator('header');
+  await expect(header).toContainText(`${ACCESS_KEY.slice(0, 2)}…${ACCESS_KEY.slice(-2)}`);
+  await expect(header).not.toContainText(ACCESS_KEY);
+  expect(await header.evaluate((element) => element.outerHTML)).not.toContain(ACCESS_KEY);
+});
 
 Then('the tool offers no list of permitted buckets of its own', async ({ app }) => {
   await app.gotoSection('History');
@@ -395,9 +514,9 @@ When('a deferred batch is still being inspected', async ({ app }) => {
 });
 
 Then('Assign loads collections without losing the batch', async ({ app }) => {
-  await app.expectStep('Assign');
+  await app.expectStep('Describe');
   await expect(app.connectForm()).toHaveCount(0);
-  await expect(app.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+  await expect(app.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
   await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
 });
 
@@ -410,4 +529,141 @@ Then('the deferred inspection finishes after connecting', async ({ app }) => {
   expect(files.map((file) => file.name).sort()).toEqual(
     slowPublishableBatch().map((file) => file.path.split('/').pop()).sort(),
   );
+});
+
+Then('the remember checkbox describes its public-computer warning', async ({ app }) => {
+  const checkbox = app.page.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = app.page.getByText("(Don't set remember endpoint & access key if on a public computer)", { exact: true });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveCSS('font-style', 'italic');
+  await checkbox.focus();
+  await expect(checkbox).toBeFocused();
+  await expect(checkbox).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+});
+
+Then('the connected login identity is available to the preserved batch', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(app.page.getByRole('heading', { name: 'Collection (required)', exact: true })).toBeVisible();
+  await expect(app.page.locator('#uploaderUser')).toHaveValue(ACCESS_KEY);
+});
+
+Given('the account-name endpoint returns {string} before login', async ({ app }, name: string) => {
+  app.s3.setWhoAmIResponse(200, JSON.stringify({ id: 'person-123', name }));
+});
+
+Given('the account-name endpoint rejects the login with AccessDenied', async ({ app }) => {
+  app.s3.setWhoAmIResponse(403, '<Error><Code>AccessDenied</Code><Message>Access denied</Message></Error>', 'application/xml');
+});
+
+Given('the account-name endpoint now returns {string}', async ({ app }, name: string) => {
+  app.s3.setWhoAmIResponse(200, JSON.stringify({ id: 'person-123', name }));
+});
+
+Then('the uploader identity defaults to {string}', async ({ app }, name: string) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue(name);
+});
+
+Then('the account-name default is stored under the connected login', async ({ app }) => {
+  const record = await app.page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), loginIdentityPreferenceKey(ACCESS_KEY));
+  expect(record).toMatchObject({ version: 2, defaultIdentity: 'Research Account', defaultSource: 'whoami' });
+  expect(await app.page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith('sparcd-login-identity-')))).toEqual([loginIdentityPreferenceKey(ACCESS_KEY)]);
+});
+
+When('the same connected session is restored', async ({ app }) => {
+  await app.reopen();
+});
+
+When('a second Uploader tab adopts the connection', async ({ app }) => {
+  app.notes.whoamiSecondTab = await app.openSecondTab();
+});
+
+Then('the second tab defaults to {string}', async ({ app }, name: string) => {
+  const second = app.notes.whoamiSecondTab as import('@playwright/test').Page;
+  await second.locator('nav[aria-label="Sections"]').getByRole('button', { name: 'Settings' }).click();
+  await second.getByText('Defaults', { exact: true }).click();
+  await expect(second.getByPlaceholder('e.g. John Doe')).toHaveValue(name);
+  await second.close();
+});
+
+Then('Settings shows the account-name error and no Access-key fallback', async ({ app }) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await expect(app.page.getByRole('alert')).toContainText(/AccessDenied/);
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveAccessibleDescription(/AccessDenied/);
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveAttribute('aria-invalid', 'true');
+  await expect(app.page.getByRole('button', { name: 'Retry account-name lookup' })).toBeVisible();
+  await expect(app.page.getByRole('alert')).not.toContainText(ACCESS_KEY);
+});
+
+When('the account-name lookup is retried', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Retry account-name lookup' }).click();
+});
+
+
+When('the account-name error leaves the identity unresolved', async ({ app }) => {
+  await app.gotoSection('Settings');
+  await app.page.getByText('Defaults', { exact: true }).click();
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('');
+  await expect(app.page.getByRole('alert')).toContainText(/AccessDenied/);
+});
+
+When('Assign is opened without a custom identity', async ({ app }) => {
+  await app.gotoSection('New upload');
+  await app.dropFolder(standardBatch());
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.chooseDeployment('Bear Canyon');
+  await app.page.getByLabel('Mountain range (required)', { exact: true }).fill('Santa Catalina Mountains');
+  await app.page.getByLabel('Date collected (required)', { exact: true }).fill('2026-10-01');
+});
+
+Then('continuing to upload is disabled because attribution is unresolved', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.continueButton()).toHaveAttribute('title', 'Set an uploader identity first');
+});
+
+When('the uploader enters custom identity {string}', async ({ app }, identity: string) => {
+  await app.page.getByPlaceholder('e.g. John Doe').first().fill(identity);
+});
+
+Then('continuing to upload is enabled with the custom identity', async ({ app }) => {
+  await expect(app.continueButton()).toBeEnabled();
+});
+
+
+When('a connection is made without remembering its login', async ({ app }) => {
+  await app.fillConnection();
+  await app.page.getByLabel('Remember endpoint & access key on this device').uncheck();
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
+});
+
+When('this unremembered login disconnects', async ({ app }) => {
+  await app.disconnectFromHeader();
+  await expect(app.connectForm()).toBeVisible();
+});
+
+Then('the retained identity preference exposes no login ID', async ({ app }) => {
+  const records = await app.page.evaluate(() => Object.entries(localStorage)
+    .filter(([key]) => key.startsWith('sparcd-login-identity-')));
+  expect(records).toHaveLength(1);
+  expect(records[0][0]).toBe(loginIdentityPreferenceKey(ACCESS_KEY));
+  expect(JSON.stringify(records)).not.toContain(ACCESS_KEY);
+  expect(JSON.stringify(records)).not.toContain(SECRET_KEY);
+});
+
+When('Describe is chosen while offline', async ({ app }) => {
+  await app.continueButton().click();
+});
+Then('a reconnect popup keeps the inspected batch intact', async ({ app }) => {
+  const popup=app.page.getByRole('alertdialog');
+  await expect(popup).toContainText('Connect online before Describe');
+  await popup.getByRole('button',{name:'OK',exact:true}).click();
+  await app.expectStep('Verify');
+  expect(await app.listedFiles()).toEqual(app.notes.deferredFiles);
+  expect(app.s3.puts).toHaveLength(0);
 });

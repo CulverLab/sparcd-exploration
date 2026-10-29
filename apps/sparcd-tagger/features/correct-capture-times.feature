@@ -6,9 +6,10 @@ Feature: Correct capture times on an upload whose camera clock was wrong
   """
   As-built flow: camera clocks drift — wrong timezone, daylight saving, a dead
   clock battery. The tagger can shift the capture time of a whole upload or a
-  selection of frames. An exact per-image correction can also be entered. The
-  correction is held alongside the original until a sync writes it; the original
-  is never rewritten locally.
+  selection of frames. Focus does not provide an absolute per-image timestamp
+  editor; its supported correction actions are the whole-upload and selection
+  shifts. Completed corrections save automatically; the immutable original
+  capture data is never rewritten locally.
   """
 
   Background:
@@ -22,16 +23,10 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     And applying it shifts every frame in the upload
 
   @unmapped
-  Scenario: An active whole-upload shift is always visible
-    Given a whole-upload shift is in effect
-    Then the workspace toolbar shows the shift and its size
-    And each shifted image is marked as shifted where its time is displayed
-
-  @unmapped
-  Scenario: A whole-upload shift can be removed
-    Given a whole-upload shift is in effect
-    When the shift is cleared
-    Then the images show their original capture times again
+  Scenario: A completed whole-upload shift can be undone
+    Given a whole-upload shift is automatically saved
+    When the latest automatic action is undone
+    Then all original capture times are restored
 
   @unmapped
   Scenario: The whole-upload time shift is unavailable with nothing to shift
@@ -39,19 +34,29 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then the whole-upload time shift is disabled with an explanation
 
   @unmapped
-  Scenario: An active whole-upload shift remains clearable with nothing to shift
-    Given a persisted whole-upload shift exists for an upload with no capture times
-    When the shift is cleared
-    Then the standing shift is cleared afterwards
-
-  @unmapped
   Scenario: Time shift selection requires an explicit selection
     Given a single image is focused with no selection
     Then time shift selection is disabled with an explanation
 
   @unmapped
-  Scenario: A selection containing exactly one frame can be shifted
-    Given exactly one image is selected
+  Scenario Outline: A selection containing exactly one frame can be shifted
+    Given exactly one image is selected in the "<view>" Overview
+    When that one-frame selection is shifted
+    Then exactly that selected image receives a time override
+    When that one-image selection is toggled off
+    Then time shift selection is disabled with an explanation
+
+    Examples:
+      | view   |
+      | grid   |
+      | list   |
+      | narrow |
+
+  @unmapped
+  Scenario: Selection time shift excludes images hidden by a filter
+    Given several images are selected
+    When the selection is filtered down to IMG001.JPG
+    Then time shift selection is enabled
     When that one-frame selection is shifted
     Then exactly that selected image receives a time override
 
@@ -84,35 +89,8 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     Then time shift selection is disabled because no selected frame has a capture time
 
   @unmapped
-  Scenario: A single frame's time can be set outright
-    Given an image is focused
-    When a corrected timestamp is typed for it
-    Then that image shows the corrected time and is marked as carrying an image override
-    And its override can be cleared to fall back to the whole-upload shift
-
-  @unmapped
-  Scenario: An impossible timestamp is refused rather than stored
-    When a typed timestamp is not a real date and time
-    Then the entry is marked invalid and is not applied
-    # Accepts "YYYY-MM-DD HH:mm" or "YYYY-MM-DDTHH:mm:ss"; rejects out-of-range
-    # values and impossible calendar days such as 30 February.
-
-  @unmapped
-  Scenario: The original capture time is always still visible
-    Given a frame's time has been corrected
-    Then the corrected time is shown prominently
-    And the original capture time is shown struck through beneath it
-
-  @unmapped
-  Scenario: Corrections change nothing stored until they are synced
-    Given times have been corrected in the workspace
-    Then the stored capture times are unchanged
-    And the sync preview counts how many images would have a corrected time
-    And only a live sync writes the corrected times into the upload's stored files
-
-  @unmapped
   Scenario: A synced whole-upload shift is not applied twice
-    Given a whole-upload shift was written to the stored files by a sync
+    Given a whole-upload shift is automatically saved
     Then the standing shift is cleared afterwards
     And the images show their now-corrected stored times without a further shift
 
@@ -122,3 +100,19 @@ Feature: Correct capture times on an upload whose camera clock was wrong
     When a whole-upload shift is applied
     Then the same images remain grouped together
     And only the times shown on the burst bands change
+
+  @unmapped
+  Scenario: Disabled shift reasons are available on touch without overflowing the viewport
+    Given a single image is focused with no selection
+    Then disabled time-shift hints are touch-readable and stay within a narrow viewport
+
+  @unmapped
+  Scenario: Only the current disabled time-shift explanation is displayed
+    Given an upload with no capture times is open in the tagging workspace
+    Then only one time-shift explanation is visible at a time
+
+  @unmapped
+  Scenario: Keyboard selection transfers focus from the explanation to the enabled action
+    Given a single image is focused with no selection
+    When the keyboard selects images while the disabled selection explanation has focus
+    Then the enabled selection time-shift button receives focus

@@ -14,6 +14,25 @@ Coverage notes for the as-built uploader feature files.
   corresponds to that story's acceptance criteria. Everything else is
   `@unmapped` — most of this app is, which is the point of the exercise.
 
+## Issue #584 identity coverage
+
+- The shared `@sparcd/auth-ui` preference is keyed by the connected login and
+  stores the custom identity separately from the resolved default. Opaque hashed
+  preference keys and fallback markers keep raw login IDs out of these records;
+  the exposed v1 records are discarded. Unit tests
+  cover per-login isolation, reload persistence, blank-on-unresolved behavior,
+  default refresh, custom-value preservation, malformed storage, and unavailable
+  storage.
+- Uploader calls the signed `/-/whoami` endpoint and uses its `name` as the
+  access-service default. The Access-key fallback is used only after explicit
+  route-absence evidence; authorization failures, malformed responses, network
+  failures, timeouts, throttling, and server errors leave the value unresolved
+  unless this login already has a saved custom identity or resolved name.
+  Focused unit and Chrome BDD coverage is in `test/whoami.test.ts`,
+  `test/store.test.ts`, and `connect-and-session.feature`. The request-signing test
+  uses the production access-service signature verifier, and storage-failure tests
+  preserve a typed custom name across pending lookup completion and retry.
+
 ## Story mapping, honestly
 
 - **F1** (upload a batch once back online) — partly met: only image/video files
@@ -22,25 +41,36 @@ Coverage notes for the as-built uploader feature files.
   exists anywhere in the app** (`navigator.onLine` is never consulted), so that
   criterion is unmet.
 - **F2 / A2** (assign a camera location) — the "cannot finalize without a
-  location" criterion is fully met and tested. The "only locations valid for the
+  location" criterion is fully met and tested, and so is the stored location:
+  every media row and every observation row, including species identified
+  before upload, points at the deployment carrying the assigned location's id,
+  name and coordinates. The "only locations valid for the
   collection" criterion is **not**: as-built *any* location in the registry can
   be assigned; locations the collection has already used are merely sorted to
   the top. Flagged in a trailing comment on that scenario.
-- **AL1** (interrupted uploads continue on their own) — partly met: verified
-  data is not resent, and an interrupted upload is always visibly "open", never
-  silently stuck. **Continuation is manual** — the user clicks Resume; there is
-  no connectivity watcher and no automatic restart. Flagged in a comment.
+- **AL1** (interrupted uploads continue on their own) — met, apart from the
+  untestable "never stuck" criterion. A run open in the tab waits out a dropped
+  connection and carries on by itself when it returns; if the browser never
+  noticed the drop, the run stops as partial and retries on a backoff timer,
+  giving up after five retries in a row that send nothing (History then says
+  storage can't be reached).
+  Repeated drops still end in one upload, verified data is not resent, and
+  History shows each upload as complete, as interrupted with "Resume upload"
+  named as the next step, or as refused by storage with who to ask. Resuming
+  from History is still a click, because it needs the source folder back.
 - **AL2** (retry to the same destination) — met, and the strongest-covered story:
   the upload folder and object paths are reused verbatim, done objects are
-  skipped after a size + fingerprint check, and location/identity are never
-  re-entered.
+  skipped after a size + fingerprint check, and location, identity and species
+  identifications are never re-entered.
 - **A1** (tag species before upload) — now met, but not by this app alone.
   There is still **no tagging surface here**: the batch is handed to the tagger
   and comes back with species on it, which the uploader shows read-only and
-  publishes as observation rows in the same upload. An untagged batch is still
-  accepted and recorded as carrying no species. Attribution (the tagger's
-  identity travelling with the tags) is recorded on the hand-off record but is
-  **not written into the published data** — that criterion stays unmet.
+  publishes as observation rows in the same upload. Until then the tags live in
+  the hand-off record, which is swept only after 30 days without being opened
+  or tagged, so a batch can wait weeks for a connection. An untagged batch is still
+  accepted and recorded as carrying no species. The tagger's identity travels
+  with the identifications and is written to `observations.csv` in the
+  `classified_by` column.
 - **F3** (announce new data) — only the negative criterion is met: a failed or
   abandoned upload publishes no metadata, so nothing sees it. There is no
   notification mechanism.
@@ -76,9 +106,10 @@ Coverage notes for the as-built uploader feature files.
   reflects a running upload. Not written up as behavior.
 - **Elevation unit** (metres/feet) is stored and persisted, and the deployment
   detail popover reads it, but no UI sets it — the setter is never called.
-- **Concurrency** and the **dry-run default** live on the Upload step and reset
-  on every page load, despite Settings still saying they will "join here in P4".
-  Documented where they actually are, with the non-persistence noted.
+- **Concurrency** lives in Settings only (#494 removed the Upload step's own
+  copy of the control). The **dry-run default** still lives on the Upload
+  step, now behind a collapsed "Advanced" disclosure. Both reset on every page
+  load — documented where they actually are, with the non-persistence noted.
 - `upload.ts` documents a **re-stamp-on-prefix-collision retry** and a
   `runUpload` entry point; neither exists in the shipped code. The wizard uses
   the streaming run, which treats a metadata-path collision as a hard error.
@@ -102,3 +133,46 @@ along the way — is written up in `features/CORRECTIONS.md`. Since PR #26 fixed
 publishing after Inspect completes, publish scenarios use small media by
 default; only scenarios about background examination keep the deliberately slow
 MP4, and in-flight upload checks are held by the S3 mock.
+
+
+## Production offline harness (#498 / #497)
+
+`pnpm --filter sparcd-uploader test:production:offline` reuses the existing F1-2
+warm-page offline Inspect and cross-tool handoff scenarios against both built
+apps on one origin. Infrastructure coverage additionally proves real Google
+Chrome process restart, preserved profile/IndexedDB, and actual network blocking.
+The suite now also verifies actual cold offline reopening and installed-PWA
+launch with production assets. See `../e2e/production/README.md` for exact
+implementation checks and #497's separate platform/manual acceptance boundary.
+
+## Prepared collection species (#498, delivery step 2)
+
+Before local tagging, explicitly choose a collection in “Species for local
+tagging” and prepare it online. Preparation uses the same production species
+loader and source-aware key-profile reconciliation as standalone Tagger; it does
+not choose Assign's collection or location. Empty/missing collection files fall
+back to settings; denied/malformed lists do not silently substitute defaults.
+
+A versioned IndexedDB snapshot stores the accepted entries, local key overrides,
+source hash and source/collection/account identity without credentials. Each new
+version-2 Flip record gets its own copy; older readers reject that version rather
+than silently using a bundled list. Local Tagger uses that copy even when a live
+shared session changes, and never fetches a replacement vocabulary. Legacy or
+invalid handoffs explain how to return and prepare while retaining tags.
+
+Assign compares a tagged batch with a freshly loaded list for the actual target.
+Changed collections/lists require explicit review; identifications absent from
+the allowed list block continuation until reviewed, without deleting tags.
+Requested-species records retain their existing supported behavior.
+
+Delivery steps 3–5 add the versioned preparation journal, verified source
+recovery, coordinated production worker, installable manifest and safe updates.
+These implementation regressions do not complete #497’s independent matrix.
+
+Issue #479: `shared-session.feature` runs in the cross-tool suite against the
+real Uploader and Tagger through one origin. It checks refused-then-corrected
+endpoint switching, reload, Remember on/off, stale remembered prefill, delayed
+versioned/legacy sibling replies, and logout without session resurrection.
+Ordered barrier messages make stale delivery deterministic; assertions inspect
+actual signed request destinations and accepted live/tab state. These scenarios
+are `@unmapped` regressions, not new user-story coverage claims.

@@ -1,6 +1,5 @@
 # DRAFT — for review, not yet agreed. Generated 2026-08-06 from apps/sparcd-uploader (src/App.tsx, src/store.ts, src/components/Chrome.tsx, src/lib/s3.ts) and packages/auth-ui (Connection.tsx, ConnectionChip.tsx, session.ts).
 
-@unmapped
 Feature: Connect the uploader to storage and manage the session
 
   """
@@ -27,30 +26,33 @@ Feature: Connect the uploader to storage and manage the session
     When "Login later" is chosen instead of connecting
     Then the New upload, History and Settings sections become reachable
     And a batch can be dropped and inspected with no connection
-    When the Assign step is reached with no connection
+    When the Describe step is reached with no connection
     Then it shows the connection screen instead of a collection picker
     And going back from it returns to Inspect with the batch intact
 
-  @unmapped @offline
+  # F1-2's offline boundary is the end of Inspect: dropping and examining the
+  # batch work without a connection. Assign intentionally remains online-only;
+  # returning to Inspect must preserve the batch until the user can connect.
+  @F1-2 @offline
   Scenario: A loaded uploader can inspect its first batch without network access
     Given no connection has been made in this browser session
     And the browser is offline before deferring login
     When "Login later" is chosen instead of connecting
     Then a batch can be dropped and inspected with no connection
-    When the Assign step is reached with no connection
-    Then it shows the connection screen instead of a collection picker
-    And going back from it returns to Inspect with the batch intact
+    When Describe is chosen while offline
+    Then a reconnect popup keeps the inspected batch intact
 
   @unmapped
   Scenario: Connecting after deferring login preserves an inspection in progress
     Given no connection has been made in this browser session
     When "Login later" is chosen instead of connecting
     And a deferred batch is still being inspected
-    And the Assign step is reached with no connection
+    And the Describe step is reached with no connection
     Then it shows the connection screen instead of a collection picker
     When a connection is made
     Then Assign loads collections without losing the batch
     And the deferred inspection finishes after connecting
+    And the connected login identity is available to the preserved batch
 
   @unmapped
   Scenario: Connecting requires an endpoint, an access key and a secret key
@@ -65,6 +67,72 @@ Feature: Connect the uploader to storage and manage the session
     Then the region, path-style addressing and HTTPS settings are inferred from it
     And those inferred settings are only shown under "Advanced"
     And any of them can be overridden before connecting
+
+  @unmapped
+  Scenario: A remembered connection's backend details are not carried over to a different endpoint
+    Given a successful connection was made earlier in this browser
+    When the tab is closed and the uploader is opened in a new one
+    And a different endpoint is entered and the field is left
+    Then the region, path-style addressing and HTTPS settings are inferred fresh for it, not carried over
+    # #596 — secure/forcePathStyle/region used to be remembered forever once
+    # set, regardless of what endpoint was later typed.
+
+  @unmapped
+  Scenario: Connecting tests the credentials against the server before accepting them
+    Given the connection screen is shown
+    When valid-looking credentials are submitted
+    Then the credentials are checked against the server before the workspace opens
+
+  @unmapped
+  Scenario: An unreachable endpoint is reported, not silently accepted
+    Given the connection screen is shown
+    And the storage endpoint cannot be reached
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the endpoint could not be reached
+    And the workspace does not open
+
+  @unmapped
+  Scenario: Rejected credentials are reported, not silently accepted
+    Given the connection screen is shown
+    And the server will reject these credentials
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the credentials were rejected
+    And the workspace does not open
+
+  @unmapped
+  Scenario: A permission-denied check is distinguished from rejected credentials
+    Given the connection screen is shown
+    And the server denies the credential check itself
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the check could not confirm the credentials
+    And the workspace does not open
+    # #589 — AccessDenied on this read-only probe proves only that the
+    # account lacks permission to list buckets, never that the credentials
+    # themselves are wrong.
+
+  @unmapped
+  Scenario: A clock-skew rejection explains itself
+    Given the connection screen is shown
+    And the server reports this computer's clock is skewed
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message about the computer's clock
+    And the workspace does not open
+
+  @unmapped
+  Scenario: An interrupted check can be retried
+    Given the connection screen is shown
+    And the credential check hangs instead of responding
+    When valid-looking credentials are submitted
+    Then connecting is refused with a message that the check was interrupted
+    And the form is available to try again
+    # Waits out the probe's own ~8s timeout for real.
+
+  @unmapped
+  Scenario: The credential check is skipped entirely while offline
+    Given the connection screen is shown
+    And the browser is offline before deferring login
+    When valid-looking credentials are submitted
+    Then the workspace opens without any credential check
 
   @unmapped
   Scenario: Reloading the page keeps the connection
@@ -134,15 +202,55 @@ Feature: Connect the uploader to storage and manage the session
     And no result cached under the previous connection is reused
 
   @unmapped
-  Scenario: The uploader identity starts from the connected access key
+  Scenario: An unset uploader identity uses the confirmed Access-key fallback
     Given no uploader identity has been entered
     When a connection is made
-    Then the uploader identity is pre-filled with the connected access key
-    And an identity carried over from a previous connection in this browser is not overwritten by connecting
-    # Correction: as-built the guard is `uploaderUser || accessKey`, and both
-    # disconnect paths blank the identity — so a typed identity never survives to
-    # meet it. What it actually protects is the identity seeded from the previous
-    # connection's remembered access key on a fresh page load.
+    Then the uploader identity defaults to the Access key after route absence is confirmed
+    And the header shows the access key only in its masked form
+
+  @unmapped
+  Scenario: The access-service account name is the per-login default across reload and tab adoption
+    Given the account-name endpoint returns "Research Account" before login
+    When a connection is made
+    Then the uploader identity defaults to "Research Account"
+    And the account-name default is stored under the connected login
+    When the same connected session is restored
+    Then the uploader identity defaults to "Research Account"
+    When a second Uploader tab adopts the connection
+    Then the second tab defaults to "Research Account"
+
+  @unmapped
+  Scenario: A whoami authorization failure is not treated as an unsupported route
+    Given the account-name endpoint rejects the login with AccessDenied
+    When a connection is made
+    Then Settings shows the account-name error and no Access-key fallback
+    Given the account-name endpoint now returns "Research Account"
+    When the account-name lookup is retried
+    Then the uploader identity defaults to "Research Account"
+
+  @unmapped
+  Scenario: Upload attribution stays unavailable until a custom or resolved identity exists
+    Given the account-name endpoint rejects the login with AccessDenied
+    When a connection is made
+    And the account-name error leaves the identity unresolved
+    When Assign is opened without a custom identity
+    Then continuing to upload is disabled because attribution is unresolved
+    When the uploader enters custom identity "Field Researcher"
+    Then continuing to upload is enabled with the custom identity
+
+  @unmapped
+  Scenario: Identity preferences do not retain the login ID after an unremembered connection logs out
+    When a connection is made without remembering its login
+    Then the uploader identity defaults to the Access key after route absence is confirmed
+    When this unremembered login disconnects
+    Then the retained identity preference exposes no login ID
+
+  @unmapped
+  Scenario: An unscoped legacy identity is not assigned to the active login
+    Given the uploader is connected
+    When a legacy session-wide uploader identity is present and the page reloads
+    Then the uploader identity defaults to the Access key after route absence is confirmed
+    And the legacy session-wide uploader identity is removed
 
   @unmapped
   Scenario: What the tool may read or write is decided by the credentials, not the page
@@ -152,3 +260,7 @@ Feature: Connect the uploader to storage and manage the session
     # As-built the app passes a wildcard bucket scope to its storage wrapper for
     # both reads and writes, so the wrapper's allowlist is not acting as a
     # restriction here. The wrapper still exposes no delete or copy operation.
+
+  @unmapped
+  Scenario: Remembering connection details includes an accessible public-computer warning
+    Then the remember checkbox describes its public-computer warning

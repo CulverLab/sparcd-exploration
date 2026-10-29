@@ -13,6 +13,10 @@ const values = (files: FileEntry[], zone = 'UTC') =>
   [...estimateCaptureTimes(files, zone).values()].map((e) => formatNaive(e.naive));
 
 describe('estimateCaptureTimes', () => {
+  it('reads file-modified times in the browser zone while no upload zone is chosen', () => {
+    const files = [file('1'), file('2')];
+    expect(values(files, '')).toEqual(values(files, Intl.DateTimeFormat().resolvedOptions().timeZone));
+  });
   it('interpolates a midpoint and records both references even with a manual override', () => {
     const files = [file('1', time('00')), file('2', undefined, { manualNaive: inputValueToNaive(time('50'))! }), file('3', time('10'))];
     expect(estimateCaptureTimes(files, 'UTC').get('2')).toEqual({

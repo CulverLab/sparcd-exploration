@@ -66,6 +66,8 @@ function ready(
     exifNaive?: NaiveDateTime;
     exifTimestampSource?: 'exif-modify';
     manualNaive?: NaiveDateTime;
+    preTags?: FlipObservation[];
+    preTaggerUser?: string;
     mediaKind?: FileEntry['mediaKind'];
   } = {},
 ): FileEntry {
@@ -86,6 +88,8 @@ function ready(
     exifNaive: 'exifNaive' in opts ? opts.exifNaive : naive(),
     exifTimestampSource: opts.exifTimestampSource,
     manualNaive: opts.manualNaive,
+    preTags: opts.preTags,
+    preTaggerUser: opts.preTaggerUser,
   };
 }
 
@@ -106,6 +110,45 @@ function build(
   return buildBundle(input);
 }
 
+describe('pre-upload identity fallback', () => {
+  it.each([
+    [undefined, undefined, 'Jane Doe'],
+    ['', '', 'Jane Doe'],
+    ['  ', '\t', 'Jane Doe'],
+    ['', 'batch tagger', 'batch tagger'],
+    ['original tagger', 'batch tagger', 'original tagger'],
+    [' original tagger ', '', ' original tagger '],
+  ])('uses attribution precedence for observation %j and batch %j', async (classifiedBy, preTaggerUser, expected) => {
+    const tag: FlipObservation = {
+      scientificName: 'Canis latrans', commonName: 'Coyote', count: 2,
+      requestedSpecies: '', freeTags: '', classifiedBy,
+      classificationTimestamp: '2024-01-11T00:00:00.000Z',
+      reviewEvents: [{ reviewedBy: 'reviewer', reviewedAt: '2024-01-12T00:00:00.000Z' }],
+    };
+    const input: BuildInput = {
+      location: SAN15, collectionUuid: UUID, bucket: `sparcd-${UUID}`,
+      uploaderSlug: 'jane_doe', uploaderUser: 'Jane Doe', description: '', timeZone: 'UTC',
+      now: new Date('2024-01-15T10:00:00.000Z'),
+      files: [ready('tagged.JPG', { preTags: [tag], preTaggerUser }), ready('untagged.JPG')],
+    };
+    const live = await buildBundle(input);
+    const resumed = await buildBundleFromRecords({
+      ...input, uploadPath: live.uploadPath, startedAt: input.now,
+      files: live.items.map((item) => ({
+        ...item, remoteKey: item.key,
+      })),
+    });
+    expect(resumed.observationsCsv).toBe(live.observationsCsv);
+    const [row, blank] = parseObservations(live.observationsCsv);
+    expect(row.classifiedBy).toBe(expected);
+    expect(row.count).toBe(2);
+    expect(row.classificationTimestamp).toBe(tag.classificationTimestamp);
+    expect(row.reviewEvents).toEqual(tag.reviewEvents);
+    expect(blank.scientificName).toBe('');
+    expect(blank.classifiedBy).toBeUndefined();
+  });
+});
+
 describe('uploader bundle is valid v016 Camtrap data', () => {
   it('writes one observations.csv row per file, species columns blank', async () => {
     const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })]);
@@ -119,23 +162,66 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     expect(rows[0].timestamp).toBe(parseMedia(b.mediaCsv)[0].timestamp);
   });
 
+  it('writes the pre-upload tagger identity as classified_by', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{ scientificName: 'Canis latrans', commonName: 'Coyote', count: 1, requestedSpecies: '', freeTags: '' }],
+      preTaggerUser: 'anita',
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('anita');
+  });
+
+  it('prefers per-observation attribution when a local batch changed identities', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{
+        scientificName: 'Canis latrans',
+        commonName: 'Coyote',
+        count: 1,
+        requestedSpecies: '',
+        freeTags: '',
+        classifiedBy: 'alice',
+        classificationTimestamp: '2024-01-20T14:30:00.000Z',
+      }],
+      preTaggerUser: 'bob',
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('alice');
+    expect(rows[0].classificationTimestamp).toBe('2024-01-20T14:30:00.000Z');
+  });
+
+  it('preserves separate review events through a tagger-to-uploader handoff', async () => {
+    const b = await build([ready('a/IMG001.JPG', {
+      preTags: [{
+        scientificName: 'Canis latrans',
+        commonName: 'Coyote',
+        count: 1,
+        requestedSpecies: '',
+        freeTags: '',
+        classifiedBy: 'fielduser',
+        classificationTimestamp: '2024-01-11T00:00:00.000Z',
+        reviewEvents: [{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }],
+      }],
+    })]);
+    const rows = parseObservations(b.observationsCsv);
+    expect(rows[0].classifiedBy).toBe('fielduser');
+    expect(rows[0].reviewEvents).toEqual([{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }]);
+  });
+
   it('media.csv carries the DST-corrected full ISO capture time in col 4', async () => {
     // The uploader is the writer-of-record for capture time: the naive EXIF
-    // wall-clock 08:00 interpreted in America/Phoenix (UTC-7, no DST) is 15:00Z,
-    // written as a full ISO 8601 UTC string — matching how sparcd-web itself
-    // stamps timestamps.
+    // wall-clock 08:00 retains the selected location's numeric offset.
     const b = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const rows = parseMedia(b.mediaCsv);
     expect(rows).toHaveLength(1);
-    expect(rows[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(rows[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
   });
 
   it('capture time is independent of the chosen zone going in (proves tz applied)', async () => {
-    // Same naive wall-clock, two different zones → two different UTC instants.
+    // Same naive wall-clock, two different zones → different numeric offsets.
     const phx = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'America/Phoenix');
     const utc = await build([ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }) })], 'UTC');
-    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
-    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000Z');
+    expect(parseMedia(phx.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
+    expect(parseMedia(utc.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000+00:00');
   });
 
   it('a video media row carries the video media type', async () => {
@@ -158,7 +244,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
 
     bundle = await build([{ ...modified, manualNaive: naive({ hour: 9 }), manualSource: 'manual' }]);
     expect(parseMedia(bundle.mediaCsv)[0].comments).toBe('[TIMESTAMP:manual]');
-    expect(parseMedia(bundle.mediaCsv)[0].timestamp).toBe('2024-01-10T16:00:00.000Z');
+    expect(parseMedia(bundle.mediaCsv)[0].timestamp).toBe('2024-01-10T09:00:00.000-07:00');
   });
 
   it('a manual capture time fills col 4 (DST-corrected) when EXIF is absent', async () => {
@@ -166,7 +252,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: undefined, manualNaive: naive({ hour: 8 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
   });
 
   it('prefers EXIF over a stray manual time so a real camera time is never clobbered', async () => {
@@ -174,7 +260,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
       [ready('a/IMG001.JPG', { exifNaive: naive({ hour: 8 }), manualNaive: naive({ hour: 20 }) })],
       'America/Phoenix',
     );
-    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T15:00:00.000Z');
+    expect(parseMedia(b.mediaCsv)[0].timestamp).toBe('2024-01-10T08:00:00.000-07:00');
     expect(parseMedia(b.mediaCsv)[0].comments).toBe('');
   });
 
@@ -211,6 +297,7 @@ describe('uploader bundle is valid v016 Camtrap data', () => {
     expect(meta.imageCount).toBe(2);
     expect(meta.editComments).toEqual([]);
     expect(meta.bucket).toBe(`sparcd-${UUID}`);
+    expect(meta.captureTimeZone).toBe('America/Phoenix');
   });
 });
 
@@ -491,5 +578,53 @@ describe('timestamp issues', () => {
     const b = await build([ready('1')]);
     expect(parseCsvRows(b.deploymentsCsv)[0][15]).toBe('false');
     expect(parseCsvRows(b.mediaCsv)[0][10]).toBe('');
+  });
+});
+
+describe('required upload comment metadata', () => {
+  it('uses the same generated prefix in a new and resumed bundle', async () => {
+    const now = new Date(2026, 9, 14, 10);
+    const input: BuildInput = {
+      location: SAN15, collectionUuid: UUID, bucket: `sparcd-${UUID}`,
+      uploaderSlug: 'jdoe', description: 'Retrieved after rain',
+      requiredComments: { mountainRange: 'Santa Rita Mountains', dateCollected: '2026-10-01', previewUploadDate: '2026-10-13' },
+      timeZone: 'America/Phoenix', files: [ready('IMG001.JPG')], now,
+    };
+    const live = await buildBundle(input);
+    const uploadPath = parseUploadMeta(live.uploadMetaJson).uploadPath;
+    const resumed = await buildBundleFromRecords({
+      ...input, startedAt: now, uploadPath,
+      files: [{ fileName: 'IMG001.JPG', size: 12, sha256: 'sha-a', remoteKey: `${uploadPath}/IMG001.JPG` }],
+    });
+    const expected = 'Santa Rita Mountains - San Pedro 15 - SAN15 - 1 image - uploaded 2026-10-13 - collected 2026-10-01 - Retrieved after rain';
+    expect(parseUploadMeta(live.uploadMetaJson).description).toBe(expected);
+    expect(parseUploadMeta(resumed.uploadMetaJson).description).toBe(expected);
+  });
+});
+
+describe('images counts all valid uploaded files', () => {
+  it.each([
+    { kinds: ['image', 'video', 'video'] as const, countText: '3 images' },
+    { kinds: ['video'] as const, countText: '1 image' },
+  ])('retains shorthand for $countText in new and resumed metadata', async ({ kinds, countText }) => {
+    const files = kinds.map((mediaKind, index) => ready(`file${index}.${mediaKind === 'video' ? 'MP4' : 'JPG'}`, { mediaKind }));
+    const now = new Date(2026, 9, 14);
+    const input: BuildInput = {
+      location: SAN15, collectionUuid: UUID, bucket: `sparcd-${UUID}`, uploaderSlug: 'jdoe',
+      description: '', requiredComments: { mountainRange: 'Santa Rita Mountains', dateCollected: '2026-10-01', previewUploadDate: '2026-10-13' },
+      files, now, timeZone: 'America/Phoenix',
+    };
+    const live = await buildBundle(input);
+    const uploadPath = parseUploadMeta(live.uploadMetaJson).uploadPath;
+    const resumed = await buildBundleFromRecords({
+      ...input, uploadPath, startedAt: now,
+      files: files.map((file) => ({ fileName: file.fileName, size: file.size, sha256: file.sha256!, remoteKey: `${uploadPath}/${file.fileName}`, mimeType: file.mimeType })),
+    });
+    for (const bundle of [live, resumed]) {
+      const meta = parseUploadMeta(bundle.uploadMetaJson);
+      expect(meta.imageCount).toBe(files.length);
+      expect(meta.description).toBe(`Santa Rita Mountains - San Pedro 15 - SAN15 - ${countText} - uploaded 2026-10-13 - collected 2026-10-01`);
+      expect(parseMedia(bundle.mediaCsv)).toHaveLength(files.length);
+    }
   });
 });

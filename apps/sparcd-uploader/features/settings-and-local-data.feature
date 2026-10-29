@@ -5,9 +5,9 @@ Feature: Settings and the data the uploader keeps on this machine
 
   """
   As-built flow: the Settings section holds the default uploader identity and
-  the disconnect that clears this machine. A SPARC'd tool is often shared on one
-  laptop, so logging out has to leave nothing of the previous person behind —
-  but it must not silently destroy uploads they have not finished.
+  the disconnect that ends the shared session and clears local upload records.
+  Remembered non-secret connection details remain. Unfinished uploads must not
+  be silently destroyed; discarding them requires explicit confirmation.
   """
 
   Background:
@@ -17,17 +17,46 @@ Feature: Settings and the data the uploader keeps on this machine
   Scenario: A default uploader identity can be set once
     When an uploader identity is entered in Settings
     Then the tool shows the key-safe form of it that will appear in upload paths
-    And each new batch starts with that identity already filled in on the Assign step
+    And each new batch starts with that identity already filled in on the Describe step
 
   @unmapped
+  Scenario: Custom uploader identities follow their connected login
+    When Login A saves custom identity "Ada Lovelace" and reloads
+    And the Uploader switches to Login B
+    Then Login B's identity defaults to the confirmed endpoint fallback
+    When Login B saves custom identity "Grace Hopper"
+    And the Uploader switches back to Login A
+    Then Login A's custom identity is restored
+    When the Uploader switches to Login B
+    Then Login B's custom identity is restored
+
+  @unmapped
+  Scenario: A same-login tab shares the custom identity preference
+    When Login A saves custom identity "Ada Lovelace" and reloads
+    And a second Uploader tab adopts the same login
+    Then the second tab shows Login A's custom identity
+    When the second tab changes Login A's identity to "Grace Hopper"
+    Then the first tab shows Login A's updated identity
+
+  @unmapped
+  Scenario: A blank custom identity remains editable until blur restores the account default
+    When the Uploader identity field is cleared
+    Then the field remains blank while it is being edited
+    When the blank Uploader identity field loses focus
+    Then the uploader identity defaults to the Access key after route absence is confirmed
+
+  @unmapped
+  @preparation-cleanup
   Scenario: Disconnecting from Settings clears this machine's upload records
     Given there are no unfinished uploads on this machine
-    When "Disconnect" is chosen
+    When Disconnect is chosen after reviewing its security explanation
     Then the connection is ended
     And this browser's recorded upload sessions, file states and metadata are cleared
     And the tool returns to the connection screen ready for the next person
+    And remembered non-secret connection details remain with no live session
 
   @unmapped
+  @preparation-cleanup
   Scenario: Disconnecting is guarded when unfinished uploads exist
     Given there are unfinished uploads recorded on this machine
     When "Disconnect" is chosen
@@ -36,6 +65,7 @@ Feature: Settings and the data the uploader keeps on this machine
     And nothing is cleared unless discarding is explicitly chosen
 
   @unmapped
+  @preparation-cleanup
   Scenario: Disconnecting from the header ends the session without clearing records
     When the Disconnect button in the header is used
     Then the connection is ended and the in-progress batch is cleared
@@ -54,3 +84,22 @@ Feature: Settings and the data the uploader keeps on this machine
     When the appearance is switched between light and dark
     Then the choice survives a page reload
     And it is kept where the other SPARC'd tools on this machine read it
+
+  @unmapped
+  Scenario: Defaults and Advanced are collapsed, independent keyboard disclosures
+    When the settings disclosures are exercised
+    And expanded settings controls fit on a narrow screen
+    Then their preferences survive reopening with both disclosures collapsed
+
+  @unmapped
+  Scenario: Blank identity falls back on blur and custom identity survives reload
+    When identity is cleared, typed, and left blank
+    Then the account default returns on blur
+    When an uploader identity is entered in Settings
+    And the custom identity is reloaded
+    Then the custom identity is preserved
+
+  @unmapped
+  Scenario: Restored and shared sessions supply a missing identity
+    When the blank identity session is restored and shared
+    Then both sessions use the confirmed Access-key fallback

@@ -1,6 +1,6 @@
 // Per-upload timezone proofs. EXIF datetimes are naive wall-clock with no zone;
-// interpreting them in a chosen IANA zone must yield the correct UTC instant,
-// DST-correct, as a full ISO 8601 UTC timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`) —
+// interpreting them in a chosen IANA zone must yield the correct local time and
+// numeric offset, DST-correct, as a full ISO 8601 timestamp —
 // and the result must NOT depend on the machine the uploader runs on.
 //
 // RED-GREEN: these assertions fail against the naive `new Date(localString)`
@@ -14,7 +14,6 @@ import {
   naiveInZoneToUtcIso,
   formatNaive,
   localTimeZone,
-  naiveToInputValue,
   inputValueToNaive,
   type NaiveDateTime,
 } from '../src/lib/exifTime';
@@ -29,16 +28,16 @@ const at = (over: Partial<NaiveDateTime>): NaiveDateTime => ({
   ...over,
 });
 
-const ISO_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const ISO_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/;
 
 describe('naiveInZoneToUtcIso', () => {
   it('interprets a naive wall-clock in a no-DST zone (America/Phoenix, UTC-7)', () => {
     expect(naiveInZoneToUtcIso(at({ month: 7, day: 15, hour: 12 }), 'America/Phoenix')).toBe(
-      '2024-07-15T19:00:00.000Z',
+      '2024-07-15T12:00:00.000-07:00',
     );
     // Phoenix has no DST, so winter is the same offset.
     expect(naiveInZoneToUtcIso(at({ month: 1, day: 15, hour: 12 }), 'America/Phoenix')).toBe(
-      '2024-01-15T19:00:00.000Z',
+      '2024-01-15T12:00:00.000-07:00',
     );
   });
 
@@ -46,26 +45,26 @@ describe('naiveInZoneToUtcIso', () => {
     // America/Denver: summer MDT (UTC-6), winter MST (UTC-7). Identical 12:00
     // local wall-clock, two different UTC instants.
     expect(naiveInZoneToUtcIso(at({ month: 7, day: 15, hour: 12 }), 'America/Denver')).toBe(
-      '2024-07-15T18:00:00.000Z',
+      '2024-07-15T12:00:00.000-06:00',
     );
     expect(naiveInZoneToUtcIso(at({ month: 1, day: 15, hour: 12 }), 'America/Denver')).toBe(
-      '2024-01-15T19:00:00.000Z',
+      '2024-01-15T12:00:00.000-07:00',
     );
   });
 
   it('handles an east-of-UTC zone (Asia/Kolkata, UTC+5:30)', () => {
     expect(naiveInZoneToUtcIso(at({ month: 6, day: 1, hour: 3, minute: 30 }), 'Asia/Kolkata')).toBe(
-      '2024-05-31T22:00:00.000Z',
+      '2024-06-01T03:30:00.000+05:30',
     );
   });
 
   it('UTC is a passthrough', () => {
     expect(naiveInZoneToUtcIso(at({ month: 6, day: 1, hour: 9, minute: 15, second: 45 }), 'UTC')).toBe(
-      '2024-06-01T09:15:45.000Z',
+      '2024-06-01T09:15:45.000+00:00',
     );
   });
 
-  it('always emits a full ISO 8601 UTC shape — millis and Z', () => {
+  it('always emits a full ISO 8601 offset-bearing shape', () => {
     for (const tz of ['UTC', 'America/Phoenix', 'America/Denver', 'Asia/Kolkata', 'Pacific/Chatham']) {
       expect(naiveInZoneToUtcIso(at({ month: 7, day: 15, hour: 12, minute: 34, second: 56 }), tz)).toMatch(
         ISO_SHAPE,
@@ -118,15 +117,15 @@ describe('machine-zone independence', () => {
       withMachineZone(machineZone);
       results.push(naiveInZoneToUtcIso(n, 'America/Phoenix'));
     }
-    for (const r of results) expect(r).toBe('2024-07-15T19:00:00.000Z');
+    for (const r of results) expect(r).toBe('2024-07-15T12:00:00.000-07:00');
   });
 
   it('the machine default never leaks an offset into the result', () => {
-    // Even when the machine pretends to be a +13:45 zone, a UTC interpretation
-    // is a pure passthrough — proving no ambient offset contaminates the math.
+    // Even when the machine pretends to be a +13:45 zone, an explicit UTC
+    // interpretation remains a +00:00 result.
     withMachineZone('Pacific/Chatham');
     expect(naiveInZoneToUtcIso(at({ month: 7, day: 15, hour: 12 }), 'UTC')).toBe(
-      '2024-07-15T12:00:00.000Z',
+      '2024-07-15T12:00:00.000+00:00',
     );
   });
 });
@@ -148,15 +147,22 @@ describe('helpers', () => {
   });
 });
 
-describe('datetime-local <-> naive (manual capture-time entry)', () => {
-  it('round-trips a naive value through the input string', () => {
+describe('manual capture-time text entry', () => {
+  it('round-trips a naive value through formatNaive', () => {
     const n = at({ month: 3, day: 9, hour: 7, minute: 5, second: 1 });
-    expect(naiveToInputValue(n)).toBe('2024-03-09T07:05:01');
-    expect(inputValueToNaive(naiveToInputValue(n))).toEqual(n);
+    expect(formatNaive(n)).toBe('2024-03-09T07:05:01');
+    expect(inputValueToNaive(formatNaive(n))).toEqual(n);
   });
 
-  it('defaults missing seconds to 0 (browsers may omit at step=1)', () => {
+  it('accepts a space separator the same as a literal T (#456)', () => {
+    const n = at({ month: 3, day: 9, hour: 7, minute: 5, second: 1 });
+    expect(inputValueToNaive('2024-03-09 07:05:01')).toEqual(n);
+    expect(inputValueToNaive('2024-03-09T07:05:01')).toEqual(n);
+  });
+
+  it('defaults missing seconds to 0', () => {
     expect(inputValueToNaive('2024-03-09T07:05')).toEqual(at({ month: 3, day: 9, hour: 7, minute: 5 }));
+    expect(inputValueToNaive('2024-03-09 07:05')).toEqual(at({ month: 3, day: 9, hour: 7, minute: 5 }));
   });
 
   it('returns null for empty or malformed input', () => {

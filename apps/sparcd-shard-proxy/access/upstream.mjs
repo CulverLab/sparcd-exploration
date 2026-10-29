@@ -62,6 +62,17 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
       return { status: res.status, etag: res.headers.get('etag'), text: await res.text() };
     },
 
+    async head(bucket, key) {
+      const res = await sendMeta(url(bucket, key), { method: 'HEAD' });
+      if (res.status === 404) return { status: 404 };
+      if (!res.ok) throw new Error(`HEAD ${bucket}/${key} → ${res.status}`);
+      return {
+        status: res.status,
+        etag: res.headers.get('etag'),
+        contentLength: res.headers.get('content-length'),
+      };
+    },
+
     async getJson(bucket, key) {
       const res = await this.get(bucket, key);
       return res.status === 404 ? { status: 404 } : { ...res, value: JSON.parse(res.text) };
@@ -69,11 +80,14 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
 
     /**
      * @param guard `{ ifMatch }` for a replace, `{ ifNoneMatch: '*' }` for a
-     *              create. Returns false on 412/409, which is the caller's cue
-     *              to reload and retry.
+     *              create. Returns the ETag of the object written, or false
+     *              on 412/409, which is the caller's cue to reload and retry.
      */
-    async put(bucket, key, body, { contentType = 'application/json', retry = true, ...guard } = {}) {
+    async put(bucket, key, body, {
+      contentType = 'application/json', retry = true, metaSha256, ...guard
+    } = {}) {
       const headers = { 'content-type': contentType };
+      if (metaSha256) headers['x-amz-meta-sha256'] = metaSha256;
       if (guard.ifMatch) headers['if-match'] = normalizeIfMatch(guard.ifMatch);
       if (guard.ifNoneMatch) headers['if-none-match'] = guard.ifNoneMatch;
       const via = retry ? sendMeta : send;
@@ -84,7 +98,7 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
       const res = await via(url(bucket, key), { method: 'PUT', body: bytes, headers });
       if (res.status === 412 || res.status === 409) return false;
       if (!res.ok) throw new Error(`PUT ${bucket}/${key} → ${res.status} ${await res.text()}`);
-      return true;
+      return res.headers.get('etag');
     },
 
     async listKeys(bucket, prefix) {
@@ -144,14 +158,22 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
 
     /** The immediate child "directories" of a prefix, via the delimiter. */
     async listCommonPrefixes(bucket, prefix) {
-      const res = await sendMeta(url(bucket, '', {
-        'list-type': '2', prefix, delimiter: '/', 'max-keys': '1000',
-      }));
-      if (res.status === 404) return [];
-      if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
-      const xml = await res.text();
-      return [...xml.matchAll(/<CommonPrefixes><Prefix>([\s\S]*?)<\/Prefix><\/CommonPrefixes>/g)]
-        .map((m) => decodeEntities(m[1]));
+      const prefixes = [];
+      let token;
+      do {
+        const query = { 'list-type': '2', prefix, delimiter: '/', 'max-keys': '1000' };
+        if (token) query['continuation-token'] = token;
+        const res = await sendMeta(url(bucket, '', query));
+        if (res.status === 404) return prefixes;
+        if (!res.ok) throw new Error(`LIST ${bucket}/${prefix} → ${res.status}`);
+        const xml = await res.text();
+        prefixes.push(...[...xml.matchAll(/<CommonPrefixes><Prefix>([\s\S]*?)<\/Prefix><\/CommonPrefixes>/g)]
+          .map((m) => decodeEntities(m[1])));
+        token = /<IsTruncated>true<\/IsTruncated>/.test(xml)
+          ? decodeEntities(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1] ?? '')
+          : null;
+      } while (token);
+      return prefixes;
     },
 
     async listBuckets() {
@@ -166,9 +188,14 @@ export function makeUpstream({ endpoint, region = 'us-east-1', accessKeyId, secr
   };
 }
 
+// MinIO, like any Go encoder, writes `"` as `&#34;`: every ETag in a listing
+// arrives that way. Left encoded, a listing the proxy rebuilds escapes it a
+// second time and the client reads `&#34;…&#34;` back as the tag.
 function decodeEntities(s) {
   return s
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
     .replace(/&amp;/g, '&');
 }

@@ -24,7 +24,7 @@ export default defineConfig({
   webServer: {
     // Use the installed Vite binary directly so the browser harness does not
     // trigger Corepack's package-manager resolution before starting the app.
-    command: `./node_modules/.bin/vite --port ${port} --strictPort`,
+    command: `./node_modules/.bin/vite --config vite.bdd.config.ts --port ${port} --strictPort`,
     url: `${origin}/sparcd-exploration/tagger/`,
     reuseExistingServer: false,
     timeout: 120_000,
@@ -35,7 +35,9 @@ export default defineConfig({
     env: { VITE_SPARCD_S3_ENDPOINT: '' },
   },
   use: {
+    ...(process.env.SPARCD_USE_SYSTEM_CHROME === '1' ? { channel: 'chrome' as const } : {}),
     baseURL: origin,
+    ...(process.env.SPARCD_USE_SYSTEM_CHROME === '1' ? { channel: 'chrome' as const } : {}),
     headless: true,
     viewport: { width: 1440, height: 950 },
     trace: 'off',

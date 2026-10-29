@@ -76,6 +76,10 @@ export function makeActivity({
         detail: { dropped: count },
       });
     }
+    // A bad-signature line is serialized here and never touched again, so
+    // the window counting into it closes with it. Later failures from the
+    // same source start a new line instead of raising a count nobody writes.
+    badSignatures.clear();
     if (buffer.length === 0) return;
     const batch = buffer;
     buffer = [];

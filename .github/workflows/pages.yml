@@ -10,6 +10,8 @@ on:
       - "apps/sparcd-tagger/**"
       - "apps/sparcd-admin/**"
       - "packages/**"
+      - "scripts/build-offline.mjs"
+      - "scripts/offline/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -79,6 +81,9 @@ jobs:
       - name: Build admin
         run: pnpm --filter sparcd-admin build
 
+      - name: Build coordinated offline release
+        run: node scripts/build-offline.mjs
+
       # --- Assemble combined site ---
       - name: Assemble site
         run: |
@@ -94,6 +99,7 @@ jobs:
           cp -r apps/sparcd-uploader/dist/. _site/uploader/
           cp -r apps/sparcd-tagger/dist/. _site/tagger/
           cp -r apps/sparcd-admin/dist/. _site/admin/
+          cp apps/sparcd-uploader/dist/offline-worker.js _site/offline-worker.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

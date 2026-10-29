@@ -17,8 +17,9 @@ const server = createServer(async (req, res) => {
   const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.json': 'application/json' };
   try { const body = await readFile(path); res.writeHead(200, { 'Content-Type': types[extname(path)] ?? 'application/octet-stream' }).end(body); } catch { res.writeHead(404).end(); }
 });
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const url = `http://127.0.0.1:${server.address().port}`;
+const liveURL = process.env.EXPLORER_TEST_URL;
+if (!liveURL) await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const url = liveURL || `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
@@ -39,9 +40,44 @@ try {
   const textFields = connectionForm.locator('input[type="text"]');
   const checkboxes = connectionForm.getByRole('checkbox');
   const endpoint = textFields.nth(0);
-  try {
-    await endpoint.waitFor({ state: 'visible', timeout: wasmStartupTimeout });
-  } catch (error) {
+  async function waitForEndpointOrPolarsFailure() {
+    let signalPolarsFailure;
+    const polarsFailure = new Promise((resolve) => { signalPolarsFailure = resolve; });
+    const onResponse = (response) => {
+      if (response.status() >= 500 && /corsproxy\.marimo\.app\/.*polars.*\.whl/i.test(response.url())) {
+        signalPolarsFailure();
+      }
+    };
+    page.on('response', onResponse);
+    try {
+      return await Promise.race([
+        endpoint.waitFor({ state: 'visible', timeout: wasmStartupTimeout })
+          .then(() => ({ ready: true }), (error) => ({ error })),
+        polarsFailure.then(() => ({ transientPolarsFailure: true })),
+      ]);
+    } finally {
+      page.off('response', onResponse);
+    }
+  }
+  let startupError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const startup = await waitForEndpointOrPolarsFailure();
+    if (startup.ready) {
+      startupError = undefined;
+      break;
+    }
+    startupError = startup.error ?? new Error('Polars WASM package request failed during startup.');
+    // Pyodide fetches the Polars WASM wheel through marimo's CORS proxy.
+    // That external endpoint occasionally returns a transient 5xx; retry
+    // only that startup failure, not application or assertion failures.
+    const transientPolarsFetch = startup.transientPolarsFailure || diagnostics.some((entry) =>
+      /response 5\d\d: https:\/\/corsproxy\.marimo\.app\/.*polars.*\.whl/i.test(entry));
+    if (!transientPolarsFetch || attempt === 3) break;
+    diagnostics.length = 0;
+    await page.waitForTimeout(1_000 * attempt);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  }
+  if (startupError) {
     const artifactDirectory = join(root, 'test-results');
     await mkdir(artifactDirectory, { recursive: true });
     await page.screenshot({ path: join(artifactDirectory, 'remember-connection-startup-failure.png'), fullPage: true });
@@ -58,10 +94,21 @@ try {
       join(artifactDirectory, 'remember-connection-startup-failure.txt'),
       `WASM diagnostics:\n${diagnostics.join('\n') || '<none>'}\nSidebar controls:\n${JSON.stringify(sidebarControls)}\nPage body:\n${body}`,
     );
-    throw new Error(`${error.message}\nWASM diagnostics:\n${diagnostics.join('\n') || '<none>'}\nSidebar controls:\n${JSON.stringify(sidebarControls)}\nPage body:\n${body}`);
+    throw new Error(`${startupError.message}\nWASM diagnostics:\n${diagnostics.join('\n') || '<none>'}\nSidebar controls:\n${JSON.stringify(sidebarControls)}\nPage body:\n${body}`);
   }
-  await assert.equal(await textFields.count(), 2, 'the connection form has endpoint and access-key fields');
-  await assert.equal(await checkboxes.count(), 2, 'the connection form has HTTPS and remember controls');
+  await expect(endpoint).toHaveValue('shared.example', { timeout: wasmStartupTimeout });
+  await expect(textFields).toHaveCount(2);
+  await expect(checkboxes).toHaveCount(2);
+  const remember = connectionForm.getByRole('checkbox', { name: 'Remember endpoint & access key on this device', exact: true });
+  const warning = connectionForm.locator('#sparcd-remember-public-computer-warning em').filter({ visible: true });
+  async function assertRememberHelp() {
+    await expect(warning).toBeVisible();
+    await expect(warning).toHaveCSS('font-style', 'italic');
+    await remember.focus();
+    await expect(remember).toBeFocused();
+    await expect(remember).toHaveAccessibleDescription("(Don't set remember endpoint & access key if on a public computer)");
+  }
+  await assertRememberHelp();
   await expect(textFields.nth(0)).toHaveValue('shared.example', { timeout: wasmStartupTimeout });
   await expect(textFields.nth(1)).toHaveValue('shared-access', { timeout: wasmStartupTimeout });
   await assert.equal(await checkboxes.nth(0).isChecked(), true);
@@ -79,7 +126,8 @@ try {
     region: 'us-west-2',
     forcePathStyle: true,
   });
-  await checkboxes.nth(1).uncheck();
+  await assertRememberHelp();
+  await remember.uncheck();
   await page.getByRole('button', { name: 'Connect' }).click();
   try {
     await page.waitForFunction(() => localStorage.getItem('sparcd-connection') === null, undefined, { timeout: 10_000 });
@@ -87,9 +135,17 @@ try {
     const stored = await page.evaluate(() => localStorage.getItem('sparcd-connection'));
     throw new Error(`${error.message}\nRemembered record after unchecked submit: ${stored}\nWASM diagnostics:\n${diagnostics.join('\n') || '<none>'}`);
   }
-  console.log('Remembered Explorer connection WASM check passed.');
+  await assertRememberHelp();
+  console.log('Remembered Explorer connection and accessible warning WASM check passed.');
+  await endpoint.fill('https:///shared.example');
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await expect(page.getByText("The Endpoint doesn't look right.")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Use exactly two slashes after “https:”.')).toBeVisible();
+  console.log('Invalid endpoint WASM check passed.');
 } finally {
   await browser.close();
-  server.closeAllConnections();
-  await new Promise((resolve) => server.close(resolve));
+  if (server.listening) {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 }

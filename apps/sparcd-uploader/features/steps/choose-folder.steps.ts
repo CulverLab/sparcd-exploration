@@ -11,10 +11,19 @@ import { join } from 'node:path';
 const tmpDir = (name: string) =>
   join(tmpdir(), 'sparcd-bdd-folders', `${name}-${Math.random().toString(36).slice(2)}`, FOLDER);
 
-Given('the New upload section is showing the Files step', async ({ app }) => {
-  await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
+Given('the New upload section is showing the Choose step', async ({ app }) => {
+  await app.expectStep('Choose');
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
 });
+
+Then(
+  'the drop area asks for a folder to be dropped, or for Choose folder to be clicked to browse',
+  async ({ app }) => {
+    const zone = app.page.locator('[aria-label^="Drop a folder"]');
+    await expect(zone).toContainText('Drop a folder to upload');
+    await expect(zone).toContainText('or click Choose folder to browse.');
+  },
+);
 
 // --- only JPEG and MP4 are taken ------------------------------------------
 
@@ -79,8 +88,8 @@ When('a folder is dragged onto the drop area', async ({ app }) => {
 });
 
 Then('its media is scanned exactly as if it had been picked from the dialog', async ({ app }) => {
-  await app.page.getByRole('button', { name: 'Start over' }).click();
-  await app.expectStep('Files');
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Choose');
   await app.pickFolder(standardBatch(), tmpDir('drag-vs-dialog'));
   await app.waitForInspected();
   const picked = (await app.listedFiles()).map((f) => ({ name: f.name, relPath: f.relPath }));
@@ -102,8 +111,8 @@ Then('the tool reports that the folder was read but held no images or videos', a
   await expect(app.page.getByText(/The folder was read but held no/)).toBeVisible();
 });
 
-Then('it stays on the Files step so another folder can be chosen', async ({ app }) => {
-  await app.expectStep('Files');
+Then('it stays on the Choose step so another folder can be chosen', async ({ app }) => {
+  await app.expectStep('Choose');
   await expect(app.page.getByText('Choose another folder')).toBeVisible();
 });
 
@@ -114,8 +123,11 @@ Given('the browser cannot present a folder picker', async ({ app }) => {
 });
 
 Then('the drop area offers to choose individual photos or videos instead', async ({ app }) => {
-  await expect(app.page.getByText('Choose photos or videos')).toBeVisible();
-  await expect(app.page.getByText('Choose folder', { exact: true })).toHaveCount(0);
+  await expect(app.page.getByText('Choose photos or videos to upload', { exact: true })).toBeVisible();
+  await expect(app.page.getByText('Choose photos or videos', { exact: true })).toBeVisible();
+  await expect(app.page.getByText(/Drop a folder|Choose folder/)).toHaveCount(0);
+  await expect(app.page.getByRole('button', { name: 'Choose JPEG photos or MP4 videos to upload' })).toBeVisible();
+  await expect(app.page.getByRole('button', { name: /folder/i })).toHaveCount(0);
   await expect(app.page.locator('input[type="file"][accept="image/jpeg,video/mp4"]')).toBeAttached();
 });
 
@@ -132,8 +144,8 @@ Given('a batch has already been scanned', async ({ app }) => {
 });
 
 When('another folder is chosen', async ({ app }) => {
-  await app.page.getByRole('button', { name: 'Start over' }).click();
-  await app.expectStep('Files');
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Choose');
   await app.dropFolder([
     { path: 'OTHERCARD/NEW_0001.JPG', mime: 'image/jpeg', bytes: jpegWithExifDate('2026:08:01 08:00:00', 'n1') },
     { path: 'OTHERCARD/NEW_0002.JPG', mime: 'image/jpeg', bytes: jpegWithExifDate('2026:08:01 08:05:00', 'n2') },
@@ -151,7 +163,7 @@ Then('examination starts over on the new batch', async ({ app }) => {
   const rows = await app.listedFiles();
   expect(rows).toHaveLength(2);
   for (const row of rows) expect(['OK', 'Warning']).toContain(row.status);
-  expect(await app.batchSummary()).not.toContain('processing');
+  expect(await app.pendingCount()).toBe(0);
 });
 
 // --- de-duplication --------------------------------------------------------
@@ -178,12 +190,12 @@ Then('each distinct path within the folder appears at most once in the batch', a
 When('a folder is supplied by dragging it onto the page', async ({ app }) => {
   await app.makeFolderPickerUnavailable();
   await app.dropFolder(publishableBatch());
-  await expect(app.fileListPane()).toBeVisible();
+  await expect(app.fileListToggle()).toBeVisible();
 });
 
 Then('no lasting access to that folder is retained', async ({ app }) => {
   await app.walkToUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
   const batches = await app.readBatchRecords();

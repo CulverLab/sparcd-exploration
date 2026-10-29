@@ -13,7 +13,7 @@ source, then human-reviewed); each file's DRAFT header names its source.
 
 | Directory | Contents | Size |
 | --- | --- | --- |
-| `spec-features/` | BDD transcription of the agreed acceptance criteria for stories F1–F4, A1, A2, AL1, AL2, H1–H3, plus `NOTES.md` on what would not fit into a scenario | 11 `.feature` files, 73 scenarios |
+| `bdd/spec/` | BDD transcription of the agreed acceptance criteria for stories F1–F4, A1, A2, AL1, AL2, H1–H3, plus `NOTES.md` on what would not fit into a scenario | 11 `.feature` files, 73 scenarios |
 | `use-cases/` | Three Cockburn-style use cases (UC1 upload, UC2 resume/retry, UC3 identify) carrying 41 NFRs, plus `NOTES.md` with 29 numbered open questions | 3 use cases |
 | `gap-report.md` | The diff between the two BDD sets: per-story coverage, 10 draft GitHub issues, 18 groups of unmapped as-built behavior, and the residue that BDD cannot express | 1 document |
 
@@ -29,7 +29,7 @@ Every file carries a DRAFT header on its first lines.
 They are deliberately two sets, written from opposite ends, in the same
 notation so they can be compared line by line.
 
-- **`spec-features/` is the target.** Each file is one agreed story. Scenarios
+- **`bdd/spec/` is the target.** Each file is one agreed story. Scenarios
   are written in the story's own vocabulary (Frank, Anita, Alice, Harold) and
   say nothing about buttons, steps or storage. They describe behavior nobody
   has committed to building yet.
@@ -56,7 +56,7 @@ than an interaction. The two sets are told apart by directory, not by tag — no
 | Set | Home | Why |
 | --- | --- | --- |
 | as-built features | `apps/<name>/features/` | Done — moved and made executable in PR #25. |
-| `spec-features/*.feature` | Requirements wiki, one DRAFT-prefixed page per story, alongside the story it transcribes | They are requirements, not tests. They become executable only once a story is agreed and scheduled — at which point the relevant file follows the story into the owning app's `features/`. |
+| `bdd/spec/*.feature` | Permanently in the repository at `bdd/spec/` | They are requirements, not tests. Tooling and issues cite their repository paths. |
 | `use-cases/*.md` | Requirements wiki, DRAFT-prefixed pages | They restructure existing wiki use cases and carry the NFRs, which have no home in a `.feature` file. |
 | `NOTES.md` (all four) | Travel with their set | Each records what its author could not express and what a reviewer must decide. They are the most perishable and most valuable part of this drop. |
 | `gap-report.md` | Consumed, not filed | §2 becomes 10 GitHub issues, §3 becomes candidate wiki stories, §4 becomes SRS/NFR entries. Once dispersed the report is a point-in-time snapshot and should not be maintained. |
@@ -69,7 +69,7 @@ the prefix per page, not in a batch.
 Work down this list; each item is a decision someone has to make, not a
 document to admire.
 
-- [ ] **Confirm the three `@unmapped` spec scenarios** in `spec-features/NOTES.md` §3
+- [ ] **Confirm the three `@unmapped` spec scenarios** in `bdd/spec/NOTES.md` §3
       (pre-upload tag attribution, per-collection species list, visible review
       state). These went beyond the agreed criteria and need the director's
       yes or no before they count as requirements.
@@ -78,7 +78,7 @@ document to admire.
       (the permission model) and the definition of "precise location" block the
       most downstream work.
 - [ ] **Define "precise location" versus a coarsened one.** Flagged in
-      `spec-features/NOTES.md` §4.3 as the single most load-bearing undefined
+      `bdd/spec/NOTES.md` §4.3 as the single most load-bearing undefined
       term in the set. F4, M1, F3 and H2 all depend on it.
 - [ ] **Rule on F3's announcement content versus F4's protection.** They are
       stated as opposing requirements in the same feature file; see below.
@@ -115,7 +115,7 @@ and were left alone.
    `F3-announce-new-data-ready-for-tagging.feature` requires the announcement
    to identify "the location or locations the data came from"; the `@security`
    scenario two below it requires that it "does not disclose the precise
-   sensitive location". `spec-features/NOTES.md` §4.2 proposes the resolution
+   sensitive location". `bdd/spec/NOTES.md` §4.2 proposes the resolution
    (omit precise sensitive locations for unauthorized recipients) but the
    feature file itself does not encode which rule wins. Needs Q3.4 answered,
    then one of the two scenarios rewritten.
@@ -124,7 +124,7 @@ and were left alone.
    from the failed attempt remains" is a deletion; M2 forbids destroying
    original uploaded data. The scenarios assume partial data from a failed
    attempt is not "original uploaded data". That assumption is stated in
-   `spec-features/NOTES.md` §4.4 and raised as Q1.4, but it is an assumption,
+   `bdd/spec/NOTES.md` §4.4 and raised as Q1.4, but it is an assumption,
    not an agreed rule.
 
 3. **The `@F4` tag is load-bearing in two contradictory directions.**
@@ -161,7 +161,7 @@ and were left alone.
 - **Two wrong file counts**: `as-built/uploader/NOTES.md` said eight feature
   files (there are nine); `as-built/tagger/NOTES.md` said ten (there are
   eleven).
-- **Three markdown headings** in `spec-features/NOTES.md` §1 broken across two
+- **Three markdown headings** in `bdd/spec/NOTES.md` §1 broken across two
   lines, so the second half rendered as body text.
 
 Verified clean afterwards: 301 scenarios across 31 feature files parse

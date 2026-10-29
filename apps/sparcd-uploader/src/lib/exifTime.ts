@@ -4,11 +4,11 @@
 // no zone. The camera wrote them in *its* local time; the uploading machine's
 // zone is irrelevant. We capture the components verbatim (never letting
 // `new Date(localString)` reinterpret them in the browser's zone), then
-// interpret them in a user-chosen IANA zone to get the true UTC instant. The
-// result is emitted as a full ISO 8601 UTC timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`)
-// — matching how sparcd-web itself stamps observation timestamps
-// (`datetime.now(UTC).isoformat()` in `camtrap_utils.py`) — the shape media.csv
-// col 4 and observations.csv col 4 now carry.
+// interpret them in a user-chosen IANA zone. The result is emitted as an ISO
+// 8601 local timestamp with the numeric offset (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`),
+// which is the shape media.csv col 4 and observations.csv col 4 carry.
+
+import { captureTimestampInZone } from '@sparcd/camtrap';
 
 /** Naive EXIF wall-clock with no zone — the components as written by the camera. */
 export type NaiveDateTime = {
@@ -40,18 +40,14 @@ export function formatNaive(n: NaiveDateTime): string {
   );
 }
 
-/** Naive components as a `<input type="datetime-local" step="1">` value. The
- *  canonical `YYYY-MM-DDTHH:mm:ss` form is exactly what such an input accepts. */
-export function naiveToInputValue(n: NaiveDateTime): string {
-  return formatNaive(n);
-}
+// A space (manually typed, `YYYY-MM-DD HH:mm:ss`) or a literal `T` (pasted
+// from `formatNaive`'s own output) both separate the date and time half.
+const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
 
-const INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
-
-/** Parse a `datetime-local` value into raw naive components — NO timezone math
- *  (the chosen upload zone is applied later at bundle build, same as EXIF). Some
- *  browsers omit seconds at step=1, so seconds default to 0. Returns null on an
- *  empty or malformed value so the caller clears the override. */
+/** Parse a manually-typed capture time into raw naive components — NO
+ *  timezone math (the chosen upload zone is applied later at bundle build,
+ *  same as EXIF). Seconds are optional and default to 0. Returns null on an
+ *  empty or malformed value; callers decide what that means for them. */
 export function inputValueToNaive(v: string): NaiveDateTime | null {
   const m = INPUT_RE.exec(v.trim());
   if (!m) return null;
@@ -91,7 +87,9 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   let fmt = zoneFormatters.get(timeZone);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone,
+      // A next batch starts with no zone chosen; read times in the browser's
+      // zone until one is, as a fresh session does.
+      timeZone: timeZone || undefined,
       hourCycle: 'h23',
       year: 'numeric',
       month: '2-digit',
@@ -121,17 +119,10 @@ export function partsInZone(utcMs: number, timeZone: string): NaiveDateTime {
   };
 }
 
-// Difference, in milliseconds, between the wall-clock `partsInZone` produced for
-// `utcMs` and the wall-clock we *wanted* (`target`). Subtracting it from the
-// UTC guess steers toward the offset that makes the zone show `target`.
-function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
-  return Date.UTC(produced.year, produced.month - 1, produced.day, produced.hour, produced.minute, produced.second) -
-    Date.UTC(target.year, target.month - 1, target.day, target.hour, target.minute, target.second);
-}
-
 /**
- * Interpret naive wall-clock components AS IF in `timeZone`, returning the true
- * UTC instant as a full ISO 8601 string (`YYYY-MM-DDTHH:mm:ss.sssZ`).
+ * Interpret naive wall-clock components AS IF in `timeZone`, returning an ISO
+ * 8601 timestamp that preserves the wall-clock value and carries the zone's
+ * numeric offset (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`).
  *
  * DST-correct without a heavy dependency: start from a UTC guess equal to the
  * components, ask Intl what wall-clock that guess shows in `timeZone`, and
@@ -142,11 +133,5 @@ function deltaMs(produced: NaiveDateTime, target: NaiveDateTime): number {
  * the two-pass fixed point lands on — pinned by tests, never throws.
  */
 export function naiveInZoneToUtcIso(n: NaiveDateTime, timeZone: string): string {
-  let guess = Date.UTC(n.year, n.month - 1, n.day, n.hour, n.minute, n.second);
-  guess -= deltaMs(partsInZone(guess, timeZone), n);
-  // Second pass: if the first correction crossed a DST boundary, the offset at
-  // the corrected instant may differ; re-correct from there.
-  guess -= deltaMs(partsInZone(guess, timeZone), n);
-
-  return new Date(guess).toISOString();
+  return captureTimestampInZone(formatNaive(n), timeZone);
 }

@@ -33,6 +33,8 @@ export function makeStore({
   let state = emptyState();
   let timer = null;
   let lastFullReload = 0;
+  let mutationVersion = 0;
+  let behind = false;
 
   function emptyState() {
     return {
@@ -68,6 +70,7 @@ export function makeStore({
   }
 
   async function doReload() {
+    const reloadVersion = mutationVersion;
     const next = emptyState();
     for (const upstreamName of await upstream.listBuckets()) {
       const client = ns.toClient(upstreamName);
@@ -76,7 +79,10 @@ export function makeStore({
       const uuid = collectionUuid(client);
       if (uuid) next.collections.set(client, { bucket: client, uuid, members: [], membersEtag: null });
     }
-    if (!next.settingsBucket) { state = next; return state; }
+    if (!next.settingsBucket) {
+      if (reloadVersion === mutationVersion) { state = next; behind = false; }
+      return state;
+    }
 
     // A reload is the slowest thing the proxy does, and every write waits on
     // one. Against storage that answers in 150 ms, reading the people one after
@@ -125,8 +131,11 @@ export function makeStore({
       }
     }));
 
-    state = next;
-    lastFullReload = Date.now();
+    if (reloadVersion === mutationVersion) {
+      state = next;
+      behind = false;
+      lastFullReload = Date.now();
+    }
     return state;
   }
 
@@ -149,12 +158,25 @@ export function makeStore({
   // would otherwise never reach the other proxies at all.
   async function poll() {
     if (Date.now() - lastFullReload >= fullReloadMs) {
-      await reload();
-      return;
+      // A failed full reload is not yet a reason to refuse anyone, but it must
+      // not hide a known change either: the generation check below decides.
+      try {
+        await reload();
+        return;
+      } catch {}
     }
     const gen = await upstream.getJson(settings(), GENERATION_KEY);
     const seen = gen.status === 404 ? 0 : (gen.value.generation ?? 0);
-    if (seen !== state.generation) await reload();
+    if (seen === state.generation) return;
+    // Access changed somewhere and this process could not read how. Any
+    // revocation in that change would go on being honoured here, so until a
+    // reload lands nothing is.
+    try {
+      await reload();
+    } catch (err) {
+      behind = true;
+      throw err;
+    }
   }
 
   async function bumpGeneration() {
@@ -174,6 +196,8 @@ export function makeStore({
     reload,
     snapshot: () => state,
     settingsBucketUpstream: settings,
+    /** True while a known change to access data has failed to load. */
+    behind: () => behind,
 
     start() {
       if (!timer) {
@@ -197,15 +221,20 @@ export function makeStore({
     },
     isSettings: (bucket) => bucket === state.settingsBucket,
 
-    /** @param expect `'new'` for a create, or the etag the caller read. */
+    /**
+     * @param expect `'new'` for a create, or the etag the caller read.
+     * @returns the person as reloaded, plus `writtenEtag`: the ETag of this
+     *          write. The reloaded `etag` can already be another proxy's.
+     */
     async savePerson(person, expect) {
       const written = { ...person, etag: undefined, updatedAt: new Date().toISOString() };
       const guard = expect === 'new' ? { ifNoneMatch: '*' } : { ifMatch: expect };
-      const ok = await upstream.put(
+      const writtenEtag = await upstream.put(
         settings(), `${PEOPLE_PREFIX}${person.id}.json`, JSON.stringify(written), guard,
       );
-      if (!ok) throw new Conflict('person changed underneath this edit');
+      if (!writtenEtag) throw new Conflict('person changed underneath this edit');
       // The write landed, so this process must see it whatever happens next.
+      mutationVersion += 1;
       // The reload below confirms it, but a reload is many reads and any one of
       // them can fail; waiting for it would leave a pause or a key retirement
       // written upstream and still being honoured here.
@@ -220,28 +249,30 @@ export function makeStore({
       } finally {
         await reload();
       }
-      return state.people.get(person.id);
+      return { ...state.people.get(person.id), writtenEtag };
     },
 
+    /** Returns the collection as reloaded, plus `writtenEtag` as `savePerson` does. */
     async saveMembers(bucket, members, expect) {
       const c = state.collections.get(bucket);
       if (!c) throw new Error(`unknown collection bucket ${bucket}`);
       const body = JSON.stringify({ schemaVersion: 1, members });
       const guard = expect === null ? { ifNoneMatch: '*' } : { ifMatch: expect };
-      const ok = await upstream.put(
+      const writtenEtag = await upstream.put(
         ns.toUpstream(bucket), `Collections/${c.uuid}/members.json`, body, guard,
       );
-      if (!ok) throw new Conflict('members changed underneath this edit');
+      if (!writtenEtag) throw new Conflict('members changed underneath this edit');
       // In force here the moment it is committed upstream, for the same reason
       // as a person: a removal that waits for a reload is a removal that a
       // failed read leaves undone.
+      mutationVersion += 1;
       c.members = members;
       try {
         await bumpGeneration();
       } finally {
         await reload();
       }
-      return state.collections.get(bucket);
+      return { ...state.collections.get(bucket), writtenEtag };
     },
   };
 }

@@ -6,8 +6,8 @@ Feature: Connect the tagger to a collection store and manage the session
   """
   As-built flow: before any tagging is possible the tagger must be given
   S3-compatible credentials. The tool is a static, bring-your-own-credentials
-  page — it holds no accounts of its own. Session-level choices (who is
-  tagging, whether writes are real, how images are grouped) live in Settings.
+  page — it holds no accounts of its own. Session-level display choices (including how images are grouped) live in Settings. Connected attribution
+  comes from the storage username.
   """
 
   Background:
@@ -61,64 +61,34 @@ Feature: Connect the tagger to a collection store and manage the session
     And it no longer shows the previous connection's collections or images
 
   @unmapped
-  Scenario: A disconnect from a sibling tool forgets the tagger identity
-    Given the tagger is connected
-    And a tagger identity is entered in Settings
-    When a sibling tool disconnects the shared session
-    Then the tagger returns to the connection screen
-    And after reloading and reconnecting, it has no identity carried over
-
-  @unmapped
   Scenario: The tagging workspace is unreachable until an upload is chosen
     Given the tagger is connected
     When no upload has been opened from Browse
     Then the "Tag" section tab is disabled
-    And Browse, History and Settings remain available
+    And Browse, Recovery and Settings remain available
 
   @unmapped
-  Scenario: The tagger identity is entered in Settings and stamps every sync
+  Scenario: Connected storage username supplies Tagger attribution
     Given the tagger is connected
-    When a tagger identity is entered in Settings
-    Then that identity is used for the audit-snapshot path and the edit comment of every sync
-    And a live sync or restore cannot be run while the identity is empty
-    # The identity is free text typed by the user; the tool does not verify it
-    # against the credentials it connected with.
+    When Settings is opened
+    Then Settings shows the connected storage username
+    And the connected identity can be edited independently of credentials
 
-  @unmapped
-  Scenario: The tagger identity survives a reload
+  @H2 @H2-3
+  Scenario: A connected-account change updates future attribution
     Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And the browser is reloaded
-    And Settings is opened
-    Then that identity is retained in Settings
-
-  @unmapped
-  Scenario: The tagger identity is remembered on this device
-    Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And the tagger is opened in a second tab of the same browser
-    Then that identity is retained in Settings of the second tab
-
-  @unmapped
-  Scenario: A sibling tab connecting as someone else drops the tagger identity
-    Given the tagger is connected
-    And a tagger identity is entered in Settings
+    And an upload is open in the tagging workspace
     When a sibling tool connects the shared session with different credentials
-    Then Settings shows no tagger identity
+    Then Settings shows connected storage username "otherkey"
+    When the connected account assigns a species to an image
+    And the upload is synced
+    Then the new identification is attributed to "otherkey"
 
   @unmapped
-  Scenario: The tagger identity is forgotten on disconnect
+  Scenario: Completed work saves without a manual or dry-run preference
     Given the tagger is connected
-    When a tagger identity is entered in Settings
-    And Disconnect is chosen
-    Then a fresh connection starts with no identity carried over
-
-  @unmapped
-  Scenario: Real writes are the default; dry-run is opt-in
-    Given the tagger is connected
-    When Settings is opened for the first time in a session
-    Then "Dry-run (log writes, change nothing)" is switched off
-    And Sync writes for real unless dry-run is switched on
+    When Settings is opened
+    Then no manual Sync or dry-run preference is offered
 
   @unmapped
   Scenario: Burst grouping is off by default and its window is adjustable
@@ -129,18 +99,13 @@ Feature: Connect the tagger to a collection store and manage the session
     And switching it on reveals a threshold between 5 and 600 seconds
 
   @unmapped
-  Scenario: Disconnecting with unsynced edits asks before discarding them
-    Given there are unsaved local edits in this browser
-    When Disconnect is chosen in Settings
-    Then the tagger reports how many unsynced edits exist
-    And it offers to cancel, to review the unsynced edits in History, or to discard them and disconnect
-
-  @unmapped
-  Scenario: Disconnecting clears this browser's local tagger data
-    Given there are no unsaved local edits
+  Scenario: Disconnecting preserves completed work's scoped Undo
+    Given a completed automatic action exists for this account
     When Disconnect is chosen
-    Then local work is cleared while scoped keybinding profiles are retained
-    And the tagger returns to the connection screen ready for the next person
+    Then the tagger returns to the connection screen ready for the next person
+    And the completed Undo remains scoped in this browser
+    When the same account reconnects
+    Then its completed Undo is available again
 
   @unmapped
   Scenario: The workspace can be switched between light and dark
@@ -148,3 +113,7 @@ Feature: Connect the tagger to a collection store and manage the session
     When the theme control in the header is used
     Then the workspace switches between the light and dark presentation
     And the choice is remembered on this machine, shared with the other SPARC'd tools
+
+  @unmapped
+  Scenario: Remembering connection details includes an accessible public-computer warning
+    Then the remember checkbox describes its public-computer warning

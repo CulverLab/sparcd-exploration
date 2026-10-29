@@ -1,3 +1,4 @@
+import { checkResumedSpecies, OfficialSpeciesError } from './officialSpecies';
 // Upload orchestration. Runs the full publish sequence for one bundle:
 //
 //   1. Stream every image blob under the upload prefix (bounded concurrency,
@@ -28,7 +29,7 @@
 // statObject size/hash sanity check, and interrupted files restart from
 // scratch (mid-file multipart resume is a follow-on, not v0). The prefix is
 // reused, so a 412 on a metadata write is treated as "already written, skip"
-// rather than a re-stamp.
+// only after the existing object is read and its bytes match.
 //
 // Bounded concurrency is a small inline lane pool rather than p-limit: lanes
 // lazily pull the next blob, so memory stays flat across thousands of files and
@@ -83,6 +84,8 @@ export type FileProgress = {
   state: FileState;
   attempt: number;
   error?: string;
+  // Failed because the request never got an answer, not because storage said no.
+  network?: boolean;
 };
 
 export type LogLine = { kind: 'put' | 'info' | 'warn' | 'error'; text: string };
@@ -90,6 +93,7 @@ export type LogLine = { kind: 'put' | 'info' | 'warn' | 'error'; text: string };
 export type UploadSnapshot = {
   version: number; // bumped each emit so React re-renders the live arrays
   sessionId: string;
+  preparationId?: string; // local preparation published by this session
   phase: UploadPhase;
   dryRun: boolean;
   files: FileProgress[];
@@ -105,6 +109,11 @@ export type UploadSnapshot = {
   metadataBundleSha256?: string;
   lanes?: number; // live blob-lane target, so the UI can show what adaptive settled on
   error?: string;
+  /** A blocked resume must warn in whichever Uploader section is visible. */
+  speciesWarning?: string;
+  // A partial run whose every failure was a lost connection: nothing needs
+  // fixing, so the app retries it on its own.
+  autoRetry?: boolean;
 };
 
 /**
@@ -120,6 +129,7 @@ export type UploadParams = {
   dryRun: boolean;
   concurrency: ConcurrencyControl; // parallel blob lanes
   // Resume metadata persisted in the batch row; absent for dry runs.
+  preparationId?: string;
   uploaderUser?: string; // raw identity (the slug lives in build.uploaderSlug)
   fileAccessMode?: FileAccessMode;
   dirHandle?: FileSystemDirectoryHandle | null;
@@ -293,6 +303,7 @@ const fileRecordFor = (sessionId: string, it: UploadItem, state: FileRecord['sta
   remoteKey: it.key,
   attempt: 0,
   preTags: it.preTags,
+  preTaggerUser: it.preTaggerUser,
 });
 
 /** A file record for a scanned-but-not-yet-processed file — everything a
@@ -419,10 +430,24 @@ function makeRunner(
   // `.then(write, write)` on both arms on purpose: one rejected write — or a
   // ledger that never opened — must not poison the rest of the queue.
   let ledgerReady: Promise<unknown> = Promise.resolve();
+  let ledgerWriteFailed = false;
   const afterLedger = (write: () => Promise<unknown>): Promise<unknown> => {
     ledgerReady = ledgerReady.then(write, write);
+    ledgerReady.catch(() => {
+      ledgerWriteFailed = true;
+    });
     return ledgerReady;
   };
+  // A completed batch's tally is read as final, so a ledger that dropped a
+  // file write leaves the batch open instead; resuming it re-checks every file.
+  const completeBatch = (sessionId: string): Promise<unknown> =>
+    afterLedger(async () => {
+      if (ledgerWriteFailed) {
+        log('warn', 'some file states could not be saved on this machine, so History keeps this upload open');
+        return;
+      }
+      await markBatchComplete(sessionId, new Date().toISOString());
+    });
 
   // Manual reads the caller's getter on every pull, so a slider change lands
   // mid-run; adaptive owns both the lane target and the length of the window it
@@ -456,11 +481,18 @@ function makeRunner(
   };
   const log = (kind: LogLine['kind'], text: string) => {
     snap.log.push({ kind, text });
+    // The run log has no on-screen panel (#108) — it stays as run state for
+    // diagnostics, and this is where the browser harness reads it.
+    (globalThis as { __uploadLog?: LogLine[] }).__uploadLog = snap.log;
     emit(true);
   };
 
+  // `refused` describes the file's latest state only: a file refused once and
+  // then failing for another reason must not keep the old refusal.
   const persistFile = (sessionId: string, localPath: string, patch: Partial<FileRecord>) => {
-    if (persist) void afterLedger(() => markFileState(fileRecordId(sessionId, localPath), patch));
+    if (persist) {
+      void afterLedger(() => markFileState(fileRecordId(sessionId, localPath), { refused: false, ...patch }));
+    }
   };
 
   // Upload (or skip) one blob. Returns once the object is present and verified,
@@ -528,7 +560,15 @@ function makeRunner(
             return false;
           }
           if (cancelled || abort.signal.aborted) throw err;
-          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) {
+            // Classified like a failed write. The ledger keeps its `done`: the
+            // object may well be there, and the next attempt checks again.
+            fp.state = 'failed';
+            fp.error = err instanceof Error ? err.message : String(err);
+            fp.network = isTransient(err);
+            emit(true);
+            throw err;
+          }
           const wait = backoff(attempt);
           log('warn', `verify retry ${it.key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
           await sleep(wait);
@@ -596,7 +636,13 @@ function makeRunner(
         if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) {
           fp.state = 'failed';
           fp.error = msg;
-          persistFile(sessionId, it.localPath, { state: 'failed', lastError: msg, attempt: fp.attempt });
+          fp.network = isTransient(err);
+          persistFile(sessionId, it.localPath, {
+            state: 'failed',
+            lastError: msg,
+            attempt: fp.attempt,
+            refused: !fp.network,
+          });
           log('error', `failed ${it.key}: ${msg}`);
           throw err;
         }
@@ -607,6 +653,49 @@ function makeRunner(
         if (attempt >= 2) blobClient = client;
       }
     }
+  };
+
+  // Once enough files have failed for want of an answer, the connection is
+  // down in a way `navigator.onLine` did not notice. The rest of the batch is
+  // marked unsent without touching the network, so the run ends `partial`
+  // with its ledger intact and the app can pick it up again on its own.
+  const markNotSent = (sessionId: string, fp: FileProgress, it: PlanItem) => {
+    fp.state = 'failed';
+    fp.error = 'not sent: connection lost';
+    fp.network = true;
+    persistFile(sessionId, it.localPath, { state: 'failed', lastError: fp.error });
+    emit(true);
+  };
+  const stallMessage =
+    `connection lost: ${MAX_FILE_FAILURES} files got no answer from storage — stopping here; ` +
+    'the upload picks up again on its own';
+
+  const endPartial = (failed: number, published: string) => {
+    snap.autoRetry = snap.files.every((f) => f.state !== 'failed' || f.network);
+    log(
+      'warn',
+      snap.autoRetry
+        ? `${failed} files failed — metadata not ${published}; the upload picks up again on its own`
+        : `${failed} files failed — metadata not ${published}; retry the failed files to complete the upload`,
+    );
+    snap.phase = 'partial';
+    emit(true);
+  };
+
+  // Past the blob phase only the final review and the metadata writes are
+  // left. One that gets no answer is the same lost connection the blob phase
+  // stalls on, so the run ends partial and picks up on its own; a refusal
+  // still ends the run in error.
+  const endUnpublished = (err: unknown): void => {
+    if (cancelled || !isTransient(err)) throw err;
+    log(
+      'warn',
+      `connection lost before publishing (${err instanceof Error ? err.message : String(err)}) — ` +
+        'the upload picks up again on its own',
+    );
+    snap.autoRetry = snap.files.every((f) => f.state !== 'failed' || f.network);
+    snap.phase = 'partial';
+    emit(true);
   };
 
   /**
@@ -785,9 +874,10 @@ function makeRunner(
 
   // One attempt at the whole sequence for a given plan. Throws
   // PreconditionFailedError on a final-prefix metadata collision (fresh runs
-  // re-stamp; resumes skip).
+  // re-stamp; resumes verify matching bytes before skipping).
   const runOnce = async (plan: RunPlan): Promise<void> => {
     abort = new AbortController(); // fresh signal per attempt
+    let stalled = false;
     snap.sessionId = plan.sessionId;
     snap.bucket = plan.bucket;
     snap.collectionUuid = plan.collectionUuid;
@@ -828,6 +918,7 @@ function makeRunner(
       let next = 0;
       let fatal: unknown = null;
       let fileFailures = 0;
+      let networkFailures = 0;
       const laneTarget = () => Math.min(currentTarget(), plan.items.length);
 
       const lane = async (index: number, pump: () => void): Promise<void> => {
@@ -837,8 +928,13 @@ function makeRunner(
           const i = next++;
           if (i >= plan.items.length) return;
           const it = plan.items[i];
+          const fp = byId.get(it.id)!;
+          if (stalled) {
+            if (!it.doneAlready) markNotSent(plan.sessionId, fp, it);
+            continue;
+          }
           try {
-            await processItem(plan.sessionId, byId.get(it.id)!, it, blobClientFor(i));
+            await processItem(plan.sessionId, fp, it, blobClientFor(i));
           } catch (err) {
             if (cancelled || abort.signal.aborted) return;
             if (isRunFatalBlobError(err)) {
@@ -847,6 +943,13 @@ function makeRunner(
                 abort.abort(); // stop sibling lanes' in-flight requests at once
               }
               return;
+            }
+            if (fp.network) {
+              if (++networkFailures >= MAX_FILE_FAILURES && !stalled) {
+                stalled = true;
+                log('warn', stallMessage);
+              }
+              continue;
             }
             fileFailures++;
             if (fileFailures >= MAX_FILE_FAILURES && !fatal) {
@@ -877,30 +980,49 @@ function makeRunner(
 
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun) await finalReview(plan.sessionId, plan.uploadPath, plan.items);
+    // With the connection down the review listing cannot answer either; the
+    // next attempt reviews whatever it confirms.
+    if (!dryRun && !stalled) {
+      try {
+        await finalReview(plan.sessionId, plan.uploadPath, plan.items);
+      } catch (err) {
+        return endUnpublished(err);
+      }
+    }
 
     const failed = snap.files.filter((f) => f.state === 'failed').length;
     if (failed > 0) {
-      log(
-        'warn',
-        `${failed} files failed — metadata not written; retry the failed files to complete the upload`,
-      );
-      snap.phase = 'partial';
-      emit(true);
+      endPartial(failed, 'written');
       return;
     }
 
     // --- Phase 2: metadata, in publish order ---
     snap.phase = 'metadata';
     emit(true);
-    await writeMetadata(plan.writes, plan.uploadPath);
+    await writeMetadata(plan.writes, plan.uploadPath).catch(endUnpublished);
   };
 
   // Shared by a fixed-plan run and a streamed run: writes the CSVs/JSON in
   // publish order, dry-run logs instead of PUTting, and treats a 412 as
-  // already-written (idempotent) only on resume — a fresh run must not
-  // silently accept a metadata collision.
+  // already-written only on resume after verifying the existing bytes. A
+  // fresh run must not silently accept a metadata collision, and a resumed
+  // run must not accept a different publication under the same key.
   const writeMetadata = async (writes: RunPlan['writes'], uploadPath: string): Promise<void> => {
+    const readExisting = async (key: string): Promise<Uint8Array> => {
+      for (let attempt = 0; ; attempt++) {
+        if (cancelled) throw new Error('cancelled');
+        try {
+          return await client.getObject(snap.bucket, key);
+        } catch (err) {
+          if (cancelled) throw new Error('cancelled');
+          if (attempt + 1 >= MAX_ATTEMPTS || !isTransient(err)) throw err;
+          const wait = backoff(attempt);
+          log('warn', `verify existing metadata retry ${key} (attempt ${attempt + 2}) after ${Math.round(wait)}ms`);
+          await sleep(wait);
+        }
+      }
+    };
+
     for (const w of writes) {
       if (cancelled) throw new Error('cancelled');
       const key = `${uploadPath}/${w.name}`;
@@ -922,7 +1044,22 @@ function makeRunner(
           if (cancelled) throw new Error('cancelled');
           if (err instanceof PreconditionFailedError) {
             if (isResume) {
-              log('info', `already present, skip: ${key}`);
+              // A 412 only says something is there. It is this upload's own
+              // earlier write only if it holds the same bytes; anything else
+              // would publish another upload's file as part of this one.
+              const existing = await readExisting(key);
+              const expected = new TextEncoder().encode(w.body);
+              const sameBytes = existing.length === expected.length && existing.every((byte, i) => byte === expected[i]);
+              if (!sameBytes) {
+                // Carries the 412 so it reads as a refusal, not a lost connection.
+                throw Object.assign(
+                  new Error(
+                    `${key} already holds different content — another upload wrote to this folder, so this one was not published`,
+                  ),
+                  { $metadata: { httpStatusCode: 412 } },
+                );
+              }
+              log('info', `already present with matching content, skip: ${key}`);
               break;
             }
             throw err;
@@ -969,6 +1106,8 @@ function makeRunner(
 
     let fatal: unknown = null;
     let fileFailures = 0;
+    let networkFailures = 0;
+    let stalled = false;
     // Every item the pool actually pulled, for the batched final review.
     const pulled: PlanItem[] = [];
     // A failure that kills the run has to stop both kinds of waiting: sibling
@@ -1010,6 +1149,10 @@ function makeRunner(
         if (idx >= 0) snap.files[idx] = fp;
         else snap.files.push(fp);
         emit(true);
+        if (stalled) {
+          markNotSent(seed.sessionId, fp, it);
+          continue;
+        }
         if (dryRun) {
           fp.state = 'done';
           fp.loaded = it.size;
@@ -1026,6 +1169,13 @@ function makeRunner(
           if (isRunFatalBlobError(err)) {
             fail(err);
             return;
+          }
+          if (fp.network) {
+            if (++networkFailures >= MAX_FILE_FAILURES && !stalled) {
+              stalled = true;
+              log('warn', stallMessage);
+            }
+            continue;
           }
           fileFailures++;
           if (fileFailures >= MAX_FILE_FAILURES) {
@@ -1057,7 +1207,14 @@ function makeRunner(
     if (fatal) throw fatal;
     if (cancelled) throw new Error('cancelled');
 
-    if (!dryRun) await finalReview(seed.sessionId, seed.uploadPath, pulled);
+    // A review that gets no answer still builds the bundle below: a retry
+    // can only resume a session that has one.
+    let reviewError: unknown = null;
+    if (!dryRun && !stalled) {
+      await finalReview(seed.sessionId, seed.uploadPath, pulled).catch((err: unknown) => {
+        reviewError = err;
+      });
+    }
 
     // The blob loop only exits normally (no fatal/cancel) once the queue is
     // closed and drained — the caller only closes it once every file in the
@@ -1069,21 +1226,17 @@ function makeRunner(
     const { writes, metadataBundleSha256 } = await buildMetadata();
     if (cancelled) throw new Error('cancelled');
     snap.metadataBundleSha256 = metadataBundleSha256;
+    if (reviewError) return endUnpublished(reviewError);
 
     const failed = snap.files.filter((f) => f.state === 'failed').length;
     if (failed > 0) {
-      log(
-        'warn',
-        `${failed} files failed — metadata not published; retry the failed files to complete the upload`,
-      );
-      snap.phase = 'partial';
-      emit(true);
+      endPartial(failed, 'published');
       return;
     }
 
     snap.phase = 'metadata';
     emit(true);
-    await writeMetadata(writes, snap.uploadPath!);
+    await writeMetadata(writes, snap.uploadPath!).catch(endUnpublished);
   };
 
   return {
@@ -1107,6 +1260,7 @@ function makeRunner(
       });
     },
     afterLedger,
+    completeBatch,
     cancel: () => {
       cancelled = true;
       abort.abort(); // requests in flight
@@ -1155,6 +1309,7 @@ export function runStreamingUpload(
     dryRun,
   });
   const sessionId = crypto.randomUUID();
+  runner.snap.preparationId = params.preparationId;
   runner.snap.sessionId = sessionId;
   runner.snap.collectionUuid = build.collectionUuid;
   // Surface the prep work — freezing every object key and opening the resume
@@ -1210,6 +1365,7 @@ export function runStreamingUpload(
     const deploymentId = locationToDeployment(build.location, build.collectionUuid).deploymentId;
     const batch: BatchRecord = {
       id: sessionId,
+      preparationId: params.preparationId,
       targetBucket: build.bucket,
       uploadPrefix: naming.uploadPath,
       deploymentId,
@@ -1218,6 +1374,7 @@ export function runStreamingUpload(
       uploaderSlug: build.uploaderSlug,
       collectionUuid: build.collectionUuid,
       description: build.description,
+      requiredComments: build.requiredComments,
       startedAt: new Date().toISOString(),
       totalFiles: build.files.length,
       totalBytes: build.files.reduce((n, f) => n + f.size, 0),
@@ -1259,7 +1416,7 @@ export function runStreamingUpload(
         queue,
         async () => {
           const files = finalFiles ?? build.files;
-          const bundle = await buildBundle({ ...build, files, now, naming });
+          const bundle = await buildBundle({ ...build, uploaderUser: params.uploaderUser, files, now, naming });
           if (persist) {
             const bundleRec: BundleRecord = {
               sessionId,
@@ -1280,7 +1437,7 @@ export function runStreamingUpload(
         runner.snap.phase = 'done';
         // Behind the ledger too: `openSession` re-puts the batch row, so a
         // completion stamp that lands first is wiped by it.
-        if (persist) await runner.afterLedger(() => markBatchComplete(sessionId, new Date().toISOString()));
+        if (persist) await runner.completeBatch(sessionId);
         runner.log('info', dryRun ? 'dry-run complete — nothing written' : `published ${naming.uploadPath}/`);
         runner.emit(true);
       }
@@ -1382,6 +1539,7 @@ export function resumeUpload(
     isResume: true,
     dryRun: false,
   });
+  runner.snap.preparationId = batch.preparationId;
   runner.snap.sessionId = batch.id;
   runner.snap.collectionUuid = batch.collectionUuid;
 
@@ -1458,14 +1616,29 @@ export function resumeUpload(
     writes: metadataWrites(bundle),
   };
 
+  let cancelValidation = () => {};
   const done = (async () => {
     try {
+      Object.assign(runner.snap, { phase: 'preparing' as UploadPhase });
       runner.log('info', `resuming ${batch.uploadPrefix}/`);
+      // Cancelling releases the run immediately, even if the list request is
+      // stalled. A late response cannot reach runOnce or publish any writes.
+      const cancelled = new Promise<never>((_, reject) => {
+        cancelValidation = () => reject(new Error('cancelled'));
+      });
+      try {
+        await Promise.race([checkResumedSpecies(getClient(config), session), cancelled]);
+      } finally {
+        cancelValidation = () => {};
+      }
+      if (runner.isCancelled()) throw new Error('cancelled');
       await runner.runOnce(plan);
       if (runner.isCancelled()) throw new Error('cancelled');
       if (runner.snap.phase !== 'partial') {
         runner.snap.phase = 'done';
-        await markBatchComplete(batch.id, new Date().toISOString());
+        // Behind the per-file writes, so History never reads a completed batch
+        // whose tally is still catching up.
+        await runner.completeBatch(batch.id);
         runner.log('info', `published ${batch.uploadPrefix}/`);
         runner.emit(true);
       }
@@ -1477,11 +1650,12 @@ export function resumeUpload(
         return;
       }
       runner.snap.phase = 'error';
+      if (err instanceof OfficialSpeciesError) { runner.snap.speciesWarning = err.message; runner.snap.autoRetry = false; }
       runner.snap.error = err instanceof Error ? err.message : String(err);
       runner.log('error', runner.snap.error);
       runner.emit(true);
     }
   })();
 
-  return { cancel: runner.cancel, done };
+  return { cancel: () => { runner.cancel(); cancelValidation(); }, done };
 }

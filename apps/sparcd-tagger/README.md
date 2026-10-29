@@ -19,9 +19,12 @@ and phase breakdown.
 - Tagging works end-to-end: Overview/Focus workspaces over a virtualized grid,
   species panel with keybindings, local drafts, burst grouping, batch
   selection, image adjustments, and a time-shift UI.
-- Writes go to S3 through the reviewed sync path — ETag-gated canonical
-  replacement (`replaceIfUnchanged`) with immutable snapshots, a sync journal,
-  and a recovery screen for interrupted syncs.
+- Completed standalone edits save automatically through ETag-gated canonical
+  replacement (`replaceIfUnchanged`), an immutable original baseline and a
+  durable recovery journal. One-level Undo reverses the latest action without
+  replacing unrelated data. Historical snapshots stay in place; new per-edit
+  snapshots and the manual Sync/Snapshots workflows are removed. See
+  [the saving and upgrade policy](../../docs/issue-518-automatic-saving.md).
 
 ## Develop
 

@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { correctedTimestamp } from '@sparcd/camtrap';
 import { Thumb } from './Thumb';
+import { ImageStatusBadges } from './ImageStatusBadges';
 import { useDraftStore } from '../lib/drafts';
 import { useStore } from '../store';
 import { formatDateTime, formatTime, type TimeFormat } from '../lib/formatting';
-import { effectiveOf, isEditedFromBase, isGhostObs } from '../lib/effective';
+import { effectiveOf, hasSpecies, isEditedFromBase, isGhostObs, reviewSummary } from '../lib/effective';
 import { isRangeFullySelected } from '../lib/selection';
 import type { Burst, BurstGrouping } from '../lib/bursts';
 import { isVideoImage, type TagImage } from '../lib/workspace';
@@ -21,6 +22,13 @@ function summarize(obs: DraftObservation[]): string {
   const name = isGhostObs(first) ? 'Ghost' : first.commonName || first.scientificName;
   const head = first.count > 1 ? `${name} ×${first.count}` : name;
   return obs.length > 1 ? `${head} +${obs.length - 1}` : head;
+}
+
+function reviewSummaryLabel(observations: DraftObservation[]): string | null {
+  const summary = reviewSummary(observations);
+  if (!summary) return null;
+  if (summary === 'mixed') return 'Mixed review';
+  return summary === 'reviewed' ? 'Reviewed' : 'Not reviewed';
 }
 
 // The Overview is the primary bulk-tagging surface: a virtualized, burst-banded
@@ -44,9 +52,10 @@ type OverviewProps = {
   onPick: (i: number, mods: PickMods) => void;
   onSelectBurst: (start: number) => void;
   /** Drill one image into the Focus view (Overview mode only; omit for the strip). */
-  onDrill?: (i: number) => void;
+  onDrill?: (i: number, opener?: HTMLElement) => void;
   /** A spatial drop affects this image only, regardless of selection. */
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
+  timeZone?: string;
 };
 
 const BAND_H = 30;
@@ -93,6 +102,7 @@ export function Overview({
   onSelectBurst,
   onDrill,
   onDropSpecies,
+  timeZone,
 }: OverviewProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(parentRef);
@@ -139,10 +149,18 @@ export function Overview({
   useEffect(() => {
     const row = rowOfImage[focus];
     if (row != null) virtualizer.scrollToIndex(row, { align: 'auto' });
+    // Once the active image moves off the tile that still holds DOM focus, that
+    // tile must stop owning Enter / Space / Shift+Space.
+    const held = document.activeElement;
+    if (held instanceof HTMLElement && held.dataset.imageIndex && Number(held.dataset.imageIndex) !== focus) held.blur();
   }, [focus, rowOfImage, virtualizer]);
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto min-h-0 bg-panel">
+    <div
+      ref={parentRef}
+      data-testid="overview-scroll"
+      className="h-full overflow-y-auto min-h-0 bg-panel"
+    >
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const item = flat[vi.index];
@@ -178,6 +196,7 @@ export function Overview({
                   onPick={onPick}
                   onDrill={onDrill}
                   onDropSpecies={onDropSpecies}
+                  timeZone={timeZone}
                   narrow={width < DETAILED_LIST_MIN_WIDTH}
                 />
               ) : (
@@ -211,10 +230,100 @@ function modsOf(e: React.MouseEvent): PickMods {
   return { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey };
 }
 
-// Two quick Cmd/Shift-clicks are selection gestures, not a request to drill —
-// drilling would wipe the selection and yank the view to focus.
-function plainDrill(e: React.MouseEvent, onDrill: (i: number) => void, index: number): void {
-  if (!e.shiftKey && !e.metaKey && !e.ctrlKey) onDrill(index);
+// Modifier-clicks are selection gestures, not a request to open Focus.
+function plainDrill(
+  e: React.MouseEvent<HTMLButtonElement>,
+  onDrill: (i: number, opener?: HTMLElement) => void,
+  index: number,
+): void {
+  if (!e.shiftKey && !e.metaKey && !e.ctrlKey) onDrill(index, e.currentTarget);
+}
+
+const TOUCH_DOUBLE_TAP_MS = 320;
+const TOUCH_DOUBLE_TAP_DISTANCE = 28;
+const TOUCH_MOVE_CANCELLATION_DISTANCE = 12;
+
+type TouchTap = { x: number; y: number; at: number };
+let previousTouchTap: (TouchTap & { imageKey: string }) | null = null;
+
+/** Recognize two deliberate taps on the same virtualized image cell. A scroll,
+ *  pinch, pointer cancellation, or tap on another cell cannot complete a pair. */
+function useTouchDoubleTap(
+  onDrill: ((index: number, opener?: HTMLElement) => void) | undefined,
+  imageKey: string,
+) {
+  const activeTap = useRef<{ pointerId: number; x: number; y: number; at: number } | null>(null);
+  const pendingDrill = useRef(false);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    pendingDrill.current = false;
+    if (event.pointerType !== 'touch') {
+      previousTouchTap = null;
+      activeTap.current = null;
+      return;
+    }
+    if (!event.isPrimary) {
+      previousTouchTap = null;
+      activeTap.current = null;
+      return;
+    }
+    if (previousTouchTap && previousTouchTap.imageKey !== imageKey) previousTouchTap = null;
+    activeTap.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      at: performance.now(),
+    };
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = activeTap.current;
+    if (event.pointerType !== 'touch' || !active || active.pointerId !== event.pointerId) return;
+    if (
+      Math.hypot(event.clientX - active.x, event.clientY - active.y) >
+      TOUCH_MOVE_CANCELLATION_DISTANCE
+    ) {
+      activeTap.current = null;
+      previousTouchTap = null;
+    }
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = activeTap.current;
+    if (event.pointerType !== 'touch' || !active || active.pointerId !== event.pointerId) return;
+    activeTap.current = null;
+    const now = performance.now();
+    if (now - active.at > 250) {
+      previousTouchTap = null;
+      return;
+    }
+    const prior = previousTouchTap;
+    const closeInTime = prior !== null && now - prior.at <= TOUCH_DOUBLE_TAP_MS;
+    const sameImage = prior !== null && prior.imageKey === imageKey;
+    const closeInSpace =
+      sameImage &&
+      Math.hypot(event.clientX - prior.x, event.clientY - prior.y) <= TOUCH_DOUBLE_TAP_DISTANCE;
+    if (onDrill && closeInTime && closeInSpace) {
+      previousTouchTap = null;
+      pendingDrill.current = true;
+      return;
+    }
+    previousTouchTap = { x: event.clientX, y: event.clientY, at: now, imageKey };
+  };
+
+  const onPointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'touch') return;
+    activeTap.current = null;
+    previousTouchTap = null;
+  };
+
+  const takeDoubleTap = () => {
+    const pending = pendingDrill.current;
+    pendingDrill.current = false;
+    return pending;
+  };
+
+  return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, takeDoubleTap };
 }
 
 function BurstBand({
@@ -259,15 +368,17 @@ function ListCell({
   onDrill,
   onDropSpecies,
   narrow,
+  timeZone,
 }: {
   img: TagImage;
   index: number;
   active: boolean;
   selected: boolean;
   onPick: (i: number, mods: PickMods) => void;
-  onDrill?: (i: number) => void;
+  onDrill?: (i: number, opener?: HTMLElement) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
   narrow?: boolean;
+  timeZone?: string;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const timeOffset = useDraftStore((s) => s.timeOffset);
@@ -276,26 +387,52 @@ function ListCell({
   const eff = effectiveOf(img, draft);
   const isVideo = isVideoImage(img);
   const species = summarize(eff.observations) || 'untagged';
-  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null);
+  const timestamp = correctedTimestamp(img.baseTimestamp, timeOffset, draft?.timeOverride ?? null, timeZone);
   const timestampDisplay = timestamp ? formatDateTime(timestamp, dateFormat, timeFormat) : null;
   const edited = isEditedFromBase(eff);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
+  const touchTap = useTouchDoubleTap(onDrill, img.key);
+  const statusLabels = [
+    ...(hasSpecies(eff) ? ['Has species — one or more species, or an explicit no-species classification'] : []),
+    ...(eff.questionable ? ['Needs expert opinion'] : []),
+  ];
   const rowLabel = [
     `Filename: ${img.fileName}`,
     ...(!narrow
       ? [`Media type: ${isVideo ? 'video' : 'image'}`, timestamp ? `Capture time: ${timestamp}` : 'Capture time unavailable']
       : []),
     `Species: ${species}`,
+    ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
     ...(edited ? ['Unsaved edit'] : []),
-    ...(eff.questionable ? ['Questionable'] : []),
+    ...statusLabels,
   ].join('; ');
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
-      onClick={(e) => onPick(index, modsOf(e))}
+      data-testid="overview-image"
+      data-image-index={index}
+      data-image-name={img.fileName}
+      onPointerDown={touchTap.onPointerDown}
+      onPointerMove={touchTap.onPointerMove}
+      onPointerUp={touchTap.onPointerUp}
+      onPointerCancel={touchTap.onPointerCancel}
+      onClick={(e) => {
+        if (touchTap.takeDoubleTap()) {
+          onDrill?.(index, e.currentTarget);
+          return;
+        }
+        if (e.detail > 1 && !e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+        if (onDrill && e.detail === 0) {
+          onDrill(index, e.currentTarget);
+          return;
+        }
+        onPick(index, modsOf(e));
+      }}
       onDoubleClick={onDrill ? (e) => plainDrill(e, onDrill, index) : undefined}
       aria-current={active ? 'true' : undefined}
+      aria-pressed={selected}
       aria-label={rowLabel}
-      className={`w-full h-full flex items-center gap-2 px-2.5 overflow-hidden text-left border-b border-ruleSoft border-l-2 ${
+      className={`touch-manipulation w-full h-full flex items-center gap-2 px-2.5 overflow-hidden text-left border-b border-ruleSoft border-l-2 ${
         selected
           ? 'border-l-accent bg-mark'
           : active
@@ -303,21 +440,23 @@ function ListCell({
             : 'border-l-transparent hover:bg-panelHover'
       }`}
     >
-      <span className="w-12 shrink-0">
+      <span data-testid="image-thumbnail" className="relative w-12 shrink-0">
         <Thumb
           objectKey={img.key}
           alt={img.fileName}
           isVideo={isVideo}
-          priority={active ? 'high' : 'low'}
         />
       </span>
       <span
         data-column="filename"
         aria-label={`Filename: ${img.fileName}`}
-        className="min-w-0 flex-1 font-mono text-[12px] text-inkSoft truncate"
         title={img.fileName}
+        className="min-w-0 flex-1 flex items-center gap-1"
       >
-        {img.fileName}
+        <span className="min-w-0 font-mono text-[12px] text-inkSoft truncate">
+          {img.fileName}
+        </span>
+        <ImageStatusBadges hasSpecies={hasSpecies(eff)} questionable={eff.questionable} presentation="list" ariaHidden />
       </span>
       {!narrow && (
         <span
@@ -354,7 +493,17 @@ function ListCell({
       >
         {species}
       </span>
-      <span data-column="markers" className="shrink-0 flex flex-col items-center gap-0.5 w-4">
+      {reviewLabel && (
+        <span
+          data-column="review-status"
+          aria-label={`Review status: ${reviewLabel}`}
+          title={`Review status: ${reviewLabel}`}
+          className="w-20 shrink-0 text-[10px] font-mono text-inkMute truncate"
+        >
+          {reviewLabel}
+        </span>
+      )}
+      <span data-column="markers" className="shrink-0 flex items-center gap-1">
         {edited && (
           <span
             className="w-1.5 h-1.5 rounded-full bg-accent"
@@ -362,26 +511,7 @@ function ListCell({
             aria-label="Unsaved edit"
           />
         )}
-        {eff.questionable && (
-          <span className="text-[11px] text-warn" title="questionable" aria-label="Questionable">
-            ?
-          </span>
-        )}
       </span>
-      {onDrill && (
-        <span
-          role="button"
-          tabIndex={-1}
-          aria-label="Open in focus view"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDrill(index);
-          }}
-          className="hidden [@media(hover:none)]:flex items-center justify-center shrink-0 min-h-11 min-w-11 text-inkMute text-base"
-        >
-          ›
-        </span>
-      )}
     </button>
   );
 }
@@ -400,19 +530,54 @@ function GridCell({
   active: boolean;
   selected: boolean;
   onPick: (i: number, mods: PickMods) => void;
-  onDrill?: (i: number) => void;
+  onDrill?: (i: number, opener?: HTMLElement) => void;
   onDropSpecies?: (i: number, tag: AppliedTag) => void;
 }) {
   const draft = useDraftStore((s) => s.drafts[img.key]);
   const eff = effectiveOf(img, draft);
+  const isVideo = isVideoImage(img);
+  const reviewLabel = reviewSummaryLabel(eff.observations);
+  const species = summarize(eff.observations) || 'untagged';
+  const touchTap = useTouchDoubleTap(onDrill, img.key);
+  const statusLabels = [
+    ...(hasSpecies(eff) ? ['Has species — one or more species, or an explicit no-species classification'] : []),
+    ...(eff.questionable ? ['Needs expert opinion'] : []),
+  ];
+  const tileLabel = [
+    `Filename: ${img.fileName}`,
+    `Media type: ${isVideo ? 'video' : 'image'}`,
+    `Species: ${species}`,
+    ...(reviewLabel ? [`Review status: ${reviewLabel}`] : []),
+    ...statusLabels,
+  ].join('; ');
   return (
     <button
       {...speciesDropProps(index, onDropSpecies)}
-      onClick={(e) => onPick(index, modsOf(e))}
+      data-testid="overview-image"
+      data-image-index={index}
+      data-image-name={img.fileName}
+      onPointerDown={touchTap.onPointerDown}
+      onPointerMove={touchTap.onPointerMove}
+      onPointerUp={touchTap.onPointerUp}
+      onPointerCancel={touchTap.onPointerCancel}
+      onClick={(e) => {
+        if (touchTap.takeDoubleTap()) {
+          onDrill?.(index, e.currentTarget);
+          return;
+        }
+        if (e.detail > 1 && !e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+        if (onDrill && e.detail === 0) {
+          onDrill(index, e.currentTarget);
+          return;
+        }
+        onPick(index, modsOf(e));
+      }}
       onDoubleClick={onDrill ? (e) => plainDrill(e, onDrill, index) : undefined}
       aria-current={active ? 'true' : undefined}
+      aria-pressed={selected}
+      aria-label={tileLabel}
       title={img.fileName}
-      className={`group relative flex flex-col text-left border p-1 ${
+      className={`group relative flex flex-col text-left border p-1 touch-manipulation ${
         selected
           ? 'border-accent ring-2 ring-inset ring-accent bg-mark'
           : active
@@ -420,41 +585,24 @@ function GridCell({
             : 'border-rule hover:bg-panelHover'
       } focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent -outline-offset-2`}
     >
-      <span className="relative block flex-1 min-h-0">
+      <span data-testid="grid-image" className="relative block flex-1 min-h-0">
         <Thumb
           objectKey={img.key}
           alt={img.fileName}
-          isVideo={isVideoImage(img)}
-          priority={active ? 'high' : 'low'}
+          isVideo={isVideo}
         />
-        {isVideoImage(img) && (
-          <span className="absolute top-1 left-1 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
+        {isVideo && (
+          <span className="absolute bottom-1 left-1 bg-paperHover border border-rule text-inkSoft font-mono text-[10px] px-1 leading-tight">
             VIDEO
           </span>
         )}
-        {onDrill && (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label="Open in focus view"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDrill(index);
-            }}
-            className="hidden [@media(hover:none)]:flex absolute top-1 right-1 items-center justify-center min-h-11 min-w-11 bg-panel/80 border border-rule text-inkMute text-base"
-          >
-            ›
-          </span>
-        )}
+        <span className="pointer-events-none absolute top-0 left-0 w-full aspect-[4/3]">
+          <ImageStatusBadges hasSpecies={hasSpecies(eff)} questionable={eff.questionable} ariaHidden />
+        </span>
       </span>
       <span className="mt-1 flex items-center gap-1">
         {isEditedFromBase(eff) && (
           <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" title="unsaved edit" />
-        )}
-        {eff.questionable && (
-          <span className="text-[11px] text-warn shrink-0" title="questionable">
-            ?
-          </span>
         )}
         <span className="block text-[11px] truncate">
           {eff.observations.length ? (
@@ -463,6 +611,16 @@ function GridCell({
             <span className="text-inkMute font-mono">{img.fileName}</span>
           )}
         </span>
+        {reviewLabel && (
+          <span
+            data-column="review-status"
+            aria-label={`Review status: ${reviewLabel}`}
+            title={`Review status: ${reviewLabel}`}
+            className="shrink-0 text-[9px] font-mono text-inkMute"
+          >
+            {reviewLabel}
+          </span>
+        )}
       </span>
     </button>
   );

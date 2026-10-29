@@ -8,6 +8,14 @@ import {
   parseUploadMeta,
   serializeUploadMeta,
   parseObservations,
+  parseCsvRows,
+  OBS_COL,
+  serializeCsvRows,
+  buildObservationComments,
+  removedSpeciesFromComments,
+  needExpertFromComments,
+  MEDIA_COL,
+  reviewEventsFromComments,
 } from '../src/index';
 import { fixture } from './fixtures';
 
@@ -48,6 +56,35 @@ const EDITS: MediaEdit[] = [
   },
 ];
 
+describe('Need expert media marker', () => {
+  const source = fixture('java-v016', 'media.csv');
+  const statusEdit = (value: boolean): MediaEdit => ({
+    mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+    observations: [], needExpert: value,
+  });
+
+  it('adds, reads, clears, and preserves unrelated comments without touching other rows', () => {
+    const original = parseCsvRows(source);
+    original[0][MEDIA_COL.comments] = 'field note [TIMESTAMP:spread][FUTURE:yes]';
+    const withNote = serializeCsvRows(original);
+    const marked = parseCsvRows(mergeMedia(withNote, [statusEdit(true)]));
+    expect(needExpertFromComments(marked[0][MEDIA_COL.comments])).toBe(true);
+    expect(marked[0][MEDIA_COL.comments]).toBe('field note [TIMESTAMP:spread][FUTURE:yes][NEED_EXPERT:true]');
+    expect(marked.slice(1)).toEqual(original.slice(1));
+    const cleared = parseCsvRows(mergeMedia(serializeCsvRows(marked), [statusEdit(false)]));
+    expect(needExpertFromComments(cleared[0][MEDIA_COL.comments])).toBe(false);
+    expect(cleared[0][MEDIA_COL.comments]).toBe(original[0][MEDIA_COL.comments]);
+  });
+
+  it('combines status and time edits for one media row', () => {
+    const rows = parseCsvRows(mergeMedia(source, [
+      { ...statusEdit(true), mediaTimestamp: '2024-01-10T09:00:00', timestampSource: 'manual' },
+    ]));
+    expect(rows[0][MEDIA_COL.timestamp]).toBe('2024-01-10T09:00:00');
+    expect(needExpertFromComments(rows[0][MEDIA_COL.comments])).toBe(true);
+  });
+});
+
 describe('tagger merge contract → tagger-edited-v016 golden', () => {
   it('observations merge is byte-for-byte', () => {
     const out = mergeObservations(fixture('java-v016', 'observations.csv'), EDITS);
@@ -73,6 +110,10 @@ describe('tagger merge contract → tagger-edited-v016 golden', () => {
 });
 
 describe('no accidental data loss', () => {
+  it('leaves observation bytes untouched when a media-only status changes', () => {
+    const original = fixture('java-v016', 'observations.csv').trimEnd();
+    expect(mergeObservations(original, [])).toBe(original);
+  });
   const merged = parseObservations(mergeObservations(fixture('java-v016', 'observations.csv'), EDITS));
 
   it('keeps the unrelated IMG004 survivor row untouched', () => {
@@ -93,6 +134,29 @@ describe('no accidental data loss', () => {
     expect(detagged).toBeDefined();
     expect(detagged.observationType).toBe('blank');
     expect(detagged.scientificName).toBe('');
+  });
+
+  it('serializes and parses explicit removed-species markers', () => {
+    const comments = buildObservationComments({
+      removedSpecies: ['Puma concolor', 'Canis latrans'],
+    });
+    expect(comments).toBe('[REMOVED:Puma concolor][REMOVED:Canis latrans]');
+    expect(removedSpeciesFromComments(comments)).toEqual(['Puma concolor', 'Canis latrans']);
+  });
+
+  it('keeps removal provenance on a full detag placeholder row', () => {
+    const mediaId = k('IMG004.JPG');
+    const canonical = fixture('java-v016', 'observations.csv');
+    const merged = parseObservations(mergeObservations(canonical, [{
+      mediaId,
+      deploymentId: DEP,
+      timestamp: '2024-01-10T22:15:00',
+      removedSpecies: ['Puma concolor'],
+      observations: [],
+    }]));
+    const row = merged.find((o) => o.mediaId === mediaId)!;
+    expect(row.observationType).toBe('blank');
+    expect(row.tags).toContain('[REMOVED:Puma concolor]');
   });
 });
 
@@ -115,5 +179,94 @@ describe('zero-count filtering (sparcd-web parity)', () => {
       detagged: 1,
       retagged: 0,
     });
+  });
+});
+
+describe('classified_by provenance', () => {
+  it('serializes repeatable review events as paired markers and parses them back', () => {
+    const events = [
+      { reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' },
+      { reviewedBy: 'anita', reviewedAt: '2024-01-21T09:00:00.000Z' },
+    ];
+    const comments = buildObservationComments({ commonName: 'Coyote', reviewEvents: events });
+    expect(comments).toBe(
+      '[COMMONNAME:Coyote][REVIEWED_BY:harold][REVIEWED_AT:2024-01-20T14:30:00.000Z]' +
+      '[REVIEWED_BY:anita][REVIEWED_AT:2024-01-21T09:00:00.000Z]',
+    );
+    expect(reviewEventsFromComments(comments)).toEqual(events);
+  });
+
+  it('ignores unmatched markers without shifting later reviewer timestamps', () => {
+    expect(reviewEventsFromComments(
+      '[REVIEWED_AT:orphan][REVIEWED_BY:harold][REVIEWED_AT:2024-01-20T14:30:00.000Z]',
+    )).toEqual([{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }]);
+  });
+
+  it('preserves review markers when replacing an observation row', () => {
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, '', k('IMG001.JPG'), '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', '', '', '', '', '', 'anita', '2024-01-10T09:00:00.000Z', '', '[REVIEWED_BY:harold][REVIEWED_AT:2024-01-20T14:30:00.000Z]'],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, classifiedBy: 'anita', reviewEvents: [{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }] }],
+    }]));
+    expect(out[0].reviewEvents).toEqual([{ reviewedBy: 'harold', reviewedAt: '2024-01-20T14:30:00.000Z' }]);
+  });
+
+  it('carries existing attribution onto replacement rows', () => {
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, '', k('IMG001.JPG'), '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', 'Adult', '', 'Walking', 'ind-1', '', 'anita', '', '0.95', '[OTHER:keep]'],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, commonName: 'Coyote', classifiedBy: 'anita' }],
+    }]));
+    expect(out[0].classifiedBy).toBe('anita');
+    const row = parseCsvRows(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, commonName: 'Coyote', classifiedBy: 'anita' }],
+    }]))[0];
+    expect(row[OBS_COL.lifeStage]).toBe('Adult');
+    expect(row[OBS_COL.behaviour]).toBe('Walking');
+    expect(row[OBS_COL.individualId]).toBe('ind-1');
+    expect(row[OBS_COL.classificationConfidence]).toBe('0.95');
+    expect(row[OBS_COL.comments]).toContain('[OTHER:keep]');
+  });
+
+  it('carries the old row onto its replacement when the producer left observation_type empty', () => {
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, '', k('IMG001.JPG'), '2024-01-10T08:00:00', '', '', '', 'Canis latrans', '1', '', 'Adult', '', 'Walking', 'ind-1', '', 'anita', '', '0.95', '[OTHER:keep]'],
+    ]);
+    const row = parseCsvRows(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{ scientificName: 'Canis latrans', count: 2, commonName: 'Coyote', classifiedBy: 'anita' }],
+    }]))[0];
+    expect(row[OBS_COL.lifeStage]).toBe('Adult');
+    expect(row[OBS_COL.behaviour]).toBe('Walking');
+    expect(row[OBS_COL.individualId]).toBe('ind-1');
+    expect(row[OBS_COL.comments]).toContain('[OTHER:keep]');
+  });
+
+  // #368: a review (confirm or correction) records who and when — col 17
+  // round-trips the same way col 16 (classified_by) already does.
+  it('writes and reads back classification_timestamp alongside classified_by', () => {
+    // Column order per OBS_COL: id, deploymentId, sequenceId, mediaId,
+    // timestamp, observationType, cameraSetup, taxonId, scientificName,
+    // count, countNew, lifeStage, sex, behaviour, individualId,
+    // classificationMethod, classifiedBy, classificationTimestamp,
+    // classificationConfidence, comments.
+    const canonical = serializeCsvRows([
+      ['obs-1', DEP, '', k('IMG001.JPG'), '2024-01-10T08:00:00', 'animal', '', '', 'Canis latrans', '1', '', '', '', '', '', '', 'anita', '2024-01-10T09:00:00.000Z', '', ''],
+    ]);
+    const out = parseObservations(mergeObservations(canonical, [{
+      mediaId: k('IMG001.JPG'), deploymentId: DEP, timestamp: '2024-01-10T08:00:00',
+      observations: [{
+        scientificName: 'Canis latrans', count: 1, commonName: 'Coyote',
+        classifiedBy: 'harold', classificationTimestamp: '2024-01-20T14:30:00.000Z',
+      }],
+    }]));
+    expect(out).toHaveLength(1); // the edit replaces the row, not appends alongside it
+    expect(out[0].classifiedBy).toBe('harold');
+    expect(out[0].classificationTimestamp).toBe('2024-01-20T14:30:00.000Z');
   });
 });

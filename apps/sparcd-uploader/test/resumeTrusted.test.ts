@@ -1,6 +1,7 @@
 // The trusted restore path: reattach files from the stored directory handle by
 // relPath + size, without re-running the hash pipeline.
 
+import { parseObservations } from '@sparcd/camtrap';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BatchRecord, FileRecord } from '../src/lib/db';
 import type { ProcessResponse } from '../src/lib/processPool';
@@ -250,6 +251,25 @@ describe('ensureBundle capture times', () => {
     updateFileRecords.mockClear();
   });
 
+  it('leaves an existing bundle unchanged when resuming', async () => {
+    const bundle = { observationsCsv: 'existing published bytes' };
+    expect(await ensureBundle({ ...batch, uploaderUser: 'Different Uploader' }, { bundle, files: [] }, new Map(), new Map())).toEqual({ ok: true });
+    expect(bundle.observationsCsv).toBe('existing published bytes');
+    expect(attachBundle).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds attribution from the saved uploader identity', async () => {
+    const files: FileRecord[] = [{
+      ...awaiting('t/IMG_0001.JPG'), state: 'pending', sha256: 'sha-1',
+      remoteKey: `${batch.uploadPrefix}/IMG_0001.JPG`, captureTimestamp: '2024-01-10T15:00:00.000Z',
+      preTaggerUser: ' ',
+      preTags: [{ scientificName: 'Canis latrans', commonName: 'Coyote', count: 1, requestedSpecies: '', freeTags: '' }],
+    }];
+    const result = await ensureBundle({ ...batch, uploaderUser: 'Saved Uploader' }, { bundle: null, files }, new Map(), attachedFor(files.map((f) => f.localPath)));
+    expect(result.ok).toBe(true);
+    expect(parseObservations(attachBundle.mock.calls[0][0].observationsCsv)[0].classifiedBy).toBe('Saved Uploader');
+  });
+
   it('keeps a record that already carries a capture time, with its source', async () => {
     const files: FileRecord[] = [
       { ...awaiting('t/IMG_0001.JPG'), state: 'pending', sha256: 'sha-1', remoteKey: `${batch.uploadPrefix}/IMG_0001.JPG`, captureTimestamp: '2024-01-10T15:00:00.000Z' },
@@ -291,15 +311,14 @@ describe('ensureBundle capture times', () => {
 
     const res = await ensureBundle(batch, { bundle: null, files }, resolved, attachedFor(files.map((f) => f.localPath)));
     expect(res.ok).toBe(true);
-    // Phoenix is UTC-7 year round: 08:05 local → 15:05Z, midway between its
-    // two neighbours.
+    // Phoenix is UTC-7 year round: the 08:05 local midpoint retains that offset.
     const csv = attachBundle.mock.calls[0][0].mediaCsv as string;
-    expect(csv).toContain('2024-01-10T15:05:00.000Z');
+    expect(csv).toContain('2024-01-10T08:05:00.000-07:00');
     expect(csv).toContain('[TIMESTAMP:interpolated]');
     const persisted = updateFileRecords.mock.calls[0][0] as FileRecord[];
     const gap = persisted.find((r) => r.localPath === 't/IMG_0002.JPG')!;
     expect(gap.timestampSource).toBe('interpolated');
-    expect(gap.captureTimestamp).toBe('2024-01-10T15:05:00.000Z');
+    expect(gap.captureTimestamp).toBe('2024-01-10T08:05:00.000-07:00');
   });
 
   it('retains ModifyDate provenance when rebuilding a bundle after interrupted inspection', async () => {

@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { isNeutral, type Adjustments } from '../lib/adjustments';
 import { adjustmentPopupPosition } from '../lib/adjustmentPopupPosition';
 
@@ -22,6 +22,8 @@ export function ImageAdjustments({
   getMediaRect,
   getBlockedRects,
   mediaKey,
+  keepValues,
+  onKeepValuesChange,
 }: {
   value: Adjustments;
   onChange: (next: Adjustments) => void;
@@ -29,12 +31,15 @@ export function ImageAdjustments({
   getMediaRect: () => DOMRect | null;
   getBlockedRects: () => DOMRect[];
   mediaKey: string;
+  keepValues: boolean;
+  onKeepValuesChange: (next: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const neutral = isNeutral(value);
+  const keepValuesHelp = useId();
 
   useEffect(() => {
     setOpen(false);
@@ -109,7 +114,7 @@ export function ImageAdjustments({
   return (
     <div className="flex flex-col items-start gap-2">
       {open && createPortal(
-        <div ref={panelRef} id="image-adjustments" role="dialog" aria-label="Image adjustments" style={{ position: 'fixed', left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden', zIndex: 50, maxHeight: Math.max(0, window.innerHeight - 16) }} className="box-border w-56 max-w-[calc(100vw-16px)] overflow-y-auto bg-panel/95 border border-rule shadow-sm p-3 flex flex-col gap-2.5">
+        <div ref={panelRef} id="image-adjustments" role="dialog" aria-label="Image adjustments" style={{ position: 'fixed', left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden', zIndex: 150, maxHeight: Math.max(0, window.innerHeight - 16) }} className="box-border w-56 max-w-[calc(100vw-16px)] overflow-y-auto bg-panel/95 border border-rule shadow-sm p-3 flex flex-col gap-2.5">
           {FIELDS.map((f) => (
             <label key={f.key} className="flex flex-col gap-1">
               <span className="flex items-center justify-between">
@@ -135,14 +140,33 @@ export function ImageAdjustments({
               />
             </label>
           ))}
-          <button
-            type="button"
-            onClick={onReset}
-            disabled={neutral}
-            className="self-end text-[12px] font-mono border border-rule px-3 py-2.5 min-h-[44px] sm:px-2 sm:py-0.5 sm:min-h-0 text-inkSoft hover:text-ink hover:border-ink disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            Reset
-          </button>
+          <div className="flex items-center justify-between gap-2">
+            <label
+              className="flex items-center gap-1.5 text-[12px] text-inkSoft"
+              title="Carry these values over when moving to the next or previous image, instead of resetting to neutral"
+            >
+              <input
+                type="checkbox"
+                data-keep-values
+                aria-describedby={keepValuesHelp}
+                checked={keepValues}
+                onChange={(e) => onKeepValuesChange(e.target.checked)}
+                className="accent-accent"
+              />
+              Keep values
+            </label>
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={neutral}
+              className="text-[12px] font-mono border border-rule px-3 py-2.5 min-h-[44px] sm:px-2 sm:py-0.5 sm:min-h-0 text-inkSoft hover:text-ink hover:border-ink disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Reset
+            </button>
+          </div>
+          <p id={keepValuesHelp} className="text-[11px] text-inkMute">
+            Keep adjustments when moving to the next or previous image. Turning this off leaves the current image unchanged.
+          </p>
         </div>, document.body
       )}
       <button
@@ -153,7 +177,7 @@ export function ImageAdjustments({
         aria-expanded={open}
         aria-controls="image-adjustments"
         aria-haspopup="dialog"
-        className="text-[12px] font-mono border border-rule bg-panel/95 px-3 py-2.5 min-h-[44px] sm:px-2 sm:py-0.5 sm:min-h-0 text-inkSoft hover:text-ink hover:border-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="text-[12px] font-mono border border-rule bg-panel/55 px-3 py-2.5 min-h-[44px] sm:px-2 sm:py-0.5 sm:min-h-0 text-inkSoft opacity-75 transition-opacity hover:bg-panel/95 hover:text-ink hover:border-ink hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         title="View-only image adjustments (does not change the file)"
       >
         Adjust {open ? '▴' : '▾'}

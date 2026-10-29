@@ -1,10 +1,12 @@
 // The page-driving helper every step goes through. Keeps the Gherkin steps
 // declarative: they say what happened, this says how.
 
+import { fileURLToPath } from 'node:url';
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { S3Mock } from './s3mock';
 
 export const APP_PATH = '/sparcd-exploration/uploader/';
+const FLIP_MODULE = fileURLToPath(new URL('../../../../packages/flip/src/index.ts', import.meta.url));
 export const S3_ORIGIN = `http://localhost:${process.env.UPLOADER_TEST_PORT ?? 5311}`;
 export const ACCESS_KEY = 'AKIATESTKEY0001';
 export const SECRET_KEY = 'test-secret-key';
@@ -23,8 +25,12 @@ export type FileSpec = {
 };
 
 export type OpenOptions = {
+  /** Production recovery tests can reopen the exact local-batch entry URL. */
+  path?: string;
   /** Simulate a browser with no folder picker at all (phone-shaped). */
   noFolderPicker?: boolean;
+  /** Keep the desktop directory input but disable the File System Access API. */
+  noDirectoryHandle?: boolean;
 };
 
 type WireFile = { path: string; mime: string; b64?: string; zeroBytes?: number; padBytes?: number; broken?: boolean };
@@ -84,12 +90,13 @@ export class App {
         return w.__pickedFolder;
       };
     });
-    if (opts.noFolderPicker) {
-      await this.page.addInitScript(() => {
-        // A device that cannot present a folder picker: no File System Access
-        // API and a coarse pointer.
+    if (opts.noFolderPicker || opts.noDirectoryHandle) {
+      await this.page.addInitScript((phone) => {
+        // Disable File System Access while retaining real input pickers.
+        // The phone-shaped fixture also reports a coarse pointer.
         // @ts-expect-error deleting an optional capability
         delete window.showDirectoryPicker;
+        if (!phone) return;
         const real = window.matchMedia.bind(window);
         window.matchMedia = (q: string) =>
           q.includes('pointer: coarse')
@@ -104,9 +111,9 @@ export class App {
                 dispatchEvent: () => false,
               } as unknown as MediaQueryList)
             : real(q);
-      });
+      }, opts.noFolderPicker ?? false);
     }
-    await this.page.goto(APP_PATH);
+    await this.page.goto(opts.path ?? APP_PATH);
   }
 
   /** Re-open the app in the same context (same storage), e.g. after a reload. */
@@ -157,6 +164,26 @@ export class App {
     await expect(this.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   }
 
+  /** Read durable public catalog data, without patching application state. */
+  async cachedSpecies(): Promise<any | null> {
+    return this.page.evaluate(() => new Promise<any | null>(resolve => {
+      const open = indexedDB.open('sparcd-flip');
+      open.onerror = () => resolve(null);
+      open.onsuccess = () => {
+        const db = open.result;
+        if (!db.objectStoreNames.contains('vocabularies')) { db.close(); resolve(null); return; }
+        const tx = db.transaction('vocabularies', 'readonly');
+        const read = tx.objectStore('vocabularies').get('selected');
+        tx.oncomplete = () => { db.close(); resolve(read.result?.snapshot ?? null); };
+        tx.onabort = () => { db.close(); resolve(null); };
+      };
+    }));
+  }
+
+  async waitForSpeciesCache(): Promise<void> {
+    await expect.poll(async () => (await this.cachedSpecies())?.collectionKey).toBe('Settings/species.json');
+  }
+
   async disconnectFromHeader(): Promise<void> {
     await this.page.getByRole('button', { name: 'Logout' }).click();
   }
@@ -176,7 +203,7 @@ export class App {
     return this.page.locator('ol[aria-label="Upload steps"] span.bg-mark');
   }
 
-  async expectStep(label: 'Files' | 'Inspect' | 'Assign' | 'Upload'): Promise<void> {
+  async expectStep(label: 'Choose' | 'Verify' | 'Describe' | 'Upload'): Promise<void> {
     await expect(this.activeStep()).toContainText(label);
   }
 
@@ -293,7 +320,7 @@ export class App {
       }
 
       if (!drop) return;
-      const zone = document.querySelector('[aria-label^="Drop a folder"]')!;
+      const zone = document.querySelector('[aria-label^="Drop a folder"], [aria-label^="Choose JPEG photos"]')!;
       const ev = new DragEvent('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer });
       zone.dispatchEvent(ev);
@@ -355,6 +382,21 @@ export class App {
         db.close();
       },
       { id, patch },
+    );
+  }
+
+  /**
+   * The Tagger's own hand-back write, through the real `@sparcd/flip` module
+   * served by the dev server — so it stamps the record exactly as the Tagger
+   * would, last-used time included.
+   */
+  async finishFlipRecord(id: string, tags: Record<string, unknown>, taggerUser: string): Promise<void> {
+    await this.page.evaluate(
+      async ({ url, id, tags, taggerUser }) => {
+        const flip = await import(/* @vite-ignore */ url);
+        await flip.finishFlipRecord(id, tags, taggerUser);
+      },
+      { url: `${APP_PATH}@fs${FLIP_MODULE}`, id, tags, taggerUser },
     );
   }
 
@@ -447,7 +489,7 @@ export class App {
 
   async pickFolder(specs: FileSpec[], dir: string): Promise<void> {
     await this.writeFolderToDisk(specs, dir);
-    await this.page.locator('input[type="file"]').first().setInputFiles(dir);
+    await this.page.getByLabel('New upload folder', { exact: true }).setInputFiles(dir);
   }
 
   async readBundleRecords(): Promise<Record<string, unknown>[]> {
@@ -456,7 +498,7 @@ export class App {
 
   /** Choose individual files through the plain (non-directory) file input. */
   async pickFiles(specs: FileSpec[]): Promise<void> {
-    await this.page.locator('input[type="file"]').first().setInputFiles(
+    await this.page.getByLabel('New upload files', { exact: true }).setInputFiles(
       specs.map((s) => ({
         name: s.path.split('/').pop()!,
         mimeType: s.mime ?? (s.path.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'image/jpeg'),
@@ -496,7 +538,7 @@ export class App {
       });
       const items = roots.map((r) => ({ webkitGetAsEntry: () => r }));
       const dataTransfer = { items: Object.assign(items, { length: items.length }) };
-      const zone = document.querySelector('[aria-label^="Drop a folder"]')!;
+      const zone = document.querySelector('[aria-label^="Drop a folder"], [aria-label^="Choose JPEG photos"]')!;
       const ev = new DragEvent('drop', { bubbles: true, cancelable: true });
       Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer });
       zone.dispatchEvent(ev);
@@ -507,17 +549,23 @@ export class App {
     return this.page.locator('[aria-label^="Scanned files"]');
   }
 
+  /** Inspect keeps the file list folded behind this toggle until asked. */
+  fileListToggle(): Locator {
+    return this.page.getByRole('button', { name: /^(Show|Hide) files$/ });
+  }
+
+  async showFileList(): Promise<void> {
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    if ((await this.fileListToggle().getAttribute('aria-expanded')) === 'false') {
+      await this.fileListToggle().click();
+    }
+    await expect(this.fileListPane()).toBeVisible();
+  }
+
   /** Wait until every file in the batch has finished the Inspect worker pass. */
   async waitForInspected(): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
-    await this.page.waitForFunction(
-      () => {
-        const t = document.body.innerText;
-        return !/\d+\s+processing/.test(t) && !t.includes('Processing…') && !t.includes('Queued');
-      },
-      undefined,
-      { timeout: 30_000 },
-    );
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => this.pendingCount(), { timeout: 30_000 }).toBe(0);
   }
 
   /** One row per file currently drawn in the (virtualised) Inspect list. */
@@ -535,6 +583,7 @@ export class App {
       species: string;
     }[]
   > {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       if (!root) return [];
@@ -568,6 +617,7 @@ export class App {
 
   /** Rows the virtualiser has actually drawn — the whole point of virtualising. */
   async drawnRowCount(): Promise<number> {
+    await this.showFileList();
     return this.page.evaluate(() => {
       const root = document.querySelector('[aria-label^="Scanned files"]');
       return root ? root.querySelectorAll('div[style*="translateY"]').length : 0;
@@ -576,40 +626,31 @@ export class App {
 
   /** Step to a row with J and drop it with D — the list's keyboard affordances. */
   async dropFileFromList(index: number): Promise<void> {
+    await this.showFileList();
     await this.fileListPane().focus();
     for (let i = 0; i < index; i++) await this.page.keyboard.press('j');
     await this.page.keyboard.press('d');
   }
 
-  /** Set a React-controlled input's value the way a real keystroke would. */
-  async setControlledValue(selector: string, value: string, nth = 0): Promise<void> {
-    await this.page.evaluate(
-      ({ selector, value, nth }) => {
-        const el = document.querySelectorAll(selector)[nth] as HTMLInputElement;
-        const setter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value',
-        )!.set!;
-        setter.call(el, value);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      },
-      { selector, value, nth },
-    );
-  }
-
-  /** The Inspect summary line ("N files · 1.2 KB · 1 warnings"). */
+  /** The Inspect summary line ("2 of 4 files processed · 1.2 KB · 1 warnings"). */
   async batchSummary(): Promise<string> {
     return this.page.evaluate(() => {
       const p = Array.from(document.querySelectorAll('p')).find((el) =>
-        /\d+\s*files\s*·/.test(el.textContent ?? ''),
+        /\d+\s*of\s*\d+\s*files processed\s*·/.test(el.textContent ?? ''),
       );
       return p?.textContent ?? '';
     });
   }
 
   async fileCount(): Promise<number> {
-    const m = /(\d+)\s*files/.exec(await this.batchSummary());
+    const m = /of\s*(\d+)\s*files/.exec(await this.batchSummary());
     return m ? Number(m[1]) : 0;
+  }
+
+  /** Files the Inspect worker pass has not finished yet. */
+  async pendingCount(): Promise<number> {
+    const m = /(\d+)\s*of\s*(\d+)\s*files processed/.exec(await this.batchSummary());
+    return m ? Number(m[2]) - Number(m[1]) : Number.NaN;
   }
 
   /** Read one IndexedDB store, retrying the Settings logout reload once. */
@@ -622,13 +663,19 @@ export class App {
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(open.error);
       });
-      if (!db.objectStoreNames.contains(storeName)) return [];
-      const tx = db.transaction(storeName, 'readonly');
-      const req = tx.objectStore(storeName).getAll();
-      return new Promise((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result as Record<string, unknown>[]);
-        req.onerror = () => reject(req.error);
-      });
+      try {
+        if (!db.objectStoreNames.contains(storeName)) return [];
+        return await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const req = tx.objectStore(storeName).getAll();
+          tx.oncomplete = () => resolve(req.result as Record<string, unknown>[]);
+          tx.onabort = () => reject(tx.error ?? new Error('IndexedDB read aborted'));
+          tx.onerror = () => reject(tx.error ?? req.error);
+          req.onerror = () => reject(req.error);
+        });
+      } finally {
+        db.close();
+      }
     }, store);
 
     try {
@@ -653,21 +700,33 @@ export class App {
   }
 
   async continueToAssign(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Continue' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    const control = this.page.getByRole('button', { name: 'Continue' });
+    await expect(control).toBeEnabled();
+    // Pointer hover stops the Verify attention animation before the click.
+    await control.hover({ force: true });
+    await control.click();
+    await expect(this.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
+  }
+
+  async fillRequiredUploadComments(): Promise<void> {
+    const mountain = this.page.getByLabel('Mountain range (required)', { exact: true });
+    const collected = this.page.getByLabel('Date collected (required)', { exact: true });
+    if (!(await mountain.inputValue()).trim()) await mountain.fill('Santa Catalina Mountains');
+    if (!(await collected.inputValue())) await collected.fill('2026-10-01');
   }
 
   async continueToUpload(): Promise<void> {
+    await this.fillRequiredUploadComments();
     await this.page.getByRole('button', { name: 'Continue' }).click();
     await expect(this.page.getByRole('heading', { name: 'Upload', exact: true })).toBeVisible();
   }
 
   /** Throw the current batch away and scan a different one. */
   async rescan(specs: FileSpec[], opts: { raw?: boolean } = {}): Promise<void> {
-    const startOver = this.page.getByRole('button', { name: 'Start over' });
-    if (await startOver.isVisible().catch(() => false)) {
-      await startOver.click();
-      await this.expectStep('Files');
+    const backToChoose = this.page.getByRole('button', { name: 'Back', exact: true });
+    if (await backToChoose.isVisible().catch(() => false)) {
+      await backToChoose.click();
+      await this.expectStep('Choose');
     }
     if (opts.raw) await this.dropRawEntries(specs);
     else await this.dropFolder(specs);
@@ -677,12 +736,11 @@ export class App {
   async walkToUploadStep(
     opts: { deployment?: string; uploader?: string; description?: string } = {},
   ): Promise<void> {
-    await expect(this.fileListPane()).toBeVisible({ timeout: 30_000 });
-    await this.page.getByRole('button', { name: 'Continue' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible({ timeout: 30_000 });
+    await this.continueToAssign();
     await this.waitForCollections();
     await this.chooseDeployment(opts.deployment ?? 'Bear Canyon');
-    if (opts.uploader !== undefined) await this.setUploader(opts.uploader);
+    await this.setUploader(opts.uploader ?? 'Ada Lovelace');
     if (opts.description !== undefined) await this.setDescription(opts.description);
     await this.continueToUpload();
   }
@@ -690,13 +748,12 @@ export class App {
   /** Back out to Drop, re-scan the same folder, and return to the Upload step. */
   async rescanFromUploadStep(): Promise<void> {
     await this.page.getByRole('button', { name: 'Back' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    await expect(this.page.getByRole('heading', { name: 'Collection' })).toBeVisible();
     await this.page.getByRole('button', { name: 'Back' }).click();
-    await expect(this.fileListPane()).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
     await this.rescan(this.lastSpecs);
-    await expect(this.fileListPane()).toBeVisible();
-    await this.page.getByRole('button', { name: 'Continue' }).click();
-    await expect(this.page.getByRole('heading', { name: 'Target collection' })).toBeVisible();
+    await expect(this.fileListToggle()).toBeVisible();
+    await this.continueToAssign();
     await this.continueToUpload();
   }
 
@@ -723,6 +780,11 @@ export class App {
     await this.setListOpen(this.collectionTrigger(), true);
   }
 
+  async chooseCollection(name: string): Promise<void> {
+    await this.openCollectionList();
+    await this.page.locator('ul[role="listbox"] li[role="option"]').filter({ hasText: name }).click();
+  }
+
   async closeCollectionList(): Promise<void> {
     await this.setListOpen(this.collectionTrigger(), false);
   }
@@ -746,7 +808,7 @@ export class App {
   }
 
   async setDescription(text: string): Promise<void> {
-    await this.page.getByPlaceholder('What this batch is — site, date range, notes.').fill(text);
+    await this.page.getByPlaceholder('Additional notes about this batch.').fill(text);
   }
 
   timeZoneSelect(): Locator {
@@ -759,8 +821,16 @@ export class App {
 
   // --- Upload --------------------------------------------------------------
 
-  dryRunCheckbox(): Locator {
-    return this.page.getByLabel('Test the upload, nothing is written');
+  /** The dry-run checkbox lives under the collapsed "Advanced" disclosure —
+   *  expand it first if it isn't already, so every existing caller keeps
+   *  working without having to know that. */
+  async dryRunCheckbox(): Promise<Locator> {
+    const checkbox = this.page.getByLabel('Test the upload, nothing is written');
+    if (!(await checkbox.isVisible().catch(() => false))) {
+      const advanced = this.page.getByRole('button', { name: 'Advanced', exact: true });
+      if (await advanced.isVisible().catch(() => false)) await advanced.click();
+    }
+    return checkbox;
   }
 
   concurrencyModeRadio(mode: 'Adaptive (default)' | 'Manual'): Locator {
@@ -776,6 +846,7 @@ export class App {
    *  `lanes` to pin at whatever the current value is. */
   async pinConcurrency(lanes?: number): Promise<void> {
     await this.gotoSection('Settings');
+    await this.page.getByText('Advanced', { exact: true }).click();
     await this.concurrencyModeRadio('Manual').check();
     if (lanes !== undefined) await this.laneSlider().fill(String(lanes));
     await this.gotoSection('New upload');
@@ -812,14 +883,14 @@ export class App {
     return this.page.locator('select').filter({ hasText: 'Select a collection…' });
   }
 
+  /** The run's log lines. Run state only — it has no on-screen panel (#108). */
   async logText(): Promise<string> {
-    return this.page.evaluate(() => {
-      const panels = Array.from(document.querySelectorAll('div'));
-      const el = panels.find(
-        (d) => d.className.includes('font-mono') && d.className.includes('text-[11.5px]'),
-      );
-      return el?.textContent ?? '';
-    });
+    return this.page.evaluate(
+      () =>
+        ((window as unknown as { __uploadLog?: { text: string }[] }).__uploadLog ?? [])
+          .map((l) => l.text)
+          .join('\n'),
+    );
   }
 
   /**

@@ -1,5 +1,5 @@
-// Display formatting for the full ISO 8601 UTC timestamps stored in media.csv
-// col 4 (`2026-09-11T13:24:00.000Z`). Construct a local date from its written
+// Display formatting for the offset-bearing ISO 8601 timestamps stored in
+// media.csv col 4 (`2026-09-11T13:24:00.000-04:00`). Construct a local date from its written
 // fields so formatting does not shift what a researcher sees across timezones.
 // Keep that calendar value in UTC while formatting, rather than constructing a
 // browser-local Date: a local construction can normalize a time in a DST gap.

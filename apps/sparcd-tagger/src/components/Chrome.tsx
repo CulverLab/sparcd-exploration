@@ -1,16 +1,16 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { BrandSwitcher, ConnectionChip } from '@sparcd/auth-ui';
 import { useStore, type Section } from '../store';
-import { useDraftStore, dirtyCount } from '../lib/drafts';
-import { finishLocalBatch, useLocalBatch } from '../lib/localBatch';
-import { StatePill } from './StatePill';
+import { useDraftStore } from '../lib/drafts';
+import { finishLocalBatch, useLocalBatch, saveLocalTags } from '../lib/localBatch';
+import { AutomaticSaveStatus, useAutomaticSave } from './AutomaticSave';
 
 // Reuses the uploader's section-tab chrome treatment so the tools read as
 // family; the tabs drive this tool's own internal navigation (no cross-app nav).
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'browse', label: 'Browse' },
   { id: 'tag', label: 'Tag' },
-  { id: 'history', label: 'History' },
+  { id: 'history', label: 'Recovery' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -30,14 +30,34 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
   const taggerUser = useStore((s) => s.taggerUser);
+  const section = useStore((s) => s.section);
+  const setSection = useStore((s) => s.setSection);
   const record = useLocalBatch((s) => s.record)!;
   const flushSaves = useDraftStore((s) => s.flushSaves);
   const [leaving, setLeaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const saveErrorId = useId();
+  const leavingRef = useRef(false);
+  const doneButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (saveError) doneButton.current?.focus(); }, [saveError]);
+  const fullAttached = useLocalBatch(s => s.fullAttached);
+  const tagSaveError = useLocalBatch(s => s.saveError);
+  const originalError = useLocalBatch(s => s.originalError);
 
   const done = async () => {
+    // Guard immediately as well as disabling the rendered button.
+    if (leavingRef.current) return;
+    leavingRef.current = true;
     setLeaving(true);
-    await flushSaves();
-    await finishLocalBatch(record, useDraftStore.getState().drafts, taggerUser);
+    setSaveError(false);
+    try {
+      await flushSaves();
+      await finishLocalBatch(record, useDraftStore.getState().drafts, taggerUser);
+    } catch {
+      leavingRef.current = false;
+      setLeaving(false);
+      setSaveError(true);
+    }
   };
 
   return (
@@ -49,12 +69,20 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
           Local batch · {fileCount} files · from Uploader
         </span>
 
+        <nav className="flex items-stretch" aria-label="Sections">
+          <button onClick={() => setSection('tag')} aria-current={section === 'tag' ? 'page' : undefined} className="px-3 text-[14px] font-body text-inkSoft hover:text-ink">Tag</button>
+          <button onClick={() => setSection('settings')} aria-current={section === 'settings' ? 'page' : undefined} className="px-3 text-[14px] font-body text-inkSoft hover:text-ink">Settings</button>
+        </nav>
+
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <button
+            ref={doneButton}
             onClick={() => void done()}
             disabled={leaving}
-            className="min-h-11 md:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 md:py-1.5 text-[14px] font-body font-[600] hover:opacity-90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            aria-busy={leaving}
+            aria-describedby={saveError ? saveErrorId : undefined}
             title="Save the tags and go back to the Uploader"
+            className="min-h-11 md:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 md:py-1.5 text-[14px] font-body font-[600] hover:opacity-90 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           >
             {leaving ? 'Saving…' : 'Done · back to Uploader'}
           </button>
@@ -69,7 +97,15 @@ function LocalChrome({ fileCount, children }: { fileCount: number; children: Rea
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
+      {!fullAttached && <p className="px-4 py-1 text-sm">Showing saved thumbnails. Original files remain in your folder.</p>}
+      {originalError && <p role="alert" className="px-4">{originalError}</p>}
+      {tagSaveError && <div className="px-4"><p role="alert">{tagSaveError}</p><button type="button" onClick={() => void saveLocalTags(record.id, useDraftStore.getState().drafts)}>Retry saving tags</button></div>}
+      <main className="flex-1 min-h-0 overflow-y-auto">
+        {saveError && <p id={saveErrorId} role="alert" className="m-3 border border-warn bg-panel p-3 text-[13px] text-warn">
+          Could not save the batch for the Uploader. Your edits are still open here. Try Done again.
+        </p>}
+        {children}
+      </main>
     </div>
   );
 }
@@ -79,16 +115,9 @@ function CollectionChrome({ children }: { children: ReactNode }) {
   const setSection = useStore((s) => s.setSection);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
-  const syncState = useStore((s) => s.syncState);
   const hasUpload = useStore((s) => !!s.selectedUploadPrefix);
-  const taggerUser = useStore((s) => s.taggerUser);
   const disconnect = useStore((s) => s.disconnect);
-  // Local-only in P1: surface unsaved edits so the pill is honest before the P4
-  // write path exists. `syncState` stays the source of truth once sync ships.
-  // A pending whole-upload location correction is unsaved too, even when no
-  // per-image draft is dirty (#301 review).
-  const hasDirty = useDraftStore((s) => dirtyCount(s.drafts) > 0 || s.pendingLocation !== null);
-  const displayState = syncState === 'local-only' && hasDirty ? 'unsynced' : syncState;
+  const pending = useAutomaticSave(s => s.view.pending);
 
   return (
     <div className="h-[100dvh] flex flex-col bg-paper">
@@ -119,12 +148,11 @@ function CollectionChrome({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          {/* Sync pill is textual; drop it below sm so the right cluster stays icon-only on phones. */}
-          <span className="hidden sm:flex items-center">
-            <StatePill state={displayState} />
-          </span>
-          <ConnectionChip identity={taggerUser || undefined} onDisconnect={disconnect} />
+        <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
+          {/* The connected access key is the attribution identity internally,
+              but ConnectionChip already renders only its masked form. Do not
+              pass the raw key into the header as a second identity label. */}
+          <ConnectionChip onDisconnect={disconnect} disconnectDisabled={pending} disconnectExplanation={pending ? "Finish pending saves before disconnecting. Use Repair credentials if this account needs a new secret key." : undefined} />
           <button
             onClick={toggleTheme}
             className="w-11 h-11 md:w-8 md:h-8 grid place-items-center border border-rule text-inkSoft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
@@ -161,6 +189,7 @@ function CollectionChrome({ children }: { children: ReactNode }) {
         })}
       </nav>
 
+      <AutomaticSaveStatus />
       <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>
     </div>
   );

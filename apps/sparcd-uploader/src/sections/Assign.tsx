@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { InfoTooltip } from '../components/InfoTooltip';
 import { useQueryClient } from '@tanstack/react-query';
 import { Connection, OfflineBanner, loadPersistedConnection, useOnline } from '@sparcd/auth-ui';
+import { PreparedAssignmentGate } from '../components/PreparedAssignmentGate';
+import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from '../store';
 import { Spinner } from '../components/Spinner';
 import { useLocations } from '../lib/useLocations';
@@ -12,6 +15,8 @@ import { CaptureTimeEditor } from '../components/CaptureTimeEditor';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { supportedTimeZones } from '../lib/exifTime';
 import { timeZoneForCoords } from '../lib/coords';
+import { findAllowedLocation, orderAllowedLocations } from '../lib/allowedLocations';
+import { formatUploadComments } from '../lib/uploadComments';
 
 const sectionLabel =
   'font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft mb-2';
@@ -25,16 +30,21 @@ const connectPrefill = { ...loadPersistedConnection() };
  *  deployments changed server-side mid-session. */
 function RefreshableLabel({
   label,
+  info,
   onRefresh,
   refreshing,
 }: {
   label: string;
+  info: string;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
   return (
     <div className="flex items-center justify-between mb-2">
-      <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">{label}</h2>
+      <span className="inline-flex items-center gap-1.5">
+        <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">{label} (required)</h2>
+        <InfoTooltip label={label} text={info} />
+      </span>
       <button
         type="button"
         onClick={onRefresh}
@@ -62,22 +72,39 @@ function LocationsState({ message, tone }: { message: string; tone: 'mute' | 'wa
 }
 
 export function Assign() {
+  const previewUploadDate = useStore((s) => s.uploadCommentDate);
+  const captureUploadCommentDate = useStore((s) => s.captureUploadCommentDate);
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
   const connect = useStore((s) => s.connect);
   const setStep = useStore((s) => s.setStep);
   const uploaderUser = useStore((s) => s.uploaderUser);
   const setUploaderUser = useStore((s) => s.setUploaderUser);
+  const beginUploaderIdentityEdit = useStore((s) => s.beginUploaderIdentityEdit);
+  const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
+  const identityResolutionStatus = useStore((s) => s.identityResolutionStatus);
+  const identityResolutionError = useStore((s) => s.identityResolutionError);
+  const refreshUploaderIdentity = useStore((s) => s.refreshUploaderIdentity);
+  const mountainRange = useStore((s) => s.mountainRange);
+  const dateCollected = useStore((s) => s.dateCollected);
+  const setMountainRange = useStore((s) => s.setMountainRange);
+  const setDateCollected = useStore((s) => s.setDateCollected);
   const description = useStore((s) => s.uploadDescription);
   const setDescription = useStore((s) => s.setUploadDescription);
   const uploadTimeZone = useStore((s) => s.uploadTimeZone);
   const setUploadTimeZone = useStore((s) => s.setUploadTimeZone);
-  const selectedLocationKey = useStore((s) => s.selectedLocationKey);
-  const setSelectedLocationKey = useStore((s) => s.setSelectedLocationKey);
+  const selectedLocationId = useStore((s) => s.selectedLocationId);
+  const setSelectedLocationId = useStore((s) => s.setSelectedLocationId);
   const selectedBucket = useStore((s) => s.selectedBucket);
   const setSelectedBucket = useStore((s) => s.setSelectedBucket);
+  const requireCollectionSelection = useStore((s) => s.requireCollectionSelection);
   const elevationUnit = useStore((s) => s.elevationUnit);
   const files = useStore((s) => s.files);
+  const flipId = useStore((s) => s.flipId);
+  const speciesScope = `${connectionId}/${selectedBucket}/${flipId}`;
+  const [speciesReadyScope, setSpeciesReadyScope] = useState<string | null>(null);
+  const speciesAssignmentReady = speciesReadyScope === speciesScope;
+  const setSpeciesAssignmentReady = useCallback((ready: boolean) => setSpeciesReadyScope(ready ? speciesScope : null), [speciesScope]);
 
   const {
     data,
@@ -109,19 +136,19 @@ export function Assign() {
 
   // Preselect the first collection the connected credentials can read.
   useEffect(() => {
-    if (!collections.data?.length) return;
+    if (!collections.data?.length || requireCollectionSelection) return;
     if (selectedBucket && collections.data.some((c) => c.key === selectedBucket || c.bucket === selectedBucket)) {
       return;
     }
     setSelectedBucket(collections.data[0].key);
-  }, [collections.data, selectedBucket, setSelectedBucket]);
+  }, [collections.data, requireCollectionSelection, selectedBucket, setSelectedBucket]);
 
   const collection =
     collections.data?.find((c) => c.key === selectedBucket || c.bucket === selectedBucket) ?? null;
 
-  // Every location is assignable, not just ones this collection has already
-  // deployed — but the ones it has already deployed (derived from its uploads'
-  // deployments.csv) are listed first, since they're the likely picks.
+  // The selected collection's location file is authoritative for new
+  // assignments. Historical deployments only order locations that are still
+  // present in that current allowed list; removed locations never reappear.
   const deployments = useCollectionDeployments(s3Config, connectionId, collection);
 
   // react-query pauses a query's in-flight fetch while offline and resumes it
@@ -142,37 +169,54 @@ export function Assign() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
-  const usedLocationCount = useMemo(
-    () => new Set(deployments.data ?? []).size,
-    [deployments.data],
-  );
+  const usedLocationCount = useMemo(() => {
+    const allowed = new Set(data?.locations.map((l) => l.id) ?? []);
+    return new Set((deployments.data ?? []).filter((id) => allowed.has(id))).size;
+  }, [data?.locations, deployments.data]);
   const collectionLocations = useMemo(() => {
-    if (!data?.locations || !deployments.data) return [];
-    const used = new Set(deployments.data);
-    const already = data.locations.filter((l) => used.has(l.id));
-    const rest = data.locations.filter((l) => !used.has(l.id));
-    return [...already, ...rest];
+    if (!data?.locations) return [];
+    return orderAllowedLocations(data.locations, deployments.data ?? []);
   }, [data?.locations, deployments.data]);
 
-  const location = collectionLocations.find((l) => l.key === selectedLocationKey) ?? null;
+  const location = findAllowedLocation(collectionLocations, selectedLocationId);
+
+  useEffect(() => {
+    if (location && mountainRange.trim() && dateCollected) captureUploadCommentDate();
+  }, [location, mountainRange, dateCollected, captureUploadCommentDate]);
+
+  // A collection switch can leave the old key in the persisted store while
+  // the new scoped list is loading. Clear it once the new list is available so
+  // a removed location cannot be carried into a new upload.
+  useEffect(() => {
+    if (!data || !selectedLocationId) return;
+    if (!findAllowedLocation(data.locations, selectedLocationId)) {
+      setSelectedLocationId(null);
+    }
+  }, [data, selectedLocationId, setSelectedLocationId]);
 
   // Picking a deployment implies a zone — the camera's naive EXIF wall-clock
   // needs to be interpreted in wherever it physically sits, not the browser's
   // zone. Fires only when the *selection* changes, so a manual override the
   // user makes afterward for the same location sticks. The mount-time run is
-  // special-cased: uploadTimeZone/selectedLocationKey are both restored from
+  // special-cased: uploadTimeZone/selectedLocationId are both restored from
   // sessionStorage before this component ever renders, so if the location on
   // mount is the same one that was already selected, re-deriving here would
   // clobber a manual override that survived the reload.
-  const mountedLocationKeyRef = useRef(selectedLocationKey);
+  const mountedLocationIdRef = useRef(selectedLocationId);
   const isFirstLocationEffect = useRef(true);
   useEffect(() => {
     if (!location) return;
     if (isFirstLocationEffect.current) {
       isFirstLocationEffect.current = false;
-      if (location.key === mountedLocationKeyRef.current) return;
+      if (selectedLocationId === mountedLocationIdRef.current) return;
     }
-    setUploadTimeZone(timeZoneForCoords(location.latitude, location.longitude));
+    if (location.latitude !== null && location.longitude !== null) {
+      setUploadTimeZone(timeZoneForCoords(location.latitude, location.longitude));
+    } else {
+      // A redacted location cannot establish a zone. Do not carry the prior
+      // location's zone into this batch; the operator must choose it manually.
+      setUploadTimeZone('');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.key]);
 
@@ -184,7 +228,20 @@ export function Assign() {
   // Background processing finishing is no longer part of this gate: Upload
   // streams blobs as files individually become ready and only publishes once
   // processing genuinely completes, so there's nothing to wait for here.
-  const baseReady = !!selectedLocationKey && !!slug && !!collection;
+  const baseReady = online && !!location && !!slug && !!collection && !!uploadTimeZone && !!mountainRange.trim() && !!dateCollected && (!flipId || speciesAssignmentReady);
+  const continueHint = !online ? 'Connect online before continuing to upload' : !location
+    ? 'Select a deployment location first'
+    : !collection
+      ? 'Select a target collection first'
+      : !slug
+        ? 'Set an uploader identity first'
+        : !uploadTimeZone
+          ? 'Select a timezone first'
+          : !mountainRange.trim()
+            ? 'Enter a mountain range before continuing'
+            : !dateCollected
+              ? 'Enter a date collected before continuing'
+              : flipId && !speciesAssignmentReady ? 'Review prepared species before continuing' : null;
 
   function handleContinue() {
     if (!baseReady) return;
@@ -194,7 +251,7 @@ export function Assign() {
   // The chosen zone is always offered even if it isn't in the platform's list.
   const timeZones = useMemo(() => {
     const all = supportedTimeZones();
-    return all.includes(uploadTimeZone) ? all : [uploadTimeZone, ...all];
+    return all.includes(uploadTimeZone) || !uploadTimeZone ? all : [uploadTimeZone, ...all];
   }, [uploadTimeZone]);
 
   // A deferred login reaches here eventually — picking a collection and a
@@ -207,6 +264,7 @@ export function Assign() {
           toolName="Uploader"
           initialConfig={connectPrefill}
           onConnect={connect}
+          onTestConnection={(config, signal) => testConnection(config, { signal })}
           embedded
         />
         <button
@@ -224,7 +282,8 @@ export function Assign() {
       <OfflineBanner message="You're offline — locations and collections won't load until your connection is back." />
       <section>
         <RefreshableLabel
-          label="Target collection"
+          label="Collection"
+          info="The collection this batch will be stored under. Only collections your connected credentials can read are listed."
           onRefresh={refreshCollections}
           refreshing={collections.isFetching}
         />
@@ -250,7 +309,7 @@ export function Assign() {
                   onChange={(key) => setSelectedBucket(key)}
                 />
                 {collection && (
-                  <p className="font-body text-[12px] text-inkMute">
+                  <p className="font-body text-[12px] text-inkMute italic">
                     <span className="text-inkSoft">{collection.name ?? 'Unnamed collection'}</span> ·{' '}
                     <span className="font-mono">{collection.uuid}</span>
                   </p>
@@ -263,7 +322,8 @@ export function Assign() {
 
       <section>
         <RefreshableLabel
-          label="Deployment"
+          label="Site ID"
+          info="Choose or correct the Site ID for the location where this batch's images were collected. Previously used Site IDs are listed first."
           onRefresh={refreshDeployments}
           refreshing={isFetching || deployments.isFetching}
         />
@@ -285,72 +345,160 @@ export function Assign() {
         {data && !collection && (
           <LocationsState tone="mute" message="Select a target collection first." />
         )}
-        {data && collection && deployments.data && (
+        {data && collection && (
           <div className="space-y-2">
             {collectionLocations.length === 0 ? (
-              <LocationsState tone="warn" message="No locations found in this connection's registry." />
+              <LocationsState tone="warn" message="No locations are currently allowed for this collection." />
             ) : (
               <DeploymentPicker
                 locations={collectionLocations}
-                value={selectedLocationKey}
-                onChange={setSelectedLocationKey}
+                value={selectedLocationId}
+                onChange={setSelectedLocationId}
                 elevationUnit={elevationUnit}
               />
             )}
-            <p className="font-body text-[12px] text-inkMute">
-              <span className="font-mono text-inkSoft">{usedLocationCount}</span> of{' '}
-              <span className="font-mono text-inkSoft">{collectionLocations.length}</span> locations
-              already deployed by <span className="text-inkSoft">{collection.name ?? 'this collection'}</span> —
-              listed first, but any location can be assigned.
+            <p className="font-body text-[12px] text-inkMute" aria-live="polite">
+              {deployments.isSuccess ? (
+                <>
+                  <span className="font-mono text-inkSoft">{usedLocationCount}</span> of{' '}
+                  <span className="font-mono text-inkSoft">{collectionLocations.length}</span> locations
+                  currently allowed for <span className="text-inkSoft">{collection.name ?? 'this collection'}</span> —
+                  previously used locations are listed first.
+                </>
+              ) : deployments.isFetching ? (
+                'Deployment history is loading; allowed locations are shown in registry order.'
+              ) : (
+                'Deployment history is unavailable; allowed locations are shown without historical ordering.'
+              )}
             </p>
           </div>
         )}
       </section>
 
       <section>
-        <h2 className={sectionLabel}>Uploader</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="uploaderUser" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Uploader (required)
+          </label>
+          <InfoTooltip label="Uploader" text="Who's uploading this batch. Recorded with every upload and used to build the storage path." />
+        </div>
         <input
           id="uploaderUser"
           name="uploaderUser"
           autoComplete="name"
           value={uploaderUser}
+          onFocus={beginUploaderIdentityEdit}
           onChange={(e) => setUploaderUser(e.target.value)}
+          onBlur={ensureUploaderIdentity}
           placeholder="e.g. John Doe"
+          aria-describedby={identityResolutionStatus === 'error' ? 'assign-identity-resolution-error' : undefined}
+          aria-invalid={identityResolutionStatus === 'error' && !uploaderUser.trim()}
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
         <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Defaults to your access key unless you set one in Settings.
+          Recorded with every upload you make.
         </p>
+        {identityResolutionStatus === 'loading' && (
+          <p role="status" aria-live="polite" className="font-body text-[12px] text-inkMute mt-1.5">
+            Checking the connected account's attribution name…
+          </p>
+        )}
+        {identityResolutionStatus === 'error' && (
+          <div id="assign-identity-resolution-error" role="alert" className="flex flex-wrap items-center gap-2 font-body text-[12px] text-warn mt-1.5">
+            <span>{identityResolutionError ?? 'The connected account name is unavailable.'} {uploaderUser.trim()
+              ? 'The saved identity remains available.'
+              : 'Enter a custom identity before continuing.'}</span>
+            <button
+              type="button"
+              onClick={() => void refreshUploaderIdentity()}
+              className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Retry account-name lookup
+            </button>
+          </div>
+        )}
       </section>
 
       <section>
-        <h2 className={sectionLabel}>Timezone</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <h2 id="upload-timezone-label" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Timezone of images (required)
+          </h2>
+          <InfoTooltip label="Timezone of images" text="Defaults to the selected deployment location's zone — change it here if the camera's clock was actually set to a different one." />
+        </div>
         <select
+          id="uploadTimeZone"
           value={uploadTimeZone}
           onChange={(e) => setUploadTimeZone(e.target.value)}
+          aria-labelledby="upload-timezone-label"
+          aria-describedby="upload-timezone-help"
+          aria-invalid={!uploadTimeZone}
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         >
-          {timeZones.map((tz) => (
+          <option value="">Select a timezone…</option>
+          {timeZones.filter(Boolean).map((tz) => (
             <option key={tz} value={tz}>
               {tz}
             </option>
           ))}
         </select>
-        <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Defaults to the selected deployment location's zone — change it here if the camera's
-          clock was actually set to a different one.
+        <p id="upload-timezone-help" className="font-body text-[12px] text-inkMute mt-1.5">
+          {!uploadTimeZone && <span className="text-warn">Select a timezone before continuing. </span>}
+          {location && (location.latitude === null || location.longitude === null)
+            ? "This account cannot read the selected location's coordinates, so choose the camera timezone manually."
+            : "Defaults to the selected deployment location's zone — change it here if the camera's clock was actually set to a different one."}
         </p>
       </section>
 
       {needsCaptureTime && (
         <section>
-          <h2 className={sectionLabel}>Capture times</h2>
+          <div className="flex items-center gap-1.5 mb-2">
+            <h2 className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">Capture times</h2>
+            <InfoTooltip label="Capture times" text="Review or correct capture times the camera didn't record or got wrong." />
+          </div>
           <CaptureTimeEditor files={files} />
         </section>
       )}
 
       <section>
-        <h2 className={sectionLabel}>Description</h2>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="mountainRange" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Mountain range (required)
+          </label>
+          <InfoTooltip label="Mountain range" text="The mountain range this site belongs to — used to build the required upload comment." />
+        </div>
+        <input
+          id="mountainRange"
+          required
+          aria-describedby="mountain-range-help"
+          type="text"
+          value={mountainRange}
+          onChange={(e) => setMountainRange(e.target.value)}
+          className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink mb-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+        />
+        <p id="mountain-range-help" className="font-body text-[12px] text-inkMute mb-4">Required for the generated upload comment.</p>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="dateCollected" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Date collected (required)
+          </label>
+          <InfoTooltip label="Date collected" text="The date these images were collected in the field — used to build the required upload comment." />
+        </div>
+        <input
+          id="dateCollected"
+          required
+          aria-describedby="date-collected-help"
+          type="date"
+          value={dateCollected}
+          onChange={(e) => setDateCollected(e.target.value)}
+          className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink mb-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
+        />
+        <p id="date-collected-help" className="font-body text-[12px] text-inkMute mb-4">Required for the generated upload comment.</p>
+        <div className="flex items-center gap-1.5 mb-2">
+          <label htmlFor="uploadDescription" className="font-[600] text-[11px] tracking-[0.16em] uppercase text-inkSoft">
+            Comments (optional)
+          </label>
+          <InfoTooltip label="Comments" text="Optional notes appended after the generated comment — anything else worth recording about this batch." />
+        </div>
         <textarea
           id="uploadDescription"
           name="uploadDescription"
@@ -358,17 +506,27 @@ export function Assign() {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
-          placeholder="What this batch is — site, date range, notes."
+          placeholder="Additional notes about this batch."
           className="w-full border border-rule bg-paper px-3 py-2 font-body text-[14px] text-ink resize-y focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1"
         />
-        <p className="font-body text-[12px] text-inkMute mt-1.5">
-          Mountain Range - Site Name - No. of images collected - Date Uploaded - Date collected
-        </p>
-        <p className="font-body text-[12px] text-inkMute">
-          (e.g.: Santa Rita Mountains - SAN06 - 39 images - uploaded 04-10-2020 - collected 03-28-2000)
-        </p>
+        <div className="mt-3 border border-ruleSoft p-3 break-words">
+          <h3 className={sectionLabel}>Generated upload comment</h3>
+          <p aria-label="Generated upload comment" className="font-body text-[13px] text-inkSoft">
+            {location && mountainRange.trim() && dateCollected && previewUploadDate ? formatUploadComments({
+              required: { mountainRange, dateCollected, previewUploadDate }, siteName: location.name, siteId: location.id,
+              imageCount: files.length, uploadDate: new Date(), comments: description,
+            }) : 'Enter a mountain range and date collected to preview the required comment.'}
+          </p>
+        </div>
       </section>
 
+      <PreparedAssignmentGate collection={collection} onReady={setSpeciesAssignmentReady} />
+
+      {!baseReady && continueHint && (
+        <p id="upload-continue-help" role="status" className="font-body text-[12px] text-warn">
+          {continueHint}
+        </p>
+      )}
       <div className="flex items-center justify-between gap-4 border-t border-ruleSoft pt-5">
         <button
           onClick={() => setStep('inspect')}
@@ -379,15 +537,8 @@ export function Assign() {
         <button
           disabled={!baseReady}
           onClick={handleContinue}
-          title={
-            !baseReady
-              ? !selectedLocationKey
-                ? 'Select a deployment location first'
-                : !collection
-                  ? 'Select a target collection first'
-                  : 'Set an uploader identity first'
-              : 'Continue to upload'
-          }
+          aria-describedby={!baseReady ? 'upload-continue-help' : undefined}
+          title={continueHint ?? 'Continue to upload'}
           className={`bg-ink text-paper border border-ink px-3.5 py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
             baseReady ? 'hover:opacity-90' : 'opacity-40 cursor-not-allowed'
           }`}

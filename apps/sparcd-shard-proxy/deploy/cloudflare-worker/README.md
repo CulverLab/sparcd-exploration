@@ -55,6 +55,15 @@ upstream's per-bucket CORS headers, removes the SDK's `?x-id=` param, and
 buffers request bodies so a length-less body never reaches the upstream as
 `Transfer-Encoding: chunked`.
 
+## Per-person coordinate permissions
+
+This legacy Worker and the Caddy passthrough recipe have no per-person
+collection membership table, so neither can enforce `exactLocations`. The
+Worker forwards coordinate-bearing objects under its single shared credential;
+do not use it when exact-coordinate access must vary by member. Use the
+[per-person access proxy](../../access/) for deployments that need authorized
+coordinate access or coordinate redaction.
+
 ## What a replayed request can change
 
 Inside the 15-minute window, a captured request can be sent again. What an

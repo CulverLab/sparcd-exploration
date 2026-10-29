@@ -100,6 +100,7 @@ const NOW = new Date('2024-01-20T14:30:00');
 
 type Recorder = {
   snapshots: { key: string; body: string }[];
+  baselines: CanonicalState[];
   replaces: { key: string; body: string; etag: string }[];
   journals: SyncJournal[];
   cleared: number;
@@ -109,7 +110,7 @@ function fakeIO(
   current: CanonicalState,
   opts: { snapshotFailsOn?: (key: string) => boolean; replaceError?: (key: string) => Error | null } = {},
 ): { io: SyncIO; rec: Recorder } {
-  const rec: Recorder = { snapshots: [], replaces: [], journals: [], cleared: 0 };
+  const rec: Recorder = { snapshots: [], baselines: [], replaces: [], journals: [], cleared: 0 };
   const io: SyncIO = {
     loadCanonical: async () => current,
     writeSnapshot: async (key, body) => {
@@ -149,6 +150,22 @@ describe('runRestore — dry-run writes nothing', () => {
   });
 });
 
+describe('runRestore — original baseline', () => {
+  it('preserves the original baseline before a live restore', async () => {
+    const cur = await canonical();
+    const { io, rec } = fakeIO(cur);
+    io.ensureOriginalBaseline = async (state) => rec.baselines.push(state);
+    const res = await runRestore(
+      { bucket: 'sparcd-x', uploadPrefix: PREFIX, user: 'jg', bodies: SNAP_BODIES, dryRun: false },
+      io,
+    );
+    expect(res.status).toBe('synced');
+    expect(rec.baselines).toHaveLength(1);
+    expect(rec.baselines[0].observations.text).toBe(CUR_OBS);
+    expect(rec.snapshots[0].key).toContain('.sparcd-tagger-snapshots/');
+  });
+});
+
 describe('runRestore — noop when the snapshot equals current', () => {
   it('writes nothing if every body already matches', async () => {
     const cur = await canonical();
@@ -176,6 +193,54 @@ describe('runRestore — legacy snapshots without deployments.csv', () => {
 });
 
 describe('runRestore — live write path', () => {
+  it('does not replace exact deployments with coordinates from a redacted snapshot', async () => {
+    const cur = await canonical();
+    const { io, rec } = fakeIO(cur);
+    const redacted = serializeDeployments([{
+      ...CURRENT_DEPLOYMENT,
+      latitude: null,
+      longitude: null,
+    }]);
+    const res = await runRestore(
+      {
+        bucket: 'sparcd-x',
+        uploadPrefix: PREFIX,
+        user: 'restricted',
+        bodies: { ...SNAP_BODIES, deployments: redacted },
+        dryRun: false,
+      },
+      io,
+    );
+    expect(res.status).toBe('synced');
+    expect(rec.replaces.map((r) => r.key.split('/').pop())).not.toContain('deployments.csv');
+    expect(rec.replaces.some((r) => r.body === redacted)).toBe(false);
+  });
+
+  it('refuses restored rows that reference a deployment absent from the retained exact file', async () => {
+    const cur = await canonical();
+    const replacement = { ...CURRENT_DEPLOYMENT, deploymentId: 'uuid:SAN22', locationId: 'SAN22' };
+    cur.deployments = { text: serializeDeployments([replacement]), etag: '"dep-2"', hash: 'changed' };
+    const { io, rec } = fakeIO(cur);
+    const redactedOldDeployment = serializeDeployments([{
+      ...CURRENT_DEPLOYMENT,
+      latitude: null,
+      longitude: null,
+    }]);
+
+    await expect(runRestore(
+      {
+        bucket: 'sparcd-x',
+        uploadPrefix: PREFIX,
+        user: 'restricted',
+        bodies: { ...SNAP_BODIES, deployments: redactedOldDeployment },
+        dryRun: false,
+      },
+      io,
+    )).rejects.toThrow(/cannot be restored safely/);
+    expect(rec.snapshots).toHaveLength(0);
+    expect(rec.replaces).toHaveLength(0);
+  });
+
   it('snapshots current state (manifest last), restores differing bodies against current ETags', async () => {
     const cur = await canonical();
     const { io, rec } = fakeIO(cur);

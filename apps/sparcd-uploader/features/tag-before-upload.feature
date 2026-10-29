@@ -3,7 +3,7 @@
 Feature: Identify species before the batch is uploaded
 
   """
-  As-built flow: a third way out of the Inspect step. The batch is handed to
+  As-built flow: a third way out of the Verify step. The batch is handed to
   the Tagger — same browser tab, nothing uploaded, no connection needed — and
   comes back with species on it. The uploader keeps no tagging UI of its own:
   what it shows on return is read-only, and the way to change it is to go back.
@@ -13,48 +13,51 @@ Feature: Identify species before the batch is uploaded
 
   Background:
     Given a folder of media has been scanned
-    And the New upload section is showing the Inspect step
+    And the New upload section is showing the Verify step
+    And species have been prepared for local tagging
 
   @A1
   Scenario: Tagging is offered as soon as the batch is fit to upload
-    Then "Tag species first" sits between "Start over" and "Continue"
+    Then "Tag species before upload" sits beside the step indicators, not with "Back" and "Continue"
     And it is available exactly when Continue is
 
   @unmapped
   Scenario: A batch that needs attention cannot be tagged yet
     Given one file fails to be examined
-    Then "Tag species first" is unavailable
+    Then "Tag species before upload" is unavailable
     # Same gate as Continue: a file the uploader could not examine has no
     # identity to tag against.
 
   @A1
   Scenario: The batch is handed over whole
-    When "Tag species first" is chosen
+    When "Tag species before upload" is chosen
     Then every examined file is handed over with everything the examination established
     And the browser goes to the Tagger carrying the batch's id
-    # The batch is rebuilt from the hand-off on the way back and never examined
-    # a second time, so anything left behind here is lost for good.
+    # Stored Inspect metadata remains authoritative on return; source bytes
+    # are verified before being reattached.
 
   @cross-tool
   Scenario: The real Tagger reads and returns the Uploader hand-off through the unified dev origin
-    When "Tag species first" is chosen through the unified dev origin
+    When "Tag species before upload" is chosen through the unified dev origin
     Then the real Tagger opens the batch written by the Uploader
     When Coyote is applied in the real Tagger
+    And the real Tagger identity is set to Anita
     And the real Tagger hands the batch back
     Then the Uploader receives Coyote from the shared hand-off record
+    And the hand-off records Anita as the tagger
     # No step seeds sparcd-flip directly: the Uploader creates the record, the
     # Tagger reads and updates it, and the Uploader consumes it on return.
 
   @cross-tool
   Scenario: The real Tagger warns when a batch has only EXIF ModifyDate
     Given a ModifyDate-only batch has been scanned
-    When "Tag species first" is chosen through the unified dev origin
+    When "Tag species before upload" is chosen through the unified dev origin
     Then the real Tagger labels the timestamp as EXIF Modified
 
   @A1
   Scenario: Tags made in the Tagger come back on the batch
     Given a batch was tagged in the Tagger and handed back
-    Then the wizard is on the Inspect step with the same files
+    Then the wizard is on the Verify step with the same files
     And each file still shows the capture time and pixel size the examination found
     And each tagged file shows the species and count it was given
     And files left untagged are shown as untagged
@@ -63,14 +66,14 @@ Feature: Identify species before the batch is uploaded
   @A1
   Scenario: The tags can be revisited without starting over
     Given a batch was tagged in the Tagger and handed back
-    Then the action row offers "Edit tags" instead of "Tag species first"
+    Then the action row offers "Edit tags" instead of "Tag species before upload"
     And choosing it returns to the Tagger with the same batch id
     # Drafts live in the Tagger, so re-entry picks up where it left off.
 
   @unmapped
   Scenario: A batch with no remembered folder asks for the folder again
     Given a batch tagged in the Tagger is handed back with no remembered folder
-    Then choosing the folder again puts the batch back on the Inspect step
+    Then choosing the folder again puts the batch back on the Verify step
     # A batch dragged in never had a durable folder handle to remember.
 
   @unmapped
@@ -80,7 +83,7 @@ Feature: Identify species before the batch is uploaded
     # A page load is not a user gesture, so the browser is within its rights to
     # refuse; the click is the gesture.
 
-  @A1
+  @A1 @A1-2
   Scenario: The upload carries the images and the identifications together
     Given a batch was tagged in the Tagger and handed back
     When it is published
@@ -88,6 +91,12 @@ Feature: Identify species before the batch is uploaded
     And observations.csv has one row per species applied, against the right image
     And each row carries the common name the tagger used
     And the upload metadata counts every identified image, empty frames included
+
+  @A1 @A1-5
+  Scenario: Tags made before upload are attributed to the person who made them
+    Given a batch was tagged in the Tagger and handed back
+    When it is published
+    Then the pre-upload identifications are attributed to Anita
 
   @unmapped
   Scenario: The hand-off is thrown away once its batch is published
@@ -103,7 +112,7 @@ Feature: Identify species before the batch is uploaded
     When a dry run of it is started
     Then the hand-off is still on this machine
 
-  @A1
+  @A1 @A1-3
   Scenario: An untagged file is accepted and published as untagged
     Given a batch was tagged in the Tagger and handed back
     When it is published
@@ -113,3 +122,29 @@ Feature: Identify species before the batch is uploaded
     And every media row carries the media type the examination sniffed
     # Not a guess from the file extension: a batch that went through the Tagger
     # must publish the same media.csv as one uploaded straight through.
+
+  @A2 @A2-5
+  Scenario: The identifications made before upload are tied to the batch's location
+    Given a batch was tagged in the Tagger and handed back
+    When it is published
+    Then every identification in observations.csv points at the location assigned to the batch
+
+  @A1 @A1-6
+  Scenario: Tags survive weeks of waiting for a connection
+    Given a batch was handed to the Tagger 40 days ago
+    And it was tagged in the Tagger 25 days later
+    When the batch is handed back 15 days after that
+    And it is published
+    Then observations.csv has one row per species applied, against the right image
+    And each row carries the common name the tagger used
+    # Unused hand-offs are swept 30 days after last use. The batch here is 40
+    # days old but was last tagged 15 days ago, so its tags must still be there.
+
+  @AL2 @AL2-5
+  Scenario: Retrying a failed upload of a tagged batch does not ask for the tags again
+    Given a batch was tagged in the Tagger and handed back
+    And its upload failed part-way
+    When the page is reloaded and the upload is resumed from History
+    Then the upload finishes without going back to Inspect or the Tagger
+    And observations.csv has one row per species applied, against the right image
+    And each row carries the common name the tagger used

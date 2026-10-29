@@ -31,6 +31,7 @@ import { naiveInZoneToUtcIso } from './exifTime';
 import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
 import type { MediaKind } from './scanFiles';
 import type { FileEntry } from '../store';
+import { formatUploadComments, type RequiredUploadComments } from './uploadComments';
 
 /** One blob to stream: the full object key (= media_path) plus its source. */
 export type UploadItem = {
@@ -43,10 +44,11 @@ export type UploadItem = {
   size: number;
   sha256: string;
   timestampSource?: TimestampSource;
-  captureTimestamp?: string; // resolved ISO 8601 UTC capture time (post-tz), media.csv col 4
+  captureTimestamp?: string; // offset-bearing ISO capture time (post-tz), media.csv col 4
   mediaKind: MediaKind;
   mimeType: string;
   preTags?: FlipObservation[]; // species applied in the tagger before this upload
+  preTaggerUser?: string;
 };
 
 export type BundlePreview = {
@@ -88,7 +90,9 @@ function observationRowsFor(
     deploymentId: string;
     timestamp: string;
     preTags?: FlipObservation[];
+    preTaggerUser?: string;
   },
+  uploaderUser: string | undefined,
   untagged: () => Observation[],
 ): Observation[] {
   const preTags = file.preTags ?? [];
@@ -107,8 +111,11 @@ function observationRowsFor(
     tags: buildObservationComments({
       commonName: o.commonName || undefined,
       requestedSpecies: o.requestedSpecies || undefined,
+      reviewEvents: o.reviewEvents,
       extra: parseTagMarkers(o.freeTags),
     }),
+    classifiedBy: [o.classifiedBy, file.preTaggerUser, uploaderUser].find((identity) => identity?.trim()),
+    classificationTimestamp: o.classificationTimestamp,
   }));
 }
 
@@ -211,15 +218,18 @@ export function planItemFor(f: FileEntry, naming: BatchNaming, timeZone: string,
     mediaKind: f.mediaKind,
     mimeType: mimeFor(f),
     preTags: f.preTags,
+    preTaggerUser: f.preTaggerUser,
   };
 }
 
 export type BuildInput = {
+  uploaderUser?: string;
   location: Location;
   collectionUuid: string;
   bucket: string;
   uploaderSlug: string;
   description: string;
+  requiredComments?: RequiredUploadComments;
   timeZone: string; // IANA zone the EXIF naive wall-clock is interpreted in
   files: FileEntry[];
   now: Date;
@@ -277,7 +287,9 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
         deploymentId: deployment.deploymentId,
         timestamp: it.captureTimestamp ?? '',
         preTags: it.preTags,
+        preTaggerUser: it.preTaggerUser,
       },
+      input.uploaderUser,
       () => [
         {
           observationId: defaultObservationId(it.objectName, 0),
@@ -304,7 +316,8 @@ export async function buildBundle(input: BuildInput): Promise<BundlePreview> {
       imagesWithSpecies: uploadItems.filter((it) => hasSpecies(it.preTags)).length,
       bucket,
       uploadPath,
-      description,
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, siteId: location.id, imageCount: ready.length, uploadDate: now, comments: description }),
+      captureTimeZone: timeZone,
     }),
   );
 
@@ -359,6 +372,7 @@ export type ResolvedFileRecord = {
   captureTimestamp?: string;
   mimeType?: string;
   preTags?: FlipObservation[];
+  preTaggerUser?: string;
 };
 
 export type ResumeBundle = {
@@ -380,16 +394,19 @@ export type ResumeBundle = {
  * headed for instead of a new one.
  */
 export async function buildBundleFromRecords(input: {
+  uploaderUser?: string;
   location: Location;
   collectionUuid: string;
   bucket: string;
   uploaderSlug: string;
   description: string;
+  requiredComments?: RequiredUploadComments;
+  timeZone?: string;
   uploadPath: string;
   startedAt: Date;
   files: ResolvedFileRecord[];
 }): Promise<ResumeBundle> {
-  const { location, collectionUuid, bucket, uploaderSlug, description, uploadPath, startedAt, files } = input;
+  const { location, collectionUuid, bucket, uploaderSlug, description, timeZone, uploadPath, startedAt, files } = input;
   const deployment = locationToDeployment(location, collectionUuid);
 
   deployment.timestampIssues = files.some((f) => !!f.timestampSource);
@@ -415,7 +432,9 @@ export async function buildBundleFromRecords(input: {
         deploymentId: deployment.deploymentId,
         timestamp: f.captureTimestamp ?? '',
         preTags: f.preTags,
+        preTaggerUser: f.preTaggerUser,
       },
+      input.uploaderUser,
       () => [
         {
           observationId: defaultObservationId(objectName, 0),
@@ -442,7 +461,8 @@ export async function buildBundleFromRecords(input: {
       imagesWithSpecies: files.filter((f) => hasSpecies(f.preTags)).length,
       bucket,
       uploadPath,
-      description,
+      description: formatUploadComments({ required: input.requiredComments, siteName: location.name, siteId: location.id, imageCount: files.length, uploadDate: startedAt, comments: description }),
+      captureTimeZone: timeZone,
     }),
   );
 

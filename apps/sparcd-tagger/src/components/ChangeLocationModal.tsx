@@ -9,14 +9,16 @@
 import { useMemo, useState } from 'react';
 import type { Deployment } from '@sparcd/camtrap';
 import { LocationPicker } from './LocationPicker';
-import { locationToDeployment, type Location } from '../lib/locations';
+import { locationIdentityKey, locationToDeployment, type Location } from '../lib/locations';
 import { useStore } from '../store';
 
 /** The registry key a Deployment's recorded coordinates/id map to — lets a
  *  loaded `Deployment` (parsed off `deployments.csv`) preselect its matching
  *  registry entry, the same identity `locationToDeployment` derives it from. */
 function keyFor(dep: Deployment): string {
-  return `${dep.locationId}|${dep.latitude},${dep.longitude}`;
+  return locationIdentityKey(
+    dep.locationId, dep.locationName, dep.latitude, dep.longitude, dep.elevation,
+  );
 }
 
 export function ChangeLocationModal({
@@ -165,7 +167,7 @@ export function ChangeLocationModal({
           )}
 
           <p className="mt-3 font-mono text-[11.5px] text-inkSoft">
-            <span className="text-inkMute">note</span> This only takes effect at the next sync —
+            <span className="text-inkMute">note</span> The completed change saves automatically —
             nothing is rewritten locally.
           </p>
         </div>

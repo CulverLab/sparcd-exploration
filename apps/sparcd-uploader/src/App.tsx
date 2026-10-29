@@ -1,5 +1,8 @@
-import { useEffect, useRef } from 'react';
-import { Connection, loadPersistedConnection } from '@sparcd/auth-ui';
+import { AutomaticSpeciesCache } from './components/AutomaticSpeciesCache';
+import { useEffect, useRef, useState } from 'react';
+import { WorkflowNotice } from './components/WorkflowNotice';
+import { Connection, OfflineApps, loadPersistedConnection } from '@sparcd/auth-ui';
+import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from './store';
 import './lib/streamingBridge';
 import { Chrome } from './components/Chrome';
@@ -8,6 +11,8 @@ import { History } from './sections/History';
 import { Settings } from './sections/Settings';
 import { uploadStateOf } from './lib/uploadState';
 import { cancelProcessing } from './lib/processing';
+import { planAutoRetry, type AutoRetryState } from './lib/autoRetry';
+import { updateBatch } from './lib/db';
 
 // Dev-only, non-secret prefill (endpoint only). Secrets are never prefilled.
 const devEndpoint = import.meta.env.VITE_SPARCD_S3_ENDPOINT as string | undefined;
@@ -21,12 +26,22 @@ const connectPrefill = { ...persistedConnection, ...(devEndpoint ? { endpoint: d
 export function App() {
   const s3Config = useStore((s) => s.s3Config);
   const connectionId = useStore((s) => s.connectionId);
+  const ensureUploaderIdentity = useStore((s) => s.ensureUploaderIdentity);
+  // Restore once on mount; direct and shared connections start their own lookup.
+  useEffect(() => {
+    ensureUploaderIdentity();
+  }, [ensureUploaderIdentity]);
   const loginDeferred = useStore((s) => s.loginDeferred);
   const setLoginDeferred = useStore((s) => s.setLoginDeferred);
   const section = useStore((s) => s.section);
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
   const activeSnap = useStore((s) => s.activeSnap);
+  const runGeneration = useStore(s => s.activeRunGeneration);
+  const [resumeWarning, setResumeWarning] = useState<string | null>(null);
+  useEffect(() => {
+    setResumeWarning(activeSnap?.speciesWarning ?? null);
+  }, [activeSnap?.sessionId, activeSnap?.speciesWarning, runGeneration]);
   const retryPartialRun = useStore((s) => s.retryPartialRun);
 
   useEffect(() => {
@@ -78,6 +93,25 @@ export function App() {
     };
   }, [retryPartialRun]);
 
+  // A connection can die while the browser still reports itself online, so
+  // no `online` event will ever come. A run that stopped only for want of an
+  // answer is retried on a backoff timer instead, until too many retries in
+  // a row get nothing through; History then says storage can't be reached.
+  const autoRetryPhase = activeSnap?.autoRetry ? activeSnap.phase : null;
+  const autoRetry = useRef<AutoRetryState>({ sessionId: null, fruitless: 0 });
+  useEffect(() => {
+    const snap = useStore.getState().activeSnap;
+    if (autoRetryPhase !== 'partial' || !snap) return;
+    const plan = planAutoRetry(autoRetry.current, snap);
+    autoRetry.current = plan.state;
+    void updateBatch(snap.sessionId, { storageUnreachable: plan.delay === null });
+    if (plan.delay === null) return;
+    const timer = setTimeout(() => {
+      if (navigator.onLine !== false) void retryPartialRun();
+    }, plan.delay);
+    return () => clearTimeout(timer);
+  }, [autoRetryPhase, retryPartialRun]);
+
   // Hold a screen wake lock while any run is in flight (including dry runs and
   // the preparing phase). Lives here (not in Upload) so it survives the user
   // navigating away mid-upload. The lock is
@@ -123,17 +157,25 @@ export function App() {
 
   if (!s3Config && !loginDeferred) {
     return (
+      <>
+      {import.meta.env.PROD && <OfflineApps />}
+      <AutomaticSpeciesCache />
       <Connection
         toolName="Uploader"
         initialConfig={connectPrefill}
         onConnect={connect}
+        onTestConnection={(config, signal) => testConnection(config, { signal })}
         onSkip={() => setLoginDeferred(true)}
       />
+      </>
     );
   }
 
   return (
     <Chrome uploadState={uploadStateOf(activeSnap)}>
+      {resumeWarning && <WorkflowNotice title="Resolve species before uploading" onClose={() => setResumeWarning(null)}><p>{resumeWarning}</p></WorkflowNotice>}
+      {import.meta.env.PROD && <OfflineApps />}
+      <AutomaticSpeciesCache />
       {section === 'new' && <NewUpload />}
       {section === 'history' && <History />}
       {section === 'settings' && <Settings />}

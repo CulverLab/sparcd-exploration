@@ -20,13 +20,138 @@ import type { S3Config } from '@sparcd/types';
 const STORAGE_KEY = 'sparcd-connection';
 const SESSION_KEY = 'sparcd-connection-tab';
 const CHANNEL_NAME = 'sparcd-connection-live';
+const HEAD_KEY = 'sparcd-connection-revision';
+const TAB_REVISION_FIELD = '__sparcdRevision';
+const PROTOCOL = 1;
+
+type Revision = { counter: number; id: string };
+type Head = { protocol: 1; revision: Revision; connected: boolean };
+const subscribers = new Set<(cfg: S3Config | null) => void>();
+let head: Head | null = null;
+let liveRevision: Revision | null = null;
+
+const compare = (a: Revision, b: Revision): number =>
+  a.counter - b.counter || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+function validRevision(value: unknown): value is Revision {
+  const r = value as Revision | null;
+  return !!r && Number.isSafeInteger(r.counter) && r.counter >= 0
+    && typeof r.id === 'string' && r.id.length > 0;
+}
+
+function readJSON(storage: Storage, key: string): unknown {
+  try { return JSON.parse(storage.getItem(key) ?? 'null'); } catch { return null; }
+}
+
+function storedHead(): Head | null {
+  try {
+    const value = readJSON(localStorage, HEAD_KEY) as Head | null;
+    return value?.protocol === PROTOCOL && validRevision(value.revision)
+      && typeof value.connected === 'boolean' ? value : null;
+  } catch { return null; }
+}
+
+/** Non-secret high-water mark survives app navigation and logout. Concurrent
+ * decisions use counter + unique id ordering; receiving/relaying is never a
+ * new decision. Repair a lower stored mark after concurrent writers converge. */
+function currentHead(): Head | null {
+  const stored = storedHead();
+  if (stored && (!head || compare(stored.revision, head.revision) > 0)) head = stored;
+  if (head && (!stored || compare(head.revision, stored.revision) > 0)) {
+    try { localStorage.setItem(HEAD_KEY, JSON.stringify(head)); } catch { /* live ordering still works */ }
+  }
+  return head;
+}
+
+function nextHead(connected: boolean): Head {
+  const latest = currentHead();
+  return { protocol: PROTOCOL, revision: {
+    counter: (latest?.revision.counter ?? 0) + 1,
+    id: crypto.randomUUID(),
+  }, connected };
+}
+
+function validConfig(value: unknown): value is S3Config {
+  const cfg = value as S3Config | null;
+  return !!cfg && ['endpoint', 'accessKey', 'secretKey', 'region'].every(
+    (key) => typeof cfg[key as keyof S3Config] === 'string' && !!cfg[key as keyof S3Config],
+  ) && typeof cfg.forcePathStyle === 'boolean'
+    && (cfg.secure === undefined || typeof cfg.secure === 'boolean');
+}
+
+function sameConfig(a: S3Config | null, b: S3Config | null): boolean {
+  return a === b || (!!a && !!b && a.endpoint === b.endpoint && a.region === b.region
+    && a.accessKey === b.accessKey && a.secretKey === b.secretKey
+    && a.forcePathStyle === b.forcePathStyle && a.secure === b.secure);
+}
+
+/** Keep memory, session storage and revision state in one accepted transition.
+ * Callers of local connect/disconnect update their own stores synchronously;
+ * incoming changes notify every subscriber once. */
+function accept(state: Head, cfg: S3Config | null, notify: boolean): boolean {
+  const latest = currentHead();
+  if (latest && compare(state.revision, latest.revision) < 0) return false;
+  const changed = !sameConfig(liveConfig, cfg);
+  head = state;
+  liveRevision = state.revision;
+  try { localStorage.setItem(HEAD_KEY, JSON.stringify(state)); } catch { /* memory only */ }
+  liveConfig = cfg;
+  if (cfg) saveSessionConnection(cfg, state.revision);
+  else clearSessionConnection();
+  if (notify && changed) for (const cb of subscribers) cb(cfg);
+  return true;
+}
+
+/** Explicit local decisions retry revision allocation if another tab advanced
+ * the mark; never let a caller proceed after silently dropping its login. */
+function publish(cfg: S3Config | null, notify = false): void {
+  let state: Head;
+  do { state = nextHead(!!cfg); } while (!accept(state, cfg, notify));
+  getChannel()?.postMessage(cfg
+    ? { ...state, type: 'connect', config: cfg } satisfies LiveMessage
+    : { ...state, type: 'disconnect' } satisfies LiveMessage);
+}
 
 export type PersistedConnection = Omit<S3Config, 'secretKey'>;
 
 type LiveMessage =
-  | { type: 'connect'; config: S3Config }
-  | { type: 'disconnect' }
-  | { type: 'request' };
+  | (Head & { type: 'connect'; config: S3Config })
+  | (Head & { type: 'disconnect' })
+  | { type: 'request'; protocol: 1 };
+
+/** Ignore unversioned old-client connections: their freshness cannot be
+ * proved. Legacy logout is conservative: honor it and relay a versioned
+ * logout so an older app cannot leave newer siblings authenticated. */
+function receive(raw: unknown): void {
+  if (!raw || typeof raw !== 'object') return;
+  const envelope = raw as { protocol?: unknown; type?: unknown };
+  if (envelope.protocol !== PROTOCOL) {
+    if (!('protocol' in envelope) && envelope.type === 'disconnect') publish(null, true);
+    return;
+  }
+  const message = raw as LiveMessage;
+  if (message.type === 'request') {
+    const latest = currentHead();
+    if (!latest) return;
+    if (!latest.connected) {
+      getChannel()?.postMessage({ ...latest, type: 'disconnect' } satisfies LiveMessage);
+    } else if (liveConfig && liveRevision && compare(liveRevision, latest.revision) === 0) {
+      getChannel()?.postMessage({ ...latest, type: 'connect', config: liveConfig } satisfies LiveMessage);
+    }
+    return;
+  }
+  if (!validRevision(message.revision)) return;
+  if (message.type !== 'connect' && message.type !== 'disconnect') return;
+  const connected = message.type === 'connect';
+  if (message.connected !== connected || (connected && !validConfig(message.config))) return;
+  const latest = currentHead();
+  if (latest && (compare(message.revision, latest.revision) < 0
+    || (compare(message.revision, latest.revision) === 0 && latest.connected !== connected))) return;
+  // A revision identifies one decision, not a license to change its credentials.
+  if (liveRevision && compare(message.revision, liveRevision) === 0) return;
+  accept({ protocol: PROTOCOL, revision: message.revision, connected },
+    message.type === 'connect' ? message.config : null, true);
+}
 
 /** Non-secret fields only — safe to read back to pre-fill the Connect form. */
 export function loadPersistedConnection(): PersistedConnection | null {
@@ -60,9 +185,9 @@ function clearPersistedConnection(): void {
   }
 }
 
-function saveSessionConnection(cfg: S3Config): void {
+function saveSessionConnection(cfg: S3Config, revision: Revision): void {
   try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(cfg));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...cfg, [TAB_REVISION_FIELD]: revision }));
   } catch {
     /* storage unavailable (private mode / quota) — nothing to do */
   }
@@ -79,7 +204,10 @@ function clearSessionConnection(): void {
 let channel: BroadcastChannel | null = null;
 function getChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === 'undefined') return null;
-  if (!channel) channel = new BroadcastChannel(CHANNEL_NAME);
+  if (!channel) {
+    channel = new BroadcastChannel(CHANNEL_NAME);
+    channel.addEventListener('message', (event: MessageEvent<unknown>) => receive(event.data));
+  }
   return channel;
 }
 
@@ -108,17 +236,44 @@ export function getLiveConnection(): S3Config | null {
  * the module-level value, so `getLiveConnection()` agrees from the first read.
  */
 export function loadSessionConnection(): S3Config | null {
-  let raw: string | null;
+  let cfg: unknown;
+  let revision: unknown;
   try {
-    raw = sessionStorage.getItem(SESSION_KEY);
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-  try {
-    liveConfig = JSON.parse(raw) as S3Config;
-  } catch {
-    return null;
+    const record = readJSON(sessionStorage, SESSION_KEY);
+    if (record && typeof record === 'object') {
+      const { [TAB_REVISION_FIELD]: storedRevision, ...config } = record as Record<string, unknown>;
+      cfg = config;
+      revision = storedRevision;
+    }
+  } catch { return null; }
+  const latest = currentHead();
+  if (!validConfig(cfg)) return null;
+  if (validRevision(revision)) {
+    if (latest && (compare(revision, latest.revision) < 0
+      || (compare(revision, latest.revision) === 0 && !latest.connected))) {
+      liveConfig = null;
+      liveRevision = null;
+      clearSessionConnection();
+      return null;
+    }
+    if (!accept({ protocol: PROTOCOL, revision, connected: true }, cfg, false)) {
+      liveConfig = null;
+      liveRevision = null;
+      clearSessionConnection();
+      return null;
+    }
+  } else {
+    // Backward-compatible same-tab migration. A raw legacy stash must not
+    // supersede an already-versioned connection or logout in another tab.
+    if (latest) {
+      clearSessionConnection();
+      return null;
+    }
+    // Migration is restoration, not an explicit new login.
+    if (!accept(nextHead(true), cfg, false)) {
+      clearSessionConnection();
+      return null;
+    }
   }
   return liveConfig;
 }
@@ -136,9 +291,7 @@ export function saveSharedConnection(cfg: S3Config, remember: boolean): void {
   const { secretKey: _secretKey, ...persisted } = cfg;
   if (remember) savePersistedConnection(persisted);
   else clearPersistedConnection();
-  saveSessionConnection(cfg);
-  liveConfig = cfg;
-  getChannel()?.postMessage({ type: 'connect', config: cfg } satisfies LiveMessage);
+  publish(cfg);
 }
 
 /**
@@ -149,41 +302,17 @@ export function saveSharedConnection(cfg: S3Config, remember: boolean): void {
  * again with "Remember me" unchecked (see `saveSharedConnection`).
  */
 export function clearSharedConnection(): void {
-  clearSessionConnection();
-  liveConfig = null;
-  getChannel()?.postMessage({ type: 'disconnect' } satisfies LiveMessage);
+  publish(null);
 }
 
-/**
- * Fire `cb` whenever another tab connects/disconnects live. `getCurrentConfig`
- * lets this tab answer a `request` from a tab that just opened (it has no
- * stash of its own to fall back on, so it asks whoever's already connected).
- * Also fires its own `request` immediately on subscribe, so a freshly opened
- * tab picks up an already-connected session from a sibling tab. What arrives
- * goes into this tab's own stash, making an adopted session as durable here as
- * one the user typed in. Returns an unsubscribe function.
- */
+/** Subscribe to accepted changes from other tabs. Session replies preserve the
+ * original revision and use synchronized live state, never a stale app getter.
+ * The second argument is retained for source compatibility with existing apps. */
 export function subscribeSharedConnection(
   cb: (cfg: S3Config | null) => void,
-  getCurrentConfig: () => S3Config | null,
+  _getCurrentConfig: () => S3Config | null,
 ): () => void {
-  const ch = getChannel();
-  if (!ch) return () => {};
-  const handler = (e: MessageEvent<LiveMessage>) => {
-    // Straight to the private helpers: `saveSharedConnection` would rebroadcast
-    // what we just received and bounce the message between tabs forever.
-    if (e.data.type === 'connect') {
-      saveSessionConnection(e.data.config);
-      cb(e.data.config);
-    } else if (e.data.type === 'disconnect') {
-      clearSessionConnection();
-      cb(null);
-    } else if (e.data.type === 'request') {
-      const current = getCurrentConfig();
-      if (current) ch.postMessage({ type: 'connect', config: current } satisfies LiveMessage);
-    }
-  };
-  ch.addEventListener('message', handler);
-  ch.postMessage({ type: 'request' } satisfies LiveMessage);
-  return () => ch.removeEventListener('message', handler);
+  subscribers.add(cb);
+  getChannel()?.postMessage({ type: 'request', protocol: PROTOCOL } satisfies LiveMessage);
+  return () => { subscribers.delete(cb); };
 }

@@ -1,3 +1,4 @@
+import { loadMasterSpecies } from './masterSpecies';
 // Handing a not-yet-uploaded batch to the tagger, and taking it back.
 //
 // Out: everything the tagger needs to show and tag the batch offline — the
@@ -8,19 +9,22 @@
 // Back: `?flip=<id>` on the uploader's own URL. The record still holds every
 // file's Inspect result, so the only thing that has to be recovered is the
 // `File` objects themselves — a browser reload drops those and nothing else.
-// `restoreFromHandleTrusted` reattaches them by path + size without re-hashing;
-// the batch was persisted minutes ago in this same session, so re-proving its
-// hashes would cost seconds to learn something the session never stopped knowing.
+// Source bytes are verified again after navigation or restart; names and sizes
+// alone cannot establish that a file has not changed.
 
 import {
   newFlipId,
+  flipRecordUnavailableReason,
   readFlipRecord,
   writeFlipRecord,
   type FlipFile,
   type FlipRecord,
 } from '@sparcd/flip';
+import { assertPreparedSpecies } from './preparedSpecies';
 import { useStore, type FileEntry } from '../store';
-import { restoreFromHandleTrusted } from './resume';
+import { restoreFromHandle, reconcileReselect, reselectFolder, type ReconcileProblem } from './resume';
+import type { ScannedFile } from './scanFiles';
+import { flushPreparation, readPreparation, bindCurrentPreparationSpecies, recoveryGuard, readPreparationForFlip } from './preparation';
 import { formatNaive } from './exifTime';
 import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
 import { taggerBatchUrl, uploaderReturnUrl } from './siblings';
@@ -40,6 +44,7 @@ const toFlipFile = (f: FileEntry, estimate: CaptureEstimate | undefined): FlipFi
   fileName: f.fileName,
   size: f.size,
   sha256: f.sha256!,
+  lastModified: f.file.lastModified,
   mediaKind: f.mediaKind,
   // Both wall-clocks, unconverted and kept apart. The upload zone is applied
   // later, at bundle build; and Inspect shows a camera time as read-only fact
@@ -71,28 +76,45 @@ const toFlipFile = (f: FileEntry, estimate: CaptureEstimate | undefined): FlipFi
  */
 export async function handOffToTagger(): Promise<void> {
   const s = useStore.getState();
+  const guard = recoveryGuard();
+  await flushPreparation();
+  const preparation = await readPreparation();
+  const preparedSpecies = preparation ? preparation.species : await loadMasterSpecies(s.s3Config ?? undefined);
+  guard();
+  assertPreparedSpecies(preparedSpecies);
+  if (useStore.getState().batchToken !== s.batchToken || useStore.getState().s3Config !== s.s3Config) throw new Error('The batch or connection changed. Try tagging again.');
+  await flushPreparation();
   const id = newFlipId();
   const estimates = estimateCaptureTimes(s.files, s.uploadTimeZone);
   await writeFlipRecord({
     id,
-    v: 1,
+    v: 2,
     createdAt: new Date().toISOString(),
     returnUrl: uploaderReturnUrl(id),
     dirHandle: s.dirHandle ?? undefined,
     files: s.files.filter((f) => f.processState === 'ready' && f.sha256).map((f) => toFlipFile(f, estimates.get(f.id))),
-    tags: {},
+    tags: Object.fromEntries(s.files.filter(f => f.preTags?.length).map(f => [f.relPath, f.preTags!])),
+    preparedSpecies: structuredClone(preparedSpecies),
   });
+  if (useStore.getState().batchToken !== s.batchToken || useStore.getState().s3Config !== s.s3Config) throw new Error('The batch or connection changed. Try tagging again.');
+  guard();
+  useStore.setState({ flipId: id });
+  await flushPreparation();
+  guard();
   window.location.href = taggerBatchUrl(id);
 }
 
 /** Re-enter the same tagging session — drafts live tagger-side, so it resumes. */
-export function reopenTagger(flipId: string): void {
+export async function reopenTagger(flipId: string): Promise<void> {
+  const guard = recoveryGuard();
+  await flushPreparation();
+  guard();
   window.location.href = taggerBatchUrl(flipId);
 }
 
 const toFileEntry = (f: FlipFile, file: File, record: FlipRecord): FileEntry => ({
   id: f.relPath,
-  file,
+  file: f.lastModified === undefined ? file : new File([file], file.name, { type: file.type, lastModified: f.lastModified }),
   relPath: f.relPath,
   fileName: f.fileName,
   size: f.size,
@@ -116,6 +138,7 @@ const toFileEntry = (f: FlipFile, file: File, record: FlipRecord): FileEntry => 
   height: f.height,
   thumbnail: f.thumb,
   preTags: record.tags[f.relPath] ?? [],
+  preTaggerUser: record.taggerUser,
 });
 
 // The inverse of `formatNaive` — the record carries the wall-clock as text, and
@@ -136,7 +159,7 @@ function parseNaive(iso: string | undefined): FileEntry['exifNaive'] {
 
 export type FlipReturn =
   /** The record is gone — a different origin in dev, or cleared storage. */
-  | { kind: 'not-found' }
+  | { kind: 'not-found'; message?: string }
   /** The folder handle needs a user gesture before it will hand back bytes. */
   | { kind: 'needs-gesture'; record: FlipRecord }
   /** No durable handle rode along; the folder has to be chosen again. */
@@ -151,58 +174,72 @@ export type FlipReturn =
  * is the `needs-gesture` result, and the caller renders a button whose click
  * calls straight back in here; that click IS the gesture, which is why the
  * permission call has to stay ahead of every other await (see
- * `restoreFromHandleTrusted`).
+ * `restoreFromHandle`).
  */
 export async function resumeFromFlip(flipId: string): Promise<FlipReturn> {
+  const guard = recoveryGuard();
   const record = await readFlipRecord(flipId);
-  if (!record) return { kind: 'not-found' };
+  guard();
+  if (!record) return { kind: 'not-found', message: await flipRecordUnavailableReason(flipId) };
   return adoptRecord(record);
 }
 
 /** The retry a "Reopen batch" click drives, with the record already in hand. */
 export async function adoptRecord(record: FlipRecord): Promise<FlipReturn> {
+  const guard = recoveryGuard();
   if (!record.dirHandle) return { kind: 'needs-reselect', record };
 
-  const restore = await restoreFromHandleTrusted(
+  const restore = await restoreFromHandle(
     { dirHandle: record.dirHandle },
-    Promise.resolve(record.files.map((f) => ({ localPath: f.relPath, fileName: f.fileName, size: f.size }))),
+    Promise.resolve(record.files.map((f) => ({ localPath: f.relPath, fileName: f.fileName, size: f.size, sha256: f.sha256 }))),
   );
+  guard();
   if (!restore.ok) return { kind: 'needs-gesture', record };
 
-  attach(record, restore.attached);
+  if (!restore.attached.size && restore.problems.length) throw new Error(restore.problems.map(p => `${p.fileName}: ${p.reason}`).join('; ') + '. Nothing was removed. Reselect the original unchanged folder.');
+  await attach(record, restore.attached, guard, restore.problems);
   return { kind: 'restored' };
 }
 
-/**
- * Adopt a batch whose folder the user just reselected. Same trusted matching as
- * the handle path — path and size — because the record's hashes were computed
- * from these very bytes minutes ago in this same session.
- */
-export function adoptReselected(
-  record: FlipRecord,
-  scanned: { relPath: string; size: number; file: File }[],
-): void {
-  const byPath = new Map(scanned.map((f) => [f.relPath, f]));
-  const attached = new Map<string, File>();
-  for (const f of record.files) {
-    const sf = byPath.get(f.relPath);
-    if (sf && sf.size === f.size) attached.set(f.relPath, sf.file);
-  }
-  attach(record, attached);
+/** Scope the OS picker and its folder scan to the same batch/connection as
+ * verification. The picker can stay open while another tab disconnects. */
+export async function reselectFlip(record: FlipRecord, list?: FileList): Promise<void> {
+  const guard = recoveryGuard();
+  const picked = await reselectFolder(list);
+  guard();
+  if (picked) await adoptReselected(record, picked.scanned);
 }
 
-// Files the folder no longer holds are dropped from the batch rather than
-// carried as broken entries — the uploader has no bytes for them, so there is
-// nothing honest to upload, and the count in the summary tells the user.
-function attach(record: FlipRecord, attached: Map<string, File>): void {
+/** Verify the original bytes before attaching; keep all saved work on failure. */
+export async function adoptReselected(
+  record: FlipRecord,
+  scanned: { relPath: string; size: number; file: File }[],
+): Promise<void> {
+  const guard = recoveryGuard();
+  const result = await reconcileReselect(
+    record.files.map(f => ({ localPath: f.relPath, fileName: f.fileName, size: f.size, sha256: f.sha256 })),
+    scanned.map(f => ({ ...f, id: f.relPath, fileName: f.file.name, mediaKind: record.files.find(r => r.relPath === f.relPath)?.mediaKind ?? 'image' })) as ScannedFile[],
+  );
+  guard();
+  if (!result.attached.size && result.problems.length) throw new Error(result.problems.map(p => `${p.fileName}: ${p.reason}`).join('; ') + '. Nothing was removed. Reselect the original unchanged folder.');
+  await attach(record, result.attached, guard, result.problems);
+}
+
+async function attach(record: FlipRecord, attached: Map<string, File>, guard: () => void, problems: ReconcileProblem[]): Promise<void> {
+  const preparation = await readPreparationForFlip(record.id);
+  guard();
   const files: FileEntry[] = [];
   for (const f of record.files) {
     const file = attached.get(f.relPath);
     if (file) files.push(toFileEntry(f, file, record));
+    else files.push({ ...toFileEntry(f, new File([], f.fileName), record), processState: 'error', needsOriginal: true,
+      processError: problems.find(problem => problem.localPath === f.relPath)?.reason ?? 'Original file could not be verified' });
   }
+  bindCurrentPreparationSpecies(record.preparedSpecies, preparation?.id);
   useStore.getState().adoptTaggedBatch({
     flipId: record.id,
     files,
     dirHandle: record.dirHandle ?? null,
   });
+  if (preparation) useStore.setState({ mountainRange: '', dateCollected: '', uploadCommentDate: null, ...preparation.inputs });
 }

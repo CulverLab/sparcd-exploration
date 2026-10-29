@@ -1,7 +1,7 @@
 import { Given, When, Then, expect } from './fixtures';
 import type { App } from './app';
 import { FOLDER, manyJpegs, publishableBatch, sameNameSubfolderBatch, slowPublishableBatch, standardBatch } from './batches';
-import { FAILING_FILE, rescanFromUpload, writtenCsvRows } from './helpers';
+import { FAILING_FILE, rescanFromUpload, writtenBody, writtenCsvRows } from './helpers';
 import { BUCKET_A, COLLECTION_A_NAME, UUID_A } from './fixtures-data';
 
 const UPLOADS_PREFIX = `Collections/${UUID_A}/Uploads/`;
@@ -30,12 +30,78 @@ Given(
   async ({ app }) => {
     await app.connect();
     await app.dropFolder(publishableBatch());
-    await expect(app.fileListPane()).toBeVisible();
+    await expect(app.fileListToggle()).toBeVisible();
   },
 );
 
 Given('the New upload section is showing the Upload step', async ({ app }) => {
   await app.walkToUploadStep({ uploader: 'Ada Lovelace', description: 'July retrieval' });
+});
+
+// --- where the batch goes --------------------------------------------------
+
+Then('it names the collection, the location with its id, and the chosen folder', async ({ app }) => {
+  const rows = await app.page.locator('dl > div').evaluateAll((divs) =>
+    divs.map((d) => [d.querySelector('dt')?.textContent, (d.querySelector('dd') as HTMLElement | null)?.innerText]),
+  );
+  expect(rows).toEqual([
+    ['Collection', `${COLLECTION_A_NAME} (${UUID_A})`],
+    // Names repeat across the registry, so the id rides along as in the picker.
+    ['Location', 'Bear Canyon\nBEAR1'],
+    ['Source folder', FOLDER],
+    ['Timezone', 'America/Phoenix'],
+    ['Mountain range', 'Santa Catalina Mountains'],
+    ['Date collected', '2026-10-01'],
+  ]);
+});
+
+Then('no storage path is shown', async ({ app }) => {
+  await expect(app.page.getByText(/Collections\//)).toHaveCount(0);
+});
+
+// --- collapsed disclosures (#494) -------------------------------------------
+
+const commentsControl = (app: App) => app.page.getByRole('button', { name: 'Comments', exact: true });
+const advancedControl = (app: App) => app.page.getByRole('button', { name: 'Advanced', exact: true });
+// Optional notes appear only inside the Comments disclosure on Upload.
+const commentsPanel = (app: App) => commentsControl(app).locator('..');
+
+Then('the Comments control is collapsed', async ({ app }) => {
+  await expect(commentsControl(app)).toHaveAttribute('aria-expanded', 'false');
+  await expect(commentsPanel(app)).not.toContainText('July retrieval');
+  await expect(app.page.getByLabel('Generated upload comment', { exact: true })).not.toContainText('July retrieval');
+  await expect(app.page.getByText('July retrieval', { exact: true })).toHaveCount(0);
+});
+
+When('"Comments" is chosen', async ({ app }) => {
+  await commentsControl(app).click();
+});
+
+Then('the comments are shown', async ({ app }) => {
+  await expect(commentsPanel(app)).toContainText('July retrieval');
+});
+
+Given('the upload has no comments', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.setDescription('');
+  await app.continueToUpload();
+});
+
+Then('there is no Comments control', async ({ app }) => {
+  await expect(commentsControl(app)).toHaveCount(0);
+});
+
+Then('the "Test the upload" option is tucked under a collapsed Advanced control', async ({ app }) => {
+  await expect(app.page.getByLabel('Test the upload, nothing is written')).toHaveCount(0);
+  await expect(advancedControl(app)).toHaveAttribute('aria-expanded', 'false');
+});
+
+When('"Advanced" is chosen', async ({ app }) => {
+  await advancedControl(app).click();
+});
+
+Then('the "Test the upload" option becomes available', async ({ app }) => {
+  await expect(app.page.getByLabel('Test the upload, nothing is written')).toBeVisible();
 });
 
 // --- dry run ---------------------------------------------------------------
@@ -48,7 +114,7 @@ Given('the upload has not been started', async ({ app }) => {
 Then(
   'the ready status explains itself on hover and keyboard focus',
   async ({ app }) => {
-    const pill = app.page.getByRole('status');
+    const pill = app.page.getByRole('status', { name: /^Upload status:/ });
     const tooltip = app.page.locator('[role="tooltip"]');
     await expect(pill).toContainText('ready');
     await expect(pill).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id'));
@@ -66,7 +132,7 @@ Then(
 Then(
   'the complete status explains itself on hover and keyboard focus',
   async ({ app }) => {
-    const pill = app.page.getByRole('status');
+    const pill = app.page.getByRole('status', { name: /^Upload status:/ });
     const tooltip = app.page.locator('[role="tooltip"]');
     await expect(pill).toContainText('complete');
     await pill.hover();
@@ -90,7 +156,7 @@ Then('dismissing it closes the dialog', async ({ app }) => {
 });
 
 async function expectDryRunPill(app: App): Promise<void> {
-  const pill = app.page.getByRole('status');
+  const pill = app.page.getByRole('status', { name: /^Upload status:/ });
   const tooltip = app.page.locator('[role="tooltip"]');
   await expect(pill).toContainText('dry-run');
   await pill.hover();
@@ -103,12 +169,82 @@ async function expectDryRunPill(app: App): Promise<void> {
 }
 
 Then('dry run is switched off by default', async ({ app }) => {
-  await expect(app.dryRunCheckbox()).not.toBeChecked();
+  await expect((await app.dryRunCheckbox())).not.toBeChecked();
   await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeVisible();
 });
 
+When('the browser reports offline before upload', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+  });
+});
+
+Then('the paused offline status message is shown and real upload is disabled', async ({ app }) => {
+  const status = app.page.locator('#upload-connectivity-status');
+  await expect(
+    status.getByText('Offline — uploads are paused; dry runs remain available', { exact: true }),
+  ).toBeVisible();
+  const start = app.page.getByRole('button', { name: 'Start upload' });
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+  await expect(start).toHaveAttribute('title', "You're offline — reconnect or choose Try upload anyway");
+  await expect(app.page.getByRole('button', { name: 'Try upload anyway', exact: true })).toBeVisible();
+});
+
+When('the operator allows a real upload while offline', async ({ app }) => {
+  await app.page.getByRole('button', { name: 'Try upload anyway', exact: true }).click();
+});
+
+Then('real upload is enabled with the offline opt-in status message', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(
+    app.page
+      .locator('#upload-connectivity-status')
+      .getByText('Offline — you can try an upload; the browser’s offline signal may be stale', { exact: true }),
+  ).toBeVisible();
+});
+
+Then('dry run remains available while offline', async ({ app }) => {
+  await expect((await app.dryRunCheckbox())).toBeEnabled();
+  await (await app.dryRunCheckbox()).check();
+  await expect(app.page.getByRole('button', { name: 'Start dry run' })).toBeEnabled();
+  await (await app.dryRunCheckbox()).uncheck();
+});
+
+Then('the retry action is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Retry failed files' })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try upload anyway', exact: true })).toBeVisible();
+});
+
+Then('History Resume is disabled while offline', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload', exact: true })).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Try resume anyway' })).toBeVisible();
+});
+
+Then('History Resume is enabled after reconnecting', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Resume upload', exact: true })).toBeEnabled();
+});
+
+When('the browser reports online again', async ({ app }) => {
+  await app.page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+  });
+});
+
+Then('the online status message is shown and real upload is enabled', async ({ app }) => {
+  await expect(
+    app.page
+      .locator('#upload-connectivity-status')
+      .getByText('Online — uploads to the server can proceed', { exact: true }),
+  ).toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).toBeEnabled();
+  await expect(app.page.getByRole('button', { name: 'Start upload' })).not.toHaveAttribute('aria-describedby', 'upload-connectivity-status');
+});
+
 When('the operator opts into a dry run', async ({ app }) => {
-  await app.dryRunCheckbox().check();
+  await (await app.dryRunCheckbox()).check();
 });
 
 When('the dry run is started', async ({ app }) => {
@@ -167,13 +303,13 @@ Then('the admin setup guidance note is shown with the collection ID', async ({ a
 // --- a complete real upload ------------------------------------------------
 
 When('a real upload is started and completes', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
 
 When('a real upload completes without dismissing its confirmation', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('done', { timeout: 60_000 });
 });
@@ -207,7 +343,7 @@ Then("each stored object's path is the one recorded for it in the media table", 
 // --- verification ----------------------------------------------------------
 
 When('a file has been uploaded', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -220,9 +356,9 @@ Then(
     // not the per-file subfolders underneath it.
     const folder = puts[0].key.split('/').slice(0, 4).join('/');
     expect(app.s3.lists).toContain(`${puts[0].bucket}/${folder}/`);
-    await expect(
-      app.page.getByText(new RegExp(`final review: all ${puts.length} objects confirmed`)),
-    ).toBeVisible();
+    await expect
+      .poll(() => app.logText())
+      .toContain(`final review: all ${puts.length} objects confirmed`);
   },
 );
 
@@ -238,47 +374,55 @@ Then(
   },
 );
 
-Then(
-  'an object the listing contradicts is treated as a failure of that file, not as a success',
+// A fresh scenario's batch (Background's publishableBatch) already carries
+// IMG_0002.JPG — no need to go back and rescan it. #477 closed that path
+// anyway: Back is unavailable once a real run has started, so these two can
+// no longer chain a second attempt onto the first run the way they used to.
+
+When(
+  'a real upload runs against storage that quietly truncates one object after it lands',
   async ({ app }) => {
-    // Re-run against storage that accepts a write and then quietly truncates
-    // it, so the listing reports a size the metadata does not claim.
+    // The listing then reports a size the metadata does not claim.
     app.s3.afterPut = (_bucket, key, obj) => {
       if (key.endsWith('IMG_0002.JPG')) obj.body = obj.body.subarray(0, 1);
     };
-    const metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
-    await rescanFromUpload(app, standardBatch());
-    await app.dryRunCheckbox().uncheck();
+    app.notes.metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect(app.page.getByText(/final review: size mismatch/).first()).toBeVisible({ timeout: 60_000 });
-    const rows = await app.page.locator('div[data-index]').allTextContents();
-    const mismatched = rows.find((r) => r.includes('IMG_0002.JPG'))!;
-    expect(mismatched).not.toContain('done');
-    expect(
-      app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length,
-    ).toBe(metadataBefore);
   },
 );
 
-Then(
-  "an object whose sha256 fingerprint is absent from storage is treated as a failure",
+When(
+  'a real upload runs against storage that drops the sha256 digest for every object',
   async ({ app }) => {
-    // Strip sha256 from every non-metadata PUT after storage — simulates a path
-    // that accepts the upload but loses or never returns the digest header.
+    // Simulates a path that accepts the upload but loses or never returns the
+    // digest header.
     app.s3.afterPut = (_bucket, key, obj) => {
       if (!METADATA_NAMES.some((n) => key.endsWith(n))) delete obj.meta['sha256'];
     };
-    const metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
-    await rescanFromUpload(app, standardBatch());
-    await app.dryRunCheckbox().uncheck();
+    app.notes.metadataBefore = app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length;
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect(app.page.getByText(/final review: digest contract broken/).first()).toBeVisible({ timeout: 60_000 });
-    await expect(app.runPhase()).toHaveText('partial');
-    expect(
-      app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length,
-    ).toBe(metadataBefore);
   },
 );
+
+Then('that object is treated as a failure of that file, not as a success', async ({ app }) => {
+  const rows = await app.page.locator('div[data-index]').allTextContents();
+  const mismatched = rows.find((r) => r.includes('IMG_0002.JPG'))!;
+  expect(mismatched).not.toContain('done');
+});
+
+Then('the run is reported as partial', async ({ app }) => {
+  await expect(app.runPhase()).toHaveText('partial');
+});
+
+Then('no metadata is published for the batch', async ({ app }) => {
+  expect(
+    app.s3.puts.filter((p) => METADATA_NAMES.some((n) => p.key.endsWith(n))).length,
+  ).toBe(app.notes.metadataBefore as number);
+});
 
 // --- streaming past Inspect ------------------------------------------------
 
@@ -289,7 +433,7 @@ Given('some files are still being examined', async ({ app }) => {
 });
 
 When('the upload is started', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   app.notes.putsAtStart = app.s3.puts.length;
   await app.startRun();
 });
@@ -316,7 +460,7 @@ Then('the tool reports how many files are still being examined', async ({ app })
 Given('a streaming run has started with one file still being examined', async ({ app }) => {
   await app.holdInspect('BIG_CLIP.MP4');
   await app.rescanFromUploadStep();
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
 });
 
@@ -346,7 +490,7 @@ Then('the run completes successfully', async ({ app }) => {
 // --- publish ordering ------------------------------------------------------
 
 Given('a real upload is running', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
 });
 
@@ -358,7 +502,7 @@ Then(
     const firstMetadata = keys.findIndex((k) => METADATA_NAMES.some((n) => k.endsWith(n)));
     expect(firstMetadata).toBe(4); // the four media objects come first
     // …and the listing that confirms them runs before any metadata is written.
-    await expect(app.page.getByText(/final review: all 4 objects confirmed/)).toBeVisible();
+    await expect.poll(() => app.logText()).toContain('final review: all 4 objects confirmed');
   },
 );
 
@@ -376,7 +520,7 @@ Given('a real upload in which some files failed after their retries', async ({ a
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0002.JPG') ? { status: 400, code: 'InvalidRequest', message: 'refused' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('partial', 120_000);
 });
@@ -404,7 +548,7 @@ Then(
 
 Given('a real upload that was cancelled or ended in failure', async ({ app }) => {
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await app.page.getByRole('button', { name: 'Cancel' }).click();
@@ -426,7 +570,7 @@ Then('nothing reading the collection sees a new upload there', async ({ app }) =
 // --- untagged batches ------------------------------------------------------
 
 When('a batch is published', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -476,7 +620,7 @@ Then(
 
 Given('a run is in progress', async ({ app }) => {
   app.s3.putDelayMs = 1000;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
 });
@@ -496,7 +640,7 @@ Then(
 );
 
 Then(
-  'an activity log records each retry, each warning and each metadata write as it happens',
+  'the run log records each retry, each warning and each metadata write',
   async ({ app }) => {
     await app.waitForRunPhase('done', 120_000);
     const log = await app.logText();
@@ -510,22 +654,26 @@ Then(
 // --- concurrency -----------------------------------------------------------
 
 Then('the number of parallel uploads is chosen automatically by default', async ({ app }) => {
-  // The Upload step reports "adaptive" instead of a slider (the row also holds
-  // the 'i' explainer, so the text isn't an exact match).
-  await expect(app.page.getByText(/^adaptive/)).toBeVisible();
-  await expect(app.page.getByRole('button', { name: 'About adaptive concurrency' })).toBeVisible();
-  await expect(app.laneSlider()).toHaveCount(0);
   await app.gotoSection('Settings');
+  await app.page.getByText('Advanced', { exact: true }).click();
   await expect(app.concurrencyModeRadio('Adaptive (default)')).toBeChecked();
+  await expect(app.laneSlider()).toHaveCount(0);
   await app.gotoSection('New upload');
 });
 
 Then('it can be pinned to a number between 4 and 32', async ({ app }) => {
-  await app.pinConcurrency(12);
+  // #494 removed the Upload step's own copy of this control — check it in
+  // Settings, the only place it lives now, instead of relying on
+  // pinConcurrency's own navigate-back-to-Upload side effect.
+  await app.gotoSection('Settings');
+  await app.page.getByText('Advanced', { exact: true }).click();
+  await app.concurrencyModeRadio('Manual').check();
   const slider = app.laneSlider();
   await expect(slider).toHaveAttribute('min', '4');
   await expect(slider).toHaveAttribute('max', '32');
+  await slider.fill('12');
   await expect(slider).toHaveValue('12');
+  await app.gotoSection('New upload');
 });
 
 Then('a pinned number defaults to 8', async ({ app }) => {
@@ -535,24 +683,36 @@ Then('a pinned number defaults to 8', async ({ app }) => {
   await expect(app.connectForm()).toBeVisible();
   await app.fillConnection();
   await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  // Connecting now awaits a credential probe (#589) before the workspace
+  // appears — dropFolder's DOM evaluate has no actionability auto-wait of
+  // its own, unlike a Locator click, so it needs this explicit beat.
+  await expect(app.page.getByRole('button', { name: 'Logout' })).toBeVisible();
   await app.dropFolder(standardBatch());
   await app.waitForInspected();
   await app.walkToUploadStep();
-  await app.pinConcurrency();
+  await app.gotoSection('Settings');
+  await app.page.getByText('Advanced', { exact: true }).click();
+  await app.concurrencyModeRadio('Manual').check();
   await expect(app.laneSlider()).toHaveValue('8');
+  await app.gotoSection('New upload');
 });
 
 Then('a pinned number can be changed while a run is in progress', async ({ app }) => {
   app.s3.putDelayMs = 1000;
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect(app.runPhase()).toHaveText('uploading');
-  await expect(app.dryRunCheckbox()).toBeDisabled();
-  // The lane pool re-reads the setting on every pull, so the slider stays live
-  // — unlike the run options, which are locked once bytes are moving.
+  await expect((await app.dryRunCheckbox())).toBeDisabled();
+  // The lane pool re-reads the setting on every pull, and the run survives
+  // section navigation, so Settings' slider stays live and adjustable from
+  // anywhere while a run is going — unlike the run options, which are locked
+  // once bytes are moving.
+  await app.gotoSection('Settings');
+  await app.page.getByText('Advanced', { exact: true }).click();
   await expect(app.laneSlider()).toBeEnabled();
   await app.laneSlider().fill('6');
   await expect(app.laneSlider()).toHaveValue('6');
+  await app.gotoSection('New upload');
   await app.waitForRunPhase('done', 120_000);
 });
 
@@ -566,7 +726,7 @@ Given(
         ? { status: 503, code: 'ServiceUnavailable', message: 'try later' }
         : undefined,
     );
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
   },
@@ -583,7 +743,7 @@ Then('it is retried up to five attempts with an increasing, randomized delay', a
   expect(Math.max(...delays)).toBeGreaterThan(Math.min(...delays));
 });
 
-Then('the retry is recorded in the activity log', async ({ app }) => {
+Then('the retry is recorded in the run log', async ({ app }) => {
   expect(await app.logText()).toContain('retry');
   expect(await app.logText()).toMatch(/failed [^\s]*IMG_0002\.JPG/);
 });
@@ -597,7 +757,7 @@ Given(
         ? { status: 400, code: 'InvalidRequest', message: 'refused' }
         : undefined,
     );
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await app.waitForRunPhase('partial', 120_000);
     app.s3.putHooks.length = 0;
@@ -641,12 +801,12 @@ Given('a run pauses because the network is reported offline', async ({ app }) =>
   await app.page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
   });
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.logText(), { timeout: 30_000 }).toContain('waiting for network');
 });
 
-Then('the activity log records the offline wait exactly once', async ({ app }) => {
+Then('the run log records the offline wait exactly once', async ({ app }) => {
   const log = await app.logText();
   expect(log.match(/waiting for network/g) ?? []).toHaveLength(1);
 });
@@ -659,7 +819,7 @@ When('the network returns', async ({ app }) => {
   await app.waitForRunPhase('done', 120_000);
 });
 
-Then('the activity log records the recovery exactly once', async ({ app }) => {
+Then('the run log records the recovery exactly once', async ({ app }) => {
   const log = await app.logText();
   expect(log.match(/network back/g) ?? []).toHaveLength(1);
 });
@@ -689,7 +849,7 @@ Given('ordinary focus events do not correct the stuck flag', async ({ app }) => 
 When(
   'the run has waited through several poll intervals with no change to the flag',
   async ({ app }) => {
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
     await expect.poll(() => app.logText()).toContain('waiting for network');
     for (let elapsed = 30_000; elapsed <= 90_000; elapsed += 30_000) {
@@ -721,7 +881,7 @@ Given("a file's upload is refused for lack of permission", async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('IMG_0000.JPG') ? { status: 403, code: 'AccessDenied', message: 'Access Denied' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -741,7 +901,7 @@ Given('ten files have failed independently in one run', async ({ app }) => {
   app.s3.putHooks.push((_b, key) =>
     key.endsWith('.JPG') ? { status: 400, code: 'InvalidRequest', message: 'nope' } : undefined,
   );
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -785,7 +945,7 @@ Given(
     });
 
     app.notes.systemicAbortStartedAt = Date.now();
-    await app.dryRunCheckbox().uncheck();
+    await (await app.dryRunCheckbox()).uncheck();
     await app.startRun();
   },
 );
@@ -816,7 +976,7 @@ Given('an object already exists at a path the run intends to write', async ({ ap
 });
 
 When('a fresh upload attempts that write', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('error', 120_000);
 });
@@ -836,7 +996,7 @@ Then('the run reports the failure', async ({ app }) => {
 
 When('a run is cancelled', async ({ app }) => {
   holdFirstMediaPut(app);
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
   app.notes.storedAtCancel = app.s3.writtenKeys();
@@ -870,7 +1030,7 @@ Then('the Back button is disabled', async ({ app }) => {
 });
 
 Given('a real upload has completed', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await app.waitForRunPhase('done');
 });
@@ -879,28 +1039,46 @@ When('"Next batch" is chosen', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Next batch' }).click();
 });
 
-Then('the wizard returns to the Files step with an empty batch', async ({ app }) => {
-  await app.expectStep('Files');
-  await expect(app.page.getByText('Drop a folder of media')).toBeVisible();
-  await expect(app.fileListPane()).toHaveCount(0);
+Then('the wizard returns to the Choose step with an empty batch', async ({ app }) => {
+  await app.expectStep('Choose');
+  await expect(app.page.getByText('Drop a folder to upload')).toBeVisible();
+  await expect(app.fileListToggle()).toHaveCount(0);
 });
 
 Then(
-  'the collection, deployment, uploader identity, description and timezone of the previous batch are kept',
+  'the next batch has no collection, deployment, description or timezone selected',
   async ({ app }) => {
     await app.dropFolder(standardBatch());
     await app.waitForInspected();
     await app.continueToAssign();
     await app.waitForCollections();
-    await expect(app.collectionTrigger()).toContainText(COLLECTION_A_NAME);
-    await expect(app.deploymentTrigger()).toContainText('Bear Canyon');
+    await expect(app.collectionTrigger()).toContainText('Select a target collection');
+    await expect(app.page.getByText('Select a target collection first.')).toBeVisible();
+    await app.collectionTrigger().click();
+    await app.page.getByRole('option').filter({ hasText: COLLECTION_A_NAME }).first().click();
+    await expect(app.deploymentTrigger()).toContainText('Select a deployment location');
     await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
     await expect(
-      app.page.getByPlaceholder('What this batch is — site, date range, notes.'),
-    ).toHaveValue('July retrieval');
-    await expect(app.timeZoneSelect()).toHaveValue('America/Phoenix');
+      app.page.getByPlaceholder('Additional notes about this batch.'),
+    ).toHaveValue('');
+    await expect(app.timeZoneSelect()).toHaveValue('');
+    await app.chooseDeployment('Bear Canyon');
+    await app.timeZoneSelect().selectOption({ label: 'Select a timezone…' });
+    await expect(app.timeZoneSelect()).toHaveValue('');
   },
 );
+
+Then('the uploader identity is still filled in', async ({ app }) => {
+  await expect(app.page.getByPlaceholder('e.g. John Doe')).toHaveValue('Ada Lovelace');
+});
+
+Then('continuing without a timezone is disabled', async ({ app }) => {
+  await expect(app.continueButton()).toBeDisabled();
+  await expect(app.page.getByRole('status').filter({ hasText: 'Select a timezone first' })).toBeVisible();
+  await expect(app.page.locator('#upload-timezone-help')).toContainText(
+    'Select a timezone before continuing.',
+  );
+});
 
 // --- wake lock and preparing phase -------------------------------------------
 
@@ -925,7 +1103,7 @@ Given('the first media blob is held at the mock', async ({ app }) => {
 });
 
 When('a real upload is started', async ({ app }) => {
-  await app.dryRunCheckbox().uncheck();
+  await (await app.dryRunCheckbox()).uncheck();
   await app.startRun();
   await expect.poll(() => app.s3.puts.length, { timeout: 30_000 }).toBeGreaterThan(0);
 });
@@ -935,7 +1113,7 @@ When('the dry run is started and completes', async ({ app }) => {
   await app.waitForRunPhase('done');
 });
 
-Then('the activity log has the preparing-upload entry', async ({ app }) => {
+Then('the run log has the preparing-upload entry', async ({ app }) => {
   expect(await app.logText()).toContain('preparing upload…');
 });
 
@@ -949,4 +1127,220 @@ Then('the browser wake lock was requested', async ({ app }) => {
 Then('releasing the held blob lets the upload complete', async ({ app }) => {
   app.s3.releaseHeldPuts();
   await app.waitForRunPhase('done');
+});
+
+// --- connection drops (AL1) ------------------------------------------------
+
+const DROP_BATCH_SIZE = 24;
+const dropBatchNames = () => manyJpegs(DROP_BATCH_SIZE).map((s) => s.path.split('/').pop()!).sort();
+const published = (app: App) => app.s3.puts.some((p) => p.key.endsWith('UploadComplete.json'));
+
+/** Upload folders this scenario created, leaving out the seeded prior upload. */
+function batchFolders(app: App): string[] {
+  const prefix = `${BUCKET_A}/${UPLOADS_PREFIX}`;
+  const folders = new Set<string>();
+  for (const key of app.s3.objects.keys()) {
+    if (key.startsWith(prefix) && !key.includes('2026.01.02')) folders.add(key.slice(prefix.length).split('/')[0]);
+  }
+  return [...folders];
+}
+
+function storedImageNames(app: App, folder: string): string[] {
+  return [...app.s3.objects.keys()]
+    .filter((k) => k.startsWith(`${BUCKET_A}/${UPLOADS_PREFIX}${folder}/`) && k.endsWith('.JPG'))
+    .map((k) => k.split('/').pop()!)
+    .sort();
+}
+
+// The writes the connection drops cut off, one per drop.
+const CUT_OFF = ['IMG_0004.JPG', 'IMG_0010.JPG', 'IMG_0016.JPG'];
+
+const gatedKey = (app: App, name: string) => app.s3.gated.find((k) => k.endsWith(`/${name}`));
+const logCount = async (app: App, text: string) => (await app.logText()).split(text).length - 1;
+
+/**
+ * Wait until the write for `name` is held at the mock, take the browser
+ * offline, then let that write go so it fails as a dropped connection would.
+ * Returns once the run has parked that file to wait for the network.
+ */
+async function cutOff(app: App, name: string): Promise<void> {
+  await expect.poll(() => gatedKey(app, name), { timeout: 60_000 }).toBeTruthy();
+  const key = gatedKey(app, name)!;
+  const waitsBefore = await logCount(app, `waiting for network to retry ${key}`);
+  app.s3.offline = true;
+  await app.page.context().setOffline(true);
+  app.s3.releaseGatedPut(key);
+  await expect.poll(() => app.s3.refusedOffline).toContain(`${BUCKET_A}/${key}`);
+  expect(app.s3.has(BUCKET_A, key)).toBe(false);
+  await expect
+    .poll(() => logCount(app, `waiting for network to retry ${key}`), { timeout: 30_000 })
+    .toBeGreaterThan(waitsBefore);
+  await expect(app.runPhase()).toHaveText('uploading');
+  app.notes.cutOffKey = key;
+}
+
+async function restoreConnection(app: App): Promise<void> {
+  const key = app.notes.cutOffKey as string;
+  const backBefore = await logCount(app, `network back, retrying ${key}`);
+  app.s3.offline = false;
+  await app.page.context().setOffline(false);
+  await expect.poll(() => logCount(app, `network back, retrying ${key}`)).toBeGreaterThan(backBefore);
+}
+
+/** Stop holding writes, letting any still at the gate through. */
+function openGate(app: App): void {
+  app.s3.gatePut = undefined;
+  for (const key of app.s3.gated) app.s3.releaseGatedPut(key);
+}
+
+Given('a real upload of many images is under way', async ({ app }) => {
+  await rescanFromUpload(app, manyJpegs(DROP_BATCH_SIZE));
+  await app.pinConcurrency(4);
+  const held = new Set<string>();
+  app.s3.gatePut = (_bucket, key) => {
+    const name = key.split('/').pop()!;
+    if (!CUT_OFF.includes(name) || held.has(name)) return false;
+    held.add(name);
+    return true;
+  };
+  await (await app.dryRunCheckbox()).uncheck();
+  await app.startRun();
+  // Count every click from here on, so a Then can show nobody restarted it.
+  await app.page.evaluate(() => {
+    const w = window as unknown as { __clicksAfterStart: number };
+    w.__clicksAfterStart = 0;
+    document.addEventListener('click', () => { w.__clicksAfterStart++; }, true);
+  });
+});
+
+Given('the connection drops while the upload is in progress', async ({ app }) => {
+  await cutOff(app, CUT_OFF[0]);
+});
+
+When('the connection returns', async ({ app }) => {
+  await restoreConnection(app);
+  openGate(app);
+});
+
+When('storage stops answering while the browser still reports being online', async ({ app }) => {
+  await expect.poll(() => gatedKey(app, CUT_OFF[0]), { timeout: 60_000 }).toBeTruthy();
+  const key = gatedKey(app, CUT_OFF[0])!;
+  // Keep the browser online and fail only the cut-off object with a transient
+  // response. The other 23 files can finish, so the scenario reaches the
+  // partial state quickly without spending the whole retry budget on every
+  // file while the mock is offline.
+  app.s3.putHooks.push((_bucket, candidate) =>
+    candidate === key ? { status: 503, code: 'ServiceUnavailable', message: 'temporarily unavailable' } : undefined,
+  );
+  app.s3.offline = true;
+  app.s3.releaseGatedPut(key);
+  await expect.poll(() => app.s3.refusedOffline).toContain(`${BUCKET_A}/${key}`);
+  app.s3.offline = false;
+  openGate(app);
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(true);
+});
+
+When('storage stops answering just as the upload is being published', async ({ app }) => {
+  // Every image lands; only the first UploadMeta.json write is held, then cut off.
+  app.s3.gatePut = (_bucket, key) => key.endsWith('/UploadMeta.json') && !gatedKey(app, 'UploadMeta.json');
+  for (const key of app.s3.gated) app.s3.releaseGatedPut(key);
+  await expect.poll(() => gatedKey(app, 'UploadMeta.json'), { timeout: 60_000 }).toBeTruthy();
+  const key = gatedKey(app, 'UploadMeta.json')!;
+  app.s3.offline = true;
+  app.s3.releaseGatedPut(key);
+  await expect.poll(() => app.s3.refusedOffline).toContain(`${BUCKET_A}/${key}`);
+  expect(published(app)).toBe(false);
+  expect(await app.page.evaluate(() => navigator.onLine)).toBe(true);
+});
+
+Then('the run stops as partial and says it picks up again on its own', async ({ app }) => {
+  await app.waitForRunPhase('partial', 120_000);
+  expect(await app.logText()).toContain('the upload picks up again on its own');
+});
+
+When('storage answers again', async ({ app }) => {
+  app.s3.offline = false;
+  app.s3.putHooks.length = 0;
+  openGate(app);
+});
+
+Then('the upload continues and is published with every image', async ({ app }) => {
+  await expect.poll(() => published(app), { timeout: 120_000 }).toBe(true);
+  const [folder] = batchFolders(app);
+  expect(storedImageNames(app, folder)).toEqual(dropBatchNames());
+});
+
+Then('nothing had to be clicked to restart it', async ({ app }) => {
+  const clicks = await app.page.evaluate(
+    () => (window as unknown as { __clicksAfterStart: number }).__clicksAfterStart,
+  );
+  expect(clicks).toBe(0);
+  await app.waitForRunPhase('done', 120_000);
+});
+
+When('the connection drops and returns three times during the upload', async ({ app }) => {
+  for (const name of CUT_OFF) {
+    await cutOff(app, name);
+    expect(published(app)).toBe(false);
+    await restoreConnection(app);
+  }
+});
+
+When('the upload finally completes', async ({ app }) => {
+  await app.waitForRunPhase('done', 120_000);
+});
+
+Then('the collection holds the batch in exactly one upload folder', async ({ app }) => {
+  const folders = batchFolders(app);
+  expect(folders).toHaveLength(1);
+  expect(storedImageNames(app, folders[0])).toEqual(dropBatchNames());
+});
+
+Then('History lists that upload once, as complete', async ({ app }) => {
+  expect(await app.readBatchRecords()).toHaveLength(1);
+  await app.gotoSection('History');
+  await expect(app.page.getByText('complete', { exact: true })).toHaveCount(1);
+  await expect(app.page.getByText('open', { exact: true })).toHaveCount(0);
+});
+
+Then('every image appears exactly once in the stored media.csv', async ({ app }) => {
+  expect(app.s3.puts.filter((p) => p.key.endsWith('media.csv'))).toHaveLength(1);
+  const [folder] = batchFolders(app);
+  expect(app.s3.text(BUCKET_A, `${UPLOADS_PREFIX}${folder}/media.csv`)).toBe(writtenBody(app, 'media.csv'));
+  const names = writtenCsvRows(app, 'media.csv').map((r) => r[6]).filter((n) => n.endsWith('.JPG'));
+  expect(names.sort()).toEqual(dropBatchNames());
+});
+
+Then('the Back explanation is keyboard discoverable', async ({ app }) => {
+  const ok = app.page.getByRole('button', { name: 'OK', exact: true });
+  if (await ok.isVisible()) await ok.click();
+  const group = app.page.getByRole('group', { name: 'Back navigation', exact: true });
+  await group.focus();
+  await group.press('Shift+Tab');
+  await app.page.keyboard.press('Tab');
+  await expect(group).toBeFocused();
+  await expect(group).toHaveAccessibleDescription(/Back is unavailable once a real upload starts, to prevent duplicate uploads/);
+  await expect(app.page.locator('#upload-back-help')).toBeVisible();
+});
+Then('Back returns to Describe after the dry run', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeEnabled();
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Describe');
+  expect(app.s3.puts).toHaveLength(0);
+});
+When('a fresh batch reaches Upload', async ({ app }) => {
+  await app.dropFolder(standardBatch());
+  await app.waitForInspected();
+  await app.continueToAssign();
+  await app.waitForCollections();
+  await app.chooseCollection(COLLECTION_A_NAME);
+  await app.chooseDeployment('Bear Canyon');
+  await app.setUploader('Ada Lovelace');
+  await app.setDescription('Next batch');
+  await app.continueToUpload();
+});
+Then('Back returns to Describe before another real run starts', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Back', exact: true })).toBeEnabled();
+  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+  await app.expectStep('Describe');
 });

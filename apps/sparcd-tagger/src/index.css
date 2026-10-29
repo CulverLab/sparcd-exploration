@@ -134,17 +134,65 @@ body {
   animation: fn-scan 3.2s ease-out infinite;
 }
 
+/* Focus loader: each track fades in, holds, then fades behind the animal. The
+   loader itself waits 200ms so a fast load never flashes it. */
+@keyframes fn-step {
+  0% {
+    opacity: 0;
+  }
+  6%,
+  45% {
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes fn-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+.fn-step {
+  opacity: 0.9;
+  animation: fn-step 2.8s linear infinite backwards;
+}
+
+.fn-appear {
+  animation: fn-appear 1ms 200ms backwards;
+}
+
+/* A thumbnail's paw while its photo downloads. */
+@keyframes fn-breathe {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.fn-breathe {
+  opacity: 0.25;
+  animation: fn-breathe 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fn-rise {
     opacity: 1;
     animation: none;
   }
   .fn-nudge,
-  .fn-scan {
+  .fn-scan,
+  .fn-step {
     animation: none;
   }
   .fn-scan {
     opacity: 0;
+  }
+  .fn-breathe {
+    animation: none;
+    opacity: 0.4;
   }
 }
 

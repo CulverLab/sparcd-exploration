@@ -70,6 +70,26 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   const activeAdmins = () => store.people().filter((p) => p.admin && p.status === 'active');
 
+  // Person and membership documents have separate ETags. Serialize the
+  // runner-sensitive read/check/write sequences in this API instance so two
+  // concurrent admin actions cannot both pass the last-runner check.
+  let runnerMutation = Promise.resolve();
+  async function serializeRunnerMutation(actor, fn) {
+    const previous = runnerMutation;
+    let release;
+    runnerMutation = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      // The caller was checked before the wait, and an edit queued ahead of
+      // this one may have paused or demoted them since, or the store may have
+      // fallen behind a change that does.
+      if (store.behind()) fail('forbidden', 'access data could not be refreshed');
+      const current = store.person(actor.id);
+      if (current?.status !== 'active') fail('forbidden', 'person is no longer active');
+      return await fn(current);
+    } finally { release(); }
+  }
+
   /**
    * One line per change, naming the change and its target. The admin screen
    * reads these directly, so "what happened" is a word and not a diff to
@@ -193,6 +213,9 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     if (path === '/-/admin/activity' && method === 'GET') {
       requireAdmin(person);
       requireNarrowRange(query);
+      const limit = query.get('limit') ? Number(query.get('limit')) : 200;
+      // NaN reads the whole range and then hands back an empty, untruncated page.
+      if (!Number.isInteger(limit) || limit < 1) fail('invalid', 'limit must be a positive integer');
       await activity.drain();
       return {
         status: 200,
@@ -202,7 +225,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
           person: query.get('person') ?? undefined,
           bucket: query.get('bucket') ?? undefined,
           kinds: parseKinds(query.get('kind')),
-          limit: query.get('limit') ? Number(query.get('limit')) : 200,
+          limit,
         }),
       };
     }
@@ -232,7 +255,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // Refused rather than quietly narrowed: an admin who asked for a year and
   // got a month back would read the short answer as the whole story.
   function requireNarrowRange(query) {
-    if (rangeTooWide(query.get('from'), query.get('to'))) {
+    const from = query.get('from');
+    const to = query.get('to');
+    const fromMs = from ? Date.parse(from) : null;
+    const toMs = to ? Date.parse(to) : null;
+    if ((from && Number.isNaN(fromMs)) || (to && Number.isNaN(toMs))) {
+      fail('invalid', 'from and to must be valid timestamps');
+    }
+    if (fromMs !== null && toMs !== null && fromMs > toMs) {
+      fail('invalid', 'from must be earlier than to');
+    }
+    if (rangeTooWide(from, to)) {
       fail('invalid', `from and to may span at most ${MAX_RANGE_DAYS} days`);
     }
   }
@@ -295,7 +328,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     };
   }
 
-  async function patchPerson(actor, id, input, requestId) {
+  async function patchPersonUnlocked(actor, id, input, requestId) {
     const person = store.person(id);
     if (!person) fail('not_found', 'no such person');
     if (input.admin !== undefined && typeof input.admin !== 'boolean') {
@@ -322,12 +355,19 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
 
+    if (person.status === 'active' && next.status !== 'active') {
+      requireActiveRunnerForPerson(person.id);
+    }
     const saved = await guard(() => store.savePerson(next, person.etag));
     if (activeAdmins().length === 0) {
       // Another proxy removed the other admin between the check and the write.
-      await store.savePerson({ ...person }, saved.etag).catch(() => {});
+      await store.savePerson({ ...person }, saved.writtenEtag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be paused or demoted');
     }
+    await undoIfStranded(
+      () => person.status === 'active' && saved.status !== 'active' && soleRunner(person.id),
+      () => store.savePerson({ ...person }, saved.writtenEtag),
+    );
 
     for (const [change, happened] of [
       ['paused', person.status === 'active' && saved.status === 'paused'],
@@ -339,7 +379,14 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     return { person: publicPerson(saved) };
   }
 
-  async function resetPerson(actor, id, requestId) {
+  function patchPerson(actor, id, input, requestId) {
+    return serializeRunnerMutation(actor, (current) => {
+      requireAdmin(current);
+      return patchPersonUnlocked(current, id, input, requestId);
+    });
+  }
+
+  async function resetPersonUnlocked(actor, id, requestId) {
     const person = store.person(id);
     if (!person) fail('not_found', 'no such person');
     if (person.admin && person.status === 'active' && activeAdmins().length <= 1) {
@@ -347,6 +394,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
     const retiredAt = new Date().toISOString();
     const { token, record } = newInvite();
+    if (person.status === 'active') requireActiveRunnerForPerson(person.id);
     const saved = await guard(() => store.savePerson({
       ...person,
       status: 'invited',
@@ -356,11 +404,22 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     // The same recheck PATCH does: a reset is the other way to lose the last
     // admin, and another proxy may have removed the other one in between.
     if (activeAdmins().length === 0) {
-      await store.savePerson({ ...person }, saved.etag).catch(() => {});
+      await store.savePerson({ ...person }, saved.writtenEtag).catch(() => {});
       fail('last_admin', 'the last active admin cannot be reset');
     }
+    await undoIfStranded(
+      () => person.status === 'active' && soleRunner(person.id),
+      () => store.savePerson({ ...person }, saved.writtenEtag),
+    );
     logChange(actor, requestId, 'reset', person);
     return { invite: { token, expiresAt: record.expiresAt } };
+  }
+
+  function resetPerson(actor, id, requestId) {
+    return serializeRunnerMutation(actor, (current) => {
+      requireAdmin(current);
+      return resetPersonUnlocked(current, id, requestId);
+    });
   }
 
   function mayEdit(actor, collection) {
@@ -386,7 +445,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     grantedAt: new Date().toISOString(),
   });
 
-  const hasRunner = (members) => members.some((m) => m.access === 'run');
+  // Invited and paused people cannot use collection access. A runner guard
+  // therefore counts only members whose person record is currently active.
+  const hasRunner = (members) => members.some((m) =>
+    m.access === 'run' && store.person(m.personId)?.status === 'active');
 
   function requireRunner(members) {
     if (!hasRunner(members)) {
@@ -405,8 +467,31 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     }
   }
 
+  /** True when `personId` runs a collection that no other active member runs. */
+  const soleRunner = (personId) => store.collections().some((c) =>
+    c.members.some((m) => m.personId === personId && m.access === 'run')
+    && !hasRunner(c.members.filter((m) => m.personId !== personId)));
+
+  function requireActiveRunnerForPerson(personId) {
+    if (soleRunner(personId)) {
+      fail('last_runner', 'this would leave the collection without an active runner');
+    }
+  }
+
+  // The lock above is per process. Another proxy can pause a collection's other
+  // runner between this one's check and its write, and the two writes touch
+  // different documents. Each side reads again after writing, so at least one
+  // of them sees the other's change, and that one puts its own back. The undo
+  // is guarded by the ETag of its own write, never the reloaded one: a later
+  // write by someone else makes it fail rather than be overwritten.
+  async function undoIfStranded(stranded, undo) {
+    if (!stranded()) return;
+    await undo().catch(() => {});
+    fail('last_runner', 'this would leave the collection without an active runner');
+  }
+
   /** The whole-list form, guarded by the version the caller last read. */
-  async function putMembers(actor, bucket, input, headers, requestId) {
+  async function putMembersUnlocked(actor, bucket, input, headers, requestId) {
     const collection = store.collection(bucket);
     if (!collection) fail('not_found', 'no such collection');
     mayEdit(actor, collection);
@@ -425,15 +510,24 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
     const before = collection.members;
     const saved = await guard(() => store.saveMembers(bucket, members, version));
+    await undoIfStranded(
+      () => !hasRunner(saved.members),
+      () => store.saveMembers(bucket, before, saved.writtenEtag),
+    );
     logMemberDiff(actor, requestId, collection, before, saved.members);
     return { members: saved.members, membersVersion: saved.membersEtag ?? null };
+  }
+
+  function putMembers(actor, bucket, input, headers, requestId) {
+    return serializeRunnerMutation(actor,
+      (current) => putMembersUnlocked(current, bucket, input, headers, requestId));
   }
 
   /**
    * The per-person form. The read-modify-write is the server's, so two admins
    * editing different people in one collection do not have to take turns.
    */
-  async function editOneMember(actor, bucket, mutate, requestId, { skipPermissionCheck } = {}) {
+  async function editOneMemberUnlocked(actor, bucket, mutate, requestId, { skipPermissionCheck } = {}) {
     for (let attempt = 0; ; attempt += 1) {
       const collection = store.collection(bucket);
       if (!collection) fail('not_found', `no such collection ${bucket}`);
@@ -444,6 +538,10 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       requireNotStranded(before, members);
       try {
         const saved = await store.saveMembers(bucket, members, collection.membersEtag ?? null);
+        await undoIfStranded(
+          () => hasRunner(before) && !hasRunner(saved.members),
+          () => store.saveMembers(bucket, before, saved.writtenEtag),
+        );
         logMemberDiff(actor, requestId, collection, before, saved.members);
         return { members: saved.members, membersVersion: saved.membersEtag ?? null };
       } catch (err) {
@@ -454,6 +552,11 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
         await store.reload();
       }
     }
+  }
+
+  function editOneMember(actor, bucket, mutate, requestId, options) {
+    return serializeRunnerMutation(actor,
+      (current) => editOneMemberUnlocked(current, bucket, mutate, requestId, options));
   }
 
   function setOneMember(actor, bucket, personId, input, requestId, options) {

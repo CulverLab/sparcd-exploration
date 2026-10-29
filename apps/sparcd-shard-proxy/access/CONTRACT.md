@@ -80,7 +80,37 @@ Every active person: GetObject/HeadObject/ListObjectsV2 on the settings bucket u
 the namespace except invariant 4, plus reading `Settings/activity/**`.
 A person sees a collection bucket in ListBuckets only with a membership; everyone
 active sees the settings bucket. Paused or invited people get 403 on everything.
-`exactLocations` is stored and returned but not yet enforced (team decision pending).
+`exactLocations` controls coordinate redaction. For non-admin callers, the proxy always
+redacts `latProperty`/`lngProperty` from `Settings/locations.json`; it redacts those
+fields from a collection's `locations.json` and blanks longitude/latitude columns in
+that collection's `deployments.csv` unless the caller's membership has
+`exactLocations: true`. Names, IDs, elevation, and deployment relationships remain
+available. A missing `members.json` means no membership and therefore no collection
+access for regular users. Admin callers retain exact-coordinate access.
+
+For coordinate-restricted responses, the proxy also replaces content-derived
+ETags and `x-amz-meta-sha256` values with stable keyed opaque validators, removes
+`Content-Length` from `HEAD`, removes `Content-Range` from redacted reads, and
+removes `x-amz-checksum-*` response headers. It sets the `Size` of protected
+entries to zero in object listings. Conditional
+read headers are verified as part of the caller signature but are not sent
+upstream, so raw storage validators cannot reveal whether a private byte version
+matches. The exact-data `metadataBundleSha256` in `UploadComplete.json` is also
+replaced with a keyed value. A create-only retry of `UploadComplete.json` after a
+lost response is accepted when its public completion fields match the stored
+object. The hidden metadata digest is excluded from that decision, so retry
+status cannot be used to test digest guesses; a change to public fields remains
+a 412 conflict.
+
+An upload-only member may create or replace a canonical `deployments.csv` only
+when both coordinate columns are blank and the write carries a signed S3
+precondition. The proxy fills coordinates from the collection's non-empty
+`locations.json`, falling back to `Settings/locations.json` only when the
+collection registry is missing or empty. A deployment row must match exactly
+one current location by ID, name, and elevation; stale or ambiguous rows are
+refused. The legacy Cloudflare Worker and Caddy passthrough recipe have no
+per-person membership model and must not be used where exact-location access
+differs between users.
 CopyObject, ListMultipartUploads, bucket create/delete, ACL, policy, versioning and
 tagging calls are 403.
 
@@ -102,8 +132,8 @@ object-lock family, `x-amz-trailer` — is refused.
 
 `If-Match` is forwarded with the quotes stripped from each tag, after the caller's
 signature has been verified against what they sent, because Ceph RGW answers 412 to a
-quoted tag on a PUT even when it is current; ETags come back to the client exactly as
-the upstream wrote them.
+quoted tag on a PUT even when it is current. Unrestricted ETags come back to the client
+as the upstream wrote them; validators for coordinate-protected objects are opaque.
 
 Object keys are refused when a decoded segment is `.` or `..`, or the key contains a
 backslash or a NUL, or starts with `/`.
@@ -121,7 +151,7 @@ one of exactly these:
 | `forbidden` | 403 | the caller may not do this |
 | `not_found` | 404 | no such endpoint, person, collection or invite |
 | `last_admin` | 409 | the change would leave no active admin |
-| `last_runner` | 409 | the change would leave the collection with no `run` member |
+| `last_runner` | 409 | the change would leave the collection with no active `run` member |
 | `changed_elsewhere` | 412 | the `If-Match` version is stale |
 | `too_large` | 413 | the body is over `MAX_BODY_BYTES` |
 | `busy` | 503 | `MAX_BUFFERED_BYTES` is already in flight |
@@ -140,8 +170,11 @@ Admin only:
 - `PATCH /-/admin/people/:id` `{ name?, email?, admin?, status?: "active"|"paused" }` → `{ person }`.
   `admin` must be a boolean and `status` one of the two words, or 400 `invalid`. The
   last active admin cannot be paused or demoted (409 `last_admin`), checked against the
-  resulting object and again after the write.
-- `POST /-/admin/people/:id/reset` → retires every key, status back to `invited`, → `{ invite }`
+  resulting object and again after the write. Pausing a person who is a collection's
+  last active `run` member is 409 `last_runner`.
+- `POST /-/admin/people/:id/reset` → retires every key, status back to `invited`, → `{ invite }`.
+  Resetting an active person who is a collection's last active `run` member is 409
+  `last_runner`; a paused or invited person can always be reset.
 - `GET /-/admin/collections` → `{ collections: [{ bucket, uuid, name, organization, membersVersion, members: [...with person names] }] }`.
   `membersVersion` is an opaque string, or `null` when the collection has no members
   file yet.
@@ -149,22 +182,32 @@ Admin only:
   → `{ members, membersVersion }`. Requires `If-Match: <membersVersion>`, or
   `If-None-Match: *` when it was `null`. A stale version is 412 `changed_elsewhere`.
   People with `run` on that collection may call it too. At least one member with `run`
-  is required (409 `last_runner`).
+  whose person is active is required (409 `last_runner`): a list whose only runner is
+  still `invited`, or `paused`, is refused.
 - `PUT /-/admin/collections/:bucket/members/:personId` `{ access, exactLocations? }` and
   `DELETE /-/admin/collections/:bucket/members/:personId` → `{ members, membersVersion }`.
   The server does the read-modify-write and retries up to three times on a conflict, so
   these need no `If-Match`. Same permission rule. The last-`run` rule here protects an
   existing runner rather than demanding one: an edit that would remove the collection's
-  last `run` member is 409 `last_runner`, while a collection that has no members yet can
-  receive its first at any level.
+  last active `run` member is 409 `last_runner`, while a collection that has no active
+  runner yet can receive any grant.
+
+Every `last_runner` rule is checked before the write and again after it. Another proxy
+can change the other runner in between, so a write that turns out to have left the
+collection with no active runner is put back and answered 409 `last_runner`.
+
 - `GET /-/admin/activity?from=&to=&person=&bucket=&kind=&limit=` → `{ events: [...], truncated }`.
   `kind` is a comma-separated list and matches any of them; a kind outside the set below is
-  400 `invalid`, and no `kind` at all is every kind.
-- `GET /-/admin/activity/downloads?bucket=&key=` → `{ events: [...] }`. `key` matches an
-  event whose key equals it or whose last path segment equals it, case-sensitive.
+  400 `invalid`, and no `kind` at all is every kind. `from` and `to` are ISO 8601
+  instants; one that does not parse, a `from` later than `to`, or a span over 31 days is
+  400 `invalid`. `limit` defaults to 200 and must be a positive integer, or 400 `invalid`.
+- `GET /-/admin/activity/downloads?bucket=&key=&from=&to=` → `{ events: [...] }`. `key`
+  matches an event whose key equals it or whose last path segment equals it,
+  case-sensitive. `from` and `to` follow the rules above.
 
 Access changes take effect on the proxy that made them at once, and on any other proxy
-within 5 s (each polls `generation.json`).
+within 5 s (each polls `generation.json`). A proxy whose poll finds a change it then
+cannot load answers every signed request with 403 until a reload succeeds.
 
 ## Activity events
 
@@ -172,7 +215,8 @@ One JSON object per line:
 `{ ts, requestId, personId, personName, kind, bucket, key?, status, bytes?, ip?, detail? }`
 `kind`: `download` (GetObject 2xx on a media file), `upload`, `identify`, `list-change`
 (Settings/ writes), `collection-change`, `access-change` (API writes), `denied` (rule
-403), `bad-signature` (aggregated per source per minute, `detail.count` holds how many),
+403), `bad-signature` (aggregated per source until the next flush, and for at most a
+minute; `detail.count` holds how many, and a source still failing gets a new line),
 `sign-in` (first request per key per day), `log-gap` (the writer dropped lines under
 back-pressure, `detail.dropped` holds how many). Listing and metadata reads are not
 logged.

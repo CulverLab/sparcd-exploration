@@ -13,7 +13,7 @@ import {
 import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
 import { makeActivity, KINDS, MAX_RANGE_DAYS, rangeTooWide } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
-import { ERROR_CODES } from '../api.mjs';
+import { ERROR_CODES, makeApi } from '../api.mjs';
 import { listAroundProtectedTrees } from '../server.mjs';
 
 const ns = makeNamespace({ namespace: 't-', allow: 'sparcd,sparcd-*' });
@@ -236,6 +236,19 @@ describe('finding 13: the activity writer under back-pressure', () => {
     assert.equal(bad.length, 2, `got ${bad.length} lines`);
     assert.equal(bad.find((l) => l.ip === '10.0.0.1').detail.count, 50);
     assert.equal(bad.find((l) => l.ip === '10.0.0.2').detail.count, 3);
+  });
+
+  test('failures after their line is written are counted on a new line', async () => {
+    const stub = stubUpstream({ failing: false });
+    const activity = makeActivity({
+      upstream: stub.client, settingsBucket: () => 'b', flushMs: 5,
+    });
+    for (let i = 0; i < 2; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    while (stub.written.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    for (let i = 0; i < 3; i += 1) activity.badSignature('10.0.0.1', { detail: 'signature mismatch' });
+    await activity.drain();
+    const lines = stub.written.flatMap((w) => w.body.trim().split('\n')).map(JSON.parse);
+    assert.deepEqual(lines.filter((l) => l.kind === 'bad-signature').map((l) => l.detail.count), [2, 3]);
   });
 });
 
@@ -718,5 +731,439 @@ describe('a settings listing pages through folders as well as keys', () => {
     assert.deepEqual(page.commonPrefixes, ['Settings/a/', 'Settings/b/']);
     assert.equal(page.truncated, true, 'a full page of folders reported as complete');
     assert.equal(page.nextToken, afterTree('Settings/b/'));
+  });
+
+  test('paging returns every folder and key once, whatever the page size', async () => {
+    const names = ['Settings/a.json', 'Settings/b/', 'Settings/c.json', 'Settings/d/', 'Settings/e.json'];
+    // An upstream that honours start-after and answers two entries at a time.
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => {
+        const rest = names.filter((n) => !startAfter || n > startAfter);
+        const page = rest.slice(0, 2);
+        return {
+          keys: page.filter((n) => !n.endsWith('/')).map((key) => ({ key })),
+          commonPrefixes: page.filter((n) => n.endsWith('/')),
+          nextToken: rest.length > 2 ? 'more' : null,
+        };
+      },
+    };
+    for (const maxKeys of [1, 2, 1000]) {
+      const seen = [];
+      let after = null;
+      do {
+        const page = await listAroundProtectedTrees({
+          upstream, bucket: 'b', prefix: 'Settings/', delimiter: '/', maxKeys, after,
+          hidden: () => false, hiddenTrees: [],
+        });
+        seen.push(...page.commonPrefixes, ...page.keys.map((k) => k.key));
+        after = page.nextToken;
+      } while (after);
+      assert.deepEqual(seen.sort(), names, `max-keys ${maxKeys}`);
+    }
+  });
+
+  test('paging keeps the upstream\'s UTF-8 byte order', async () => {
+    // U+FF5A is EF BD 9A and U+1F600 is F0 9F 98 80, so S3 lists the first
+    // one first. Compared as UTF-16 code units they swap.
+    const names = ['Settings/ｚ.json', 'Settings/\u{1F600}.json'];
+    const utf8 = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+    const upstream = {
+      listPage: async (bucket, { startAfter }) => ({
+        keys: names.filter((n) => !startAfter || utf8(n, startAfter) > 0).map((key) => ({ key })),
+        commonPrefixes: [],
+        nextToken: null,
+      }),
+    };
+    const seen = [];
+    let after = null;
+    do {
+      const page = await listAroundProtectedTrees({
+        upstream, bucket: 'b', prefix: 'Settings/', delimiter: '', maxKeys: 1, after,
+        hidden: () => false, hiddenTrees: [],
+      });
+      seen.push(...page.keys.map((k) => k.key));
+      after = page.nextToken;
+    } while (after);
+    assert.deepEqual(seen, names);
+  });
+
+  const walk = (upstream, hiddenTrees = []) => listAroundProtectedTrees({
+    upstream,
+    bucket: 't-sparcd-settings-x',
+    prefix: 'Settings/',
+    delimiter: '',
+    maxKeys: 1000,
+    after: null,
+    hidden: (k) => hiddenTrees.some((t) => k.startsWith(t)),
+    hiddenTrees,
+  });
+
+  test('a walk that runs out of upstream pages says so and can be resumed', async () => {
+    const page = await walk({
+      listPage: async (bucket, { startAfter }) => {
+        const n = startAfter ? Number(startAfter.slice(-3)) + 1 : 0;
+        return {
+          keys: [{ key: `Settings/k${String(n).padStart(3, '0')}` }], commonPrefixes: [], nextToken: 'more',
+        };
+      },
+    });
+    assert.equal(page.keys.length, 20);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.equal(page.nextToken, 'Settings/k019');
+  });
+
+  test('a walk spent stepping over hidden trees still ends truncated', async () => {
+    const page = await walk({
+      listPage: async () => ({
+        keys: [{ key: 'Settings/access/people/p.json' }], commonPrefixes: [], nextToken: 'more',
+      }),
+    }, ['Settings/access/']);
+    assert.equal(page.keys.length, 0);
+    assert.equal(page.truncated, true, 'a capped walk reported as complete');
+    assert.ok(page.nextToken);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The API over a store over one in-memory upstream. Two stores over the same
+// upstream are two proxies, each with a cache the other does not refresh.
+// ---------------------------------------------------------------------------
+
+const UUID = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
+const COLLECTION = `sparcd-${UUID}`;
+const SETTINGS_UP = 't-sparcd-settings-x';
+
+function memoryUpstream(people, members) {
+  const objects = new Map();
+  let writes = 0;
+  const upstream = {
+    objects,
+    listBuckets: async () => [SETTINGS_UP, `t-${COLLECTION}`],
+    getJson: async (bucket, key) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      return hit ? { status: 200, etag: hit.etag, value: JSON.parse(hit.body) } : { status: 404 };
+    },
+    get: async () => ({ status: 404 }),
+    listKeys: async (bucket, prefix) => [...objects.keys()]
+      .filter((k) => k.startsWith(`${bucket}/${prefix}`))
+      .map((k) => k.slice(bucket.length + 1)),
+    put: async (bucket, key, body, guard = {}) => {
+      const hit = objects.get(`${bucket}/${key}`);
+      if (guard.ifNoneMatch === '*' && hit) return false;
+      if (guard.ifMatch && guard.ifMatch !== hit?.etag) return false;
+      writes += 1;
+      const etag = `"w${writes}"`;
+      objects.set(`${bucket}/${key}`, { body: String(body), etag });
+      return etag;
+    },
+  };
+  for (const p of people) {
+    objects.set(`${SETTINGS_UP}/Settings/access/people/${p.id}.json`, {
+      body: JSON.stringify({ admin: false, keys: [], ...p }), etag: `"${p.id}"`,
+    });
+  }
+  objects.set(`t-${COLLECTION}/Collections/${UUID}/members.json`, {
+    body: JSON.stringify({ schemaVersion: 1, members }), etag: '"members"',
+  });
+  return upstream;
+}
+
+async function accessApi(upstream) {
+  const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+  await store.reload();
+  const activity = {
+    record() {},
+    drain: async () => {},
+    query: async () => ({ events: [], truncated: false }),
+    downloads: async () => ({ events: [] }),
+  };
+  const api = makeApi({
+    store, activity, lastActive: new Map(), publicEndpoint: 'http://proxy.example.org',
+  });
+  const call = (actorId, method, target, body, headers = {}) => {
+    const url = new URL(target, 'http://proxy.example.org');
+    return api.handle({
+      method, path: url.pathname, query: url.searchParams, headers: new Headers(headers),
+      body: body && Buffer.from(JSON.stringify(body)), person: store.person(actorId), requestId: 'test',
+    });
+  };
+  return { store, call };
+}
+
+const admin = { id: 'admin', name: 'Admin', status: 'active', admin: true };
+
+describe('activity filters the API takes', () => {
+  test('an unparseable or reversed date is invalid, not a server error', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const q of ['from=yesterday', 'to=nope', 'from=2026-02-02T00:00:00Z&to=2026-02-01T00:00:00Z']) {
+      for (const path of ['/-/admin/activity', '/-/admin/activity/downloads']) {
+        await assert.rejects(call('admin', 'GET', `${path}?${q}`), { code: 'invalid' }, `${path}?${q}`);
+      }
+    }
+    const ok = await call('admin', 'GET', '/-/admin/activity?from=2026-02-01T00:00:00Z&to=2026-02-02T00:00:00Z');
+    assert.equal(ok.status, 200);
+  });
+
+  test('a limit that is not a positive integer is invalid, not an empty page', async () => {
+    const { call } = await accessApi(memoryUpstream([admin], []));
+    for (const limit of ['abc', '0', '-5', '2.5']) {
+      await assert.rejects(call('admin', 'GET', `/-/admin/activity?limit=${limit}`), { code: 'invalid' }, limit);
+    }
+    assert.equal((await call('admin', 'GET', '/-/admin/activity?limit=50')).status, 200);
+  });
+});
+
+describe('a collection keeps a runner who can act on it', () => {
+  test('a member list whose only runner is still invited is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'invited' }],
+      [{ personId: 'r1', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members`, {
+      members: [{ personId: 'r1', access: 'look' }, { personId: 'r2', access: 'run' }],
+    }, { 'if-match': '"members"' }), { code: 'last_runner' });
+  });
+
+  test('pausing or resetting the last active runner is refused, a paused one is not', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'paused' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    await assert.rejects(call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    await assert.rejects(call('admin', 'POST', '/-/admin/people/r1/reset'), { code: 'last_runner' });
+    assert.equal((await call('admin', 'POST', '/-/admin/people/r2/reset')).status, 200);
+  });
+
+  test('two pauses at once on one proxy cannot both pass the check', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const { call } = await accessApi(upstream);
+    const results = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(results.find((r) => r.status === 'rejected').reason.code, 'last_runner');
+  });
+
+  test('an edit queued behind its caller\'s own pause is refused', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'a2', status: 'active', admin: true }, { id: 'p1', status: 'active' }],
+      [],
+    );
+    const { call } = await accessApi(upstream);
+    // a2 is checked and queued while still an active admin, then paused ahead of their turn.
+    const [pause, queued] = await Promise.allSettled([
+      call('admin', 'PATCH', '/-/admin/people/a2', { status: 'paused' }),
+      call('a2', 'PATCH', '/-/admin/people/p1', { status: 'paused' }),
+    ]);
+    assert.equal(pause.status, 'fulfilled');
+    assert.equal(queued.reason?.code, 'forbidden');
+  });
+});
+
+describe('two proxies cannot strand a collection between them', () => {
+  const twoRunners = () => memoryUpstream(
+    [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }],
+    [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+  );
+  const stored = (upstream, key) => JSON.parse(upstream.objects.get(key).body);
+  const personKey = (id) => `${SETTINGS_UP}/Settings/access/people/${id}.json`;
+  const membersKey = `t-${COLLECTION}/Collections/${UUID}/members.json`;
+
+  // The second proxy has not polled since the first paused r1, so its own
+  // check still counts r1 as an active runner.
+  test('a pause that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' }),
+      { code: 'last_runner' });
+    assert.equal(stored(upstream, personKey('r2')).status, 'active', 'the pause was not put back');
+  });
+
+  test('a member removal that the other proxy\'s pause made the last is undone', async () => {
+    const upstream = twoRunners();
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'r2' && m.access === 'run'),
+      'the removal was not put back');
+  });
+
+  // Runs `between` once, right after the next write to `key` lands and before
+  // the writer reloads: the other proxy acting in that gap.
+  const afterWrite = (upstream, key, between) => {
+    const put = upstream.put;
+    upstream.put = async (bucket, k, ...rest) => {
+      const written = await put(bucket, k, ...rest);
+      if (`${bucket}/${k}` === key) { upstream.put = put; await between(); }
+      return written;
+    };
+  };
+
+  test('a rollback leaves the other proxy\'s later reset in place', async () => {
+    const KEY = { accessKeyId: 'SPKR1AAAAAAAAAAAAAAAA', wrappedSecret: 'v1.x.y' };
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active', keys: [KEY] }, { id: 'r2', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r2', { status: 'paused' })).status, 200);
+    afterWrite(upstream, personKey('r1'), async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'POST', '/-/admin/people/r1/reset')).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' }),
+      { code: 'last_runner' });
+    const r1 = stored(upstream, personKey('r1'));
+    assert.equal(r1.status, 'invited', 'the rollback undid the reset');
+    assert.ok(r1.keys.every((k) => k.retiredAt), 'the retired key works again');
+  });
+
+  test('a member rollback leaves the other proxy\'s later grant in place', async () => {
+    const upstream = memoryUpstream(
+      [admin, { id: 'r1', status: 'active' }, { id: 'r2', status: 'active' }, { id: 'p3', status: 'active' }],
+      [{ personId: 'r1', access: 'run' }, { personId: 'r2', access: 'run' }],
+    );
+    const one = await accessApi(upstream);
+    const two = await accessApi(upstream);
+    assert.equal((await one.call('admin', 'PATCH', '/-/admin/people/r1', { status: 'paused' })).status, 200);
+    afterWrite(upstream, membersKey, async () => {
+      await one.store.reload();
+      assert.equal((await one.call('admin', 'PUT', `/-/admin/collections/${COLLECTION}/members/p3`,
+        { access: 'look' })).status, 200);
+    });
+    await assert.rejects(two.call('admin', 'DELETE', `/-/admin/collections/${COLLECTION}/members/r2`),
+      { code: 'last_runner' });
+    assert.ok(stored(upstream, membersKey).members.some((m) => m.personId === 'p3'),
+      'the rollback undid the grant');
+  });
+});
+
+describe('a poll that cannot load a change fails closed', () => {
+  test('a newer generation that will not load holds the store behind until it does', { timeout: 5000 }, async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5 });
+    await store.reload();
+    assert.equal(store.behind(), false);
+
+    // Another proxy bumps the counter, and this one can then read nothing else.
+    upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+      body: '{"generation":1}', etag: '"g1"',
+    });
+    const listBuckets = upstream.listBuckets;
+    upstream.listBuckets = async () => { throw new Error('upstream is down for this'); };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+    store.start();
+    try {
+      while (!store.behind()) await tick();
+      upstream.listBuckets = listBuckets;
+      while (store.behind()) await tick();
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
+
+  test('a failing periodic full reload still notices a newer generation', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    // Every poll is due a full reload.
+    const store = makeStore({
+      upstream, namespace: 't-', allow: 'sparcd,sparcd-*', pollMs: 5, fullReloadMs: 0,
+    });
+    await store.reload();
+    const listBuckets = upstream.listBuckets;
+    let failures = 0;
+    upstream.listBuckets = async () => { failures += 1; throw new Error('upstream is down for this'); };
+    const until = async (done, message) => {
+      for (let i = 0; i < 400 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.ok(done(), message);
+    };
+    store.start();
+    try {
+      // Nothing is known to have changed, so failing reloads alone refuse nobody.
+      await until(() => failures >= 3, 'no full reload was attempted');
+      assert.equal(store.behind(), false);
+
+      upstream.objects.set(`${SETTINGS_UP}/Settings/access/generation.json`, {
+        body: '{"generation":1}', etag: '"g1"',
+      });
+      await until(() => store.behind(), 'a known change was never noticed');
+      upstream.listBuckets = listBuckets;
+      await until(() => !store.behind(), 'still behind after a reload succeeded');
+      assert.equal(store.snapshot().generation, 1);
+    } finally {
+      store.stop();
+    }
+  });
+
+  test('an edit queued before the store fell behind is refused when its turn comes', async () => {
+    const upstream = memoryUpstream([admin, { id: 'p1', status: 'active' }, { id: 'p2', status: 'active' }], []);
+    const { store, call } = await accessApi(upstream);
+    // The first edit's write waits for the test, holding the queue behind it.
+    const put = upstream.put;
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    let holding = false;
+    upstream.put = async (...args) => {
+      upstream.put = put;
+      holding = true;
+      await held;
+      return put(...args);
+    };
+    const first = call('admin', 'PATCH', '/-/admin/people/p1', { name: 'P one' });
+    const queued = call('admin', 'PATCH', '/-/admin/people/p2', { status: 'paused' });
+    while (!holding) await new Promise((resolve) => setImmediate(resolve));
+    store.behind = () => true;
+    release();
+    assert.equal((await first).status, 200);
+    await assert.rejects(queued, { code: 'forbidden' });
+    const p2 = JSON.parse(upstream.objects.get(`${SETTINGS_UP}/Settings/access/people/p2.json`).body);
+    assert.equal(p2.status, 'active');
+  });
+});
+
+describe('a reload already in flight cannot undo a write', () => {
+  const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+  test('a reload that read a person before their pause does not bring them back', async () => {
+    const upstream = memoryUpstream([{ id: 'p1', status: 'active' }], []);
+    const store = makeStore({ upstream, namespace: 't-', allow: 'sparcd,sparcd-*' });
+    await store.reload();
+
+    // Person reads answer with what was stored when they were asked, but only
+    // when the test lets them.
+    const read = upstream.getJson;
+    const held = [];
+    let holding = true;
+    upstream.getJson = async (bucket, key) => {
+      const value = await read(bucket, key);
+      if (holding && key.includes('/people/')) await new Promise((resolve) => held.push(resolve));
+      return value;
+    };
+
+    const stale = store.reload();
+    while (held.length === 0) await turn();
+    const saving = store.savePerson({ ...store.person('p1'), status: 'paused' }, store.person('p1').etag);
+    while (store.person('p1').status !== 'paused') await turn();
+
+    held.splice(0).forEach((release) => release());
+    await stale;
+    assert.equal(store.person('p1').status, 'paused', 'the older reload put the person back');
+
+    holding = false;
+    held.splice(0).forEach((release) => release());
+    await saving;
+    assert.equal(store.person('p1').status, 'paused');
   });
 });

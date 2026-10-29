@@ -15,6 +15,10 @@ Given('an upload is open in the tagging workspace', async ({ page }) => {
   await openWorkspace(page);
 });
 
+Given('the fresh upload is open in the tagging workspace', async ({ page }) => {
+  await openWorkspace(page, 'newuploader');
+});
+
 Given('an image is focused', async ({ page }) => {
   await focusFrame(page, 'IMG002.JPG');
 });
@@ -25,19 +29,14 @@ Given('several images are selected', async ({ page }) => {
   await expect(positionReadout(page)).toHaveText('3 selected');
 });
 
-Given('a tagger identity has been set in Settings', async ({ page }) => {
+Given('the connected account is ready for attribution', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
-  await page.locator('#user').fill('jgonzalez');
+  await expect(page.locator('#user')).toHaveValue('testkey');
   await sectionTab(page, 'Tag').click();
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
+  await expect(page.getByTestId('automatic-save')).toBeVisible();
 });
 
-Given('the dry-run setting has been switched off', async ({ page }) => {
-  await sectionTab(page, 'Settings').click();
-  await settingsDryRunCheckbox(page).uncheck();
-  await sectionTab(page, 'Tag').click();
-  await expect(page.getByRole('button', { name: 'Sync…' })).toBeVisible();
-});
+
 
 Given('burst grouping is switched on in Settings', async ({ page }) => {
   await sectionTab(page, 'Settings').click();
@@ -52,4 +51,3 @@ Given('burst grouping is switched on', async ({ page }) => {
   await sectionTab(page, 'Tag').click();
   await expect(page.getByText(/^Burst 1 ·/)).toBeVisible();
 });
-
