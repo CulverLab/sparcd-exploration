@@ -103,12 +103,25 @@ function encodeXmlText(value) {
   return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-function redactListingEntries(xml, shouldRedact, opaqueEtag) {
+// With `encoding-type=url` the upstream percent-encodes each key, slashes
+// included, so the key is decoded before the check. One that will not decode
+// is redacted.
+function listedKey(text, urlEncoded) {
+  if (!urlEncoded) return text;
+  try {
+    return decodeURIComponent(text.replaceAll('+', ' '));
+  } catch {
+    return null;
+  }
+}
+
+export function redactListingEntries(xml, shouldRedact, opaqueEtag) {
+  const urlEncoded = /<EncodingType>url<\/EncodingType>/.test(xml);
   return xml.replace(/<Contents>([\s\S]*?)<\/Contents>/g, (block) => {
     const keyMatch = /<Key>([\s\S]*?)<\/Key>/.exec(block);
     if (!keyMatch) return block;
-    const key = decodeXmlText(keyMatch[1]);
-    if (!shouldRedact(key)) return block;
+    const key = listedKey(decodeXmlText(keyMatch[1]), urlEncoded);
+    if (key !== null && !shouldRedact(key)) return block;
     const etagMatch = /<ETag>([\s\S]*?)<\/ETag>/.exec(block);
     const etag = etagMatch ? decodeXmlText(etagMatch[1]) : '';
     const safeEtag = '<ETag>' + encodeXmlText(opaqueEtag(etag)) + '</ETag>';

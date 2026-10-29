@@ -14,7 +14,7 @@ import { peekAccessKeyId, verifySignature } from '../sigv4.mjs';
 import { makeActivity, KINDS, MAX_RANGE_DAYS, rangeTooWide } from '../activity.mjs';
 import { makeStore } from '../store.mjs';
 import { ERROR_CODES, makeApi } from '../api.mjs';
-import { listAroundProtectedTrees } from '../server.mjs';
+import { listAroundProtectedTrees, redactListingEntries } from '../server.mjs';
 
 const ns = makeNamespace({ namespace: 't-', allow: 'sparcd,sparcd-*' });
 
@@ -1271,5 +1271,24 @@ describe('a reload already in flight cannot undo a write', () => {
     held.splice(0).forEach((release) => release());
     await saving;
     assert.equal(store.person('p1').status, 'paused');
+  });
+});
+
+describe('a url-encoded listing is redacted like a plain one', () => {
+  const entry = (key) => `<Contents><Key>${key}</Key><ETag>&#34;raw&#34;</ETag><Size>1234</Size></Contents>`;
+  const redact = (xml) => redactListingEntries(
+    xml, (key) => key.endsWith('/deployments.csv'), () => '"opaque"');
+
+  test('a percent-encoded coordinate file is caught', () => {
+    const out = redact('<ListBucketResult><EncodingType>url</EncodingType>'
+      + `${entry('Collections%2Fu%2FUploads%2Fa+b%2Fdeployments.csv')}`
+      + `${entry('Collections%2Fu%2FUploads%2Fa+b%2Fmedia.csv')}</ListBucketResult>`);
+    assert.match(out, /deployments\.csv<\/Key><ETag>"opaque"<\/ETag><Size>0<\/Size>/);
+    assert.match(out, /media\.csv<\/Key><ETag>&#34;raw&#34;<\/ETag><Size>1234<\/Size>/);
+  });
+
+  test('a key that will not decode is redacted', () => {
+    const out = redact(`<ListBucketResult><EncodingType>url</EncodingType>${entry('Collections%2Fu%2F%E0%A4')}</ListBucketResult>`);
+    assert.match(out, /<ETag>"opaque"<\/ETag><Size>0<\/Size>/);
   });
 });
