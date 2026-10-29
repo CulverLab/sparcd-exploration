@@ -158,6 +158,17 @@ export function App({
     )
   }, [])
 
+  // Abandoning a login in flight also has to drop its Connecting state: the
+  // abandoned run no longer clears it.
+  const logout = () => {
+    runId.current += 1
+    clearSharedConnection()
+    setConnecting(false)
+    setConfig(null)
+    setData(null)
+    setMe(null)
+  }
+
   if (config && me && !me.admin) {
     return (
       <div className="grid min-h-[100svh] place-items-center bg-paper p-6">
@@ -166,13 +177,7 @@ export function App({
           <p className="mt-2 text-sm text-inkSoft">Ask an administrator for access.</p>
           <button
             type="button"
-            onClick={() => {
-              runId.current += 1
-              clearSharedConnection()
-              setConfig(null)
-              setData(null)
-              setMe(null)
-            }}
+            onClick={logout}
             className="mt-4 border border-ink bg-ink px-3 py-2 text-sm font-semibold text-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             Logout
@@ -184,16 +189,14 @@ export function App({
 
   if (!config || !data) {
     return (
-      <>
-        <Connection
-          toolName="Admin"
-          defaultRemember
-          initialConfig={loadPersistedConnection() ?? undefined}
-          onConnect={(nextConfig, remember) => void authorize(nextConfig, remember)}
-        />
-        {connecting && <p role="status">Opening the configuration workspace…</p>}
-        {error && <p role="alert" className="error">{error}</p>}
-      </>
+      <Connection
+        toolName="Admin"
+        defaultRemember
+        initialConfig={loadPersistedConnection() ?? undefined}
+        onConnect={(nextConfig, remember) => void authorize(nextConfig, remember)}
+        busy={connecting}
+        error={error}
+      />
     )
   }
 
@@ -223,13 +226,7 @@ export function App({
       section={sections.includes(section) ? section : 'species'}
       onSectionChange={setSection}
       onToggleTheme={toggleTheme}
-      onDisconnect={() => {
-        runId.current += 1
-        clearSharedConnection()
-        setConfig(null)
-        setData(null)
-        setMe(null)
-      }}
+      onDisconnect={logout}
     >
       <div className="max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         {notice && <p role="alert" className="mb-4 border border-warn px-3 py-2 text-sm text-warn">{notice}</p>}

@@ -308,3 +308,17 @@ describe('Connection — credential probe (#589)', () => {
     expect(onConnect).toHaveBeenCalled();
   });
 });
+
+describe('Connection — a caller that checks after onConnect', () => {
+  it('locks the form and reads Connecting… while busy', () => {
+    render(<Connection toolName="Admin" onConnect={vi.fn()} busy />);
+    fillValidForm();
+    expect((screen.getByRole('button', { name: 'Connecting…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Endpoint') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("shows the caller's error inside the form", () => {
+    render(<Connection toolName="Admin" onConnect={vi.fn()} error="The login ID or secret was not accepted." />);
+    expect(screen.getByRole('alert').textContent).toBe('The login ID or secret was not accepted.');
+  });
+});

@@ -22,6 +22,12 @@ export type ConnectionProps = {
    *  `@sparcd/s3-safe` (#589). Skipped entirely while offline, preserving
    *  today's optimistic-accept behavior for deferred/offline login. */
   onTestConnection?: (config: S3Config, signal?: AbortSignal) => Promise<ConnectionProbeResult>;
+  /** For a caller that does its own checking after `onConnect`: the form
+   *  stays locked and reads "Connecting…" while it is set. */
+  busy?: boolean;
+  /** A sign-in problem that caller found, shown where the connection check's
+   *  own failures go. */
+  error?: string;
   /** When provided, offers a secondary "Login later" action so a caller can
    *  let someone proceed without a connection until one is actually needed. */
   onSkip?: () => void;
@@ -49,6 +55,8 @@ export function Connection({
   onConnect,
   defaultRemember = false,
   onTestConnection,
+  busy = false,
+  error,
   onSkip,
   embedded,
 }: ConnectionProps) {
@@ -103,6 +111,7 @@ export function Connection({
   // second submission landing while the first is still in flight, so no
   // stale result can ever apply to values the user has since changed.
   const [pending, setPending] = useState(false);
+  const locked = pending || busy;
   const [probeFailure, setProbeFailure] = useState<Extract<ConnectionProbeResult, { ok: false }> | null>(
     null,
   );
@@ -176,7 +185,7 @@ export function Connection({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canConnect || pending) return;
+    if (!canConnect || locked) return;
     const resolved = syncOverridesToEndpoint();
     const config: S3Config = {
       endpoint: endpoint.trim(),
@@ -259,6 +268,14 @@ export function Connection({
               {probeFailureMessage(probeFailure)}
             </div>
           )}
+          {error && (
+            <div
+              role="alert"
+              className="border border-warn/40 bg-paper px-3 py-2.5 font-body text-[13px] text-warn"
+            >
+              {error}
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -276,7 +293,7 @@ export function Connection({
               onBlur={() => syncOverridesToEndpoint()}
               autoComplete="url"
               spellCheck={false}
-              disabled={pending}
+              disabled={locked}
             />
           </div>
           <div>
@@ -291,7 +308,7 @@ export function Connection({
               onChange={(e) => setAccessKey(e.target.value)}
               autoComplete="username"
               spellCheck={false}
-              disabled={pending}
+              disabled={locked}
             />
           </div>
           <div>
@@ -306,7 +323,7 @@ export function Connection({
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}
               autoComplete="current-password"
-              disabled={pending}
+              disabled={locked}
             />
           </div>
           <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
@@ -316,7 +333,7 @@ export function Connection({
               checked={remember}
               aria-describedby={rememberHelpId}
               onChange={(e) => setRemember(e.target.checked)}
-              disabled={pending}
+              disabled={locked}
             />
             Remember endpoint &amp; access key on this device
           </label>
@@ -349,7 +366,7 @@ export function Connection({
                 value={region}
                 onChange={(e) => setRegionOverride(e.target.value)}
                 spellCheck={false}
-                disabled={pending}
+                disabled={locked}
               />
             </div>
             <label className="flex items-center gap-2.5 font-body text-[14px] text-ink">
@@ -358,7 +375,7 @@ export function Connection({
                 className="w-4 h-4 accent-accent"
                 checked={forcePathStyle}
                 onChange={(e) => setPathStyleOverride(e.target.checked)}
-                disabled={pending}
+                disabled={locked}
               />
               Force path-style addressing (MinIO)
             </label>
@@ -368,7 +385,7 @@ export function Connection({
                 className="w-4 h-4 accent-accent"
                 checked={secure}
                 onChange={(e) => setSecureOverride(e.target.checked)}
-                disabled={pending}
+                disabled={locked}
               />
               Secure (HTTPS)
             </label>
@@ -377,18 +394,18 @@ export function Connection({
 
         <button
           type="submit"
-          disabled={!canConnect || pending}
+          disabled={!canConnect || locked}
           title={!online ? "You're offline" : undefined}
           className="mt-7 w-full bg-ink text-paper border border-ink px-4 py-2 text-[14px] font-body font-[600] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-inkSoft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
         >
-          {pending ? 'Connecting…' : 'Connect'}
+          {locked ? 'Connecting…' : 'Connect'}
         </button>
 
         {onSkip && (
           <button
             type="button"
             onClick={onSkip}
-            disabled={pending}
+            disabled={locked}
             className="mt-3 w-full text-[13px] font-body text-inkSoft hover:text-ink underline underline-offset-4 decoration-rule disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Login later
