@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { parseObservations } from '@sparcd/camtrap';
 import {
-  Given, When, Then, expect, openWorkspace, openSettings, sectionTab, focusFrame, focusedTile,
+  Given, Then, expect, openWorkspace, openSettings, sectionTab, focusFrame, focusedTile,
   gridCell, selectedTiles, enterFocusView, closeFocusView, speciesAssignKey, speciesBadge, speciesFilter,
 } from './support/world';
 import { autoAdvanceCheckbox, waitForAutomaticSave } from './support/flows';
@@ -145,17 +145,12 @@ Then('a {string} interrupts {string} without tagging', async ({ page, s3 }, inte
   expect(s3.text(BUCKET, csvKey)).toBe(before);
 });
 
-When('the {string} Adjust control is focused', async ({ page }, control: string) => {
+Then('a standalone {string} tap tags Ghost once from the {string} Adjust control', async ({ page, s3 }, modifier: string, control: string) => {
   await page.getByRole('button', { name: 'Adjust ▾' }).click();
   const target = control === 'Keep values' ? page.getByLabel('Keep values') : page.getByLabel('Brightness');
   await target.focus();
   await expect(target).toBeFocused();
-});
-
-Then('a standalone {string} tap tags Ghost once from the focused {string} control', async ({ page, s3 }, modifier: string, control: string) => {
   const before = s3.text(BUCKET, csvKey);
-  const target = control === 'Keep values' ? page.getByLabel('Keep values') : page.getByLabel('Brightness');
-  await expect(target).toBeFocused();
   await tap(page, modifier);
   await waitForAutomaticSave(page);
   expect(rowsFor(s3.text(BUCKET, csvKey), 'IMG002.JPG').map(row => [row.scientificName, row.count])).toEqual([['Casper', 1]]);

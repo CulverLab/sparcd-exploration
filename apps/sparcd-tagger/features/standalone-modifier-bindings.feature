@@ -78,8 +78,7 @@ Feature: Bind standalone Shift and Control without stealing combinations
   Scenario Outline: Modifier bindings work while Adjust controls are focused
     Given a modifier tagging workspace in "Focus"
     And "<modifier>" is assigned to Ghost with a standalone tap
-    When the "<control>" Adjust control is focused
-    Then a standalone "<modifier>" tap tags Ghost once from the focused "<control>" control
+    Then a standalone "<modifier>" tap tags Ghost once from the "<control>" Adjust control
     Examples:
       | modifier | control     |
       | Shift    | brightness |
