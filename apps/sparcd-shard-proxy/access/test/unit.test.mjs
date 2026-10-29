@@ -514,7 +514,7 @@ describe('importing an existing login', () => {
   });
 
   test('ids a SigV4 credential cannot carry are refused', () => {
-    for (const accessKey of [undefined, '', 'ab', 'A'.repeat(129), 'has/slash', 'has space', 'tab\there']) {
+    for (const accessKey of [undefined, '', 'ab', 'A'.repeat(129), 'has/slash', 'has space', 'tab\there', 'ana,x', 'ana=x']) {
       assert.match(importProblem({ ...ok, accessKey }, []), /access key must be/, String(accessKey));
     }
   });

@@ -18,7 +18,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (!arg.startsWith('--')) continue;
     const flag = arg.slice(2);
-    out[flag] = FLAGS.has(flag) ? true : argv[i + 1];
+    const next = argv[i + 1];
+    out[flag] = FLAGS.has(flag) ? true : (next?.startsWith('--') ? undefined : next);
   }
   return out;
 }
@@ -66,16 +67,16 @@ export async function init({ name, email, config }) {
   return { endpoint: config.publicEndpoint ?? config.upstream, accessKey, secretKey, name, email };
 }
 
-// MinIO allows 3 to 20 characters; anything SigV4 can carry in a Credential
-// scope is accepted, which is everything printable except `/`.
-const ACCESS_KEY_ID = /^[\x21-\x2e\x30-\x7e]{3,128}$/;
+// MinIO allows 3 to 20 characters. The Authorization header splits on `,`,
+// `=` and `/`, so ids keep to characters that parse the same everywhere.
+const ACCESS_KEY_ID = /^[A-Za-z0-9._@+-]{3,128}$/;
 const MIN_SECRET = 8;
 
 /** The first reason an import cannot go ahead, or null. */
 export function importProblem({ name, email, accessKey, secret }, people) {
   if (!name || !email) return 'name and email are required';
   if (!ACCESS_KEY_ID.test(accessKey ?? '')) {
-    return 'access key must be 3 to 128 printable characters without spaces or "/"';
+    return 'access key must be 3 to 128 letters, digits, or . _ @ + -';
   }
   if (String(secret ?? '').length < MIN_SECRET) {
     return `secret must be at least ${MIN_SECRET} characters`;
