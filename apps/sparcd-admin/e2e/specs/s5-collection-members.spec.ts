@@ -21,22 +21,22 @@ test('the members table carries the rules and the change reaches storage', async
   await openSection(page, 'Collections')
 
   await collections(page).getByRole('button', { name: /Research 1/ }).first().click()
-  await expect(members(page).getByRole('radio', { name: 'Can identify for Priya Nair' })).toBeChecked()
+  await expect(members(page).getByRole('checkbox', { name: 'Can identify for Priya Nair' })).toBeChecked()
 
   await collections(page).getByRole('button', { name: /Sky Islands 2026/ }).first().click()
-  await expect(members(page).getByRole('radio', { name: 'Can upload for Ana Morales' })).toBeChecked()
-  await expect(members(page).getByRole('radio', { name: 'Can look for Luis Park' })).toBeChecked()
+  await expect(members(page).getByRole('checkbox', { name: 'Can upload for Ana Morales' })).toBeChecked()
+  await expect(members(page).getByRole('checkbox', { name: 'Can look for Luis Park' })).toBeChecked()
   await expect(members(page).getByText('Run by: nobody yet')).toBeVisible()
 
   await members(page).getByLabel('Add a person to this collection').fill('Priya')
   await members(page).getByRole('button', { name: 'Priya Nair' }).click()
   await expect(members(page).getByRole('row')).toHaveCount(4) // header plus three people
 
-  await members(page).getByRole('radio', { name: 'Can identify for Luis Park' }).check()
+  await members(page).getByRole('checkbox', { name: 'Can identify for Luis Park' }).check()
   await members(page).getByRole('button', { name: 'Save people' }).click()
   await expect(members(page).getByRole('status')).toHaveText(RUNNER_SENTENCE)
 
-  await members(page).getByRole('radio', { name: 'Runs this collection for Ana Morales' }).check()
+  await members(page).getByRole('checkbox', { name: 'Runs this collection for Ana Morales' }).check()
   await members(page).getByRole('button', { name: 'Save people' }).click()
   await expect(members(page).getByRole('status')).toHaveText('Saved.')
   await expect(members(page).getByText('Run by: Ana Morales')).toBeVisible()

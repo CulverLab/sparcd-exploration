@@ -52,13 +52,14 @@ const SETTINGS_PROBE = /sparcd-settings-[^/]*\/Collections\/settings-[^/]*\/coll
 /** The Tagger and the Uploader ask every visible bucket for the species and location lists. Only one has them. */
 const SPECIES_PROBE = /^404 HEAD .*\/Settings\/(species|locations)\.json$/
 
-async function invite(page: Page, person: { name: string; email: string; access: string }) {
+async function invite(page: Page, person: { name: string; email: string; access: string[] }) {
   await page.getByRole('button', { name: 'Add a person' }).click()
   const form = page.getByRole('region', { name: 'Add a person' })
   await form.getByLabel('Name').fill(person.name)
   await form.getByLabel('Email').fill(person.email)
-  await form.getByLabel('Also add to a collection').selectOption({ label: 'Sky Islands 2026' })
-  await form.getByRole('radio', { name: person.access }).check()
+  for (const access of person.access) {
+    await form.getByRole('checkbox', { name: `${access} for Sky Islands 2026` }).check()
+  }
   await form.getByRole('button', { name: 'Add person' }).click()
   const link = await form.getByLabel('Link to send').inputValue()
   await form.getByRole('button', { name: 'Done' }).click()
@@ -151,13 +152,13 @@ test('the administrator invites three people onto one collection', async ({ brow
   await openSection(admin, 'People')
 
   remember('nadia', await joinAs(browser, await invite(admin, {
-    name: WHO, email: 'nadia@example.org', access: 'Can upload',
+    name: WHO, email: 'nadia@example.org', access: ['Can identify', 'Can upload'],
   })))
   remember('omar', await joinAs(browser, await invite(admin, {
-    name: 'Omar Haddad', email: 'omar@example.org', access: 'Can look',
+    name: 'Omar Haddad', email: 'omar@example.org', access: ['Can look'],
   })))
   remember('rae', await joinAs(browser, await invite(admin, {
-    name: 'Rae Lindqvist', email: 'rae@example.org', access: 'Can identify',
+    name: 'Rae Lindqvist', email: 'rae@example.org', access: ['Can identify'],
   })))
 
   await context.close()

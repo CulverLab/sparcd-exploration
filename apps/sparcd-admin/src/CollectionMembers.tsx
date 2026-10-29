@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { problemSentence, type Access, type AccessApi, type Person } from './api'
-import { ACCESS_CHOICES, EXACT_LOCATIONS } from './AccessChoices'
+import { AccessCells, AccessHeadings, WILL_BE_REMOVED } from './AccessChoices'
 import { moment } from './moment'
 
-type Row = { personId: string; name: string; access: Access; exactLocations: boolean }
+type Row = { personId: string; name: string; access: Access[]; exactLocations: boolean }
 
 /** One collection's people. The rows carry the bucket they were read from. */
 type Table = { bucket: string; rows: Row[]; saved: Row[]; version: string | null }
@@ -11,8 +11,8 @@ type Table = { bucket: string; rows: Row[]; saved: Row[]; version: string | null
 export const RUNNER_SENTENCE = 'A collection always needs at least one person running it who has joined and is not paused.'
 
 /** The service counts only runners who are active: invited or paused ones cannot run anything yet. */
-export const hasRunner = (rows: { personId: string; access: Access }[], people: Person[]) =>
-  rows.some((row) => row.access === 'run' && people.some((person) => person.id === row.personId && person.status === 'active'))
+export const hasRunner = (rows: { personId: string; access: Access[] }[], people: Person[]) =>
+  rows.some((row) => row.access.includes('run') && people.some((person) => person.id === row.personId && person.status === 'active'))
 
 export function CollectionMembers({ api, bucket, people }: {
   api: AccessApi
@@ -70,7 +70,9 @@ export function CollectionMembers({ api, bucket, people }: {
   const { rows, saved, version } = table
   const setRows = (next: Row[]) => setTable({ ...table, rows: next })
   const changed = JSON.stringify(rows) !== JSON.stringify(saved)
-  const runners = rows.filter((row) => row.access === 'run')
+  // A row with nothing ticked stays on screen until the save takes it out.
+  const kept = rows.filter((row) => row.access.length > 0)
+  const runners = kept.filter((row) => row.access.includes('run'))
 
   const set = (personId: string, patch: Partial<Row>) =>
     setRows(rows.map((row) => (row.personId === personId ? { ...row, ...patch } : row)))
@@ -79,7 +81,7 @@ export function CollectionMembers({ api, bucket, people }: {
     // The rows carry the collection they were read from. Writing them anywhere
     // else would overwrite who can reach that other collection.
     if (table.bucket !== bucket) return
-    if (!hasRunner(rows, people)) {
+    if (!hasRunner(kept, people)) {
       setMessage(RUNNER_SENTENCE)
       return
     }
@@ -88,13 +90,13 @@ export function CollectionMembers({ api, bucket, people }: {
     try {
       const written = await api.setMembers(
         table.bucket,
-        rows.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
+        kept.map(({ personId, access, exactLocations }) => ({ personId, access, exactLocations })),
         version,
       )
       wroteAt.current = moment()
       setTable((current) =>
         current && current.bucket === table.bucket
-          ? { ...current, saved: rows, version: written.membersVersion }
+          ? { ...current, rows: kept, saved: kept, version: written.membersVersion }
           : current)
       setMessage('Saved.')
     } catch (cause) {
@@ -119,49 +121,27 @@ export function CollectionMembers({ api, bucket, people }: {
           ? <p className="m-0 text-sm text-inkSoft">Run by: {runners.map((row) => row.name).join(', ')}</p>
           : <p className="m-0 text-sm text-warn">Run by: nobody yet</p>}
       </div>
-      {!hasRunner(rows, people) && <p className="m-0 border-b border-rule px-4 py-2 text-sm text-warn">{RUNNER_SENTENCE}</p>}
+      {!hasRunner(kept, people) && <p className="m-0 border-b border-rule px-4 py-2 text-sm text-warn">{RUNNER_SENTENCE}</p>}
       <div className="overflow-x-auto p-4">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="text-left text-xs uppercase tracking-wider text-inkSoft">
-              <th className="py-2 pr-3 font-semibold">Person</th>
-              {ACCESS_CHOICES.map((choice) => <th key={choice.value} className="px-2 py-2 font-semibold">{choice.label}</th>)}
-              <th className="px-2 py-2 font-semibold">{EXACT_LOCATIONS.label}</th>
-              <th className="py-2" />
-            </tr>
+            <AccessHeadings first="Person" />
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.personId} className="border-t border-ruleSoft">
-                <td className="py-2 pr-3 text-ink">{row.name}</td>
-                {ACCESS_CHOICES.map((choice) => (
-                  <td key={choice.value} className="px-2 py-2 text-center">
-                    <input
-                      type="radio"
-                      disabled={busy}
-                      name={`access-${bucket}-${row.personId}`}
-                      aria-label={`${choice.label} for ${row.name}`}
-                      className="h-4 w-4 accent-accent"
-                      checked={row.access === choice.value}
-                      onChange={() => set(row.personId, { access: choice.value })}
-                    />
+            {rows.map((row) => {
+              const leaving = row.access.length === 0
+              return (
+                <tr key={row.personId} className="border-t border-ruleSoft">
+                  <td className={`py-2 pr-3 ${leaving ? 'text-inkSoft' : 'text-ink'}`}>{row.name}</td>
+                  <AccessCells label={row.name} row={row} disabled={busy} onChange={(next) => set(row.personId, next)} />
+                  <td className="py-2 text-right">
+                    {leaving
+                      ? <span className="text-sm text-inkSoft">{WILL_BE_REMOVED}</span>
+                      : <button type="button" disabled={busy} className="text-sm text-ink underline disabled:opacity-40" onClick={() => set(row.personId, { access: [], exactLocations: false })}>Remove</button>}
                   </td>
-                ))}
-                <td className="px-2 py-2 text-center">
-                  <input
-                    type="checkbox"
-                    disabled={busy}
-                    aria-label={`${EXACT_LOCATIONS.label} for ${row.name}`}
-                    className="h-4 w-4 accent-accent"
-                    checked={row.exactLocations}
-                    onChange={(event) => set(row.personId, { exactLocations: event.target.checked })}
-                  />
-                </td>
-                <td className="py-2 text-right">
-                  <button type="button" disabled={busy} className="text-sm text-ink underline disabled:opacity-40" onClick={() => setRows(rows.filter((other) => other.personId !== row.personId))}>Remove</button>
-                </td>
-              </tr>
-            ))}
+                </tr>
+              )
+            })}
             {rows.length === 0 && <tr><td colSpan={7} className="py-2 text-inkSoft">Nobody is in this collection yet.</td></tr>}
           </tbody>
         </table>
@@ -183,7 +163,7 @@ export function CollectionMembers({ api, bucket, people }: {
                   type="button"
                   className="block w-full px-3 py-2 text-left text-sm hover:bg-paperHover"
                   onClick={() => {
-                    setRows([...rows, { personId: person.id, name: person.name, access: 'identify', exactLocations: false }])
+                    setRows([...rows, { personId: person.id, name: person.name, access: ['look', 'identify'], exactLocations: false }])
                     setSearch('')
                   }}
                 >

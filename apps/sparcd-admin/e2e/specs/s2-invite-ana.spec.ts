@@ -26,8 +26,9 @@ test('Ana is invited, joins once, and can upload only where she was put', async 
   const form = admin.getByRole('region', { name: 'Add a person' })
   await form.getByLabel('Name').fill('Ana Morales')
   await form.getByLabel('Email').fill('ana@example.org')
-  await form.getByLabel('Also add to a collection').selectOption({ label: 'Sky Islands 2026' })
-  await form.getByRole('radio', { name: 'Can upload' }).check()
+  // Identifying brings looking with it.
+  await form.getByRole('checkbox', { name: 'Can identify for Sky Islands 2026' }).check()
+  await form.getByRole('checkbox', { name: 'Can upload for Sky Islands 2026' }).check()
   await form.getByRole('button', { name: 'Add person' }).click()
 
   const link = form.getByLabel('Link to send')
@@ -38,7 +39,8 @@ test('Ana is invited, joins once, and can upload only where she was put', async 
 
   await form.getByRole('button', { name: 'Done' }).click()
   await admin.getByRole('button', { name: /Ana Morales/ }).first().click()
-  await expect(admin.getByText('Sky Islands 2026 · Can upload')).toBeVisible()
+  await expect(admin.getByRole('checkbox', { name: 'Can upload for Sky Islands 2026' })).toBeChecked()
+  await expect(admin.getByRole('checkbox', { name: 'Can look for Sky Islands 2026' })).toBeChecked()
 
   const ana = await openInvite(browser, inviteUrl)
   await expect(ana.page.getByRole('heading', { name: "Welcome, Ana Morales. You're all set." })).toBeVisible()

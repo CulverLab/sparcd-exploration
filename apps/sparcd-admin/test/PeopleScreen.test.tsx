@@ -6,10 +6,10 @@ import { inviteLink, inviteMailto } from '../src/InviteLink'
 import { button, click, field, hasButton, render, settle, type } from './dom'
 import { ApiError } from '../src/api'
 import { fakeApi, person } from './fakeApi'
-import type { AccessApi, Person } from '../src/api'
+import type { Access, AccessApi, Person } from '../src/api'
 import { useState } from 'react'
 
-const collections = [{ bucket: 'sparcd-aaa', name: 'Sky Islands 2026' }]
+const collections = [{ bucket: 'sparcd-aaa', name: 'Sky Islands 2026' }, { bucket: 'sparcd-bbb', name: 'Research 1' }]
 
 // The app owns the list now, so the test stands in for it: one piece of state,
 // one refresh, handed to the screen the way App hands it over.
@@ -29,6 +29,8 @@ const screen = async (state: Parameters<typeof fakeApi>[0] = {}) => {
 const rowFor = (host: HTMLElement, name: string) =>
   Array.from(host.querySelectorAll('li button')).find((one) => one.textContent?.includes(name))!
 
+const box = (host: HTMLElement, label: string) => host.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement
+
 afterEach(() => { document.body.innerHTML = '' })
 
 describe('the list', () => {
@@ -40,9 +42,9 @@ describe('the list', () => {
     expect(collectionsText(person('p1', 'Ana', { collections: [] }))).toBe('None yet')
     expect(collectionsText(person('p1', 'Ana', {
       collections: [
-        { bucket: 'a', name: 'One', access: 'look', exactLocations: false },
-        { bucket: 'b', name: 'Two', access: 'look', exactLocations: false },
-        { bucket: 'c', name: 'Three', access: 'look', exactLocations: false },
+        { bucket: 'a', name: 'One', access: ['look'], exactLocations: false },
+        { bucket: 'b', name: 'Two', access: ['look'], exactLocations: false },
+        { bucket: 'c', name: 'Three', access: ['look'], exactLocations: false },
       ],
     }))).toBe('3 collections')
   })
@@ -78,6 +80,25 @@ describe('adding a person', () => {
     expect(decodeURIComponent(mail.href)).toContain('It opens once and expires in 7 days.')
   })
 
+  it('offers every collection as a row and sends only the ones with boxes ticked', async () => {
+    const { view, calls } = await screen()
+    await click(button(view.host, 'Add a person'))
+    await type(field(view.host, 'Name'), 'Sam Whitfield')
+    await type(field(view.host, 'Email'), 'sam@example.org')
+    expect(box(view.host, 'Can look for Sky Islands 2026').checked).toBe(false)
+    expect(box(view.host, 'Can look for Research 1').checked).toBe(false)
+    await click(box(view.host, 'Runs this collection for Sky Islands 2026'))
+    await click(box(view.host, 'Can upload for Sky Islands 2026'))
+    await click(box(view.host, 'Can upload for Research 1'))
+    await click(box(view.host, 'Can upload for Research 1'))
+    await click(box(view.host, 'Sees exact camera locations for Research 1'))
+    await click(button(view.host, 'Add person'))
+    await settle()
+    expect((calls.find((call) => call.name === 'addPerson')!.args[0] as { memberships: unknown }).memberships).toEqual([
+      { bucket: 'sparcd-aaa', access: ['look', 'upload', 'run'], exactLocations: false },
+    ])
+  })
+
   it('writes a friendly mail body addressed to the first name', () => {
     const href = inviteMailto('sam@example.org', 'Sam Whitfield', 'https://x/join', 'Jorge Delgado')
     expect(href.startsWith('mailto:sam%40example.org?')).toBe(true)
@@ -91,41 +112,61 @@ describe('adding a person', () => {
 describe('one person at a time (contract 1.1)', () => {
   const withMembership = {
     people: [person('p1', 'Ana Morales', {
-      collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: 'look' as const, exactLocations: false }],
+      collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: ['look'] as Access[], exactLocations: false }],
     })],
   }
+
+  it('shows every collection, ticked where they are a member', async () => {
+    const { view } = await screen(withMembership)
+    await click(rowFor(view.host, 'Ana Morales'))
+    expect(box(view.host, 'Can look for Sky Islands 2026').checked).toBe(true)
+    expect(box(view.host, 'Can identify for Sky Islands 2026').checked).toBe(false)
+    for (const label of ['Can look', 'Can identify', 'Can upload', 'Runs this collection', 'Sees exact camera locations']) {
+      expect(box(view.host, `${label} for Research 1`).checked).toBe(false)
+    }
+    expect((button(view.host, 'Save access') as HTMLButtonElement).disabled).toBe(true)
+  })
 
   it('adds to a collection through the per-person call', async () => {
     const { view, calls } = await screen()
     await click(rowFor(view.host, 'Ana Morales'))
-    await click(button(view.host, 'Add to a collection'))
-    await click(view.host.querySelector('input[type="checkbox"]')!)
-    await click(button(view.host, 'Add to collection'))
+    await click(box(view.host, 'Can identify for Research 1'))
+    expect(box(view.host, 'Can look for Research 1').checked).toBe(true)
+    await click(box(view.host, 'Sees exact camera locations for Research 1'))
+    await click(button(view.host, 'Save access'))
     await settle()
-    expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
-      'sparcd-aaa', 'p1', { access: 'identify', exactLocations: true },
+    expect(calls.filter((call) => call.name === 'setMember').map((call) => call.args)).toEqual([
+      ['sparcd-bbb', 'p1', { access: ['look', 'identify'], exactLocations: true }],
     ])
     expect(calls.some((call) => call.name === 'setMembers')).toBe(false)
   })
 
-  it('changes one membership without rewriting the list', async () => {
+  it('sets several collections in one save', async () => {
     const { view, calls } = await screen(withMembership)
     await click(rowFor(view.host, 'Ana Morales'))
-    expect(view.host.textContent).toContain('Sky Islands 2026 · Can look')
-    await click(button(view.host, 'Change'))
-    await click(view.host.querySelectorAll('input[type="radio"]')[2])
+    await click(box(view.host, 'Can upload for Sky Islands 2026'))
+    await click(box(view.host, 'Can upload for Research 1'))
     await click(button(view.host, 'Save access'))
     await settle()
-    expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
-      'sparcd-aaa', 'p1', { access: 'upload', exactLocations: false },
+    expect(calls.filter((call) => call.name === 'setMember').map((call) => call.args)).toEqual([
+      ['sparcd-aaa', 'p1', { access: ['look', 'upload'], exactLocations: false }],
+      ['sparcd-bbb', 'p1', { access: ['upload'], exactLocations: false }],
     ])
+  })
+
+  it('does not write a collection where nothing but the location box is ticked', async () => {
+    const { view } = await screen()
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(box(view.host, 'Sees exact camera locations for Research 1'))
+    expect((button(view.host, 'Save access') as HTMLButtonElement).disabled).toBe(true)
+    expect(view.host.textContent).not.toContain('Will be removed')
   })
 
   it('sends the change to the person it was opened for, even if the selection moved', async () => {
     const { api, calls, data } = fakeApi({
       people: [
         person('p1', 'Ana Morales', {
-          collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: 'look' as const, exactLocations: false }],
+          collections: [{ bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', access: ['look'], exactLocations: false }],
         }),
         person('p2', 'Luis Park'),
       ],
@@ -140,25 +181,38 @@ describe('one person at a time (contract 1.1)', () => {
     await settle()
 
     await click(rowFor(view.host, 'Ana Morales'))
-    await click(button(view.host, 'Change'))
-    await click(view.host.querySelectorAll('input[type="radio"]')[2])
+    await click(box(view.host, 'Can upload for Sky Islands 2026'))
     await click(button(view.host, 'Save access'))
     await click(rowFor(view.host, 'Luis Park'))
     await act(async () => { release!() })
     await settle()
 
     expect(calls.find((call) => call.name === 'setMember')!.args).toEqual([
-      'sparcd-aaa', 'p1', { access: 'upload', exactLocations: false },
+      'sparcd-aaa', 'p1', { access: ['look', 'upload'], exactLocations: false },
     ])
     expect(data.people.find((one) => one.id === 'p2')!.collections).toEqual([])
   })
 
-  it('removes one membership through the per-person call', async () => {
+  it('shows an unticked membership as leaving, then removes it through the per-person call', async () => {
     const { view, calls } = await screen(withMembership)
     await click(rowFor(view.host, 'Ana Morales'))
-    await click(button(view.host, 'Remove'))
+    await click(box(view.host, 'Can look for Sky Islands 2026'))
+    const row = box(view.host, 'Can look for Sky Islands 2026').closest('tr')!
+    expect(row.textContent).toContain('Will be removed')
+    expect(box(view.host, 'Can look for Research 1').closest('tr')!.textContent).not.toContain('Will be removed')
+    await click(button(view.host, 'Save access'))
     await settle()
     expect(calls.find((call) => call.name === 'removeMember')!.args).toEqual(['sparcd-aaa', 'p1'])
+    expect(calls.some((call) => call.name === 'setMember')).toBe(false)
+  })
+
+  it('Undo changes puts the boxes back', async () => {
+    const { view } = await screen(withMembership)
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(box(view.host, 'Can look for Sky Islands 2026'))
+    await click(button(view.host, 'Undo changes'))
+    expect(box(view.host, 'Can look for Sky Islands 2026').checked).toBe(true)
+    expect(view.host.textContent).not.toContain('Will be removed')
   })
 
   it('turns a refusal into one plain sentence', async () => {
@@ -178,7 +232,7 @@ describe('one person at a time (contract 1.1)', () => {
     people: [person('p1', 'Ana Morales')],
     collections: [{
       bucket: 'sparcd-aaa', uuid: 'aaa', name: 'Sky Islands 2026', organization: '', membersVersion: 'members-v1',
-      members: [{ personId: 'p1', name: 'Ana Morales', access: 'run' as const, exactLocations: false }],
+      members: [{ personId: 'p1', name: 'Ana Morales', access: ['look', 'run'] as Access[], exactLocations: false }],
     }],
   }
   const SOLE_RUNNER = 'Ana Morales is the only person running one of their collections. Have someone else run it first.'
@@ -190,6 +244,22 @@ describe('one person at a time (contract 1.1)', () => {
     await click(button(view.host, 'Yes, pause access'))
     await settle()
     expect(view.host.textContent).toContain(SOLE_RUNNER)
+  })
+
+  it('keeps the boxes and says why when a save would leave nobody running it', async () => {
+    const { view, calls } = await screen({
+      ...soleRunner,
+      people: [person('p1', 'Ana Morales', {
+        collections: [{ bucket: 'sparcd-aaa', name: 'Sky Islands 2026', access: ['look', 'run'], exactLocations: false }],
+      })],
+    })
+    await click(rowFor(view.host, 'Ana Morales'))
+    await click(box(view.host, 'Runs this collection for Sky Islands 2026'))
+    await click(button(view.host, 'Save access'))
+    await settle()
+    expect(calls.some((call) => call.name === 'setMember')).toBe(true)
+    expect(view.host.textContent).toContain('A collection always needs at least one person running it who has joined and is not paused.')
+    expect(box(view.host, 'Runs this collection for Sky Islands 2026').checked).toBe(false)
   })
 
   it('says the same before resetting its only runner', async () => {

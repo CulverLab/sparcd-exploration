@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { Access, AccessApi, Invite, Person } from './api'
-import { AccessChoices } from './AccessChoices'
+import type { AccessApi, Invite, Person } from './api'
+import { AccessCells, AccessHeadings, type AccessRow } from './AccessChoices'
 import { InviteLink, inviteLink } from './InviteLink'
 
 export function AddPerson({ api, endpoint, collections, from, onAdded, onClose }: {
@@ -13,9 +13,8 @@ export function AddPerson({ api, endpoint, collections, from, onAdded, onClose }
 }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [bucket, setBucket] = useState('')
-  const [access, setAccess] = useState<Access>('identify')
-  const [exactLocations, setExactLocations] = useState(false)
+  // By bucket. A collection with nothing ticked is one they are not added to.
+  const [grants, setGrants] = useState<Record<string, AccessRow>>({})
   const [added, setAdded] = useState<{ person: Person; invite: Invite } | null>(null)
   const [problem, setProblem] = useState('')
   const [busy, setBusy] = useState(false)
@@ -27,7 +26,9 @@ export function AddPerson({ api, endpoint, collections, from, onAdded, onClose }
       setAdded(await api.addPerson({
         name: name.trim(),
         email: email.trim(),
-        memberships: bucket ? [{ bucket, access, exactLocations }] : undefined,
+        memberships: collections
+          .filter((entry) => grants[entry.bucket]?.access.length)
+          .map((entry) => ({ bucket: entry.bucket, ...grants[entry.bucket] })),
       }))
       onAdded()
     } catch (cause) {
@@ -41,9 +42,7 @@ export function AddPerson({ api, endpoint, collections, from, onAdded, onClose }
     setAdded(null)
     setName('')
     setEmail('')
-    setBucket('')
-    setAccess('identify')
-    setExactLocations(false)
+    setGrants({})
   }
 
   const inputClass = 'min-h-10 w-full border border-rule bg-paper px-2 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent'
@@ -72,17 +71,30 @@ export function AddPerson({ api, endpoint, collections, from, onAdded, onClose }
                 <input aria-label="Email" type="email" className={inputClass} value={email} onChange={(event) => setEmail(event.target.value)} />
               </label>
             </div>
-            <label className="mt-3 grid max-w-md gap-1 text-sm font-medium text-ink">
-              Also add to a collection <span className="font-normal text-inkSoft">(optional)</span>
-              <select aria-label="Also add to a collection" className={inputClass} value={bucket} onChange={(event) => setBucket(event.target.value)}>
-                <option value="">Not yet</option>
-                {collections.map((entry) => <option key={entry.bucket} value={entry.bucket}>{entry.name}</option>)}
-              </select>
-            </label>
-            {bucket && (
-              <div className="mt-3 max-w-md">
-                <AccessChoices name="add-person-access" value={access} onChange={setAccess} exactLocations={exactLocations} onExactLocations={setExactLocations} />
-              </div>
+            {collections.length > 0 && (
+              <>
+                <p className="mb-0 mt-3 text-sm font-medium text-ink">Collections <span className="font-normal text-inkSoft">(optional)</span></p>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <AccessHeadings first="Collection" />
+                    </thead>
+                    <tbody>
+                      {collections.map((entry) => (
+                        <tr key={entry.bucket} className="border-t border-ruleSoft">
+                          <td className="py-2 pr-3 text-ink">{entry.name}</td>
+                          <AccessCells
+                            label={entry.name}
+                            row={grants[entry.bucket] ?? { access: [], exactLocations: false }}
+                            onChange={(next) => setGrants({ ...grants, [entry.bucket]: next })}
+                          />
+                          <td className="py-2" />
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
             {problem && <p role="alert" className="mt-3 text-sm text-warn">{problem}</p>}
             <div className="mt-3 flex flex-wrap gap-2">

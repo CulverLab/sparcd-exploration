@@ -1,6 +1,7 @@
 import { SignatureV4 } from '@smithy/signature-v4'
 import type { S3Config } from '@sparcd/types'
 
+/** One permission. A membership holds a non-empty set of them. */
 export type Access = 'look' | 'identify' | 'upload' | 'run'
 export type PersonStatus = 'invited' | 'active' | 'paused'
 
@@ -8,7 +9,7 @@ export type Membership = {
   bucket: string
   uuid?: string
   name?: string | null
-  access: Access
+  access: Access[]
   exactLocations: boolean
 }
 
@@ -35,7 +36,7 @@ export type Invite = { token: string; expiresAt: string }
 export type CollectionMember = {
   personId: string
   name?: string
-  access: Access
+  access: Access[]
   exactLocations: boolean
 }
 
@@ -55,15 +56,18 @@ export type AccessChange =
   | 'invited' | 'joined' | 'paused' | 'resumed' | 'reset'
   | 'admin-granted' | 'admin-removed' | 'added' | 'changed' | 'removed'
 
-export type AccessLevel = { access: Access; exactLocations: boolean }
+export type AccessLevel = { access: Access[]; exactLocations: boolean }
+
+/** Activity written before memberships were sets holds a single level. */
+type RecordedAccess = { access: Access | Access[]; exactLocations: boolean }
 
 export type AccessChangeDetail = {
   change: AccessChange
   target: { personId: string; personName: string }
   bucket?: string
   collectionName?: string
-  before?: AccessLevel
-  after?: AccessLevel
+  before?: RecordedAccess
+  after?: RecordedAccess
 }
 
 export type ActivityKind =
@@ -233,7 +237,7 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
     async listPeople(): Promise<Person[]> {
       return ((await send({ method: 'GET', path: 'admin/people' })) as { people: Person[] }).people
     },
-    async addPerson(input: { name: string; email: string; admin?: boolean; memberships?: { bucket: string; access: Access; exactLocations?: boolean }[] }) {
+    async addPerson(input: { name: string; email: string; admin?: boolean; memberships?: { bucket: string; access: Access[]; exactLocations?: boolean }[] }) {
       return (await send({ method: 'POST', path: 'admin/people', body: input })) as { person: Person; invite: Invite }
     },
     async updatePerson(id: string, patch: { name?: string; email?: string; admin?: boolean; status?: 'active' | 'paused' }) {
@@ -247,7 +251,7 @@ export function createApi(config: S3Config, doFetch: typeof fetch = fetch) {
     },
     // The version the list was read at goes back with it, so two coordinators
     // editing one collection cannot quietly overwrite each other.
-    async setMembers(bucket: string, members: { personId: string; access: Access; exactLocations: boolean }[], membersVersion: string | null) {
+    async setMembers(bucket: string, members: { personId: string; access: Access[]; exactLocations: boolean }[], membersVersion: string | null) {
       return (await send({
         method: 'PUT',
         path: `admin/collections/${encodeURIComponent(bucket)}/members`,

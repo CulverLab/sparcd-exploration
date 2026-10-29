@@ -1,5 +1,5 @@
 import type { AccessChangeDetail, ActivityEvent, ActivityKind } from './api'
-import { EXACT_LOCATIONS, accessLabel } from './AccessChoices'
+import { EXACT_LOCATIONS, accessSet } from './AccessChoices'
 
 export type WhereName = (bucket?: string) => string
 
@@ -30,6 +30,15 @@ export const isOwnBookkeeping = (event: ActivityEvent) =>
   (event.key?.startsWith('Settings/admin-sessions/') === true ||
     event.key?.startsWith('Settings/audit/config/') === true)
 
+const EXACT_WORDS = 'exact locations'
+
+/** "upload", "look and identify", "look, identify and upload" */
+const andList = (words: string[]) =>
+  words.length <= 1 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+
+const grantWords = (grant: NonNullable<AccessChangeDetail['after']>) =>
+  [...accessSet(grant.access), ...(grant.exactLocations ? [EXACT_WORDS] : [])]
+
 const accessChangeSentence = (event: ActivityEvent, whereName: WhereName): { who: string; text: string } | null => {
   const detail = event.detail as AccessChangeDetail | undefined
   if (!detail?.change || !detail.target) return null
@@ -52,16 +61,22 @@ const accessChangeSentence = (event: ActivityEvent, whereName: WhereName): { who
     case 'admin-removed':
       return { who, text: `took ${target}'s administrator access away` }
     case 'added':
-      return { who, text: `added ${target} to ${where} as ${accessLabel(detail.after!.access)}` }
+      return { who, text: `gave ${target} ${andList(grantWords(detail.after!))} in ${where}` }
     case 'removed':
       return { who, text: `removed ${target} from ${where}` }
     case 'changed': {
       const { before, after } = detail
-      if (before && after && before.access !== after.access)
-        return { who, text: `changed ${target} in ${where} from ${accessLabel(before.access)} to ${accessLabel(after.access)}` }
-      if (before && after && before.exactLocations !== after.exactLocations)
+      if (!before || !after) return { who, text: `changed what ${target} can do in ${where}` }
+      const was = grantWords(before)
+      const is = grantWords(after)
+      const gained = is.filter((word) => !was.includes(word))
+      const lost = was.filter((word) => !is.includes(word))
+      if (gained.length === 0 && lost.length === 0) return { who, text: `changed what ${target} can do in ${where}` }
+      if ([...gained, ...lost].join() === EXACT_WORDS)
         return { who, text: `turned ${after.exactLocations ? 'on' : 'off'} ${EXACT_LOCATIONS.label} for ${target} in ${where}` }
-      return { who, text: `changed what ${target} can do in ${where}` }
+      if (lost.length === 0) return { who, text: `gave ${target} ${andList(gained)} in ${where}` }
+      if (gained.length === 0) return { who, text: `removed ${andList(lost)} for ${target} in ${where}` }
+      return { who, text: `gave ${target} ${andList(gained)} and removed ${andList(lost)} in ${where}` }
     }
   }
 }

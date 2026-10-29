@@ -62,14 +62,29 @@ describe('access changes in detail (contract 1.1)', () => {
   const change = (detail: Record<string, unknown>) =>
     activitySentence(event('access-change', { personName: 'Jorge Delgado', detail: { target, collectionName: 'Research 1', ...detail } }), where)
 
-  it('names the person, the collection and the level', () => {
-    expect(change({ change: 'added', after: { access: 'identify', exactLocations: false } })).toEqual({
+  it('names what was given and what was taken away', () => {
+    expect(change({ change: 'added', after: { access: ['upload'], exactLocations: false } })).toEqual({
       who: 'Jorge Delgado',
-      text: 'added Luis Park to Research 1 as Can identify',
+      text: 'gave Luis Park upload in Research 1',
     })
-    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'identify', exactLocations: false } }).text)
-      .toBe('changed Luis Park in Research 1 from Can look to Can identify')
+    expect(change({ change: 'added', after: { access: ['look', 'identify'], exactLocations: true } }).text)
+      .toBe('gave Luis Park look, identify and exact locations in Research 1')
+    expect(change({ change: 'changed', before: { access: ['look'], exactLocations: false }, after: { access: ['look', 'upload'], exactLocations: false } }).text)
+      .toBe('gave Luis Park upload in Research 1')
+    expect(change({ change: 'changed', before: { access: ['look', 'identify'], exactLocations: false }, after: { access: ['look'], exactLocations: false } }).text)
+      .toBe('removed identify for Luis Park in Research 1')
+    expect(change({ change: 'changed', before: { access: ['look', 'identify'], exactLocations: false }, after: { access: ['look', 'run'], exactLocations: true } }).text)
+      .toBe('gave Luis Park run and exact locations and removed identify in Research 1')
     expect(change({ change: 'removed' }).text).toBe('removed Luis Park from Research 1')
+  })
+
+  it('still reads the single levels written before', () => {
+    expect(change({ change: 'added', after: { access: 'identify', exactLocations: false } }).text)
+      .toBe('gave Luis Park look and identify in Research 1')
+    expect(change({ change: 'changed', before: { access: 'look', exactLocations: false }, after: { access: 'upload', exactLocations: false } }).text)
+      .toBe('gave Luis Park identify and upload in Research 1')
+    expect(change({ change: 'changed', before: { access: 'run', exactLocations: false }, after: { access: ['look', 'identify'], exactLocations: false } }).text)
+      .toBe('removed upload and run for Luis Park in Research 1')
   })
 
   it('says which way the exact-locations box went', () => {

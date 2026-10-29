@@ -97,9 +97,9 @@ holding that person's own key.
 | the invite link, Copy, and Add another person | `s7b-people-panel` | covered |
 | the mail behind "Email it instead" | `s7b-people-panel` | covered |
 | a person's access rows | `s2-invite-ana`, `s7b-people-panel` | covered |
-| Add to a collection | `s7b-people-panel` | covered |
-| Change, including the exact-locations box | `s7b-people-panel` | covered |
-| Remove | `s7b-people-panel` | covered |
+| a box ticked in a collection they are not in yet | `s7b-people-panel` | covered |
+| more boxes, including the exact-locations box | `s7b-people-panel` | covered |
+| every box unticked: "Will be removed", then gone on save | `s7b-people-panel` | covered |
 | Pause, resume, and reset | `s4-pause-resume-reset` | covered |
 | backing out of either confirmation | `s7b-people-panel` | covered |
 | making someone an administrator | — | not covered ([why](#not-covered-and-why)) |
@@ -153,8 +153,8 @@ holding that person's own key.
   API instead, then signs in as them and drives the screens, so the *state* is
   covered even though the button does not exist to press.
 - **Remove and the exact-locations box inside the members table.** They call
-  the same two endpoints as the People panel's Change and Remove, on the same
-  rows, and `s7b-people-panel` drives both of those through the interface and
+  the same endpoints as the People panel's boxes, on the same rows, and
+  `s7b-people-panel` drives both of those through the interface and
   checks the effect with the person's own key. Adding them here would repeat
   that without testing anything new.
 - **A duplicate scientific name.** Same rule and same code path as a duplicate
