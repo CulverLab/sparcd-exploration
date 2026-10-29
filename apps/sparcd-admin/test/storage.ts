@@ -1,4 +1,5 @@
 import type { SafeS3Client } from '@sparcd/s3-safe'
+import { saveSharedConnection } from '@sparcd/auth-ui'
 import type { S3Config } from '@sparcd/types'
 
 export type Store = Record<string, Record<string, unknown>>
@@ -89,3 +90,13 @@ export const settingsStore = (): Store => ({
   },
   other: {},
 })
+
+/** Starts this tab's session the way a login does, so it carries a revision. */
+export const seedSession = () => saveSharedConnection(config, false)
+
+/** What a sibling tab broadcasts when it logs in: newer than anything this tab has seen. */
+export const siblingConnect = (cfg: S3Config) => {
+  const head = JSON.parse(localStorage.getItem('sparcd-connection-revision') ?? 'null')
+  const revision = { counter: (head?.revision.counter ?? 0) + 1, id: 'sibling' }
+  return { type: 'connect', protocol: 1, connected: true, revision, config: cfg }
+}

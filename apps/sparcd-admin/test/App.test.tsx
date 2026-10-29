@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { S3Config } from '@sparcd/types'
 import { App } from '../src/App'
 import { button, click, field, hasButton, render, rowButtons, settle, type } from './dom'
-import { config, fakeStorage, httpError, settingsStore, type Store } from './storage'
+import { config, fakeStorage, httpError, settingsStore, type Store, seedSession, siblingConnect } from './storage'
 import { fakeApi, noService } from './fakeApi'
 import type { MakeApi } from '../src/App'
 
-type Message = { type: string; config?: S3Config }
+type Message = { type: string; protocol?: number; config?: S3Config }
 
 const channels: FakeChannel[] = []
 class FakeChannel {
@@ -32,7 +32,7 @@ const mounted: { unmount: () => void }[] = []
 
 const open = (store: Store, faults: Record<string, () => Error> = {}, makeApi: MakeApi = noService) => {
   const storage = fakeStorage(store, faults)
-  sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+  seedSession()
   const view = render(<App makeClient={(_config, read, write) => storage.make(read, write)} makeApi={makeApi} />)
   mounted.push(view)
   return { storage, view }
@@ -113,13 +113,13 @@ describe('a load that finishes late (fix 3)', () => {
     const slow = fakeStorage(slowStore, {}, (entry) => (entry.endsWith('Settings/species.json') ? held : undefined))
     const fast = fakeStorage(fastStore)
 
-    sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+    seedSession()
     const view = render(<App makeClient={(target, read, write) => (target.accessKey === config.accessKey ? slow : fast).make(read, write)} makeApi={noService} />)
     mounted.push(view)
     await settle()
 
     const sibling = new FakeChannel('sparcd-connection-live')
-    await act(async () => { sibling.postMessage({ type: 'connect', config: { ...config, accessKey: 'OTHERKEY' } }) })
+    await act(async () => { sibling.postMessage(siblingConnect({ ...config, accessKey: 'OTHERKEY' })) })
     await act(async () => { release() })
 
     expect(speciesSection(view.host).textContent).toContain('Newer')
@@ -180,8 +180,8 @@ describe('answering another tab (bug 12)', () => {
     const sibling = new FakeChannel('sparcd-connection-live')
     const heard: Message[] = []
     sibling.addEventListener('message', (event) => heard.push(event.data))
-    sibling.postMessage({ type: 'request' })
-    expect(heard).toEqual([{ type: 'connect', config }])
+    sibling.postMessage({ type: 'request', protocol: 1 })
+    expect(heard).toMatchObject([{ type: 'connect', config }])
   })
 })
 
@@ -199,7 +199,7 @@ describe('a login whose people arrive after it was abandoned (fix 4)', () => {
     // A sibling tab hands over a different login; its people list is still in
     // flight when this tab logs out.
     const sibling = new FakeChannel('sparcd-connection-live')
-    await act(async () => { sibling.postMessage({ type: 'connect', config: { ...config, accessKey: 'OTHERKEY' } }) })
+    await act(async () => { sibling.postMessage(siblingConnect({ ...config, accessKey: 'OTHERKEY' })) })
     await click(button(view.host, 'Logout'))
     await act(async () => { release() })
     await settle()

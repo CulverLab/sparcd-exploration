@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { S3Config } from '@sparcd/types'
 import { App } from '../src/App'
 import { button, click, field, render, rowButtons, settle, type } from './dom'
-import { config, fakeStorage, settingsStore } from './storage'
+import { config, fakeStorage, settingsStore, seedSession, siblingConnect } from './storage'
 import { fakeApi, noService } from './fakeApi'
 import type { MakeApi } from '../src/App'
 
-type Message = { type: string; config?: S3Config }
+type Message = { type: string; protocol?: number; config?: S3Config }
 const channels: FakeChannel[] = []
 class FakeChannel {
   listeners: ((event: { data: Message }) => void)[] = []
@@ -48,7 +48,7 @@ function openHeld(makeApi: MakeApi = noService) {
     if (!holding) return undefined
     return new Promise<void>((resolve) => pending.push(resolve))
   })
-  sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+  seedSession()
   const view = render(<App makeClient={(_c, read, write) => storage.make(read, write)} makeApi={makeApi} />)
   mounted.push(view)
   const release = async () => {
@@ -213,7 +213,7 @@ function openStaged(makeApi: MakeApi = noService) {
     })
   }
 
-  sessionStorage.setItem('sparcd-connection-tab', JSON.stringify(config))
+  seedSession()
   const view = render(<App makeClient={(_c, read, write) => make(read, write)} makeApi={makeApi} />)
   mounted.push(view)
 
@@ -331,7 +331,7 @@ describe('other tabs', () => {
     await settle()
     const before = app.storage.log.length
     const sibling = new FakeChannel('sparcd-connection-live')
-    await act(async () => { sibling.postMessage({ type: 'connect', config }) })
+    await act(async () => { sibling.postMessage(siblingConnect(config)) })
     await settle()
     expect(app.storage.log.length).toBe(before)
   })
