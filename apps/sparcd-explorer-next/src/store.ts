@@ -89,6 +89,8 @@ type State = {
   side: boolean;
   /** The phone Filters sheet is open. */
   sheet: boolean;
+  /** The report sheet is open. Either Report button opens it, so a resize that swaps them keeps it. */
+  report: boolean;
   /** For about 8 s after Reset: what Undo puts back, and which Reset slot was pressed. */
   resetUndo: (Back & { from: ResetSlot }) | null;
 
@@ -126,6 +128,7 @@ type State = {
   undoReset: () => void;
   setSide: (side: boolean) => void;
   setSheet: (open: boolean) => void;
+  setReport: (open: boolean) => void;
   setSeparate: (separate: boolean) => void;
   setView: (view: View) => void;
   setPhotoLayout: (layout: PhotoLayout) => void;
@@ -229,6 +232,7 @@ export const useStore = create<State>((set, get) => ({
   back: null,
   side: readStored(SIDE_KEY, true, (v): v is boolean => typeof v === 'boolean'),
   sheet: false,
+  report: false,
   resetUndo: null,
 
   signIn: (config, remember) => {
@@ -260,6 +264,7 @@ export const useStore = create<State>((set, get) => ({
       toast: null,
       back: null,
       resetUndo: null,
+      report: false,
       openGeneration: get().openGeneration + 1,
     });
   },
@@ -430,6 +435,7 @@ export const useStore = create<State>((set, get) => ({
     set({ side });
   },
   setSheet: (sheet) => set({ sheet }),
+  setReport: (report) => set({ report }),
 
   setSeparate: (separate) => set({ separate }),
   setView: (view) => set({ view }),

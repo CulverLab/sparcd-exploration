@@ -135,6 +135,14 @@ Feature: Report and downloads
     When I download "Camtrap DP package (.zip)" from More formats
     Then the package's deployment "AB07" is named "'=1+1"
 
+  Scenario: The report stays open as the window narrows past 1024 pixels
+    Given I have opened "Alpha Basin"
+    When I open the report
+    And the window narrows to 900 pixels
+    Then the report is open
+    When I close the report
+    Then focus is back on the "Report & export" button
+
   Scenario: Closing the report puts the page back where it was, and Esc closes it too
     Given I have opened "Alpha Basin"
     When I note where the page is

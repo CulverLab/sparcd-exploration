@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { activeFilters, type Precision } from '@/data';
 import { filtersName } from '@/lib/filterLabels';
 import { initials } from '@/lib/format';
@@ -260,25 +260,29 @@ function ChecksItem() {
   );
 }
 
+/** In the top bar, or under 1024 px in `NarrowActions`: one at a time, so the id is the one shown. */
 function ReportButton() {
-  const [open, setOpen] = useState(false);
-  const button = useRef<HTMLButtonElement>(null);
+  const setReport = useStore((s) => s.setReport);
   return (
-    <>
-      <button ref={button} type="button" className="btn primary" aria-haspopup="dialog" onClick={() => setOpen(true)}>
-        Report &amp; export
-      </button>
-      {open && (
-        <Suspense fallback={null}>
-          <ReportSheet
-            onClose={() => {
-              setOpen(false);
-              button.current?.focus({ preventScroll: true });
-            }}
-          />
-        </Suspense>
-      )}
-    </>
+    <button type="button" id="reportbtn" className="btn primary" aria-haspopup="dialog" onClick={() => setReport(true)}>
+      Report &amp; export
+    </button>
+  );
+}
+
+function Report() {
+  const open = useStore((s) => s.report);
+  const setReport = useStore((s) => s.setReport);
+  if (!open) return null;
+  return (
+    <Suspense fallback={null}>
+      <ReportSheet
+        onClose={() => {
+          setReport(false);
+          document.getElementById('reportbtn')?.focus({ preventScroll: true });
+        }}
+      />
+    </Suspense>
   );
 }
 
@@ -373,6 +377,7 @@ export function Header() {
         </>
       )}
       <AccountMenu changeLabel={change} />
+      <Report />
     </header>
   );
 }

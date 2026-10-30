@@ -33,6 +33,16 @@ When('I close the report', async ({ page }) => {
   await report(page).getByRole('button', { name: 'Close', exact: true }).click();
 });
 
+When('the window narrows to {int} pixels', async ({ page }, width: number) => {
+  await page.setViewportSize({ width, height: 860 });
+  // Under 1024 px the Report button sits in the row above the figures.
+  await expect(page.locator('.phoneacts #reportbtn')).toHaveCount(1);
+});
+
+Then('the report is open', async ({ page }) => {
+  await expect(report(page)).toBeVisible();
+});
+
 Then('the report is closed', async ({ page }) => {
   await expect(report(page)).toHaveCount(0);
 });
