@@ -13,7 +13,6 @@ import {
   filterButton,
   headerCells,
   openCollections,
-  photoCount,
   popover,
   resetButton,
   settled,
@@ -24,7 +23,14 @@ import { ALPHA, addUpload } from './support/data';
 
 // --- Filters --------------------------------------------------------------------
 
+/** On a phone, the filters are in a sheet the Filters button opens. */
+export async function openSheetIfPhone(page: Page) {
+  const fb = page.locator('#filtersbtn');
+  if ((await fb.getAttribute('aria-haspopup')) === 'dialog' && (await fb.getAttribute('aria-expanded')) !== 'true') await fb.click();
+}
+
 async function openFilter(page: Page, name: string) {
+  await openSheetIfPhone(page);
   const button = filterButton(page, new RegExp(`^${name}`));
   if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click();
 }
@@ -33,11 +39,23 @@ const FILTER_NAMES: Record<string, string> = {
   species: 'Species',
   locations: 'Locations',
   dates: 'Dates',
-  area: 'Area',
-  files: 'Files',
+  area: 'Map area',
+  files: 'Photo files',
   'mountain range': 'Mountain range',
   collections: 'Collections',
 };
+const DIMS: Record<string, string> = {
+  species: 'species',
+  locations: 'locations',
+  dates: 'dates',
+  area: 'area',
+  files: 'files',
+  'mountain range': 'ranges',
+  collections: 'collections',
+};
+/** A section, read even while the sidebar is hidden. */
+const section = (page: Page, which: string) => page.locator(`#side .fsec[data-dim="${DIMS[which]}"]`);
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** A picker row: its checkbox, and the Only button that shows as the pointer rests on it. */
 function pickerRow(page: Page, filter: string, item: string) {
@@ -57,9 +75,9 @@ async function pressOnly(page: Page, filter: string, item: string) {
 }
 
 Then(
-  'the filter buttons read {string}, {string}, {string}, {string} and {string}',
-  async ({ page }, a: string, b: string, c: string, d: string, e: string) => {
-    await expect(filterBar(page).locator('.fbtn')).toHaveText([a, b, c, d, e]);
+  'the sidebar sections read {string}, {string}, {string}, {string}, {string} and {string}',
+  async ({ page }, a: string, b: string, c: string, d: string, e: string, f: string) => {
+    await expect(filterBar(page).locator('.fsec-label')).toHaveText([a, b, c, d, e, f]);
   },
 );
 
@@ -160,12 +178,112 @@ Then('the species filter lists {string} first, apart from the species', async ({
   await expect(first.getByRole('button', { name: `Only ${item}`, exact: true })).toBeAttached();
 });
 
-Then(/^the (species|dates|locations|area|files|mountain range) filter reads "(.*)"$/, async ({ page }, which: string, label: string) => {
-  await expect(filterBar(page).locator('.fbtn').filter({ hasText: new RegExp(`^${FILTER_NAMES[which]}`) })).toHaveText(label);
-});
+/** "Species: Bobcat" is the Species section on, reading "Bobcat" (in either case); "Species" alone is the section off. */
+Then(
+  /^the (species|dates|locations|area|files|mountain range|collections) filter reads "(.*)"$/,
+  async ({ page }, which: string, label: string) => {
+    const sec = section(page, which);
+    const at = label.indexOf(': ');
+    if (at < 0) {
+      await expect(sec).not.toHaveClass(/\bon\b/);
+      return;
+    }
+    await expect(sec).toHaveClass(/\bon\b/);
+    await expect(sec.locator('.fsec-value')).toHaveText(new RegExp(`^${escapeRe(label.slice(at + 2))}$`, 'i'));
+  },
+);
 
 When(/^I clear the (Collections|Species|Area|Locations|Files|Dates) filter with its ×$/, async ({ page }, name: string) => {
-  await page.getByRole('button', { name: `Clear ${name} filter` }).click();
+  await openSheetIfPhone(page);
+  await page.getByRole('button', { name: `Clear ${FILTER_NAMES[name.toLowerCase()]} filter` }).click();
+});
+
+When('I press the year {int} in the Dates section', async ({ page }, year: number) => {
+  await filterBar(page).getByRole('group', { name: 'Years' }).getByRole('button', { name: String(year), exact: true }).click();
+});
+
+Then("Undo has taken Reset's place, with the focus on it", async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeFocused();
+  await expect(resetButton(page)).toHaveCount(0);
+});
+
+Then('"Reset filters" is back in its place', async ({ page }) => {
+  await expect(resetButton(page)).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(0);
+});
+
+// --- Layout -----------------------------------------------------------------------
+
+type Box = { x: number; y: number; width: number; height: number };
+const LAYOUT_PARTS = ['#figures', '#map', '#table .tbl-head'];
+const boxes = (page: Page) => Promise.all(LAYOUT_PARTS.map(async (sel) => (await page.locator(sel).boundingBox())!));
+
+When("I note where the figures, the map and the tables' tab row are", async ({ page, scratch }) => {
+  await page.evaluate(() => scrollTo(0, 0));
+  scratch.boxes = await boxes(page);
+});
+
+Then("the figures, the map and the tables' tab row have not moved", async ({ page, scratch }) => {
+  const before = scratch.boxes as Box[];
+  const now = await boxes(page);
+  now.forEach((b, i) => {
+    for (const k of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(b[k] - before[i][k]), `${LAYOUT_PARTS[i]} ${k}`).toBeLessThanOrEqual(1);
+  });
+});
+
+Then("the figures, the map and the tables' tab row are only wider", async ({ page, scratch }) => {
+  const before = scratch.boxes as Box[];
+  await expect.poll(async () => Math.round((await page.locator('#map').boundingBox())!.x)).toBeLessThan(before[1].x - 200);
+  // Once the sidebar has slid shut.
+  await page.waitForTimeout(250);
+  const now = await boxes(page);
+  now.forEach((b, i) => {
+    expect(Math.abs(b.y - before[i].y), `${LAYOUT_PARTS[i]} top`).toBeLessThanOrEqual(1);
+    expect(Math.abs(b.height - before[i].height), `${LAYOUT_PARTS[i]} height`).toBeLessThanOrEqual(1);
+    expect(Math.abs(b.x + b.width - (before[i].x + before[i].width)), `${LAYOUT_PARTS[i]} right edge`).toBeLessThanOrEqual(1);
+    expect(b.width, `${LAYOUT_PARTS[i]} width`).toBeGreaterThan(before[i].width + 200);
+  });
+});
+
+When(/^I (hide|show) the sidebar$/, async ({ page }, verb: string) => {
+  const fb = page.locator('#filtersbtn');
+  await expect(fb).toHaveAttribute('aria-pressed', verb === 'hide' ? 'true' : 'false');
+  await fb.click();
+  // Once it has slid in or out.
+  await (verb === 'hide' ? expect(filterBar(page)).toBeHidden() : expect(filterBar(page)).toBeVisible());
+});
+
+Then(/^the sidebar is (hidden|shown)$/, async ({ page }, state: string) => {
+  await expect(page.locator('#filtersbtn')).toHaveAttribute('aria-pressed', state === 'shown' ? 'true' : 'false');
+  await (state === 'shown' ? expect(filterBar(page)).toBeVisible() : expect(filterBar(page)).toBeHidden());
+});
+
+Then('the Filters button counts {int} on, named {string}', async ({ page }, n: number, name: string) => {
+  const fb = page.locator('#filtersbtn');
+  await expect(fb.locator('.n')).toHaveText(String(n));
+  await expect(fb).toHaveAccessibleName(name);
+});
+
+Then('"Reset filters" sits right after the Filters button', async ({ page }) => {
+  const fb = (await page.locator('#filtersbtn').boundingBox())!;
+  const reset = (await resetButton(page).boundingBox())!;
+  expect(reset.x - (fb.x + fb.width)).toBeGreaterThan(0);
+  expect(reset.x - (fb.x + fb.width)).toBeLessThan(16);
+  expect(Math.abs(reset.y + reset.height / 2 - (fb.y + fb.height / 2))).toBeLessThanOrEqual(1);
+});
+
+When('I open the Filters sheet', async ({ page }) => {
+  await page.locator('#filtersbtn').click();
+  await expect(filterBar(page)).toBeVisible();
+});
+
+Then("the sheet's button reads {string}", async ({ page }, label: string) => {
+  await expect(filterBar(page).locator('.sheetfoot button')).toHaveText(label);
+});
+
+Then('the Filters sheet is closed', async ({ page }) => {
+  await expect(filterBar(page)).toBeHidden();
+  await expect(page.locator('#filtersbtn')).toHaveAttribute('aria-expanded', 'false');
 });
 
 When('I press Escape', async ({ page }) => {
@@ -221,24 +339,9 @@ Given('the screen is {int} pixels wide', async ({ page }, width: number) => {
   await page.setViewportSize({ width, height: 860 });
 });
 
-Then('the filter bar is one line high', async ({ page }) => {
-  const tops = await filterBar(page).locator('.fb').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
-  expect(new Set(tops).size).toBe(1);
-  const bar = await page.locator('.filterbar').boundingBox();
-  expect(bar!.height).toBeLessThan(60);
-});
-
 Then('the page does not scroll sideways', async ({ page }) => {
-  const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, innerWidth]);
-  expect(scroll).toBeLessThanOrEqual(width);
-});
-
-Then('the reset button reads {string}', async ({ page }, label: string) => {
-  await expect(resetButton(page)).toHaveAccessibleName(label);
-});
-
-Then('the photo count is hidden', async ({ page }) => {
-  await expect(photoCount(page)).toBeHidden();
+  // Once the layout has followed a resize: the effort strip and the map measure their boxes a frame later.
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });
 
 // --- Tables ---------------------------------------------------------------------
@@ -298,18 +401,18 @@ Then(/^the Locations table (has|has no) a? ?"(.*)" column$/, async ({ page }, ha
   expect((await columnLabels(page)).includes(label)).toBe(has === 'has');
 });
 
-Then('the filter bar has a {string} filter', async ({ page }, name: string) => {
+Then('the sidebar has a {string} section', async ({ page }, name: string) => {
   await expect(filterButton(page, name)).toBeVisible();
 });
 
-Then('the filter bar has no {string} filter', async ({ page }, name: string) => {
+Then('the sidebar has no {string} section', async ({ page }, name: string) => {
   await expect(filterButton(page, name)).toHaveCount(0);
 });
 
-Then('{string} lists photos by collection', async ({ page }, region: string) => {
-  const inView = page.getByRole('region', { name: region });
-  await expect(inView.getByText('By collection')).toBeVisible();
-  await expect(inView.locator('table.bc tbody tr')).toHaveCount(2);
+Then('the figures list photos by collection', async ({ page }) => {
+  const line = page.getByRole('group', { name: 'By collection' });
+  await expect(line.locator(':scope > .bc-k')).toHaveText('By collection');
+  await expect(line.locator(':scope > .bc-item')).toHaveCount(2);
 });
 
 // --- Columns and Display --------------------------------------------------------
@@ -398,14 +501,17 @@ Then('the first row is {string}', async ({ page }, id: string) => {
 
 // --- Data checks ----------------------------------------------------------------
 
+/** The quiet item in the top bar's status: "3 data checks", or "No data problems". */
+export const checksButton = (page: Page) => page.getByRole('button', { name: /data checks?$|^No data problems$/ });
+
 When('I open Data checks', async ({ page }) => {
-  await page.getByRole('button', { name: /^Data checks/ }).click();
+  await checksButton(page).click();
   await expect(popover(page, 'Data checks')).toBeVisible();
 });
 
 Then('Data checks shows {int} problems', async ({ page }, n: number) => {
   await expect(popover(page, 'Data checks').locator('.dqlist li')).toHaveCount(n);
-  await expect(page.getByRole('button', { name: /^Data checks/ })).toContainText(String(n));
+  await expect(checksButton(page)).toHaveText(`${n} data check${n === 1 ? '' : 's'}`);
 });
 
 When('I press {string} in Data checks', async ({ page }, label: string) => {
@@ -429,7 +535,7 @@ Then('the Locations table lists {string} once, and no {string}', async ({ page }
 });
 
 When('I switch on {string}', async ({ page }, label: string) => {
-  const sw = page.getByRole('switch', { name: label });
+  const sw = popover(page, 'Data checks').getByRole('switch', { name: label });
   await sw.click();
   await expect(sw).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('Escape');
@@ -442,14 +548,14 @@ When('I scroll down to the table', async ({ page }) => {
   await page.evaluate(() => scrollTo(0, document.getElementById('table')!.offsetTop + 40));
 });
 
-Then('the filter bar is still at the top of the screen', async ({ page }) => {
+Then('the top bar and the sidebar are still in view', async ({ page }) => {
   expect(await page.evaluate(() => scrollY)).toBeGreaterThan(300);
-  // The header block's top edge sits exactly at the viewport's top, and the bar right under the header.
+  // The top bar's top edge sits exactly at the viewport's top, and the sidebar right under it.
   await expect.poll(async () => Math.round((await page.locator('#sticky-top').boundingBox())!.y)).toBe(0);
   const header = (await page.locator('header.top').boundingBox())!;
-  const bar = (await page.locator('.filterbar').boundingBox())!;
-  expect(Math.abs(bar.y - (header.y + header.height))).toBeLessThan(2);
-  await expect(page.locator('.filterbar')).toBeInViewport();
+  const side = (await filterBar(page).boundingBox())!;
+  expect(Math.abs(side.y - (header.y + header.height))).toBeLessThan(2);
+  await expect(resetButton(page)).toBeInViewport();
 });
 
 const tools = (page: Page) => page.locator('#table .tbl-head');
@@ -462,11 +568,12 @@ When('I scroll far down the table', async ({ page }) => {
   await page.evaluate(() => scrollTo(0, document.getElementById('table')!.getBoundingClientRect().top + scrollY + 2500));
 });
 
-Then(/^the table's controls sit just under (?:it|the filter bar), on one line$/, async ({ page, scratch }) => {
+Then(/^the table's controls sit just under (?:it|the top bar), on one line$/, async ({ page, scratch }) => {
   const bar = (await page.locator('#sticky-top').boundingBox())!;
   await expect.poll(async () => Math.abs(Math.round((await tools(page).boundingBox())!.y - (bar.y + bar.height)))).toBeLessThan(2);
   const box = (await tools(page).boundingBox())!;
-  expect(box.height).toBeLessThan(60);
+  // The tabs, and the tools beside them rather than wrapped under them.
+  expect(box.height).toBeLessThan(80);
   if (scratch.toolsHeight !== undefined) expect(box.height).toBe(scratch.toolsHeight);
   await expect(tools(page).getByRole('button', { name: 'Export CSV' })).toBeInViewport();
 });
@@ -486,4 +593,8 @@ Then("the table's column headers sit just under the table's controls", async ({ 
       return Math.abs(Math.round((await headerCells(page).first().boundingBox())!.y - (box.y + box.height)));
     })
     .toBeLessThan(4);
+});
+
+Then('the table shows each location ID separately', async ({ page }) => {
+  await expect(page.locator('#table').getByRole('switch', { name: 'Show each location ID separately' })).toHaveAttribute('aria-checked', 'true');
 });

@@ -25,7 +25,7 @@ Feature: Data checks
     When I open Data checks
     And I switch on "Show each location ID separately"
     Then the Locations table has 6 rows
-    And I see "Each location ID shown separately"
+    And the table shows each location ID separately
 
   Scenario: The same location in two collections
     Given I am signed in
@@ -39,7 +39,7 @@ Feature: Data checks
     And I press "Show each position" in Data checks
     Then the Locations table has 2 rows
     And the "Location ID" column lists "AB01"
-    And I see "Each location ID shown separately"
+    And the table shows each location ID separately
 
   Scenario: Near-duplicate IDs show both
     Given I have opened "Alpha Basin"
@@ -57,7 +57,7 @@ Feature: Data checks
     When I press "Show both" in Data checks
     Then the Locations table has 2 rows
     And the "Location ID" column lists "pat26"
-    And I see "Each location ID shown separately"
+    And the table shows each location ID separately
 
   Scenario: Hidden uploads are named on request
     Given I have opened "Alpha Basin"

@@ -23,7 +23,7 @@ When('I open the report', async ({ page }) => {
   // scroll the sticky header's "natural" place into view, moving the page.
   // Measured again on a retry: the header can still be settling as the workspace opens.
   await expect(async () => {
-    const box = (await page.getByRole('button', { name: 'Report', exact: true }).boundingBox())!;
+    const box = (await page.getByRole('button', { name: 'Report & export', exact: true }).boundingBox())!;
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await expect(report(page)).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 10_000 });

@@ -7,10 +7,12 @@ S3 with read-only credentials and keeps a local copy in IndexedDB, so a
 collection opened before shows at once.
 
 It signs in once with the Tagger and Uploader, opens several collections
-together, and shows a map of hexes (or exact sites where allowed), the camera
-effort per month, an In view summary with data checks, and Locations, Species
-and Photos tables, a photo grid with a detail view, and charts. Every part
-follows one filter bar with Reset and Undo. Report prints what is in view or
+together, and shows large figures for what is in view, a map of hexes (or
+exact sites where allowed) with the camera effort per month under it, and
+Locations, Species and Photos tables, a photo grid with a detail view, and
+charts. Every part follows the filters in the left sidebar, which hides with
+the Filters button and keeps Reset and Undo in a fixed place; on phones the
+filters open as a sheet. Data checks sit in the top bar. Report prints what is in view or
 saves it as a PDF, and downloads it as a spreadsheet, CSV files or a Camtrap DP
 package. Coordinates are never shown or exported more exact than the Display
 precision.

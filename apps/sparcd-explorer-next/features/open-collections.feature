@@ -7,17 +7,17 @@ Feature: Open collections
   Scenario: Two collections open together
     Given I am signed in
     When I open "Alpha Basin" and "Bravo Flats" together
-    Then the header names "Alpha Basin + 1 more"
+    Then the header names "Alpha Basin + Bravo Flats"
     And the header offers "Change collections"
-    And the filter bar has a "Collections" filter
-    And "In view" lists photos by collection
+    And the sidebar has a "Collections" section
+    And the figures list photos by collection
     And the Locations table has a "Collection" column
     And the photo count reads "14 photos"
 
   Scenario: One collection shows no collection controls
     Given I have opened "Alpha Basin"
     Then the header names "Alpha Basin"
-    And the filter bar has no "Collections" filter
+    And the sidebar has no "Collections" section
     And the Locations table has no "Collection" column
 
   Scenario: Opening shows its steps and can be cancelled
@@ -96,7 +96,7 @@ Feature: Open collections
     When I pick "Bravo Flats" in By collection
     Then "Bravo Flats" is highlighted in By collection
     And By collection lists "Alpha Basin" then "Bravo Flats"
-    And "× Clear" shows at the right end of the "By collection" line
+    And "× Clear" shows at the end of the "By collection" line
     And By collection has not moved
     And the photo count reads "3 of 14 photos"
     When I press "× Clear" by the collections
@@ -109,7 +109,7 @@ Feature: Open collections
     And I open "Alpha Basin" and "Bravo Flats" together
     When I pick "Bravo Flats" in By collection
     And I press "Show photos" on the Locations row "BF01"
-    Then the table's controls offer "Back to Locations" before the view switch
+    Then the table's controls offer "Back to Locations" ahead of the other tools
     When <clear>
     Then no row is highlighted in By collection
     And the locations filter reads "Locations: BF01"
@@ -119,6 +119,20 @@ Feature: Open collections
       | clear                                     |
       | I press "× Clear" by the collections      |
       | I clear the Collections filter with its × |
+
+  Scenario: With three collections the title names the first and how many more, and By collection lists every one
+    Given I am signed in
+    And the screen is 1100 pixels wide
+    When I tick "Alpha Basin"
+    And I tick "Bravo Flats"
+    And I tick "Charlie Pond"
+    And I press the open button
+    Then the header names "Alpha Basin + 2 more", with every name in its title
+    When I open "+ more" in By collection
+    Then the By collection list names "Alpha Basin, Bravo Flats, Charlie Pond"
+    When I pick "Charlie Pond" in the By collection list
+    Then "Charlie Pond" is picked in the By collection list
+    And the photo count reads "3 of 17 photos"
 
   @preview-3
   Scenario: Collections open when the computer's clock is off, and Data checks says so
@@ -144,7 +158,7 @@ Feature: Open collections
     And the opening panel does not offer "Continue with"
     When the server's clock is right again
     And I press "Retry failed"
-    Then the header names "Alpha Basin + 1 more"
+    Then the header names "Alpha Basin + Bravo Flats"
     And the photo count reads "14 photos"
 
   @preview-3
@@ -170,14 +184,14 @@ Feature: Open collections
     Then I see "Bravo Flats: couldn't open"
     When the uploads of "Bravo Flats" can be listed again
     And I press "Retry failed"
-    Then the header names "Alpha Basin + 1 more"
+    Then the header names "Alpha Basin + Bravo Flats"
     And the photo count reads "14 photos"
 
   @preview-6
   Scenario: A location in two collections names them in its Collection cell, not in a flag
     Given I am signed in
     And I open "Alpha Basin" and "Bravo Flats" together
-    Then the header names "Alpha Basin + 1 more"
+    Then the header names "Alpha Basin + Bravo Flats"
     And no flag reads "collections"
     And the Collection of "AB01" reads "2 collections", naming "Alpha Basin, Bravo Flats"
     When I tap the Collection of "AB01"

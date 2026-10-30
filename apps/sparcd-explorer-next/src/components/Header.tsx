@@ -333,7 +333,7 @@ function Title() {
     <h1 className={many ? 'collname many' : 'collname'} title={names.join(', ')} aria-label={many ? names.join(', ') : undefined}>
       {many ? (
         <>
-          <span className="cn-first">{names[0]}</span>
+          <span className="cn-first">{names[0]}</span>{' '}
           <span className="cn-more">+ {names.length - 1} more</span>
         </>
       ) : (

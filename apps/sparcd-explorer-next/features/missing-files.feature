@@ -24,7 +24,7 @@ Feature: Photos whose files aren't on the server
     And I press "Show them" in Data checks
     Then the grid shows 2 photos
     And 2 tiles say "File not found"
-    And the files filter reads "Files: not on the server"
+    And the files filter reads "Files: Only the 2 missing files"
     And the photo count reads "2 of 13 photos"
     When I clear the Files filter with its ×
     Then the photo count reads "13 photos"

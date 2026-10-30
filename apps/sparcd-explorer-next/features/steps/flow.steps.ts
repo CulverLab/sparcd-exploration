@@ -11,7 +11,7 @@ import {
   collectionBox,
   expect,
   openCollections,
-  photoCount,
+  photoCountText,
   signIn,
   signedIn,
 } from './support/world';
@@ -215,7 +215,7 @@ Then('the header says {string}', async ({ page }, text: string) => {
 });
 
 Then('the photo count reads {string}', async ({ page }, text: string) => {
-  await expect(photoCount(page)).toHaveText(text);
+  await expect.poll(() => photoCountText(page)).toBe(text);
 });
 
 // --- Tabs -----------------------------------------------------------------------

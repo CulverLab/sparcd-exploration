@@ -56,16 +56,27 @@ export { expect };
 
 // --- Page parts ---------------------------------------------------------------
 
-export const filterBar = (page: Page): Locator => page.getByRole('group', { name: 'Filters' });
+/** The filter sidebar (or, on a phone, the Filters sheet). */
+export const filterBar = (page: Page): Locator => page.getByRole('complementary', { name: 'Filters' });
+/** A sidebar section's button: its name, then its value ("Species All 4 species"). */
 export const filterButton = (page: Page, name: string | RegExp): Locator =>
   filterBar(page).getByRole('button', { name: typeof name === 'string' ? new RegExp(`^${name}`) : name });
-export const resetButton = (page: Page): Locator => page.getByRole('button', { name: /^Reset( filters)?$/ });
-export const photoCount = (page: Page): Locator => page.locator('.fright .result');
+export const resetButton = (page: Page): Locator => page.getByRole('button', { name: 'Reset filters', exact: true });
+/** The Photos figure: its number, then "of N" while a filter is on. */
+export const photosFigure = (page: Page): Locator => page.locator('#figures .fig.ph');
+/** The Photos figure as one line: "4 of 11 photos", or "11 photos" with no filter on. */
+export async function photoCountText(page: Page): Promise<string> {
+  const fig = photosFigure(page);
+  const v = (await fig.locator('.v').innerText()).trim();
+  const of = (await fig.locator('.of').last().innerText()).trim();
+  const noun = (of ? of.slice(3) : v) === '1' ? 'photo' : 'photos';
+  return of ? `${v} ${of} ${noun}` : `${v} ${noun}`;
+}
 export const table = (page: Page): Locator => page.locator('#table table.data');
 export const tableRows = (page: Page): Locator => table(page).locator('tbody tr:not([aria-hidden])');
 export const headerCells = (page: Page): Locator => table(page).locator('thead th');
 export const viewButton = (page: Page, name: string): Locator =>
-  page.getByRole('group', { name: 'Show' }).getByRole('button', { name, exact: true });
+  page.getByRole('tablist', { name: 'Tables' }).getByRole('tab', { name, exact: true });
 export const popover = (page: Page, name: string): Locator => page.getByRole('dialog', { name });
 
 /**
@@ -73,7 +84,7 @@ export const popover = (page: Page, name: string): Locator => page.getByRole('di
  * sort or a filter in a background render, and says "Updating…" until then.
  */
 export async function settled(page: Page): Promise<void> {
-  await expect(page.locator('.fright .updating')).toHaveCount(0);
+  await expect(page.locator('#table .updating')).toHaveCount(0);
 }
 
 /** Column labels in order: each header's first text, as written (headers are uppercased by CSS). */

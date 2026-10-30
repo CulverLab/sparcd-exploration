@@ -20,7 +20,7 @@ Feature: Camera effort
     When I drag the strip from "Jan 2024" to "May 2024"
     And I pick the year 2024 in the dates filter
     And I press "Show photos" on the Locations row "AB02"
-    Then the table's controls offer "Back to Locations" before the view switch
+    Then the table's controls offer "Back to Locations" ahead of the other tools
     When <clear>
     Then the dates filter reads "Dates"
     And the locations filter reads "Locations: AB02"

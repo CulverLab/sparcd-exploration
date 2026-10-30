@@ -21,17 +21,17 @@ Feature: The map
     And the hex holding "AB02" is outlined as selected
     And the photo count reads "5 of 11 photos"
     When I click the hex holding "AB02"
-    Then the filter bar has no "Area" filter
+    Then the area filter reads "Area"
     And the photo count reads "11 photos"
 
-  Scenario: Clearing the area from the map or from the filter bar
+  Scenario: Clearing the area from the map or from its section
     When I click the hex holding "AB02"
     And I press "× Clear" on the map
-    Then the filter bar has no "Area" filter
+    Then the area filter reads "Area"
     When I click the hex holding "AB01"
     Then the area filter reads "Area: 1 location"
     When I clear the Area filter with its ×
-    Then the filter bar has no "Area" filter
+    Then the area filter reads "Area"
     And the map has no "× Clear"
 
   Scenario: Select area takes in the hexes inside a dragged rectangle
@@ -57,7 +57,7 @@ Feature: The map
     When I press "Select area"
     And I press "Select area"
     Then "Select area" is switched off
-    And the filter bar has no "Area" filter
+    And the area filter reads "Area"
 
   @US-001
   Scenario: A coarser Display precision makes the hexes coarser, and the area stays

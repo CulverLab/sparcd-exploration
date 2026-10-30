@@ -1,13 +1,14 @@
 Feature: Filter the photos in view
 
-  The filter bar is one line. Each filter shows its own value and its own ×,
-  and Reset sits at the right end with Undo.
+  The filters live in a sidebar, one section each in a fixed order. Each
+  section shows its value in plain words and, while on, its own ×. Reset sits
+  in a fixed place, and Undo takes its place for a few seconds.
 
   Background:
     Given I have opened "Alpha Basin"
 
-  Scenario: A filter shows its value on its button and clears with its ×
-    Then the filter buttons read "Species", "Locations", "Dates", "Elevation" and "Mountain range"
+  Scenario: A filter shows its value in its section and clears with its ×
+    Then the sidebar sections read "Species", "Locations", "Dates", "Map area", "Mountain range" and "Elevation"
     And "Reset filters" is disabled
     When I filter species to "Bobcat"
     Then the species filter reads "Species: Bobcat"
@@ -38,10 +39,10 @@ Feature: Filter the photos in view
     Then the species filter reads "Species: all but Bobcat"
     And the photo count reads "8 of 11 photos"
     When I untick "Coyote" in the species filter
-    Then the species filter reads "Species: Deer (Mule), Gray Fox"
+    Then the species filter reads "Species: Deer (Mule), Gray Fox, untagged photos"
     When I clear the Species filter with its ×
     And I untick "Untagged photos" in the species filter
-    Then the species filter reads "Species: no untagged"
+    Then the species filter reads "Species: no untagged photos"
     And the photo count reads "7 of 11 photos"
 
   Scenario: Clear all, then Select all
@@ -69,7 +70,7 @@ Feature: Filter the photos in view
     Then the species filter reads "Species"
     And the photo count reads "11 photos"
 
-  Scenario: The locations list does the same when its button closes it
+  Scenario: The locations list does the same when its section closes it
     When I open the locations filter
     And I press "Clear all" in the locations filter
     Then I see "Pick at least one location"
@@ -120,16 +121,24 @@ Feature: Filter the photos in view
     Then the dates filter reads "Dates: 2024"
     And the photo count reads "5 of 11 photos"
 
-  Scenario: Reset clears every filter, and Undo brings them back
+  Scenario: The year buttons in the Dates section pick years in place
+    When I press the year 2024 in the Dates section
+    Then the dates filter reads "Dates: 2024"
+    And the photo count reads "5 of 11 photos"
+    When I press the year 2024 in the Dates section
+    Then the dates filter reads "Dates"
+
+  Scenario: Reset clears every filter, and Undo in its place brings them back
     When I filter species to "Bobcat"
     And I pick the year 2024 in the dates filter
     And I press "Reset filters"
     Then the photo count reads "11 photos"
-    And I see the note "Filters reset" with Undo
+    And Undo has taken Reset's place, with the focus on it
     When I press Undo
     Then the species filter reads "Species: Bobcat"
     And the dates filter reads "Dates: 2024"
     And the photo count reads "1 of 11 photos"
+    And "Reset filters" is back in its place
 
   Scenario: Undo after a refresh puts back "only these", leaving a new location out
     When I filter locations to "AB02"
@@ -148,15 +157,48 @@ Feature: Filter the photos in view
     When I press the big "Reset filters" button
     Then the photo count reads "11 photos"
 
-  Scenario: On a phone the filter bar stays on one line
-    Given the screen is 400 pixels wide
-    When I filter species to "Bobcat"
-    Then the filter bar is one line high
-    And the page does not scroll sideways
-    And the reset button reads "Reset"
-    And the photo count is hidden
+  Scenario: Turning a filter on and off moves nothing
+    When I note where the figures, the map and the tables' tab row are
+    And I filter species to "Bobcat"
+    Then the figures, the map and the tables' tab row have not moved
+    When I clear the Species filter with its ×
+    Then the figures, the map and the tables' tab row have not moved
 
-  Scenario: The header and filter bar stay in view while the page scrolls
+  Scenario: Hiding the sidebar is remembered, and changes only the main area's width
+    When I note where the figures, the map and the tables' tab row are
+    And I hide the sidebar
+    Then the sidebar is hidden
+    And the figures, the map and the tables' tab row are only wider
+    When I reload and reopen "Alpha Basin"
+    Then the sidebar is hidden
+    When I show the sidebar
+    And I reload and reopen "Alpha Basin"
+    Then the sidebar is shown
+
+  Scenario: While the sidebar is hidden, the Filters count and Reset sit beside the Filters button
+    When I filter species to "Bobcat"
+    And I hide the sidebar
+    Then the Filters button counts 1 on, named "Filters, 1 on: Species"
+    And "Reset filters" sits right after the Filters button
+    When I press "Reset filters"
+    Then the photo count reads "11 photos"
+    And Undo has taken Reset's place, with the focus on it
+    When I press Undo
+    Then the species filter reads "Species: Bobcat"
+
+  Scenario: On a phone the filters open in a sheet, and nothing scrolls sideways
+    Given the screen is 390 pixels wide
+    Then the page does not scroll sideways
+    When I open the Filters sheet
+    Then the page does not scroll sideways
+    When I filter species to "Bobcat"
+    Then the sheet's button reads "Show 4 photos"
+    And the Filters button counts 1 on, named "Filters, 1 on: Species"
+    When I press "Show 4 photos"
+    Then the Filters sheet is closed
+    And the page does not scroll sideways
+
+  Scenario: The top bar and the sidebar stay in view while the page scrolls
     When I scroll down to the table
-    Then the filter bar is still at the top of the screen
-    And the table's controls sit just under it, on one line
+    Then the top bar and the sidebar are still in view
+    And the table's controls sit just under the top bar, on one line

@@ -39,7 +39,7 @@ Feature: Photos grid and detail
     When I show the Photos table
     And I note the height of the table's controls
     And I scroll far down the table
-    Then the table's controls sit just under the filter bar, on one line
+    Then the table's controls sit just under the top bar, on one line
     And the table's column headers sit just under the table's controls
     When I note where the table's controls are
     And I show the Photos grid

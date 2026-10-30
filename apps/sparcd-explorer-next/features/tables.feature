@@ -76,7 +76,7 @@ Feature: Tables of locations, species and photos
     When I filter species to "Bobcat"
     And I press "Show photos" on the Locations row "AB01"
     Then the view switch shows "Photos"
-    And the table's controls offer "Back to Locations" before the view switch
+    And the table's controls offer "Back to Locations" ahead of the other tools
     When I press "Back to Locations"
     Then the view switch shows "Locations"
     And the species filter reads "Species: Bobcat"
@@ -85,10 +85,10 @@ Feature: Tables of locations, species and photos
     And there is no "Back to" button
 
   @preview-7
-  Scenario: The Tagged switch keeps Back; the filter bar lets it go
+  Scenario: The Tagged switch keeps Back; a filter lets it go
     When I press "Show photos" on the Locations row "AB01"
     And I choose "Tagged" in the Photos switch
-    Then the table's controls offer "Back to Locations" before the view switch
+    Then the table's controls offer "Back to Locations" ahead of the other tools
     When I filter species to "Bobcat"
     Then there is no "Back to" button
 
@@ -98,6 +98,6 @@ Feature: Tables of locations, species and photos
     And I open Data checks
     And I press "Show each position" in Data checks
     Then the view switch shows "Locations"
-    And the table's controls offer "Back to Species" before the view switch
+    And the table's controls offer "Back to Species" ahead of the other tools
     When I press "Reset filters"
     Then there is no "Back to" button

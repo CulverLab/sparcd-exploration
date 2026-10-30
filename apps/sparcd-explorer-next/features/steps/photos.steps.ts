@@ -185,7 +185,8 @@ When('the originals are slow to arrive', async ({ page, s3 }) => {
 });
 
 When('I note where the page is', async ({ page, scratch }) => {
-  await page.evaluate(() => scrollTo(0, 420));
+  // Scrolled down to the tables, the grid in view under their tab row.
+  await page.evaluate(() => scrollTo(0, Math.round(document.getElementById('table')!.getBoundingClientRect().top + scrollY - 56)));
   scratch.scroll = await page.evaluate(() => scrollY);
 });
 

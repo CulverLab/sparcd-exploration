@@ -1,6 +1,6 @@
 Feature: Report and downloads
 
-  Report, in the header, opens a printable report of whatever is in view over
+  Report & export, in the top bar, opens a printable report of whatever is in view over
   the page. From there the report prints or saves as a PDF, and the same
   numbers download as a spreadsheet, CSV files or a Camtrap DP package, never
   with coordinates more exact than the page shows.
@@ -143,8 +143,8 @@ Feature: Report and downloads
     And I press Escape
     Then the report is closed
     And the page has not moved
-    And focus is back on the "Report" button
+    And focus is back on the "Report & export" button
     When I open the report
     And I close the report
     Then the page has not moved
-    And focus is back on the "Report" button
+    And focus is back on the "Report & export" button

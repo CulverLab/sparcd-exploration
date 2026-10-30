@@ -66,6 +66,8 @@ function ByCollection() {
       setFit((f) => (f.mode === mode && f.shown === shown ? f : { mode, shown }));
     };
     work();
+    // Again once the web fonts are in, which changes every width.
+    void document.fonts?.ready.then(() => box.isConnected && work());
     const observer = new ResizeObserver(work);
     observer.observe(box);
     return () => observer.disconnect();

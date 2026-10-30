@@ -654,7 +654,8 @@ path.st.sel { stroke: var(--warn); stroke-width: 3; }
 .maptip .m, .tip .m { font: 12.5px var(--mono); }
 .maptip .muted { color: var(--inkMute); }
 .maptip .foot, .tip .foot { margin-top: 4px; color: var(--inkMute); font-size: 12px; }
-.mapctl { position: absolute; z-index: 1001; top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; pointer-events: none; }
+/* Above Select area's drawing layer, so a second press of Select area cancels it. */
+.mapctl { position: absolute; z-index: 1101; top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; pointer-events: none; }
 .mapctl > * { pointer-events: auto; }
 .mapctl .mapright { margin-left: auto; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; }
 .mapctl .mapright > * { pointer-events: auto; }
@@ -734,7 +735,8 @@ svg.effort { display: block; cursor: pointer; touch-action: pan-y; user-select: 
 
 /* Tables: the tabs, then the open view's tools on the right, one row that stays under the top bar.
    Too narrow, and the tools wrap under the tabs. */
-.tables { min-width: 0; margin: 16px var(--padR) 0 var(--padL); padding-bottom: 72px; }
+/* At least a screen tall, so the tab row can always reach the top bar. */
+.tables { min-width: 0; min-height: calc(100dvh - var(--topH)); margin: 16px var(--padR) 0 var(--padL); padding-bottom: 72px; }
 .tbl-head {
   position: sticky; top: calc(var(--stickyH, 56px) + env(safe-area-inset-top, 0px)); z-index: 6;
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0;
@@ -1658,7 +1660,7 @@ dl.fields dd {
   .maphint.corner { left: 8px; right: auto; bottom: 66px; }
   .legend { display: none; }
   .side {
-    position: fixed; inset: 0; z-index: 75; height: auto; grid-row: auto; grid-column: auto; border-right: 0;
+    position: fixed; inset: 0; z-index: 75; height: auto; align-self: stretch; grid-row: auto; grid-column: auto; border-right: 0;
     padding-top: env(safe-area-inset-top, 0px);
   }
   .side > * { width: auto; }

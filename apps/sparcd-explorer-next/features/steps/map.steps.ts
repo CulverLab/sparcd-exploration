@@ -1,8 +1,8 @@
-// The map, the effort strip and the In view summary.
+// The map, the effort strip, the figures and the Species table's shortcut.
 
 import type { Locator, Page } from '@playwright/test';
 import { exactSitesOrigin } from './support/s3mock';
-import { Then, USERNAME, When, expect, openCollections, signIn, tableRows } from './support/world';
+import { Then, USERNAME, When, columnValues, expect, openCollections, signIn, tableRows } from './support/world';
 
 // --- Map ------------------------------------------------------------------------
 
@@ -69,11 +69,11 @@ Then('the map is not zoomed', async ({ page }) => {
 });
 
 Then('a hint over the map reads {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.map-hint')).toHaveText(text);
+  await expect(page.locator('.maphint')).toHaveText(text);
 });
 
 Then('the map has no hint', async ({ page }) => {
-  await expect(page.locator('.map-hint')).toHaveCount(0);
+  await expect(page.locator('.maphint')).toHaveCount(0);
 });
 
 /** A hex's top-left corner from the map's. */
@@ -113,10 +113,10 @@ When('I scroll the page down from just above the map', async ({ page, scratch })
     (window as unknown as { wheels: Wheels }).wheels = log;
     addEventListener('wheel', (e) => log.push({ onMap: !!(e.target as Element).closest('.leafmap'), prevented: e.defaultPrevented }), { passive: true });
   });
-  const head = (await page.locator('#map .bandhead').boundingBox())!;
   const map = (await page.locator('.leafmap').boundingBox())!;
-  const y = head.y + 8;
-  await page.mouse.move(head.x + 30, y);
+  // On the figures, just above the map's top edge.
+  const y = map.y - 40;
+  await page.mouse.move(map.x + 30, y);
   // The page scroll at which the map's top edge reaches the pointer.
   scratch.mapReachesPointer = map.y - y;
   // Small steps, as a trackpad sends them: the browser may scroll before it finds the event's target.
@@ -243,7 +243,7 @@ Then('the map offers no {string} view', async ({ page }, mode: string) => {
 });
 
 Then('the map says {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.map-note')).toHaveText(text);
+  await expect(page.locator('.mapnote')).toHaveText(text);
 });
 
 When('I note where the hex holding {string} is', async ({ page, scratch }, id: string) => {
@@ -262,7 +262,7 @@ Then(
 );
 
 Then('the map credit reads {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.map-credit')).toHaveText(text);
+  await expect(page.locator('.mapcredit')).toHaveText(text);
 });
 
 When('I choose the {string} basemap', async ({ page }, name: string) => {
@@ -373,35 +373,51 @@ When('I point at the Activity of {string}', async ({ page }, id: string) => {
 });
 
 Then('I see the note {string}', async ({ page }, text: string) => {
-  await expect(page.getByRole('tooltip')).toContainText(text);
+  await expect(page.locator('.tip[role="tooltip"]')).toContainText(text);
 });
 
-// --- In view --------------------------------------------------------------------
+// --- The figures and the Species table ---------------------------------------------
 
-const inView = (page: Page) => page.getByRole('region', { name: 'In view' });
+const figure = (page: Page, label: string) =>
+  page.locator('#figures .fig').filter({ has: page.locator('.k', { hasText: new RegExp(`^${label}`) }) });
 
-Then('"In view" reads {string} {string}', async ({ page }, label: string, value: string) => {
-  const stat = inView(page).locator('.stat').filter({ has: page.locator('.k', { hasText: new RegExp(`^${label}`) }) });
-  await expect(stat.locator('.v')).toHaveText(value, { normalizeWhitespace: true });
+/** A figure's number, then its sub-lines that say something: "11 64% tagged", "5 of 5". */
+Then('the {string} figure reads {string}', async ({ page }, label: string, value: string) => {
+  await expect
+    .poll(() =>
+      figure(page, label).evaluate((el) =>
+        [el.querySelector('.v'), ...el.querySelectorAll('.of')].map((x) => x!.textContent!.trim()).filter(Boolean).join(' '),
+      ),
+    )
+    .toBe(value);
 });
 
 Then('{string} explains {string}', async ({ page }, label: string, text: string) => {
-  const stat = inView(page).locator('.stat').filter({ has: page.locator('.k', { hasText: new RegExp(`^${label}`) }) });
-  await expect(stat).toHaveAttribute('title', text);
+  const help = figure(page, label).locator('.qmark');
+  await help.focus();
+  await expect(help.getByRole('tooltip')).toHaveText(text);
+  await expect(help).toHaveAccessibleDescription(text);
 });
 
-const topSpecies = (page: Page, name: string) => inView(page).locator('.spbar').filter({ hasText: name });
+const speciesName = (page: Page, name: string) => page.locator('#table .cellbtn').filter({ hasText: new RegExp(`^${name}$`) });
 
-When('I press {string} in the top species', async ({ page }, name: string) => {
-  await topSpecies(page, name).click();
+Then('the Species table lists the most detected first, each count with its bar', async ({ page }) => {
+  const counts = (await columnValues(page, 'Detections')).map(Number);
+  expect(counts.length).toBeGreaterThan(1);
+  expect(counts).toEqual([...counts].sort((a, b) => b - a));
+  await expect(tableRows(page).locator('.numbar b')).toHaveCount(counts.length);
 });
 
-Then('{string} is pressed in the top species', async ({ page }, name: string) => {
-  await expect(topSpecies(page, name)).toHaveAttribute('aria-pressed', 'true');
+When('I press {string} in the Species table', async ({ page }, name: string) => {
+  await speciesName(page, name).click();
 });
 
-When('I move to {string} in the top species and press Enter', async ({ page }, name: string) => {
-  await topSpecies(page, name).focus();
+Then('{string} is pressed in the Species table', async ({ page }, name: string) => {
+  await expect(speciesName(page, name)).toHaveAttribute('aria-pressed', 'true');
+});
+
+When('I move to {string} in the Species table and press Enter', async ({ page }, name: string) => {
+  await speciesName(page, name).focus();
   await page.keyboard.press('Enter');
 });
 

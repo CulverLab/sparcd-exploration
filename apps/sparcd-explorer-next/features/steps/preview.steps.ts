@@ -6,8 +6,10 @@ import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
 import { Given, Then, When, columnLabels, expect, popover, tableRows, viewButton } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
-const byCollection = (page: Page) => page.getByRole('region', { name: 'In view' }).locator('table.bc');
-const byCollectionClear = (page: Page) => page.getByRole('button', { name: 'Clear collection selection' });
+const byCollection = (page: Page) => page.locator('#figures').getByRole('group', { name: 'By collection' });
+/** By collection's shown items, not the hidden copy it measures them with. */
+const byCollectionItems = (page: Page) => byCollection(page).locator(':scope > .bc-item');
+const byCollectionClear = (page: Page) => byCollection(page).getByRole('button', { name: 'Clear collection selection' });
 
 // --- #1 Select all and Clear all in the chooser ----------------------------------
 
@@ -52,26 +54,51 @@ When('I pick {string} in By collection', async ({ page }, name: string) => {
 });
 
 Then('By collection lists {string} then {string}', async ({ page }, a: string, b: string) => {
-  await expect(byCollection(page).locator('tbody tr td:first-child')).toHaveText([a, b]);
+  await expect(byCollectionItems(page).locator('.linkbtn')).toHaveText([a, b]);
 });
 
 Then('{string} is highlighted in By collection', async ({ page }, name: string) => {
-  const row = byCollection(page).locator('tbody tr', { hasText: name });
-  await expect(row).toHaveClass(/\bon\b/);
-  await expect(row.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
+  const item = byCollectionItems(page).filter({ hasText: name });
+  await expect(item).toHaveClass(/\bon\b/);
+  await expect(item.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
 });
 
 Then('no row is highlighted in By collection', async ({ page }) => {
-  await expect(byCollection(page).locator('tbody tr.on')).toHaveCount(0);
+  await expect(byCollectionItems(page).and(page.locator('.on'))).toHaveCount(0);
 });
 
-Then('"× Clear" shows at the right end of the "By collection" line', async ({ page }) => {
+Then('"× Clear" shows at the end of the "By collection" line', async ({ page }) => {
   const clear = byCollectionClear(page);
   await expect(clear).toBeVisible();
   await expect(clear).toHaveText('×Clear');
-  const line = (await page.locator('.bchead').boundingBox())!;
+  const last = (await byCollectionItems(page).last().boundingBox())!;
   const box = (await clear.boundingBox())!;
-  expect(Math.abs(box.x + box.width - (line.x + line.width))).toBeLessThan(2);
+  expect(box.x).toBeGreaterThan(last.x + last.width);
+  expect(Math.abs(box.y + box.height / 2 - (last.y + last.height / 2))).toBeLessThan(4);
+});
+
+When('I open "+ more" in By collection', async ({ page }) => {
+  await byCollection(page).getByRole('button', { name: /^\+ \d+ more$/ }).click();
+});
+
+Then('the By collection list names {string}', async ({ page }, names: string) => {
+  await expect(popover(page, 'By collection').locator('.bclist .linkbtn')).toHaveText(names.split(', '));
+});
+
+When('I pick {string} in the By collection list', async ({ page }, name: string) => {
+  await popover(page, 'By collection').getByRole('button', { name, exact: true }).click();
+});
+
+Then('{string} is picked in the By collection list', async ({ page }, name: string) => {
+  await expect(popover(page, 'By collection').getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+Then('the header names {string}, with every name in its title', async ({ page }, shown: string) => {
+  const h1 = page.locator('h1.collname');
+  await expect(h1).toHaveText(shown);
+  const all = await h1.getAttribute('title');
+  expect(all!.split(', ').length).toBeGreaterThan(2);
+  await expect(h1).toHaveAccessibleName(all!);
 });
 
 Then('there is no "× Clear" by the collections', async ({ page }) => {
@@ -182,7 +209,7 @@ function timeClick(page: Page, selector: string, text: string, ready: string): P
 }
 
 const QUICK: Record<string, [string, string, string]> = {
-  'showing the Photos grid': ['[aria-label="Show"] button', 'Photos', "!!document.querySelector('.gallery .tile')"],
+  'showing the Photos grid': ['[aria-label="Tables"] [role="tab"]', 'Photos', "!!document.querySelector('.gallery .tile')"],
   'switching to the List': ['[aria-label="Layout"] button', 'List', "!!document.querySelector('#table thead')?.textContent.includes('Date and time')"],
   'sorting the List by Species': [
     '#table th button',
@@ -262,17 +289,14 @@ When('I press {string} on the Locations row {string}', async ({ page, scratch },
   scratch.scroll = await page.evaluate(() => (window as unknown as { clickedAt: number }).clickedAt);
 });
 
-Then("the table's controls offer {string} before the view switch", async ({ page }, label: string) => {
-  const back = page.locator('#table .tbl-tools').getByRole('button', { name: label, exact: true });
+Then("the table's controls offer {string} ahead of the other tools", async ({ page }, label: string) => {
+  const back = page.locator('#table .tbar > :first-child');
+  await expect(back).toHaveAccessibleName(label);
   await expect(back).toBeVisible();
-  const b = (await back.boundingBox())!;
-  const seg = (await page.getByRole('group', { name: 'Show' }).boundingBox())!;
-  expect(b.x + b.width).toBeLessThanOrEqual(seg.x);
-  expect(Math.abs(b.y + b.height / 2 - (seg.y + seg.height / 2))).toBeLessThan(2);
 });
 
 Then('the view switch shows {string}', async ({ page }, view: string) => {
-  await expect(viewButton(page, view)).toHaveAttribute('aria-pressed', 'true');
+  await expect(viewButton(page, view)).toHaveAttribute('aria-selected', 'true');
 });
 
 Then('the page is back where it was', async ({ page, scratch }) => {
