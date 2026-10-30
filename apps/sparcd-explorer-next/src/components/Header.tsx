@@ -345,9 +345,14 @@ function Title() {
 
 const useChangeLabel = () => (useStore((s) => s.model!.collections.length) > 1 ? 'Change collections' : 'Change collection');
 
-/** The top bar. Under 1024 px its actions move to `NarrowActions`, a row above the figures. */
+/**
+ * The top bar. Under 1440 px "Change collections" reads "Change", leaving the
+ * title room. Under 1024 px its actions move to `NarrowActions`, a row above
+ * the figures.
+ */
 export function Header() {
   const narrow = useMedia(NARROW);
+  const short = useMedia('(max-width: 1439px)');
   const change = useChangeLabel();
   return (
     <header className="top" id="sticky-top">
@@ -355,12 +360,14 @@ export function Header() {
       <ResetSlot slot="top" />
       <AppSwitcher />
       <Title />
-      {!narrow && <ChangeButton label={change} />}
+      {!narrow && <ChangeButton label={change} short={short} />}
       <div className="grow" />
       {!narrow && (
         <>
-          <ChecksItem />
-          <Status />
+          <div className="topstatus">
+            <ChecksItem />
+            <Status />
+          </div>
           <DisplayMenu />
           <ReportButton />
         </>

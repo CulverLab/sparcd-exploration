@@ -214,6 +214,13 @@ Then('the header says {string}', async ({ page }, text: string) => {
   await expect(page.locator('.updated')).toHaveText(text);
 });
 
+Then('the status reads {string} in full', async ({ page }, text: string) => {
+  const status = page.locator('.updated');
+  await expect(status).toHaveText(text);
+  await expect(status).toBeInViewport({ ratio: 1 });
+  expect(await status.evaluate((el) => el.scrollWidth <= el.clientWidth), 'cut short').toBe(true);
+});
+
 Then('the photo count reads {string}', async ({ page }, text: string) => {
   await expect.poll(() => photoCountText(page)).toBe(text);
 });

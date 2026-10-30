@@ -446,6 +446,7 @@ input[type='range'] { accent-color: var(--accent); width: 100%; margin: 4px 0 10
 .collname.many { display: flex; }
 .collname .cn-first { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .collname .cn-more { flex: none; padding-left: 0.3em; }
+.topstatus { display: contents; }
 .updated { flex: none; font-size: 13px; color: var(--inkMute); white-space: nowrap; }
 .updated.warn { color: var(--warn); }
 /* Data checks, as part of the status text. */
@@ -1548,7 +1549,11 @@ dl.fields dd {
   .fig.da .v { font-size: 18px; }
 }
 @media (max-width: 1199px) {
-  .top .updated { display: none; }
+  /* The status text goes under the data checks, cut to their width, so the title keeps its room. */
+  .topstatus { display: grid; grid-template-columns: max-content auto; align-items: center; column-gap: 10px; }
+  .topstatus .ckbtn { grid-area: 1 / 1; min-height: 24px; }
+  .topstatus .updated { grid-area: 2 / 1; width: 0; min-width: 100%; padding-left: 8px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; }
+  .topstatus .iconbtn { grid-area: 1 / 2 / 3; }
   .summary {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     grid-template-areas: 'ph de an sp' 'lo ad da da' 'bc bc bc bc';

@@ -50,6 +50,18 @@ Feature: Open collections
     Then the photo count reads "12 photos"
     And the header says "Updated just now"
 
+  Scenario Outline: When the collections were last read shows in full at <width> pixels
+    Given the screen is <width> pixels wide
+    And I have opened "Alpha Basin"
+    Then the status reads "Updated just now" in full
+
+    Examples:
+      | width |
+      | 900   |
+      | 1024  |
+      | 1199  |
+      | 1280  |
+
   Scenario: Signing in as someone else while a collection opens never shows the first account's data
     Given I am signed in
     And the explorer is open in a second tab
