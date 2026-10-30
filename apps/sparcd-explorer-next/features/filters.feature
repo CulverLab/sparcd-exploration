@@ -140,6 +140,13 @@ Feature: Filter the photos in view
     And the photo count reads "1 of 11 photos"
     And "Reset filters" is back in its place
 
+  Scenario: Undo running out with the focus on it hands the focus to the Filters button
+    When I filter species to "Bobcat"
+    And I press "Reset filters"
+    Then Undo has taken Reset's place, with the focus on it
+    When Undo runs out
+    Then the focus is on the Filters button
+
   Scenario: Undo after a refresh puts back "only these", leaving a new location out
     When I filter locations to "AB02"
     And I press "Reset filters"
@@ -197,6 +204,19 @@ Feature: Filter the photos in view
     When I press "Show 4 photos"
     Then the Filters sheet is closed
     And the page does not scroll sideways
+
+  Scenario: On a phone nothing behind the Filters sheet, or behind a picker over it, takes the focus
+    Given the screen is 390 pixels wide
+    When I open the Filters sheet
+    Then only the Filters sheet takes the focus
+    When I open the species filter
+    Then only the Species picker takes the focus
+    When I press Escape
+    Then the focus is on the Species section
+    And only the Filters sheet takes the focus
+    When I press Escape
+    Then the Filters sheet is closed
+    And the focus is on the Filters button
 
   Scenario: The top bar and the sidebar stay in view while the page scrolls
     When I scroll down to the table

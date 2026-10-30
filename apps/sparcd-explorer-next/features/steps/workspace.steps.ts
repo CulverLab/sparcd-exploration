@@ -286,6 +286,29 @@ Then('the Filters sheet is closed', async ({ page }) => {
   await expect(page.locator('#filtersbtn')).toHaveAttribute('aria-expanded', 'false');
 });
 
+When('Undo runs out', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveCount(0, { timeout: 10_000 });
+});
+
+Then('the focus is on the Filters button', async ({ page }) => {
+  await expect(page.locator('#filtersbtn')).toBeFocused();
+});
+
+Then('the focus is on the Species section', async ({ page }) => {
+  await expect(filterButton(page, 'Species')).toBeFocused();
+});
+
+const inert = (page: Page, selector: string) => page.locator(selector).evaluate((el) => (el as HTMLElement).inert);
+
+Then('only the Filters sheet takes the focus', async ({ page }) => {
+  expect([await inert(page, '#sticky-top'), await inert(page, '#main'), await inert(page, '#side')]).toEqual([true, true, false]);
+});
+
+Then('only the Species picker takes the focus', async ({ page }) => {
+  await expect(popover(page, 'Species')).toBeVisible();
+  expect([await inert(page, '#sticky-top'), await inert(page, '#main'), await inert(page, '#side')]).toEqual([true, true, true]);
+});
+
 When('I press Escape', async ({ page }) => {
   await page.keyboard.press('Escape');
 });

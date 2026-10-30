@@ -18,10 +18,15 @@ export function ResetSlot({ slot }: { slot: Slot }) {
   const hadUndoFocus = useRef(false);
   useEffect(() => {
     if (undo) {
-      if (undo.from === slot) undoRef.current?.focus({ preventScroll: true });
+      if (undo.from !== slot) return;
+      undoRef.current?.focus({ preventScroll: true });
+      // Reset and Undo are one element to React: a Reset that had the focus keeps it, and no focus event comes.
+      hadUndoFocus.current = true;
     } else if (hadUndoFocus.current) {
       hadUndoFocus.current = false;
-      resetRef.current?.focus({ preventScroll: true });
+      // Undo ran out, leaving Reset disabled: the Filters toggle takes the focus, or on a phone the open sheet's.
+      const to = active ? resetRef.current : document.getElementById(useStore.getState().sheet ? 'closesheet' : 'filtersbtn');
+      to?.focus({ preventScroll: true });
     }
   }, [undo, slot]);
   return (

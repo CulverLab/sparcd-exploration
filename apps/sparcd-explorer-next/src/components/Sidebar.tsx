@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { activeFilters, type FilterDimension, type FilterState, type ListDimension } from '@/data';
 import { LIST_NOUNS, SECTION_NAMES, nothingTicked, sectionValue } from '@/lib/filterLabels';
 import { plural } from '@/lib/format';
@@ -173,8 +173,11 @@ export function Sidebar() {
   const closePicker = (refocus: boolean) => {
     const dim = open;
     if (!dim) return;
-    setOpen(null);
-    if (refocus) document.getElementById(`fsec-${dim}`)?.focus({ preventScroll: true });
+    if (refocus) {
+      // Rendered now, so a phone's sheet is no longer inert when its section takes the focus.
+      flushSync(() => setOpen(null));
+      document.getElementById(`fsec-${dim}`)?.focus({ preventScroll: true });
+    } else setOpen(null);
     const { model: m, filters: f } = useStore.getState();
     if (dim in LIST_NOUNS && nothingTicked(m!, f, dim as ListDimension)) {
       clear(dim, `No ${LIST_NOUNS[dim as ListDimension]} were picked, so all are shown again`);
@@ -201,9 +204,18 @@ export function Sidebar() {
     };
   }, [sheet]);
   const closeSheet = () => {
-    setSheet(false);
+    flushSync(() => setSheet(false));
     document.getElementById('filtersbtn')?.focus({ preventScroll: true });
   };
+  // On a phone the sheet, and a picker over it, are all there is: what's behind takes no focus or clicks.
+  useLayoutEffect(() => {
+    if (!phone || !sheet) return;
+    const behind = ['sticky-top', 'main', ...(open ? ['side'] : [])].map((id) => document.getElementById(id)!);
+    for (const el of behind) el.inert = true;
+    return () => {
+      for (const el of behind) el.inert = false;
+    };
+  }, [phone, sheet, open]);
 
   const n = active.length;
   return (
