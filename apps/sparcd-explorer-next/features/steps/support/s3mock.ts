@@ -7,6 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import type { BrowserContext, Page, Route } from '@playwright/test';
+import { EXACT_SITES_HOST } from '../../../src/data/coords';
 
 type StoredObject = { body: Buffer; contentType: string; etag: string };
 
@@ -124,23 +125,32 @@ function listObjectsXml(
 }
 
 export const testOrigin = () => `http://localhost:${process.env.SPARCD_E2E_PORT ?? '5314'}`;
+/** The one server the map shows exact sites for. The mock answers it too, so no request reaches the real one. */
+export const exactSitesOrigin = () => `https://${EXACT_SITES_HOST}`;
 
 export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): Promise<void> {
   await target.route('**/*', async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.origin !== testOrigin()) return route.fallback();
+    const remote = url.origin === exactSitesOrigin();
+    if (url.origin !== testOrigin() && !remote) return route.fallback();
+    // The page reaches the exact-sites server cross-origin; Playwright answers the CORS preflights itself.
+    const cors = remote ? { 'access-control-allow-origin': testOrigin(), 'access-control-expose-headers': 'etag, content-range, date' } : {};
+    const fulfill = (r: { status: number; headers: Record<string, string>; body: string | Buffer }) =>
+      route.fulfill({ ...r, headers: { ...r.headers, ...cors } });
 
     const segments = url.pathname.split('/').filter(Boolean);
     const auth = request.headers()['authorization'] ?? '';
     const isListBuckets = segments.length === 0 && auth.startsWith('AWS4-HMAC');
     const bucket = segments[0] ?? '';
-    if (!isListBuckets && !s3.buckets.includes(bucket)) return route.fallback();
+    if (!isListBuckets && !s3.buckets.includes(bucket)) {
+      return remote ? fulfill({ status: 404, headers: XML, body: errorXml('NoSuchBucket', `no such bucket ${bucket}`) }) : route.fallback();
+    }
 
     const now = Date.now() + s3.clockAheadMs;
     const signedAt = request.headers()['x-amz-date'] ?? url.searchParams.get('X-Amz-Date');
     if (s3.clockAheadMs && signedAt && Math.abs(now - amzTime(signedAt)) > FIFTEEN_MINUTES) {
-      await route.fulfill({
+      await fulfill({
         status: 403,
         headers: s3.hideDate ? XML : { ...XML, date: new Date(now).toUTCString() },
         body: errorXml('RequestTimeTooSkewed', "The difference between the request time and the server's time is too large."),
@@ -150,11 +160,11 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
 
     const accessKey = /Credential=([^/]+)\//.exec(auth)?.[1];
     if (accessKey && s3.rejectedKeys.has(accessKey)) {
-      await route.fulfill({ status: 403, headers: XML, body: errorXml('InvalidAccessKeyId', 'unknown access key') });
+      await fulfill({ status: 403, headers: XML, body: errorXml('InvalidAccessKeyId', 'unknown access key') });
       return;
     }
     if (isListBuckets) {
-      await route.fulfill({ status: 200, headers: XML, body: listBucketsXml(s3.buckets) });
+      await fulfill({ status: 200, headers: XML, body: listBucketsXml(s3.buckets) });
       return;
     }
 
@@ -165,7 +175,7 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
     const recursive = isList && !url.searchParams.get('delimiter');
     const failure = s3.failures.get(recursive ? `${key}**` : key);
     if (failure && request.method() !== 'HEAD') {
-      await route.fulfill({ status: failure.status, headers: XML, body: errorXml(failure.code, `mock failure for ${key}`) });
+      await fulfill({ status: failure.status, headers: XML, body: errorXml(failure.code, `mock failure for ${key}`) });
       return;
     }
 
@@ -183,13 +193,13 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
         const o = s3.get(bucket, k)!;
         contents.push({ key: k, size: o.body.length, etag: o.etag });
       }
-      await route.fulfill({ status: 200, headers: XML, body: listObjectsXml(bucket, key, delimiter, contents, [...common].sort()) });
+      await fulfill({ status: 200, headers: XML, body: listObjectsXml(bucket, key, delimiter, contents, [...common].sort()) });
       return;
     }
 
     const existing = s3.get(bucket, key);
     if (request.method() === 'HEAD') {
-      await route.fulfill(
+      await fulfill(
         existing
           ? { status: 200, headers: { 'content-type': existing.contentType, etag: `"${existing.etag}"` }, body: '' }
           : { status: 404, headers: XML, body: '' },
@@ -202,7 +212,7 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
       s3.gets.push({ key, range });
       if (range && s3.refuseRanges) return route.abort('failed');
       if (!existing) {
-        await route.fulfill({ status: 404, headers: XML, body: errorXml('NoSuchKey', `no such key ${key}`) });
+        await fulfill({ status: 404, headers: XML, body: errorXml('NoSuchKey', `no such key ${key}`) });
         return;
       }
       const headers = { 'content-type': existing.contentType, etag: `"${existing.etag}"`, 'cache-control': 'no-store' };
@@ -211,16 +221,16 @@ export async function installS3Mock(target: Page | BrowserContext, s3: MockS3): 
         const size = existing.body.length;
         const start = Number(bytes[1]);
         const end = Math.min(size - 1, bytes[2] ? Number(bytes[2]) : size - 1);
-        await route.fulfill({
+        await fulfill({
           status: 206,
           headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` },
           body: existing.body.subarray(start, end + 1),
         });
         return;
       }
-      await route.fulfill({ status: 200, headers, body: existing.body });
+      await fulfill({ status: 200, headers, body: existing.body });
       return;
     }
-    await route.fulfill({ status: 405, headers: XML, body: errorXml('MethodNotAllowed', 'the explorer only reads') });
+    await fulfill({ status: 405, headers: XML, body: errorXml('MethodNotAllowed', 'the explorer only reads') });
   });
 }

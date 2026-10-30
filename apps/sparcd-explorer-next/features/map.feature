@@ -2,7 +2,8 @@ Feature: The map
 
   Hexes show how many detections are in view. A click on a hex adds its
   locations to the Area filter, and "Select area" takes in every hex inside a
-  rectangle. The map is never more exact than the Display precision.
+  rectangle, or in Sites mode every site whose dot is inside it. The map is
+  never more exact than the Display precision.
 
   Background:
     Given I have opened "Alpha Basin"
@@ -40,6 +41,14 @@ Feature: The map
     Then "Select area" is switched off
     And the area filter reads "Area: 3 locations"
     And the photo count reads "5 of 11 photos"
+
+  Scenario: Select area in Sites mode takes in only the sites inside the box
+    When I sign in to the server that shows exact sites and open "Alpha Basin"
+    And I show sites on the map
+    And I press "Select area"
+    And I drag a rectangle around the dot of "AB02"
+    Then the area filter reads "Area: 1 location"
+    And the photo count reads "3 of 11 photos"
 
   Scenario: Esc or a second press cancels Select area
     When I press "Select area"

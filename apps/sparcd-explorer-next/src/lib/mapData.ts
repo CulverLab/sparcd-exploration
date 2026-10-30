@@ -151,6 +151,11 @@ export function hexesInBox(grid: HexGrid, hexes: string[], box: Box): string[] {
   });
 }
 
+/** The keys of the sites whose dot, drawn at the display precision, a dragged rectangle covers. */
+export function sitesInBox(model: Model, display: CoordDisplay, box: Box): string[] {
+  return model.sites.flatMap((s) => (s.position && inside(shownPosition(s.position, display), box) ? [s.key] : []));
+}
+
 function pointInRing(p: Position, ring: Position[]): boolean {
   let hit = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {

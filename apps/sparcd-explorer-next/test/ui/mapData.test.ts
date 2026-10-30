@@ -11,11 +11,12 @@ import {
   shortCount,
   siteRadius,
   siteViews,
+  sitesInBox,
   sitesInHexes,
   toggleHex,
   unplacedPhotos,
 } from '../../src/lib/mapData';
-import { cellsOf, collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
+import { EXACT, cellsOf, collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
 
 // Two cameras in one hex, one far away, and photos with no location.
 const model = modelOf(
@@ -135,6 +136,7 @@ describe('selecting an area by rectangle', () => {
   const hexes = hexViews(model, filter(model), false, cells).map((h) => h.hex);
   const alpha = hexOfSite('AA01');
   const c = hexCenter(cells.grid, alpha);
+  const keyOf = (id: string) => model.sites.find((s) => s.locationId === id)!.key;
 
   it('takes the hexes whose centre it covers', () => {
     expect(hexesInBox(cells.grid, hexes, boxOf({ lat: c.lat - 0.001, lon: c.lon - 0.001 }, { lat: c.lat + 0.001, lon: c.lon + 0.001 }))).toEqual([
@@ -156,6 +158,26 @@ describe('selecting an area by rectangle', () => {
   it('takes nothing from empty ground, and both hexes from a rectangle around them', () => {
     expect(hexesInBox(cells.grid, hexes, boxOf({ lat: 0, lon: 0 }, { lat: 1, lon: 1 }))).toEqual([]);
     expect(hexesInBox(cells.grid, hexes, boxOf({ lat: 12, lon: -102 }, { lat: 14, lon: -100 })).sort()).toEqual([...hexes].sort());
+  });
+
+  it('in Sites mode takes only the sites whose dot it covers, not the rest of their hex', () => {
+    const exact = { coords: 'latlon' as const, precision: EXACT };
+    const around = (lat: number, lon: number) => boxOf({ lat: lat - 0.0003, lon: lon - 0.0003 }, { lat: lat + 0.0003, lon: lon + 0.0003 });
+    expect(sitesInHexes(model, cells, hexesInBox(cells.grid, hexes, around(12.5, -100.25))).sort()).toEqual([keyOf('AA01'), keyOf('AA02')].sort());
+    expect(sitesInBox(model, exact, around(12.5, -100.25))).toEqual([keyOf('AA01')]);
+    expect(sitesInBox(model, exact, boxOf({ lat: 12, lon: -102 }, { lat: 14, lon: -100 })).sort()).toEqual(
+      [keyOf('AA01'), keyOf('AA02'), keyOf('BB01')].sort(),
+    );
+    expect(sitesInBox(model, exact, boxOf({ lat: 0, lon: 0 }, { lat: 1, lon: 1 }))).toEqual([]);
+  });
+
+  it('in Sites mode goes by where the dots are drawn, at the display precision', () => {
+    const twoDigits = { coords: 'latlon' as const, precision: { method: 'round' as const, digits: 2 } };
+    // AA02 at 12.501, -100.251 is drawn on AA01's dot at 12.5, -100.25, and not where it really is.
+    expect(sitesInBox(model, twoDigits, boxOf({ lat: 12.4997, lon: -100.2503 }, { lat: 12.5003, lon: -100.2497 })).sort()).toEqual(
+      [keyOf('AA01'), keyOf('AA02')].sort(),
+    );
+    expect(sitesInBox(model, twoDigits, boxOf({ lat: 12.5007, lon: -100.2513 }, { lat: 12.5013, lon: -100.2507 }))).toEqual([]);
   });
 
   it('reads the same whichever way the rectangle was dragged', () => {

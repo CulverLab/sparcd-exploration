@@ -1,7 +1,8 @@
 // The map, the effort strip and the In view summary.
 
 import type { Locator, Page } from '@playwright/test';
-import { Then, When, expect, tableRows } from './support/world';
+import { exactSitesOrigin } from './support/s3mock';
+import { Then, USERNAME, When, expect, openCollections, signIn, tableRows } from './support/world';
 
 // --- Map ------------------------------------------------------------------------
 
@@ -212,6 +213,27 @@ When('I drag a rectangle over the middle of the hex holding {string}', async ({ 
   await page.mouse.move(cx - 20, cy - 20);
   await page.mouse.down();
   await page.mouse.move(cx + 20, cy + 20, { steps: 6 });
+  await page.mouse.up();
+});
+
+When('I sign in to the server that shows exact sites and open {string}', async ({ page }, name: string) => {
+  await page.getByRole('button', { name: 'Account' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await signIn(page, USERNAME, exactSitesOrigin());
+  await expect(page.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
+  await openCollections(page, name);
+});
+
+When('I show sites on the map', async ({ page }) => {
+  await page.getByRole('group', { name: 'Map shows' }).getByRole('button', { name: 'Sites', exact: true }).click();
+});
+
+When('I drag a rectangle around the dot of {string}', async ({ page }, id: string) => {
+  const box = (await page.locator(`path.st[data-site="${id}"]`).boundingBox())!;
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  await page.mouse.move(cx - 10, cy - 10);
+  await page.mouse.down();
+  await page.mouse.move(cx + 10, cy + 10, { steps: 6 });
   await page.mouse.up();
 });
 

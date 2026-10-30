@@ -16,6 +16,7 @@ import {
   shortCount,
   siteRadius,
   siteViews,
+  sitesInBox,
   sitesInHexes,
   toggleHex,
   unplacedPhotos,
@@ -380,7 +381,10 @@ export function MapBand() {
     const a = map.containerPointToLatLng([d.x0, d.y0]);
     const b = map.containerPointToLatLng([d.x1, d.y1]);
     const box = boxOf({ lat: a.lat, lon: a.lng }, { lat: b.lat, lon: b.lng });
-    const picked = sitesInHexes(model, cells, hexesInBox(cells.grid, hexes.map((h) => h.hex), box));
+    const picked =
+      mode === 'sites'
+        ? sitesInBox(model, { coords, precision }, box)
+        : sitesInHexes(model, cells, hexesInBox(cells.grid, hexes.map((h) => h.hex), box));
     if (picked.length) setFilters((f) => ({ ...f, area: [...new Set([...f.area, ...picked])] }));
   };
 

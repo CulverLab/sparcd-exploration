@@ -99,9 +99,9 @@ export async function columnValues(page: Page, label: string): Promise<string[]>
 
 // --- Flows ----------------------------------------------------------------------
 
-export async function signIn(page: Page, username = USERNAME): Promise<void> {
+export async function signIn(page: Page, username = USERNAME, endpoint = ENDPOINT): Promise<void> {
   await page.goto(APP_URL);
-  await page.locator('#endpoint').fill(ENDPOINT);
+  await page.locator('#endpoint').fill(endpoint);
   await page.locator('#accessKey').fill(username);
   await page.locator('#secretKey').fill('a-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
