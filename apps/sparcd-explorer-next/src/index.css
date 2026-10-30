@@ -446,7 +446,7 @@ input[type='range'] { accent-color: var(--accent); width: 100%; margin: 4px 0 10
 .collname.many { display: flex; }
 .collname .cn-first { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .collname .cn-more { flex: none; padding-left: 0.3em; }
-.updated { min-width: 0; font-size: 13px; color: var(--inkMute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.updated { flex: none; font-size: 13px; color: var(--inkMute); white-space: nowrap; }
 .updated.warn { color: var(--warn); }
 /* Data checks, as part of the status text. */
 .ckbtn {
@@ -1611,6 +1611,7 @@ dl.fields dd {
   .phoneacts .btn { padding: 6px 12px; }
   .phonestatus { display: flex; flex: 1 0 100%; align-items: center; gap: 8px; min-width: 0; }
   .phonestatus .ckbtn { margin-left: -8px; }
+  .phonestatus .updated { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .phonestatus .iconbtn { margin-left: auto; }
   .side-head { padding: 12px 10px 12px var(--gutter-l); }
   .side-list { padding-right: 6px; }
