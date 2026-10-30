@@ -246,12 +246,22 @@ Then('the map says {string}', async ({ page }, text: string) => {
   await expect(page.locator('.mapnote')).toHaveText(text);
 });
 
+/**
+ * The hex's shape on the page. Playwright's box takes in the stroke, which widens when the pointer, left over the
+ * map by a closing picker, rests on the hex; that isn't a move.
+ */
+const shapeBox = async (page: Page, id: string) =>
+  (await hexOf(page, id)).evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  });
+
 When('I note where the hex holding {string} is', async ({ page, scratch }, id: string) => {
-  scratch.hexBox = await (await hexOf(page, id)).boundingBox();
+  scratch.hexBox = await shapeBox(page, id);
 });
 
 Then('the hex holding {string} has not moved', async ({ page, scratch }, id: string) => {
-  expect(await (await hexOf(page, id)).boundingBox()).toEqual(scratch.hexBox);
+  expect(await shapeBox(page, id)).toEqual(scratch.hexBox);
 });
 
 Then(
