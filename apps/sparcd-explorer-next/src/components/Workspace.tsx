@@ -13,7 +13,8 @@ import { Toast } from './Toast';
  * The top bar, the filter sidebar beside the main area, and in it the
  * figures, the map with the camera effort, then the tables. The page scrolls;
  * the top bar and the sidebar stay put. The map fills the first screen,
- * leaving the tables' tab row in sight at its foot.
+ * leaving the tables' tab row in sight at its foot, but is never under 420 px
+ * with its effort strip: on a short screen the tab row waits below.
  */
 export function Workspace() {
   const app = useRef<HTMLDivElement>(null);
@@ -32,8 +33,7 @@ export function Workspace() {
       const cs = getComputedStyle(row);
       const tabsH = tabs.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
       const mapTop = Math.ceil(map.getBoundingClientRect().top + scrollY - 0.01);
-      const min = innerWidth < 760 ? 420 : 260;
-      root.style.setProperty('--mapH', `${Math.max(min, innerHeight - mapTop - 16 - tabsH - 6)}px`);
+      root.style.setProperty('--mapH', `${Math.max(420, innerHeight - mapTop - 16 - tabsH - 6)}px`);
     };
     size();
     const observer = new ResizeObserver(size);
