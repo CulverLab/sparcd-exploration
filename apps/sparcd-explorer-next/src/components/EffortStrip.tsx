@@ -10,10 +10,10 @@ import { Tip, type TipAt } from './Tip';
 
 // Geometry of the strip, in pixels: a left gutter for the scale, bars between
 // `TOP` and `BASE`, year labels under the axis.
-const H = 102;
-const X0 = 44;
-const TOP = 32;
-const BASE = 82;
+const H = 92;
+const X0 = 52;
+const TOP = 8;
+const BASE = 72;
 
 /**
  * Camera effort per month across the opened data: every filter but Dates,
@@ -40,8 +40,7 @@ export function EffortStrip() {
 
   useLayoutEffect(() => {
     const el = wrap.current!;
-    // The strip's side padding is 10px each way.
-    const measure = () => setWidth(el.clientWidth - 20);
+    const measure = () => setWidth(el.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -63,8 +62,8 @@ export function EffortStrip() {
 
   if (!axis) {
     return (
-      <section className="panel" aria-label="Camera effort">
-        <div className="bandhead">
+      <section className="effortband" aria-label="Camera effort">
+        <div className="effhead">
           <h2>Camera effort</h2>
         </div>
         <div ref={wrap} className="strip">
@@ -198,8 +197,8 @@ export function EffortStrip() {
   const clearW = clearRef.current?.offsetWidth ?? 72;
 
   return (
-    <section className="panel" aria-label="Camera effort">
-      <div className="bandhead">
+    <section className="effortband" aria-label="Camera effort">
+      <div className="effhead">
         <h2>Camera effort</h2>
         <span className="tl-legend" aria-hidden="true">
           <span>
@@ -249,10 +248,10 @@ export function EffortStrip() {
           }}
         >
           <line className="grid" x1={X0} x2={W} y1={TOP + 0.5} y2={TOP + 0.5} />
-          <text className="scale" x={X0 - 6} y={TOP + 1}>
+          <text className="scale" x={X0 - 8} y={TOP + 1}>
             {fmtN(max)}
           </text>
-          <text className="scale" x={X0 - 6} y={BASE - 1}>
+          <text className="scale" x={X0 - 8} y={BASE - 1}>
             0
           </text>
           {[...counts].map(([m, [photos, untagged, match]]) => {
@@ -291,8 +290,8 @@ export function EffortStrip() {
             const x = Math.round(X0 + t.x) + 0.5;
             return (
               <g key={t.month}>
-                <line className="axis" x1={x} x2={x} y1={BASE} y2={BASE + 7} />
-                <text className="year" x={t.anchor === 'start' ? x + 3 : W - 1} y={BASE + 17} textAnchor={t.anchor}>
+                <line className="axis" x1={x} x2={x} y1={BASE} y2={BASE + 8} />
+                <text className="year" x={t.anchor === 'start' ? x + 4 : W - 1} y={BASE + 16} textAnchor={t.anchor}>
                   {t.year}
                 </text>
               </g>
@@ -303,7 +302,7 @@ export function EffortStrip() {
           <SelClear
             ref={clearRef}
             className="onstrip"
-            style={{ left: 10 + Math.min(Math.max(bracketEnd - clearW, X0), W - clearW), top: 1 }}
+            style={{ left: Math.min(Math.max(bracketEnd - clearW, X0), W - clearW), top: 0 }}
             label="Clear dates"
             onClick={() => clear('dates')}
           />

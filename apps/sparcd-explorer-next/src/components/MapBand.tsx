@@ -27,9 +27,10 @@ import { readStored, writeStored } from '@/lib/storage';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { useShowTarget } from './DataChecks';
-import { InView } from './InView';
+import { EffortStrip } from './EffortStrip';
 import { Seg } from './Popover';
 import { SelClear } from './SelClear';
+import { flashSection } from './Sidebar';
 
 const BASEMAP_KEY = 'sparcd-explorer-basemap';
 const MAX_ZOOM = 16;
@@ -149,7 +150,6 @@ export function MapBand() {
       maxZoom: MAX_ZOOM,
       minZoom: 2,
     });
-    L.control.zoom({ position: 'topright' }).addTo(m);
     m.on('moveend', () => {
       lastView = { key: fitKeyRef.current, center: m.getCenter(), zoom: m.getZoom() };
     });
@@ -198,7 +198,7 @@ export function MapBand() {
     }
     const inView = new Set(hexes.filter((h) => h.inView).map((h) => h.hex));
     const bounds = placesBounds(cells, inView) ?? placesBounds(cells);
-    if (bounds) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 13, animate: false });
+    if (bounds) map.fitBounds(bounds, { paddingTopLeft: [28, 64], paddingBottomRight: [28, 56], maxZoom: 13, animate: false });
     else map.setView([0, 0], 2, { animate: false });
     // Only the collections decide when to fit; a filter change keeps the view.
   }, [map, fitKey]);
@@ -212,7 +212,10 @@ export function MapBand() {
       const ring = hexRing(cells.grid, id).slice(0, 6).map(latLng);
       const center = latLng(hexCenter(cells.grid, id));
       const poly = L.polygon(ring, { weight: 1 }).addTo(group);
-      const toggle = () => setFilters((f) => ({ ...f, area: toggleHex(model, cells, f.area, id) }));
+      const toggle = () => {
+        setFilters((f) => ({ ...f, area: toggleHex(model, cells, f.area, id) }));
+        flashSection('area');
+      };
       poly.on('click', toggle);
       poly.bindTooltip('', { sticky: true, direction: 'top', className: 'maptip', opacity: 1 });
       const el = poly.getElement() as SVGPathElement;
@@ -292,7 +295,10 @@ export function MapBand() {
       if (!site.position) return;
       // Drawn where the tables put it, never more exact.
       const dot = L.circleMarker(latLng(shownPosition(site.position, { coords, precision })), { radius: 4, weight: 1.2 }).addTo(group);
-      dot.on('click', () => setFilters((f) => ({ ...f, area: toggled(f.area, site.key) })));
+      dot.on('click', () => {
+        setFilters((f) => ({ ...f, area: toggled(f.area, site.key) }));
+        flashSection('area');
+      });
       dot.bindTooltip('', { direction: 'top', className: 'maptip', opacity: 1 });
       (dot.getElement() as SVGPathElement).dataset.site = site.locationId;
       layers.set(i, dot);
@@ -342,9 +348,9 @@ export function MapBand() {
       const right = Math.max(...points.map((p) => p.x));
       const top = Math.min(...points.map((p) => p.y));
       const bottom = Math.max(...points.map((p) => p.y));
-      const y = top - h - 6 < 6 ? bottom + 6 : top - h - 6;
-      // Clear of the zoom buttons at the top right and the credit line at the bottom.
-      setClearAt({ left: Math.min(Math.max(right - w, 6), size.x - w - 52), top: Math.min(Math.max(y, 6), size.y - h - 24) });
+      const y = top - h - 6 < 60 ? bottom + 6 : top - h - 6;
+      // Clear of the controls along the top and the credit line at the bottom.
+      setClearAt({ left: Math.min(Math.max(right - w, 6), size.x - w - 6), top: Math.min(Math.max(y, 56), size.y - h - 34) });
     };
     place();
     map.on('move zoom resize', place);
@@ -385,94 +391,123 @@ export function MapBand() {
       mode === 'sites'
         ? sitesInBox(model, { coords, precision }, box)
         : sitesInHexes(model, cells, hexesInBox(cells.grid, hexes.map((h) => h.hex), box));
-    if (picked.length) setFilters((f) => ({ ...f, area: [...new Set([...f.area, ...picked])] }));
+    if (picked.length) {
+      setFilters((f) => ({ ...f, area: [...new Set([...f.area, ...picked])] }));
+      flashSection('area');
+    }
   };
 
   const legendMax = Math.max(0, ...hexes.map((h) => h.detections));
   const credit = basemapOf(basemap).credit;
 
+  const setView = useStore((s) => s.setView);
+  const zoom = (by: number) => map?.setZoom(map.getZoom() + by, { animate: !matchMedia('(prefers-reduced-motion: reduce)').matches });
+
   return (
-    <section id="map" className="mapband panel" aria-label="Map">
-      <div className="bandhead">
-        <h2>Map</h2>
-        {sitesAllowed && (
-          <Seg
-            label="Map shows"
-            value={mode}
-            options={[
-              ['hexes', 'Hexes'],
-              ['sites', 'Sites'],
-            ]}
-            onChange={setMapMode}
-          />
-        )}
-        <button
-          type="button"
-          className="btn sm tool"
-          aria-pressed={boxing}
-          onClick={() => {
-            setDrag(null);
-            setBoxing(!boxing);
-          }}
-        >
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="2.2 1.6" aria-hidden="true">
-            <rect x="1.5" y="1.5" width="11" height="11" />
-          </svg>
-          Select area
-        </button>
-        <label className="sr" htmlFor="basemap">
-          Basemap
-        </label>
-        <select
-          id="basemap"
-          className="field basemap"
-          value={basemap}
-          onChange={(e) => {
-            setBasemap(e.target.value);
-            writeStored(BASEMAP_KEY, e.target.value);
-          }}
-        >
-          {BASEMAPS.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-      </div>
+    <section id="map" className="mapregion" aria-label="Map and camera effort">
       <div
         ref={wrapRef}
-        className={boxing ? 'mapwrap boxing' : 'mapwrap'}
+        className={boxing ? 'mapbox boxing' : 'mapbox'}
         onClickCapture={(e) => {
           if (suppressClick.current) e.stopPropagation();
         }}
       >
-        <div className="leafmap" role="group" aria-label="Map of camera locations" />
-        <div className="map-legend" aria-hidden="true">
-          {mode === 'hexes' ? (
-            <>
-              Detections in view
-              <span className="ramp">
-                {Array.from({ length: HEX_STEPS }, (_, i) => (
-                  <i key={i} className={`s${i + 1}`} />
-                ))}
-              </span>
-              <span className="mono">{fmtN(legendMax)}</span>
-            </>
-          ) : (
-            'Dot size: detections'
+        <div className="mapctl">
+          {sitesAllowed && (
+            <Seg
+              className="seg onmap"
+              label="Map shows"
+              value={mode}
+              options={[
+                ['hexes', 'Hexes'],
+                ['sites', 'Sites'],
+              ]}
+              onChange={setMapMode}
+            />
           )}
-        </div>
-        {unplaced > 0 && noLocationAction && (
-          <button type="button" className="map-note" onClick={() => show(noLocationAction)}>
-            {fmtN(unplaced)} {unplaced === 1 ? 'photo has' : 'photos have'} no location
+          <button
+            type="button"
+            className="btn tool onmap"
+            aria-pressed={boxing}
+            onClick={() => {
+              setDrag(null);
+              setBoxing(!boxing);
+            }}
+          >
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="2.2 1.6" aria-hidden="true">
+              <rect x="1.5" y="1.5" width="11" height="11" />
+            </svg>
+            Select area
           </button>
-        )}
-        <div className="map-credit">Tiles · {credit}</div>
+          <div className="zoomgrp onmap" role="group" aria-label="Zoom">
+            <span aria-hidden="true">Zoom</span>
+            <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(-1)}>
+              −
+            </button>
+            <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(1)}>
+              +
+            </button>
+          </div>
+          <div className="mapright">
+            <label className="sr" htmlFor="basemap">
+              Basemap
+            </label>
+            <select
+              id="basemap"
+              className="field basemapsel onmap"
+              value={basemap}
+              onChange={(e) => {
+                setBasemap(e.target.value);
+                writeStored(BASEMAP_KEY, e.target.value);
+              }}
+            >
+              {BASEMAPS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn onmap"
+              onClick={() => {
+                setView('photos');
+                document.getElementById('table')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+              }}
+            >
+              See these photos
+            </button>
+          </div>
+        </div>
+        <div className="leafmap" role="group" aria-label="Map of camera locations" />
+        <div className="mapfoot">
+          {unplaced > 0 && noLocationAction && (
+            <button type="button" className="mapnote" onClick={() => show(noLocationAction)}>
+              {fmtN(unplaced)} {unplaced === 1 ? 'photo has' : 'photos have'} no location
+            </button>
+          )}
+          <div className="legend" aria-hidden="true">
+            {mode === 'hexes' ? (
+              <>
+                Detections in view
+                <span className="ramp">
+                  {Array.from({ length: HEX_STEPS }, (_, i) => (
+                    <i key={i} className={`s${i + 1}`} />
+                  ))}
+                </span>
+                <span className="mono">{fmtN(legendMax)}</span>
+              </>
+            ) : (
+              'Dot size: detections'
+            )}
+          </div>
+        </div>
         {pinchHint && (
-          <div className="map-hint" role="status">
+          <div className="maphint corner" role="status">
             Pinch to zoom · two fingers to move the map
           </div>
         )}
+        <div className="mapcredit">Tiles · {credit}</div>
         {clearAt && !boxing && (
           <SelClear ref={clearRef} className="onmap" style={clearAt} label="Clear map selection" onClick={clearSelection} />
         )}
@@ -507,7 +542,7 @@ export function MapBand() {
           </div>
         )}
       </div>
-      <InView />
+      <EffortStrip />
     </section>
   );
 }

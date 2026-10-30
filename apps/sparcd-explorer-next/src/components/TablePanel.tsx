@@ -39,7 +39,7 @@ import { DataChecksPanel } from './DataChecks';
 import { CollectionsCell, FlagTags } from './LocationCells';
 import { DataTable } from './DataTable';
 import { PhotoGrid, useSteadyRows } from './PhotoGrid';
-import { Seg, usePopover } from './Popover';
+import { Seg } from './Popover';
 import { Tip, type TipAt } from './Tip';
 import { Charts, PhotoDetail } from './later';
 
@@ -57,6 +57,7 @@ function photoRowsOf(model: Model, result: FilterResult, tag: PhotoTag, separate
 }
 
 const VIEW_NAMES = { locations: 'Locations', species: 'Species', photos: 'Photos', charts: 'Charts' } as const;
+const VIEWS = ['locations', 'species', 'photos', 'charts'] as const;
 
 /** The Activity header: year labels thinned to fit, reporting the strip width it has. */
 function ActivityHead({ ticks, onWidth }: { ticks: AxisTick[]; onWidth: (width: number) => void }) {
@@ -182,11 +183,12 @@ export function TablePanel() {
   const setFilters = useStore((s) => s.setFilters);
   const display = useStore((s) => s.display);
   const reset = useStore((s) => s.resetFilters);
+  const side = useStore((s) => s.side);
+  const setSeparate = useStore((s) => s.setSeparate);
   const drillDown = useStore((s) => s.drillDown);
   const setPhotoTag = useStore((s) => s.setPhotoTag);
   const back = useStore((s) => s.back);
   const goBack = useStore((s) => s.goBack);
-  const checks = usePopover();
   const setSorting = useStore((s) => s.setSorting);
   const [tip, setTip] = useState<TipAt | null>(null);
   const setHighlight = useStore((s) => s.setHighlight);
@@ -303,6 +305,7 @@ export function TablePanel() {
     );
   };
 
+  const maxDetections = view === 'species' ? Math.max(1, ...(rows as SpeciesRow[]).map((r) => r.detections)) : 1;
   const nothing = active && result.photos.length === 0;
   const unpicked = nothing ? noneTicked(model, filters) : null;
   let body;
@@ -316,7 +319,7 @@ export function TablePanel() {
               Select all
             </button>
           )}
-          <button type="button" className={unpicked ? 'btn' : 'btn primary'} onClick={reset}>
+          <button type="button" className={unpicked ? 'btn' : 'btn primary'} onClick={() => reset(side ? 'side' : 'top')}>
             Reset filters
           </button>
         </div>
@@ -407,6 +410,16 @@ export function TablePanel() {
         onSorting={(s) => setSorting('species', s)}
         rowKey={(r) => model.species[r.species].key}
         cell={(c, r) => {
+          if (c.id === 'dets') {
+            return (
+              <span className="numbar">
+                {fmtN(r.detections)}
+                <i>
+                  <b style={{ width: `${((r.detections / maxDetections) * 100).toFixed(1)}%` }} />
+                </i>
+              </span>
+            );
+          }
           if (c.id !== 'common') return undefined;
           const key = model.species[r.species].key;
           const on = soleSpecies(model, filters.species) === key;
@@ -449,30 +462,43 @@ export function TablePanel() {
   }
 
   return (
-    <section id="table" className="tablepanel panel" aria-label="Table" aria-busy={updating}>
-      {/* One line that stays under the filter bar while the table scrolls. */}
+    <section id="table" className="tables" aria-label="Tables" aria-busy={updating}>
+      {/* The tabs, then the open view's tools: one row that stays under the top bar while the table scrolls. */}
       <div className="tbl-head">
-        <div className="tbl-tools">
+        <div className="tabs" role="tablist" aria-label="Tables">
+          {VIEWS.map((v, i) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              id={`tab-${v}`}
+              aria-selected={now.view === v}
+              aria-controls="table-view"
+              tabIndex={now.view === v ? 0 : -1}
+              onClick={() => setView(v)}
+              onKeyDown={(e) => {
+                const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: VIEWS.length - 1 }[e.key];
+                if (to === undefined) return;
+                e.preventDefault();
+                const next = VIEWS[(to + VIEWS.length) % VIEWS.length];
+                setView(next);
+                document.getElementById(`tab-${next}`)?.focus();
+              }}
+            >
+              {VIEW_NAMES[v]}
+            </button>
+          ))}
+        </div>
+        <div className="tbar">
           {back && (
             <button type="button" className="btn backbtn" onClick={backHere}>
               <span aria-hidden="true">←</span> Back to {VIEW_NAMES[back.view]}
             </button>
           )}
-          <Seg
-            className="seg view-seg"
-            label="Show"
-            value={now.view}
-            options={[
-              ['locations', 'Locations'],
-              ['species', 'Species'],
-              ['photos', 'Photos'],
-              ['charts', 'Charts'],
-            ]}
-            onChange={setView}
-          />
           {now.view === 'photos' && (
             <>
               <Seg
+                className="seg"
                 label="Layout"
                 value={now.layout}
                 options={[
@@ -482,6 +508,7 @@ export function TablePanel() {
                 onChange={switchLayout}
               />
               <Seg
+                className="seg"
                 label="Tagged"
                 value={now.filters.photoTag}
                 options={[
@@ -493,6 +520,7 @@ export function TablePanel() {
               />
               {now.layout === 'grid' && (
                 <Seg<'new' | 'old' | ''>
+                  className="seg"
                   label="Order"
                   value={now.sorting.photos[0]?.id === 'time' ? (now.sorting.photos[0].desc ? 'new' : 'old') : ''}
                   options={[
@@ -505,10 +533,26 @@ export function TablePanel() {
             </>
           )}
           <span className="rowcount" aria-live="polite">
+            {updating && (
+              <span className="updating" role="status">
+                Updating…
+              </span>
+            )}
             {nothing ? '' : count}
           </span>
-        </div>
-        <div className="tbl-acts">
+          {(now.view === 'locations' || now.view === 'species') && (
+            <span className={grouping.separate ? 'septoggle on' : 'septoggle'}>
+              <span id="sep-label">Show each location ID separately</span>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={now.grouping.separate}
+                aria-labelledby="sep-label"
+                onClick={() => setSeparate(!now.grouping.separate)}
+              />
+            </span>
+          )}
           <ColumnsEditor
             title={view === 'species' ? 'Species' : view === 'photos' ? 'Photos list' : 'Locations'}
             defs={defs}
@@ -522,16 +566,9 @@ export function TablePanel() {
           </button>
         </div>
       </div>
-      {view === 'locations' && grouping.separate && (
-        <div className="subbar">
-          <span className="state">Each location ID shown separately</span>
-          <button ref={checks.anchor} type="button" className="linkbtn" aria-expanded={checks.open} onClick={checks.toggle}>
-            Change in Data checks
-          </button>
-          {checks.open && <DataChecksPanel anchor={checks.anchor} onClose={checks.close} />}
-        </div>
-      )}
-      <div className="tbl-wrap">{body}</div>
+      <div className="tbl-wrap" id="table-view" role="tabpanel" aria-labelledby={`tab-${now.view}`}>
+        {body}
+      </div>
       {flagCheck && (
         <DataChecksPanel
           key={flagCheck.n}

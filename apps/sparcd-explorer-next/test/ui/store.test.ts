@@ -204,7 +204,7 @@ describe('changing collections', () => {
     const two = useStore.getState().model!;
     useStore.getState().setFilters((f) => ({ ...f, locations: onlyLocations(two, ['id:AA01']), years: [2024] }));
     useStore.getState().resetFilters();
-    useStore.getState().toast!.undo!();
+    useStore.getState().undoReset();
     setItem.mockRestore();
     expect(written.join('\n')).not.toMatch(/"hidden"|"years"|speciesMode/);
   });
@@ -236,7 +236,7 @@ describe('Undo', () => {
     s.setFilters((f) => ({ ...f, species: onlySpecies(useStore.getState().model!, ['Lynx rufus']) }));
     s.resetFilters();
     s.applyRefresh([herd(true)], NONE);
-    useStore.getState().toast!.undo!();
+    useStore.getState().undoReset();
     const { model, filters } = useStore.getState();
     expect(fileNames(model!, applyFilters(model!, filters).photos)).toEqual(['a.jpg']);
   });

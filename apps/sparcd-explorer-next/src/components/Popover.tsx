@@ -24,11 +24,13 @@ export function Popover({
   anchor,
   label,
   onClose,
+  className,
   children,
 }: {
   anchor: RefObject<HTMLElement>;
   label: string;
   onClose: (refocus: boolean) => void;
+  className?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -84,7 +86,7 @@ export function Popover({
   }, [anchor]);
 
   return createPortal(
-    <div ref={ref} className="pop" role="dialog" aria-label={label} style={pos}>
+    <div ref={ref} className={className ? `pop ${className}` : 'pop'} role="dialog" aria-label={label} style={pos}>
       {children}
     </div>,
     document.body,

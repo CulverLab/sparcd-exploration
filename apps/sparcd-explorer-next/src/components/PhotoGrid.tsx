@@ -6,7 +6,7 @@ import { useStore } from '@/store';
 
 // Tiles at least 150px wide (130px on phones), 3:2 pictures over a fixed caption.
 const GAP = 8;
-const CAPTION = 60;
+const CAPTION = 72;
 
 const panel = () => document.querySelector<HTMLElement>('#table .tbl-wrap');
 

@@ -88,7 +88,7 @@ export function DataChecksPanel({
             {checks.map((c, i) => (
               <li key={i} ref={c.key && c.key === focus ? focused : undefined} className={c.key && c.key === focus ? 'focus' : undefined}>
                 <span>{c.text}</span>
-                {listed === i && c.details && <span className="mono text-[11.5px]">{c.details.join(', ')}</span>}
+                {listed === i && c.details && <span className="mono text-[13px]">{c.details.join(', ')}</span>}
                 <button
                   type="button"
                   className="btn sm"
@@ -114,7 +114,7 @@ export function DataChecksPanel({
       </div>
       <div className="sect">
         <div className="row">
-          <span id="separate-label" className="text-[13px] font-[500]">
+          <span id="separate-label" className="text-[14px] font-[500]">
             Show each location ID separately
           </span>
           <div className="flex-1" />
@@ -129,7 +129,7 @@ export function DataChecksPanel({
         </div>
         {anyMissing && (
           <div className="row">
-            <span id="missing-label" className="text-[13px] font-[500]">
+            <span id="missing-label" className="text-[14px] font-[500]">
               Include photos whose files are missing
             </span>
             <div className="flex-1" />

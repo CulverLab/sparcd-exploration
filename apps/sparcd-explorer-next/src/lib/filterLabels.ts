@@ -19,6 +19,18 @@ import { areaLocations } from './mapData';
 
 export type FilterButton = { dim: FilterDimension; name: string; label: string; active: boolean };
 
+/** What the sidebar calls each filter. */
+export const SECTION_NAMES: Record<FilterDimension, string> = {
+  collections: 'Collections',
+  species: 'Species',
+  locations: 'Locations',
+  dates: 'Dates',
+  area: 'Map area',
+  ranges: 'Mountain range',
+  elevation: 'Elevation',
+  files: 'Photo files',
+};
+
 const NAMES: Record<FilterDimension, string> = {
   collections: 'Collections',
   species: 'Species',
@@ -189,6 +201,59 @@ export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit,
       const v = active.has(dim) ? value(model, f, dim, unit, separate) : null;
       return { dim, name: NAMES[dim], label: v ? `${NAMES[dim]}: ${v}` : NAMES[dim], active: active.has(dim) };
     });
+}
+
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** The elevation span the Elevation picker offers, in metres, rounded out to its 50 m steps. */
+export function elevationSpan(model: Model): [number, number] | null {
+  const known = model.sites.flatMap((s) => (s.elevation === null ? [] : [s.elevation]));
+  if (!known.length) return null;
+  return [Math.floor(Math.min(...known) / 50) * 50, Math.ceil(Math.max(...known) / 50) * 50];
+}
+
+/**
+ * A sidebar section's value in plain words: what the filter keeps when it is
+ * on ("Bobcat, Coyote"), else what there is ("All 14 species").
+ */
+export function sectionValue(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean): string {
+  const on = activeFilters(f).includes(dim);
+  switch (dim) {
+    case 'collections': {
+      const n = model.collections.length;
+      return on ? cap(listFilterValue(model, f, dim, separate)!) : n === 2 ? 'Both collections' : `All ${n} collections`;
+    }
+    case 'species':
+      return on ? cap(speciesWords(model, f)!) : `All ${plural(model.species.length, 'species', 'species')}`;
+    case 'locations':
+      return on ? cap(listFilterValue(model, f, dim, separate)!) : `All ${plural(locationItems(model, f, separate).length, 'location')}`;
+    case 'ranges': {
+      const n = listKeys(model, 'ranges').length;
+      return on ? cap(listFilterValue(model, f, dim, separate)!) : n ? `All ${plural(n, 'mountain range')}` : 'None named';
+    }
+    case 'dates': {
+      const span = model.dateSpan;
+      return on ? cap(value(model, f, dim, unit, separate)!) : span ? `${monthName(span.first)} to ${monthName(span.last)}` : 'No dates';
+    }
+    case 'area':
+      return on ? value(model, f, dim, unit, separate)! : 'Whole map';
+    case 'elevation': {
+      if (on) return value(model, f, dim, unit, separate)!;
+      const span = elevationSpan(model);
+      return span ? `Any, ${fmtN(elevationIn(span[0], unit))} to ${fmtN(elevationIn(span[1], unit))} ${unit}` : 'Any';
+    }
+    case 'files': {
+      const n = model.photos.filter((p) => p.missing).length;
+      const files = plural(n, 'missing file');
+      return f.missing === 'only' ? `Only the ${files}` : f.missing === 'show' ? `${files}, included` : `${files}, left out`;
+    }
+  }
+}
+
+/** The Filters button's accessible name: "Filters", or "Filters, 2 on: Species, Dates". */
+export function filtersName(f: FilterState): string {
+  const on = activeFilters(f);
+  return on.length ? `Filters, ${on.length} on: ${on.map((d) => SECTION_NAMES[d]).join(', ')}` : 'Filters';
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

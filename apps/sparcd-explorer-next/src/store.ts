@@ -34,6 +34,9 @@ export type OpenStamp = { account: string; generation: number };
 
 type Toast = { id: number; message: string; undo?: () => void };
 
+/** Reset sits in the sidebar, and beside the Filters button while the sidebar is hidden. */
+export type ResetSlot = 'side' | 'top';
+
 /** Everything a reset or a data-check shortcut can change, so Undo can put it back. */
 type Snapshot = { filters: FilterState; separate: boolean; view: View };
 
@@ -80,8 +83,14 @@ type State = {
   mapMode: MapMode;
   /** Sites of the Locations row under the pointer or focus, lit on the map. */
   highlight: number[] | null;
-  /** Set by a row or data-check action; the filter bar or Reset lets it go. */
+  /** Set by a row or data-check action; a filter change or Reset lets it go. */
   back: Back | null;
+  /** The filter sidebar shows (wide screens); remembered in this browser. */
+  side: boolean;
+  /** The phone Filters sheet is open. */
+  sheet: boolean;
+  /** For about 8 s after Reset: what Undo puts back, and which Reset slot was pressed. */
+  resetUndo: (Back & { from: ResetSlot }) | null;
 
   signIn: (config: S3Config, remember: boolean) => void;
   adoptSession: (config: S3Config | null) => void;
@@ -112,7 +121,11 @@ type State = {
   drillDown: (message: string, change: (s: Snapshot) => Snapshot, scroll: number) => void;
   /** Back to where the last drill-down came from. */
   goBack: () => void;
-  resetFilters: () => void;
+  /** Clear every filter; Undo takes the pressed slot's place for about 8 s. */
+  resetFilters: (from?: ResetSlot) => void;
+  undoReset: () => void;
+  setSide: (side: boolean) => void;
+  setSheet: (open: boolean) => void;
   setSeparate: (separate: boolean) => void;
   setView: (view: View) => void;
   setPhotoLayout: (layout: PhotoLayout) => void;
@@ -125,6 +138,10 @@ type State = {
 };
 
 const DISPLAY_KEY = 'sparcd-explorer-display';
+const SIDE_KEY = 'sparcd-explorer-sidebar';
+/** How long Undo stays in Reset's place. */
+export const RESET_UNDO_MS = 8000;
+let resetTimer: ReturnType<typeof setTimeout> | undefined;
 const LAYOUT_KEY = 'sparcd-explorer-photo-layout';
 // Every visit opens on Locations; a table view older builds remembered goes.
 writeStored('sparcd-explorer-view', null);
@@ -210,6 +227,9 @@ export const useStore = create<State>((set, get) => ({
   mapMode: 'hexes',
   highlight: null,
   back: null,
+  side: readStored(SIDE_KEY, true, (v): v is boolean => typeof v === 'boolean'),
+  sheet: false,
+  resetUndo: null,
 
   signIn: (config, remember) => {
     saveSharedConnection(config, remember);
@@ -239,6 +259,7 @@ export const useStore = create<State>((set, get) => ({
       sorting: DEFAULT_SORTING,
       toast: null,
       back: null,
+      resetUndo: null,
       openGeneration: get().openGeneration + 1,
     });
   },
@@ -288,6 +309,7 @@ export const useStore = create<State>((set, get) => ({
       view: 'locations',
       toast: null,
       back: null,
+      resetUndo: null,
     });
     if (carried.dropped) {
       // Onto the model shown when Undo is pressed: a refresh since may have changed it.
@@ -336,9 +358,9 @@ export const useStore = create<State>((set, get) => ({
     goneTimer ??= setTimeout(rebuildFiles, GONE_BATCH_MS);
   },
 
-  setFilters: (change) => set({ filters: change(get().filters), back: null }),
+  setFilters: (change) => set({ filters: change(get().filters), back: null, resetUndo: null }),
   clearFilter: (dim, undo) => {
-    if (!undo) return set({ filters: clearFilter(get().filters, dim), back: null });
+    if (!undo) return set({ filters: clearFilter(get().filters, dim), back: null, resetUndo: null });
     set({ back: null });
     get().withUndo(undo, (s) => ({ ...s, filters: clearFilter(s.filters, dim) }));
   },
@@ -349,7 +371,7 @@ export const useStore = create<State>((set, get) => ({
     const before: Snapshot = { filters, separate, view };
     const after = change(before);
     get().setView(after.view);
-    set({ filters: after.filters, separate: after.separate });
+    set({ filters: after.filters, separate: after.separate, resetUndo: null });
     get().showToast(message, () => {
       // A refresh since may have added items: the filters go back as their buttons named them.
       const now = get().model;
@@ -379,11 +401,35 @@ export const useStore = create<State>((set, get) => ({
     set({ filters, separate: back.separate, back: null, toast: null });
   },
 
-  resetFilters: () => {
-    if (!isFiltered(get().filters)) return;
-    set({ back: null });
-    get().withUndo('Filters reset', (s) => ({ ...s, filters: resetFilters(s.filters).state }));
+  resetFilters: (from = 'side') => {
+    const { filters, separate, view, model: made } = get();
+    if (!isFiltered(filters)) return;
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => set({ resetUndo: null }), RESET_UNDO_MS);
+    set({
+      filters: resetFilters(filters).state,
+      back: null,
+      toast: null,
+      resetUndo: { filters, separate, view, scroll: 0, model: made, from },
+    });
   },
+  undoReset: () => {
+    const { resetUndo: before, model: now } = get();
+    if (!before) return;
+    clearTimeout(resetTimer);
+    // A refresh since may have added items: the filters go back as their sections named them.
+    const filters =
+      before.model && now && now !== before.model
+        ? carryFilters(before.model, now, before.filters, { separate: before.separate, strict: true }).state
+        : before.filters;
+    set({ filters, separate: before.separate, resetUndo: null });
+    get().showToast('Filters restored');
+  },
+  setSide: (side) => {
+    writeStored(SIDE_KEY, side);
+    set({ side });
+  },
+  setSheet: (sheet) => set({ sheet }),
 
   setSeparate: (separate) => set({ separate }),
   setView: (view) => set({ view }),
