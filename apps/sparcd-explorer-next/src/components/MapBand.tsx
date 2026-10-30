@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
 import { attachTrackpad } from '@/lib/mapGestures';
+import { useMedia } from '@/lib/useMedia';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
 import {
@@ -128,6 +129,8 @@ export function MapBand() {
   const clearRef = useRef<HTMLButtonElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
   const [pinchHint, setPinchHint] = useState(!pinchedOnce);
+  // The hint is about trackpads; on a touch screen one finger already moves the map.
+  const trackpad = useMedia('(pointer: fine)');
   const hexLayers = useRef(new Map<string, HexLayer>());
   const siteLayers = useRef(new Map<number, L.CircleMarker>());
   const suppressClick = useRef(false);
@@ -502,7 +505,7 @@ export function MapBand() {
             )}
           </div>
         </div>
-        {pinchHint && (
+        {pinchHint && trackpad && (
           <div className="maphint corner" role="status">
             Pinch to zoom · two fingers to move the map
           </div>

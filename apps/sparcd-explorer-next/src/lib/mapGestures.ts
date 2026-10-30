@@ -88,6 +88,11 @@ export function attachTrackpad(map: L.Map): () => void {
 
   function zoomTo(zoom: number, point: L.Point) {
     if (!pinch) {
+      // A pan still waiting for its frame lands first, or the pinch's anchor would undo it.
+      if (frame) {
+        cancelAnimationFrame(frame);
+        flush();
+      }
       hooks._stop();
       pinch = { zoom: map.getZoom(), point, latlng: map.containerPointToLatLng(point) };
       hooks._moveStart(true, false);
@@ -144,6 +149,8 @@ export function attachTrackpad(map: L.Map): () => void {
   };
   const onGestureStart = (e: Event) => {
     e.preventDefault();
+    // Safari may send a Ctrl wheel event first; the gesture now owns the pinch until it ends.
+    window.clearTimeout(idle);
     safariStart = pinch ? pinch.zoom : map.getZoom();
   };
   const onGestureChange = (e: Event) => {
