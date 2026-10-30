@@ -63,8 +63,23 @@ Then('{string} is highlighted in By collection', async ({ page }, name: string) 
   await expect(item.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
 });
 
-Then('no row is highlighted in By collection', async ({ page }) => {
+Then('neither {string} nor {string} is highlighted in By collection', async ({ page }, a: string, b: string) => {
+  const names = [a, b];
+  const line = byCollectionItems(page).getByRole('button');
+  const more = byCollection(page).getByRole('button', { name: /^\+ \d+ more$/ });
+  // Once the line has settled, its names and "+ N more" count every collection.
+  const counted = async () => (await line.count()) + ((await more.count()) ? Number(/\d+/.exec(await more.innerText())![0]) : 0);
+  await expect.poll(counted).toBe(names.length);
+  const shown = await line.count();
+  await expect(line).toHaveText(names.slice(0, shown));
+  for (const button of await line.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
   await expect(byCollectionItems(page).and(page.locator('.on'))).toHaveCount(0);
+  if (shown === names.length) return;
+  await more.click();
+  const list = popover(page, 'By collection').locator('.bclist').getByRole('button');
+  await expect(list).toHaveText(names);
+  for (const button of await list.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await page.keyboard.press('Escape');
 });
 
 Then('"× Clear" shows at the end of the "By collection" line', async ({ page }) => {

@@ -112,7 +112,7 @@ Feature: Open collections
     And By collection has not moved
     And the photo count reads "3 of 14 photos"
     When I press "× Clear" by the collections
-    Then no row is highlighted in By collection
+    Then neither "Alpha Basin" nor "Bravo Flats" is highlighted in By collection
     And there is no "× Clear" by the collections
     And the photo count reads "14 photos"
 
@@ -123,7 +123,7 @@ Feature: Open collections
     And I press "Show photos" on the Locations row "BF01"
     Then the table's controls offer "Back to Locations" ahead of the other tools
     When <clear>
-    Then no row is highlighted in By collection
+    Then neither "Alpha Basin" nor "Bravo Flats" is highlighted in By collection
     And the locations filter reads "Locations: BF01"
     And there is no "Back to" button
 
