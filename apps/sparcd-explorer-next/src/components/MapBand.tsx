@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
-import { PINCH_ZOOM_OPTIONS, attachPinchZoom } from '@/lib/mapGestures';
+import { attachTrackpad } from '@/lib/mapGestures';
 import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
 import {
@@ -41,6 +41,8 @@ const latLng = (p: { lat: number; lon: number }) => L.latLng(p.lat, p.lon);
 
 /** Where the map stood for a set of collections, so coming back keeps the user's pan and zoom. */
 let lastView: { key: string; center: L.LatLng; zoom: number } | null = null;
+/** The pinch hint goes for good at the first pinch since the page opened. */
+let pinchedOnce = false;
 
 function hexTip(model: Model, h: HexView, multi: boolean, selected: boolean): string {
   const n = h.locations.length;
@@ -123,13 +125,7 @@ export function MapBand() {
   const boxRef = useRef<HTMLDivElement>(null);
   const clearRef = useRef<HTMLButtonElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
-  // Shown once, the first time a plain scroll passes over the map: null = not yet, true = showing, false = done.
-  const [scrollHint, setScrollHint] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (scrollHint !== true) return;
-    const t = window.setTimeout(() => setScrollHint(false), 1800);
-    return () => clearTimeout(t);
-  }, [scrollHint]);
+  const [pinchHint, setPinchHint] = useState(!pinchedOnce);
   const hexLayers = useRef(new Map<string, HexLayer>());
   const siteLayers = useRef(new Map<number, L.CircleMarker>());
   const suppressClick = useRef(false);
@@ -144,9 +140,9 @@ export function MapBand() {
     const m = L.map(el, {
       zoomControl: false,
       attributionControl: false,
-      // Pinch and Ctrl/⌘ + wheel zoom; attachPinchZoom keeps plain wheel
-      // scrolling the page. Double-click would fight hex clicks.
-      ...PINCH_ZOOM_OPTIONS,
+      // attachTrackpad zooms and pans instead. Double-click would fight hex clicks.
+      scrollWheelZoom: false,
+      zoomSnap: 0,
       doubleClickZoom: false,
       boxZoom: false,
       maxZoom: MAX_ZOOM,
@@ -157,12 +153,24 @@ export function MapBand() {
       lastView = { key: fitKeyRef.current, center: m.getCenter(), zoom: m.getZoom() };
     });
     m.on('zoomend', () => (el.dataset.zoom = String(m.getZoom())));
-    const detachPinch = attachPinchZoom(m, wrap, () => setScrollHint((shown) => (shown === null ? true : shown)));
+    const detachTrackpad = attachTrackpad(m);
+    const pinched = () => {
+      pinchedOnce = true;
+      setPinchHint(false);
+    };
+    const onWheel = (e: WheelEvent) => (e.ctrlKey || e.metaKey) && pinched();
+    const onTouch = (e: TouchEvent) => e.touches.length > 1 && pinched();
+    wrap.addEventListener('wheel', onWheel, { capture: true, passive: true });
+    wrap.addEventListener('gesturestart', pinched, { capture: true });
+    wrap.addEventListener('touchstart', onTouch, { capture: true, passive: true });
     const resize = new ResizeObserver(() => m.invalidateSize());
     resize.observe(el);
     setMap(m);
     return () => {
-      detachPinch();
+      detachTrackpad();
+      wrap.removeEventListener('wheel', onWheel, { capture: true });
+      wrap.removeEventListener('gesturestart', pinched, { capture: true });
+      wrap.removeEventListener('touchstart', onTouch, { capture: true });
       resize.disconnect();
       m.remove();
       setMap(null);
@@ -456,9 +464,9 @@ export function MapBand() {
           </button>
         )}
         <div className="map-credit">Tiles · {credit}</div>
-        {scrollHint && (
+        {pinchHint && (
           <div className="map-hint" role="status">
-            Pinch, or use + and −, to zoom the map
+            Pinch to zoom · two fingers to move the map
           </div>
         )}
         {clearAt && !boxing && (

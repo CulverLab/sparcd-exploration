@@ -965,9 +965,9 @@ path.st.sel {
 .map-hint {
   position: absolute;
   z-index: 1002;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  right: 6px;
+  bottom: 22px;
+  max-width: calc(100% - 12px);
   padding: 6px 12px;
   font-size: 13px;
   color: var(--panel);

@@ -13,18 +13,77 @@ async function noteZoom(page: Page): Promise<Locator> {
   return map;
 }
 
-let pageHandledWheel = true;
 const zoomOf = (page: Page) =>
   page.locator('.leafmap').evaluate((el) => ({ before: Number((el as HTMLElement).dataset.zoomBefore), now: Number((el as HTMLElement).dataset.zoom) }));
 
-When('I pinch to zoom in over the map', async ({ page }) => {
+type Pinch = { widths: number[]; endsDuring: number; pageHandled: boolean };
+type Wheels = { onMap: boolean; prevented: boolean }[];
+
+When('I pinch to zoom in over the map', async ({ page, scratch }) => {
   const map = await noteZoom(page);
-  // A trackpad pinch arrives as a wheel event with ctrlKey set; the page handled it unless it was cancelled.
-  pageHandledWheel = await map.evaluate((el) => {
+  // A trackpad pinch arrives as a run of wheel events with ctrlKey set, a frame apart; the page handled
+  // one unless it was cancelled. A hex's width tracks the zoom mid-gesture, and each zoom end writes data-zoom.
+  scratch.pinch = await map.evaluate(async (el): Promise<Pinch> => {
+    const w = window as unknown as { zoomEnds: number };
+    w.zoomEnds = 0;
+    new MutationObserver((records) => (w.zoomEnds += records.length)).observe(el, { attributeFilter: ['data-zoom'] });
+    const hex = el.querySelector('path.hx')!;
     const r = el.getBoundingClientRect();
-    const e = new WheelEvent('wheel', { ctrlKey: true, deltaY: -60, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
-    return el.dispatchEvent(e);
+    const widths = [hex.getBoundingClientRect().width];
+    let pageHandled = false;
+    for (let i = 0; i < 6; i++) {
+      const e = new WheelEvent('wheel', { ctrlKey: true, deltaY: -10, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true });
+      pageHandled = el.dispatchEvent(e) || pageHandled;
+      await new Promise(requestAnimationFrame);
+      widths.push(hex.getBoundingClientRect().width);
+    }
+    return { widths, endsDuring: w.zoomEnds, pageHandled };
   });
+});
+
+Then('the map zoomed in step by step while the fingers moved', ({ scratch }) => {
+  const { widths, endsDuring } = scratch.pinch as Pinch;
+  for (let i = 1; i < widths.length; i++) expect(widths[i], `hex width after wheel event ${i}`).toBeGreaterThan(widths[i - 1]);
+  expect(endsDuring, 'zoom ends before the fingers stopped').toBe(0);
+});
+
+Then('the map is zoomed in', async ({ page }) => {
+  await expect.poll(async () => { const z = await zoomOf(page); return z.now - z.before; }).toBeGreaterThan(0);
+});
+
+Then('the zoom ended once', async ({ page }) => {
+  // Well past the pinch's 150 ms idle wait.
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (window as unknown as { zoomEnds: number }).zoomEnds)).toBe(1);
+});
+
+Then('the browser did not zoom the page', ({ scratch }) => {
+  expect((scratch.pinch as Pinch).pageHandled, 'the pinch was kept from the browser').toBe(false);
+});
+
+Then('the map is not zoomed', async ({ page }) => {
+  await page.waitForTimeout(400);
+  const z = await zoomOf(page);
+  expect(z.now).toBe(z.before);
+});
+
+Then('a hint over the map reads {string}', async ({ page }, text: string) => {
+  await expect(page.locator('.map-hint')).toHaveText(text);
+});
+
+Then('the map has no hint', async ({ page }) => {
+  await expect(page.locator('.map-hint')).toHaveCount(0);
+});
+
+/** A hex's top-left corner from the map's. */
+async function hexOnMap(page: Page, id: string): Promise<{ x: number; y: number }> {
+  const hex = (await (await hexOf(page, id)).boundingBox())!;
+  const map = (await page.locator('.leafmap').boundingBox())!;
+  return { x: hex.x - map.x, y: hex.y - map.y };
+}
+
+When('I note where the hex holding {string} sits on the map', async ({ page, scratch }, id: string) => {
+  scratch.hexOnMap = await hexOnMap(page, id);
 });
 
 When('I scroll over the map without pinching', async ({ page, scratch }) => {
@@ -32,30 +91,53 @@ When('I scroll over the map without pinching', async ({ page, scratch }) => {
   const box = (await (await noteZoom(page)).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   scratch.scroll = await page.evaluate(() => scrollY);
-  await page.mouse.wheel(0, 300);
+  await page.mouse.wheel(0, 100);
 });
 
-Then('the map is zoomed in', async ({ page }) => {
-  await expect.poll(async () => { const z = await zoomOf(page); return z.now - z.before; }).toBeGreaterThan(0);
+Then('the hex holding {string} has moved up on the map', async ({ page, scratch }, id: string) => {
+  const before = scratch.hexOnMap as { x: number; y: number };
+  await expect.poll(async () => (await hexOnMap(page, id)).y).toBeLessThan(before.y - 50);
+  expect(Math.abs((await hexOnMap(page, id)).x - before.x)).toBeLessThanOrEqual(1);
 });
 
-Then('the map is not zoomed', async ({ page }) => {
-  // Past Leaflet's 40ms wheel debounce and its zoom animation.
-  await page.waitForTimeout(400);
-  const z = await zoomOf(page);
-  expect(z.now).toBe(z.before);
+Then('the page stayed where it was', async ({ page, scratch }) => {
+  expect(await page.evaluate(() => scrollY)).toBe(scratch.scroll);
 });
 
-Then('the browser did not zoom the page', () => {
-  expect(pageHandledWheel, 'the pinch was kept from the browser').toBe(false);
+When('I scroll the page down from just above the map', async ({ page, scratch }) => {
+  await page.evaluate(() => {
+    scrollTo(0, 0);
+    // After the map's own handler: whether each wheel event reached the map, and whether it was kept from the page.
+    const log: Wheels = [];
+    (window as unknown as { wheels: Wheels }).wheels = log;
+    addEventListener('wheel', (e) => log.push({ onMap: !!(e.target as Element).closest('.leafmap'), prevented: e.defaultPrevented }), { passive: true });
+  });
+  const head = (await page.locator('#map .bandhead').boundingBox())!;
+  const map = (await page.locator('.leafmap').boundingBox())!;
+  const y = head.y + 8;
+  await page.mouse.move(head.x + 30, y);
+  // The page scroll at which the map's top edge reaches the pointer.
+  scratch.mapReachesPointer = map.y - y;
+  // Small steps, as a trackpad sends them: the browser may scroll before it finds the event's target.
+  for (let i = 0; i < 20; i++) {
+    await page.mouse.wheel(0, 10);
+    await page.waitForTimeout(20);
+  }
 });
 
-Then('the browser scrolled the page as usual', async ({ page, scratch }) => {
-  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(scratch.scroll as number);
+Then('the page kept scrolling while the map was under the pointer', async ({ page, scratch }) => {
+  const wheels = await page.evaluate(() => (window as unknown as { wheels: Wheels }).wheels);
+  expect(wheels[0].onMap, 'the scroll started on the map').toBe(false);
+  expect(wheels.filter((w) => w.onMap).length, 'wheel events over the map').toBeGreaterThan(2);
+  expect(wheels.filter((w) => w.prevented), 'wheel events kept from the page').toEqual([]);
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan((scratch.mapReachesPointer as number) + 60);
 });
 
-Then('a hint over the map reads {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.map-hint')).toHaveText(text);
+Then('the hex holding {string} sits where it did on the map', async ({ page, scratch }, id: string) => {
+  const before = scratch.hexOnMap as { x: number; y: number };
+  const now = await hexOnMap(page, id);
+  expect(Math.abs(now.x - before.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(now.y - before.y)).toBeLessThanOrEqual(1);
 });
 
 const hexNote = (page: Page) => page.locator('.leaflet-tooltip.maptip');

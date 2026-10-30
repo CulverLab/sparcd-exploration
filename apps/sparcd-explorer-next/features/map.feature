@@ -77,15 +77,26 @@ Feature: The map
     And I see the note "Showing photos with no location" with Undo
 
   Scenario: Pinching over the map zooms the map, not the page
+    Then a hint over the map reads "Pinch to zoom · two fingers to move the map"
     When I pinch to zoom in over the map
-    Then the map is zoomed in
+    Then the map zoomed in step by step while the fingers moved
+    And the map is zoomed in
+    And the zoom ended once
     And the browser did not zoom the page
+    And the map has no hint
 
-  Scenario: Scrolling past the map leaves it alone and says how to zoom
-    When I scroll over the map without pinching
-    Then the map is not zoomed
-    And the browser scrolled the page as usual
-    And a hint over the map reads "Pinch, or use + and −, to zoom the map"
+  Scenario: A plain scroll that starts on the map pans it and leaves the page where it was
+    When I note where the hex holding "AB02" sits on the map
+    And I scroll over the map without pinching
+    Then the hex holding "AB02" has moved up on the map
+    And the map is not zoomed
+    And the page stayed where it was
+
+  Scenario: A scroll that starts off the map keeps scrolling the page as the map passes under the pointer
+    When I note where the hex holding "AB02" sits on the map
+    And I scroll the page down from just above the map
+    Then the page kept scrolling while the map was under the pointer
+    And the hex holding "AB02" sits where it did on the map
 
   Scenario: The map keeps its view when a filter changes
     When I note where the hex holding "AB02" is
