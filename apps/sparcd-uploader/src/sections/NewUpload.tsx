@@ -1,11 +1,11 @@
 import { useOnline } from '@sparcd/auth-ui';
-import { bindPreparedSpecies, readFlipRecord, validPreparedSpecies } from '@sparcd/flip';
+import { selectPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import { WorkflowNotice } from '../components/WorkflowNotice';
-import { loadMasterSpecies, refreshMasterSpecies } from '../lib/masterSpecies';
-import { acceptPreparationSpecies, readBoundPreparationSpecies, readPreparation } from '../lib/preparation';
+import { choosePreparationSpecies } from '../lib/preparation';
+import { SpeciesListChooser } from '../components/SpeciesListChooser';
 import { PreparationRecovery, PreparationSaveStatus } from '../components/PreparationRecovery';
 import { flushPreparation, recoveryGuard } from '../lib/preparation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { Severity } from '../lib/validation';
 import { StepIndicator } from '../components/StepIndicator';
@@ -101,10 +101,12 @@ export function NewUpload() {
   const validations = useStore((s) => s.validations);
   const batchToken = useStore((s) => s.batchToken);
   const flipId = useStore((s) => s.flipId);
+  const s3Config = useStore((s) => s.s3Config);
   const online = useOnline();
   const [notice, setNotice] = useState<{title:string;message:string} | null>(null);
   const [tagError, setTagError] = useState('');
   const [tagging, setTagging] = useState(false);
+  const [speciesChooserOpen, setSpeciesChooserOpen] = useState(false);
   const resetBatch = useStore((s) => s.resetBatch);
   const setStep = useStore((s) => s.setStep);
 
@@ -120,6 +122,21 @@ export function NewUpload() {
   const summary = useMemo(() => summarize(files, validations), [files, validations]);
   const tagged = useMemo(() => files.filter((f) => f.preTags?.length).length, [files]);
   const missingOriginals = files.filter(file => file.needsOriginal);
+
+  const cancelSpeciesChooser = useCallback(() => {
+    setSpeciesChooserOpen(false);
+    setTagging(false);
+  }, []);
+
+  const continueWithSpecies = useCallback(async (snapshot: PreparedSpecies) => {
+    const guard = recoveryGuard();
+    await flushPreparation();
+    guard();
+    if (flipId) await selectPreparedSpecies(flipId, snapshot);
+    else await choosePreparationSpecies(snapshot);
+    guard();
+    await (flipId ? reopenTagger(flipId) : handOffToTagger());
+  }, [flipId]);
 
   // Clicking a severity counter filters the list to just those files —
   // scrolling a 5000-row list for the one flagged file is not an option.
@@ -162,32 +179,13 @@ export function NewUpload() {
           <button
             disabled={!summary.ready || tagging}
             onClick={() => {
-              setTagging(true); setTagError('');
-              const guard = recoveryGuard();
-              void (async () => {
-                await flushPreparation();
-                let saved = flipId ? (await readFlipRecord(flipId))?.preparedSpecies : (await readPreparation())?.species ?? await readBoundPreparationSpecies();
-                guard();
-                if (saved && !validPreparedSpecies(saved)) throw new Error('This batch’s saved species list cannot be read by this version. Your files and tags are unchanged. Use a compatible version to continue tagging.');
-                if (!validPreparedSpecies(saved)) {
-                  const cfg = useStore.getState().s3Config;
-                  saved = await loadMasterSpecies(cfg ?? undefined);
-                  if (!saved && cfg && online) {
-                    try { saved = await refreshMasterSpecies(cfg, () => { try { guard(); return true; } catch { return false; } }); }
-                    catch { throw new Error('The species list could not be downloaded. Check your connection and access, then try tagging again. Your files and tags are unchanged.'); }
-                  }
-                  guard();
-                  if (!saved) throw new Error('The species list is not available on this device. Connect online to download the Settings species list, then try tagging again. You can keep selecting and inspecting files.');
-                  if (flipId) await bindPreparedSpecies(flipId, saved);
-                  else await acceptPreparationSpecies(saved);
-                }
-                guard();
-                await (flipId ? reopenTagger(flipId) : handOffToTagger());
-              })().catch(error => { setNotice({title:'Tagging species',message:(error as Error).message}); setTagging(false); });
+              setTagError('');
+              setTagging(true);
+              setSpeciesChooserOpen(true);
             }}
             title={
               flipId
-                ? 'Go back to the tagger and pick up where you left off'
+                ? 'Choose a species list, then return to the Tagger'
                 : summary.ready
                   ? 'Identify species in the Tagger before uploading'
                   : 'Resolve files that need attention first'
@@ -200,6 +198,14 @@ export function NewUpload() {
           </button>
         )}
       </div>
+
+      <SpeciesListChooser
+        open={speciesChooserOpen}
+        online={online}
+        cfg={s3Config}
+        onCancel={cancelSpeciesChooser}
+        onContinue={continueWithSpecies}
+      />
 
       {step === 'drop' && !flip && <ResumeNotice />}
       {notice && <WorkflowNotice title={notice.title} onClose={() => setNotice(null)}><p>{notice.message}</p></WorkflowNotice>}

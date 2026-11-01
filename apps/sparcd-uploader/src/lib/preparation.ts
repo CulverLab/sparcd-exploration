@@ -53,6 +53,20 @@ export async function acceptPreparationSpecies(species: PreparedSpecies): Promis
   batchSpecies = species; speciesRead = Promise.resolve(species); lastToken = token;
   retryPreparation();
 }
+
+/** Apply the vocabulary the user explicitly chose for this batch. Background refreshes use acceptPreparationSpecies instead. */
+export async function choosePreparationSpecies(species: PreparedSpecies): Promise<void> {
+  const state = useStore.getState();
+  nextSpecies = species; nextConnection = state.s3Config;
+  if (!state.files.length) return;
+  const token = state.batchToken, id = preparationId;
+  try { await speciesRead; } catch { /* The user choice replaces a failed prior read. */ }
+  if (useStore.getState().batchToken !== token || preparationId !== id) return;
+  batchSpecies = species;
+  speciesRead = Promise.resolve(species);
+  lastToken = token;
+  retryPreparation();
+}
 const listeners = new Set<() => void>();
 let status = '';
 let hasPreparation = false;

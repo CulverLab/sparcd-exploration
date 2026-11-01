@@ -1,6 +1,5 @@
 import { AutomaticSpeciesCache } from './components/AutomaticSpeciesCache';
-import { useEffect, useRef, useState } from 'react';
-import { WorkflowNotice } from './components/WorkflowNotice';
+import { useEffect, useRef } from 'react';
 import { Connection, OfflineApps, loadPersistedConnection } from '@sparcd/auth-ui';
 import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from './store';
@@ -37,11 +36,6 @@ export function App() {
   const connect = useStore((s) => s.connect);
   const theme = useStore((s) => s.theme);
   const activeSnap = useStore((s) => s.activeSnap);
-  const runGeneration = useStore(s => s.activeRunGeneration);
-  const [resumeWarning, setResumeWarning] = useState<string | null>(null);
-  useEffect(() => {
-    setResumeWarning(activeSnap?.speciesWarning ?? null);
-  }, [activeSnap?.sessionId, activeSnap?.speciesWarning, runGeneration]);
   const retryPartialRun = useStore((s) => s.retryPartialRun);
 
   useEffect(() => {
@@ -173,7 +167,6 @@ export function App() {
 
   return (
     <Chrome uploadState={uploadStateOf(activeSnap)}>
-      {resumeWarning && <WorkflowNotice title="Resolve species before uploading" onClose={() => setResumeWarning(null)}><p>{resumeWarning}</p></WorkflowNotice>}
       {import.meta.env.PROD && <OfflineApps />}
       <AutomaticSpeciesCache />
       {section === 'new' && <NewUpload />}

@@ -235,7 +235,34 @@ export async function finishFlipRecord(
 /** Store only the explicit non-secret snapshot shape, never a connection config. */
 export async function savePreparedSpecies(snapshot: PreparedSpecies): Promise<void> {
   if (!validPreparedSpecies(snapshot)) throw new Error('Species preparation is invalid or empty. Prepare it online again.');
-  await flipDb.vocabularies.put({ id: 'selected', snapshot: copyPreparedSpecies(snapshot) });
+  const copy = copyPreparedSpecies(snapshot);
+  await flipDb.transaction('rw', flipDb.vocabularies, async () => {
+    await flipDb.vocabularies.put({ id: 'selected', snapshot: copy });
+    await flipDb.vocabularies.put({ id: speciesCatalogId(copy), snapshot: copy });
+  });
+}
+
+function speciesCatalogId(snapshot: PreparedSpecies): string {
+  return `catalog:${snapshot.endpoint}\0${snapshot.account}\0${snapshot.collectionKey}\0${snapshot.sourceBucket}\0${snapshot.sourceKey}`;
+}
+
+/** Keep a local copy of each vocabulary the user has actually loaded, for offline choices. */
+export async function saveSpeciesVocabulary(snapshot: PreparedSpecies): Promise<void> {
+  if (!validPreparedSpecies(snapshot)) throw new Error('Species preparation is invalid or empty.');
+  const copy = copyPreparedSpecies(snapshot);
+  await flipDb.vocabularies.put({ id: speciesCatalogId(copy), snapshot: copy });
+}
+
+/** Locally loaded vocabularies, de-duplicated and sorted for the offline chooser. */
+export async function listSpeciesVocabularies(): Promise<PreparedSpecies[]> {
+  const rows = await flipDb.vocabularies.toArray();
+  const byId = new Map<string, PreparedSpecies>();
+  for (const row of rows) {
+    if (!validPreparedSpecies(row.snapshot)) continue;
+    const copy = copyPreparedSpecies(row.snapshot);
+    byId.set(speciesCatalogId(copy), copy);
+  }
+  return [...byId.values()].sort((a, b) => a.collectionName.localeCompare(b.collectionName));
 }
 
 export async function loadPreparedSpecies(scope?: { endpoint: string; accessKey: string }): Promise<PreparedSpecies | null> {
@@ -252,6 +279,16 @@ export async function bindPreparedSpecies(id: string, snapshot: PreparedSpecies)
     const record = await flipDb.records.get(id);
     if (!record) throw new Error('This local batch is no longer available.');
     if (validPreparedSpecies(record.preparedSpecies)) throw new Error('This batch already has its own prepared species list.');
+    await flipDb.records.update(id, { v: 2, preparedSpecies: copyPreparedSpecies(snapshot) });
+  });
+}
+
+/** Explicitly select a new vocabulary for an existing local batch without touching its tags. */
+export async function selectPreparedSpecies(id: string, snapshot: PreparedSpecies): Promise<void> {
+  if (!validPreparedSpecies(snapshot)) throw new Error('The selected species list is invalid or empty.');
+  await flipDb.transaction('rw', flipDb.records, async () => {
+    const record = await flipDb.records.get(id);
+    if (!record) throw new Error('This local batch is no longer available.');
     await flipDb.records.update(id, { v: 2, preparedSpecies: copyPreparedSpecies(snapshot) });
   });
 }

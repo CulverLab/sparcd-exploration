@@ -288,6 +288,34 @@ it('persists non-secret preparation with account isolation and an immutable hand
   expect((await readFlipRecord('batch-1'))?.preparedSpecies?.species[0].commonName).toBe('Coyote');
 });
 
+it('keeps multiple locally available vocabularies and changes a batch vocabulary without losing tags or attribution', async () => {
+  const { savePreparedSpecies, saveSpeciesVocabulary, listSpeciesVocabularies, selectPreparedSpecies } = await import('../src/index');
+  await flipDb.vocabularies.clear();
+  const makeSnapshot = (collectionKey: string, collectionName: string, sourceKey: string) => ({
+    v: 1 as const, endpoint: 'https://storage.test', account: 'person', collectionKey, collectionName,
+    sourceBucket: collectionKey === 'Settings/species.json' ? 'settings' : 'bucket', sourceKey,
+    sourceHash: 'b'.repeat(64), preparedAt: '2026-10-17T12:00:00Z', profileId: 'profile', overrides: {},
+    species: [{ key: 'Canis latrans', scientificName: 'Canis latrans', commonName: 'Coyote', iconUrl: '', keyBinding: null }],
+  });
+  const master = makeSnapshot('Settings/species.json', 'Master species list', 'Settings/species.json');
+  const alpha = makeSnapshot('bucket::alpha', 'Alpha Collection', 'Collections/alpha/species.json');
+  const beta = makeSnapshot('bucket::beta', 'Beta Collection', 'Collections/beta/species.json');
+  await savePreparedSpecies(master);
+  await saveSpeciesVocabulary(alpha);
+  await saveSpeciesVocabulary(beta);
+  expect((await listSpeciesVocabularies()).map(item => item.collectionKey).sort()).toEqual([
+    'Settings/species.json', 'bucket::alpha', 'bucket::beta',
+  ]);
+
+  const tagged = record({ tags: { 'SD/IMG_0001.JPG': [coyote] }, taggerUser: 'anita' });
+  await writeFlipRecord(tagged);
+  await selectPreparedSpecies(tagged.id, alpha);
+  const after = await readFlipRecord(tagged.id);
+  expect(after?.preparedSpecies?.collectionKey).toBe('bucket::alpha');
+  expect(after?.tags).toEqual(tagged.tags);
+  expect(after?.taggerUser).toBe('anita');
+});
+
 it('rejects invalid preparation and preserves the previously saved list on failure', async () => {
   const { savePreparedSpecies, loadPreparedSpecies } = await import('../src/index');
   await flipDb.vocabularies.clear();

@@ -22,6 +22,7 @@ const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag specie
 async function handOff(app: App): Promise<string> {
   await app.stubTagger();
   await tagButton(app).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   return new URL(app.page.url()).searchParams.get('batch')!;
 }
@@ -105,6 +106,7 @@ Then("the browser goes to the Tagger carrying the batch's id", async ({ app }) =
 
 When('"Tag species before upload" is chosen through the unified dev origin', async ({ app }) => {
   await tagButton(app).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
 });
@@ -321,6 +323,7 @@ Then('the action row offers "Edit tags" instead of "Tag species before upload"',
 
 Then('choosing it returns to the Tagger with the same batch id', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Edit tags' }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   expect(new URL(app.page.url()).searchParams.get('batch')).toBe(app.notes.flipId);
 });

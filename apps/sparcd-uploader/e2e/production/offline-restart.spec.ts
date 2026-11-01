@@ -8,6 +8,7 @@ import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage, COLLECTION_A_NAME } from '../../features/steps/fixtures-data';
 import { verifyRecoveredUpload } from './acceptance-helpers';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 
 test.use({ trace: 'off' });
 test('prepared production apps and inspected batch survive a real offline Chrome restart and local handoff', async ({ baseURL }, info) => {
@@ -61,6 +62,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
     await app.waitForInspected();
     await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+    await continueWithMasterSpecies(page);
     await expect(page.getByText('Local batch · 1 files · from Uploader')).toBeVisible();
     await expect(page.getByText('Showing saved thumbnails.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();

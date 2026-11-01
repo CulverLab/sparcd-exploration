@@ -3,6 +3,7 @@ import { App } from '../../features/steps/app';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage, SETTINGS_BUCKET } from '../../features/steps/fixtures-data';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 
 test('a sibling master refresh cannot replace an inspected batch catalog or journal', async ({ page, context }) => {
   const s3 = new S3Mock(); seedDefaultStorage(s3);
@@ -15,6 +16,7 @@ test('a sibling master refresh cannot replace an inspected batch catalog or jour
   await expect.poll(async () => (await b.cachedSpecies())?.species[0].scientificName).toBe('Beta species');
   await b.dropFolder([jpegAt('BETA.JPG','2026:07:01 12:00:00')]); await b.waitForInspected();
   await page.getByRole('button',{name:'Tag species before upload',exact:true}).click();
+  await continueWithMasterSpecies(page);
   await page.waitForURL(/\/tagger\/\?batch=/);
   expect((await a.readFlipRecords())[0].preparedSpecies).toEqual(first);
   await sibling.reload();
@@ -31,6 +33,6 @@ test('an automatic refresh after file selection keeps that batch snapshot frozen
   s3.put(SETTINGS_BUCKET,'Settings/species.json',JSON.stringify([{name:'New catalog',scientificName:'New species'}]),{contentType:'application/json'});
   await context.setOffline(true);await expect.poll(()=>page.evaluate(()=>navigator.onLine)).toBe(false);await context.setOffline(false);
   await expect.poll(async()=>(await app.cachedSpecies())?.species[0].scientificName).toBe('New species');
-  await page.getByRole('button',{name:'Tag species before upload',exact:true}).click();await page.waitForURL(/\/tagger\/\?batch=/);
+  await page.getByRole('button',{name:'Tag species before upload',exact:true}).click(); await continueWithMasterSpecies(page); await page.waitForURL(/\/tagger\/\?batch=/);
   expect((await app.readFlipRecords())[0].preparedSpecies).toEqual(first);
 });

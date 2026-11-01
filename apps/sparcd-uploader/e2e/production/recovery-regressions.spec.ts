@@ -3,6 +3,7 @@ import { App } from '../../features/steps/app';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage, BUCKET_B, UUID_B } from '../../features/steps/fixtures-data';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 async function prepare(app: App, _name: string) { await app.waitForSpeciesCache(); }
 
 for (const legacy of [true, false]) test(`recovery preserves a ${legacy ? 'legacy collection' : 'master'} snapshot after the shared master cache changes`, async ({ page, context }) => {
@@ -25,7 +26,7 @@ for (const legacy of [true, false]) test(`recovery preserves a ${legacy ? 'legac
   const reopened=await context.newPage();const recovered=new App(reopened,s3);await recovered.open();
   await reopened.getByRole('button',{name:'Login later',exact:true}).click();
   await recovered.seedPickedFolder(specs);await reopened.getByRole('button',{name:'Reselect saved batch folder',exact:true}).click();await recovered.waitForInspected();
-  await reopened.getByRole('button',{name:'Tag species before upload',exact:true}).click();await reopened.waitForURL(/\/tagger\/\?batch=/);
+  await reopened.getByRole('button',{name:'Tag species before upload',exact:true}).click(); await continueWithMasterSpecies(reopened); await reopened.waitForURL(/\/tagger\/\?batch=/);
   expect((await recovered.readFlipRecords())[0].preparedSpecies).toEqual(expected);
 });
 
@@ -35,6 +36,7 @@ test('a Disconnect while the Flip folder picker is open cannot restore that batc
   const specs = [jpegAt('OLD.JPG', '2026:07:01 12:00:00')];
   await a.dropFolder(specs); await a.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(page);
   await page.waitForURL(/\/tagger\/\?batch=/);
   const record = (await a.readFlipRecords())[0];
   await page.goto(record.returnUrl);
@@ -81,6 +83,7 @@ test('a damaged sibling journal does not hide a healthy saved batch', async ({ p
   await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
   await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(page);
   await page.waitForURL(/\/tagger\/\?batch=/);
   const record = (await app.readFlipRecords())[0];
   await page.goto(record.returnUrl);
