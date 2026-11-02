@@ -13,6 +13,7 @@ test('a failed final local-Tagger write keeps edits visible and Done retryable',
   await app.dropFolder(specs); await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
   await continueWithMasterSpecies(page);
+  await page.waitForURL(/\/tagger\/\?batch=/);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('#user').fill('return-person');
   await page.getByRole('button', { name: 'Tag', exact: true }).click();
