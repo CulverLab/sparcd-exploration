@@ -15,7 +15,7 @@ test('an interrupted coordinated update preserves the active offline release and
   await waitForOfflineApps(page);
   await app.dropFolder([jpegAt('PENDING.JPG', '2026:07:01 12:00:00')]);
   await app.waitForInspected();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   const names = await page.evaluate(() => caches.keys());
   const firstLine = original.slice(0, original.indexOf('\n'));
   const release = JSON.parse(firstLine.slice('const RELEASE = '.length, -1));
@@ -93,7 +93,7 @@ test('journal quota failure blocks handoff without losing Inspect and exposes a 
   expect(await app.readFlipRecords()).toEqual([]);
   await page.evaluate(() => (window as any).__restoreQuotaFault());
   await page.getByRole('button', { name: 'Retry saving preparation' }).click();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
   await expect(page.locator('button[title="QUOTA.JPG"]')).toBeVisible();
   expect((await app.readFlipRecords())[0].files[0].sha256).toMatch(/^[a-f0-9]{64}$/);

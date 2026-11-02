@@ -16,7 +16,7 @@ for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as 
       await app.waitForSpeciesCache();
       const spec = { ...jpegAt('OLD.JPG', '2026:07:01 12:00:00'), ...(path === 'Flip files' ? { path: 'OLD.JPG' } : {}) };
       await app.dropFolder([spec]); await app.waitForInspected();
-      await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
       if (path.startsWith('Flip')) {
         await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
         await page.waitForURL(/\/tagger\/\?batch=/);

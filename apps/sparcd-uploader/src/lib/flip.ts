@@ -25,6 +25,7 @@ import { useStore, type FileEntry } from '../store';
 import { restoreFromHandle, reconcileReselect, reselectFolder, type ReconcileProblem } from './resume';
 import type { ScannedFile } from './scanFiles';
 import { flushPreparation, readPreparation, bindCurrentPreparationSpecies, recoveryGuard, readPreparationForFlip } from './preparation';
+import { summarizeSourceFolders } from './sourceFolders';
 import { formatNaive } from './exifTime';
 import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
 import { taggerBatchUrl, uploaderReturnUrl } from './siblings';
@@ -235,7 +236,11 @@ async function attach(record: FlipRecord, attached: Map<string, File>, guard: ()
     else files.push({ ...toFileEntry(f, new File([], f.fileName), record), processState: 'error', needsOriginal: true,
       processError: problems.find(problem => problem.localPath === f.relPath)?.reason ?? 'Original file could not be verified' });
   }
-  bindCurrentPreparationSpecies(record.preparedSpecies, preparation?.id);
+  bindCurrentPreparationSpecies(
+    record.preparedSpecies,
+    preparation?.id,
+    preparation?.sourceFolders ?? summarizeSourceFolders(record.files.map(file => file.relPath)),
+  );
   useStore.getState().adoptTaggedBatch({
     flipId: record.id,
     files,

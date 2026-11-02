@@ -9,7 +9,7 @@ test('a sibling master refresh cannot replace an inspected batch catalog or jour
   const a = new App(page, s3); await a.connect(); await a.waitForSpeciesCache();
   const first = await a.cachedSpecies();
   await a.dropFolder([jpegAt('ALPHA.JPG', '2026:07:01 12:00:00')]); await a.waitForInspected();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   s3.put(SETTINGS_BUCKET, 'Settings/species.json', JSON.stringify([{ name:'New master species', scientificName:'Beta species', keyBinding:'B' }]), { contentType:'application/json' });
   const sibling = await context.newPage(); const b = new App(sibling, s3); await b.open();
   await expect.poll(async () => (await b.cachedSpecies())?.species[0].scientificName).toBe('Beta species');

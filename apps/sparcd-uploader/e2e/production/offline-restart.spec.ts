@@ -41,7 +41,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await page.locator('#mountainRange').fill('Saved mountain range');
     await page.locator('#dateCollected').fill('2026-07-01');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     await close();
 
     page = await launch(true, 'offline-recovery');
@@ -97,7 +97,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await app.seedPickedFolder(specs);
     await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
     await app.waitForInspected();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     const [record] = await app.readFlipRecords();
     expect(record.tags['SDCARD/OFFLINE.JPG'][0].scientificName).toBe('Canis latrans');
     expect(record.preparedSpecies.species.length).toBeGreaterThan(0);
