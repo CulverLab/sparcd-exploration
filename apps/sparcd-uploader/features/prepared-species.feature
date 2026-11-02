@@ -8,7 +8,6 @@ Feature: Cache the Settings master list for optional Uploader tagging
 
   Scenario: The master vocabulary is frozen into the real handoff despite a collection-specific list
     Given Alpha has a collection-specific species list
-    And species have been prepared for local tagging
     When "Tag species before upload" is chosen through the unified dev origin
     Then the optional tagging feature uses the saved master species
     When the live shared account changes during local tagging
@@ -23,19 +22,6 @@ Feature: Cache the Settings master list for optional Uploader tagging
       | denied    |
       | malformed |
       | empty     |
-
-  Scenario Outline: Describe checks current vocabulary without discarding returned tags
-    Given species have been prepared for local tagging
-    When "Tag species before upload" is chosen through the unified dev origin
-    And Coyote is applied in the real Tagger
-    And the real Tagger identity is set to Anita
-    And the real Tagger hands the batch back
-    And the assigned species list is "<change>"
-    Then Describe handles the species check for "<change>"
-    Examples:
-      | change  |
-      | renamed |
-      | removed |
 
   Scenario Outline: An invalid handoff snapshot explains recovery without losing tags
     Given species have been prepared for local tagging

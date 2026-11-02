@@ -38,11 +38,3 @@ it('does not accept a late download after the connection changes or treat a lega
   memory.saved.collectionKey = 'collection::legacy';
   expect(await loadMasterSpecies()).toBeNull();
 });
-
-it('reports every missing official species, including legacy requested names, without changing tags', async () => {
-  const {checkOfficialSpecies}=await import('../src/lib/preparedSpecies');
-  const tags=[{scientificName:'Coyote'},{scientificName:'Removed'},{scientificName:'Requested',requestedSpecies:'Requested'}];
-  const original=structuredClone(tags);
-  expect(await checkOfficialSpecies(cfg,{key:'bucket::one'} as any,tags)).toEqual(['Removed','Requested']);
-  expect(tags).toEqual(original);
-});

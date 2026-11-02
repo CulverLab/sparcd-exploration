@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { App } from '../../features/steps/app';
+import { continueWithMasterSpecies } from './tagging-helpers';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage } from '../../features/steps/fixtures-data';
 import { jpegAt } from '../../features/steps/batches';
@@ -11,6 +12,8 @@ test('a failed final local-Tagger write keeps edits visible and Done retryable',
   const specs = [jpegAt('RETURN.JPG', '2026:07:01 12:00:00')];
   await app.dropFolder(specs); await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(page);
+  await page.waitForURL(/\/tagger\/\?batch=/);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('#user').fill('return-person');
   await page.getByRole('button', { name: 'Tag', exact: true }).click();

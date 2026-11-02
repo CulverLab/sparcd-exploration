@@ -1,4 +1,3 @@
-import { missingOfficialSpecies } from './officialSpecies';
 import { loadSpeciesVocabulary, type CollectionRef, type SpeciesResult } from '@sparcd/s3-safe';
 import { keyProfileId, useKeyBindings, activeKeyProfile } from '@sparcd/auth-ui';
 import { validPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
@@ -20,6 +19,22 @@ export function stagePreparation(cfg: S3Config, result: SpeciesResult): string {
   bindings.activateProfile(profile);
   useKeyBindings.getState().stageSpecies(`${result.sourceBucket}/${result.sourceKey}`, result.species, result.settingsBucket !== null);
   return profile;
+}
+
+/** Re-activate a saved vocabulary's source-aware local key reconciliation offline. */
+export function stageSavedPreparation(snapshot: PreparedSpecies): void {
+  if (!validPreparedSpecies(snapshot)) throw new Error('The saved species list is invalid.');
+  const bindings = useKeyBindings.getState();
+  bindings.activateProfile(snapshot.profileId);
+  useKeyBindings.getState().stageSpecies(
+    `${snapshot.sourceBucket}/${snapshot.sourceKey}`,
+    snapshot.species,
+    snapshot.sourceKey === 'Settings/species.json',
+  );
+  const profile = activeKeyProfile(useKeyBindings.getState());
+  if (profile.speciesSources?.[`${snapshot.sourceBucket}/${snapshot.sourceKey}`]?.pendingSpeciesChange) {
+    throw new Error('Review and accept the species-list changes before using this saved list.');
+  }
 }
 
 export async function snapshotPreparation(cfg: S3Config, collection: CollectionRef, result: SpeciesResult): Promise<PreparedSpecies> {
@@ -45,21 +60,7 @@ export function assertPreparedSpecies(snapshot: unknown): asserts snapshot is Pr
   if (!validPreparedSpecies(snapshot)) throw new Error('The species list is not available on this device. Connect online to download the Settings species list, then try tagging again. Your files are unchanged.');
 }
 
-export function assessPreparedAssignment(snapshot: PreparedSpecies, loaded: SpeciesResult, cfg: S3Config, collectionKey: string, tags: { scientificName: string; requestedSpecies?: string }[]) {
-  const allowed = new Set(loaded.species.map((s) => s.scientificName));
-  return {
-    missing: [...new Set(tags.filter((tag) => !allowed.has(tag.scientificName)).map((tag) => tag.scientificName))],
-    changed: snapshot.endpoint !== cfg.endpoint || snapshot.account !== cfg.accessKey || snapshot.collectionKey !== collectionKey || snapshot.sourceBucket !== loaded.sourceBucket || snapshot.sourceKey !== loaded.sourceKey || speciesFingerprint(snapshot.species) !== speciesFingerprint(loaded.species),
-  };
-}
-
-
 /** Field and row ordering are not vocabulary changes. Include every displayed field. */
 export function speciesFingerprint(species: PreparedSpecies['species']): string {
   return JSON.stringify([...species].sort((a, b) => a.scientificName.localeCompare(b.scientificName)).map((s) => [s.scientificName, s.commonName, s.iconUrl, s.keyBinding]));
-}
-
-/** Fresh validation uses the same destination lookup as resumed uploads. */
-export async function checkOfficialSpecies(cfg: S3Config, collection: CollectionRef, tags: { scientificName: string; requestedSpecies?: string }[]): Promise<string[]> {
-  return missingOfficialSpecies(getClient(cfg), collection.key, tags);
 }

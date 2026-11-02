@@ -1,5 +1,3 @@
-import { WorkflowNotice } from '../components/WorkflowNotice';
-import { checkOfficialSpecies } from '../lib/preparedSpecies';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOnline } from '@sparcd/auth-ui';
 import { deleteFlipRecord } from '@sparcd/flip';
@@ -243,30 +241,15 @@ export function Upload() {
 
   const uploadMounted = useRef(true);
   useEffect(() => { uploadMounted.current = true; return () => { uploadMounted.current = false; }; }, []);
-  const startChecking = useRef(false);
-  const [checkingSpecies, setCheckingSpecies] = useState(false);
-  const [speciesWarning, setSpeciesWarning] = useState('');
   const start = async () => {
     if (!s3Config || !location || !collection || !slug || !mountainRange.trim() || !dateCollected) return;
-    if (startChecking.current) return;
     const expected = useStore.getState();
-    startChecking.current = true; setCheckingSpecies(true);
-    try {
-      const missing = effectiveDryRun ? [] : await checkOfficialSpecies(s3Config, collection, files.flatMap(file => file.preTags ?? []));
-      const current = useStore.getState();
-      const detailsChanged = (['dryRun', 'uploaderUser', 'uploadDescription', 'uploadTimeZone', 'mountainRange', 'dateCollected', 'uploadCommentDate'] as const)
-        .some(key => current[key] !== expected[key]);
-      if (!uploadMounted.current || current.step !== 'upload' || current.section !== 'new' || detailsChanged ||
-          current.batchToken !== expected.batchToken || current.s3Config !== s3Config ||
-          current.selectedBucket !== expected.selectedBucket || current.selectedLocationId !== expected.selectedLocationId || current.files !== files) return;
-      if (missing.length) {
-        setSpeciesWarning(`Resolve these species before uploading because they are not in the current official collection or master list: ${missing.join(', ')}. Return to Inspect to review the identifications. Your tags and counts have been kept.`);
-        return;
-      }
-    } catch {
-      setSpeciesWarning('The current species list could not be checked. Reconnect and try uploading again. Your tags are unchanged.');
-      return;
-    } finally { startChecking.current = false; if (uploadMounted.current) setCheckingSpecies(false); }
+    const current = useStore.getState();
+    const detailsChanged = (['dryRun', 'uploaderUser', 'uploadDescription', 'uploadTimeZone', 'mountainRange', 'dateCollected', 'uploadCommentDate'] as const)
+      .some(key => current[key] !== expected[key]);
+    if (!uploadMounted.current || current.step !== 'upload' || current.section !== 'new' || detailsChanged ||
+        current.batchToken !== expected.batchToken || current.s3Config !== s3Config ||
+        current.selectedBucket !== expected.selectedBucket || current.selectedLocationId !== expected.selectedLocationId || current.files !== files) return;
     setCompleteDismissed(false);
     attachedRef.current = null; // this batch's files are the store's again
     setResumeProblems([]);
@@ -425,8 +408,6 @@ export function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
-      {speciesWarning && <WorkflowNotice title="Resolve species before uploading" onClose={() => setSpeciesWarning('')}><p>{speciesWarning}</p></WorkflowNotice>}
-
       <UploadConnectivityStatus
         online={online}
         offlineOverride={offlineOverride}
@@ -669,7 +650,7 @@ export function Upload() {
           ) : (
             <button
               onClick={() => void start()}
-              disabled={checkingSpecies || (!effectiveDryRun && !realUploadAllowed)}
+              disabled={!effectiveDryRun && !realUploadAllowed}
               title={!effectiveDryRun && !realUploadAllowed ? "You're offline — reconnect or choose Try upload anyway" : undefined}
               aria-describedby={!effectiveDryRun && !realUploadAllowed ? uploadConnectivityStatusId : undefined}
               className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!effectiveDryRun && !realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}

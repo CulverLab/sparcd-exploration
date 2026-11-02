@@ -8,6 +8,7 @@ import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage, COLLECTION_A_NAME } from '../../features/steps/fixtures-data';
 import { verifyRecoveredUpload } from './acceptance-helpers';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 
 test.use({ trace: 'off' });
 test('installed Uploader launches as an app offline after a Chrome process restart', async ({ baseURL }, info) => {
@@ -63,6 +64,7 @@ test('installed Uploader launches as an app offline after a Chrome process resta
     const specs = [jpegAt('PWA.JPG', '2026:07:01 12:00:00')];
     await local.dropFolder(specs); await local.waitForInspected();
     await app.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+    await continueWithMasterSpecies(app);
     await expect(app.locator('button[title="PWA.JPG"]')).toBeVisible();
     expect(await app.evaluate(() => matchMedia('(display-mode: standalone)').matches)).toBe(true);
     await app.getByRole('button', { name: 'Settings', exact: true }).click();
