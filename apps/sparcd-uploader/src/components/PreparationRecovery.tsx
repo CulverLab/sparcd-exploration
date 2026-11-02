@@ -2,9 +2,19 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { recoveryGuard, listPreparations, recoverPreparation, recoverPreparationFromHandle, preparationStatus, subscribePreparation, retryPreparation, type LocalPreparation } from '../lib/preparation';
 import { reselectFolder } from '../lib/resume';
 import { canPickFolder, supportsDirectoryHandle } from '../lib/scanFiles';
+import { sourceFolderCopy } from '../lib/sourceFolders';
 export function PreparationSaveStatus() {
   const message = useSyncExternalStore(subscribePreparation, preparationStatus);
-  return message ? <div className="p-3 text-sm"><p role={message.includes('could not') ? 'alert' : 'status'}>{message}</p>{message.includes('could not') && <button type="button" onClick={retryPreparation} className="border px-3 py-2">Retry saving preparation</button>}</div> : null;
+  if (!message) return null;
+  if (message.kind === 'saving') return <div className="p-3 text-sm"><p role="status">Saving local preparation…</p></div>;
+  if (message.kind === 'failed') return <div className="p-3 text-sm"><p role="alert">Local preparation could not be saved. Keep this tab open, free browser storage, and retry before leaving.</p><button type="button" onClick={retryPreparation} className="border px-3 py-2">Retry saving preparation</button></div>;
+
+  const copy = sourceFolderCopy(message.sourceFolders);
+  return <div className="p-3 text-sm"><p role="status" className="min-w-0 break-words select-text">
+    <span>Local preparation saved.</span> {copy.beforeNames}{copy.names.map((name, index) => <span key={`${name}-${index}`}>
+      {index > 0 ? ', ' : ''}<strong className="font-[700]">{name}</strong>
+    </span>)}{copy.afterNames}
+  </p></div>;
 }
 export function PreparationRecovery() {
   const [saved, setSaved] = useState<LocalPreparation | null>(null);

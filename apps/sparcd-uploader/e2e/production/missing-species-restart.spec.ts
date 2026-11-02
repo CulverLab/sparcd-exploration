@@ -36,7 +36,7 @@ for (const installed of [false, true]) test(`${installed ? 'PWA' : 'browser'} co
     await waitForOfflineApps(page);
     const specs = [jpegAt('UNPREPARED.JPG', '2026:07:01 12:00:00')];
     await app.dropFolder(specs); await app.waitForInspected();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     if (installed) {
       const cdp = await context!.newCDPSession(page);
       await cdp.send('PWA.install' as any, { manifestId: url, installUrlOrBundleUrl: url });
