@@ -9,6 +9,7 @@ import {
   applyFilters,
   buildModel,
   checkPhotoFiles,
+  inViewWithout,
   listKeys,
   missingKeys,
   only,
@@ -25,6 +26,7 @@ import { collectionRef } from './support/fixtures';
 const PHOTOS = 200_000;
 const UPLOADS = 400;
 const BUDGET_MS = 100 * Number(process.env.PERF_FACTOR ?? 1);
+const pad = (n: number) => String(n).padStart(3, '0');
 const SPECIES = ['Genus alpha', 'Genus beta', 'Genus gamma', 'Genus delta', 'Genus epsilon', 'Genus zeta'];
 
 function syntheticCollection(): LoadedCollection {
@@ -168,6 +170,19 @@ describe('the Photos view with 500,000 photos in 50 collections', () => {
   it('builds one row per photo with its species', () => {
     expect(rows).toHaveLength(500_000);
     expect(best(() => photoRows(model, result.photos, result.detections))).toBeLessThan(4 * BUDGET_MS);
+  });
+
+  it('says what is in view per filter in one pass, for the sidebar on every filter change', () => {
+    const busy: FilterState = {
+      ...NO_FILTERS,
+      species: onlySpecies(model, ['Genus alpha', 'Genus beta']),
+      years: [2015, 2016, 2017, 2018, 2019, 2020],
+      hours: [20, 6],
+      elevation: [600, 1200],
+      locations: onlyLocations(model, Array.from({ length: 200 }, (_, i) => `id:P${pad(i % 50)}-${i % 5}`)),
+    };
+    expect(best(() => inViewWithout(model, NO_FILTERS))).toBeLessThan(BUDGET_MS);
+    expect(best(() => inViewWithout(model, busy))).toBeLessThan(BUDGET_MS);
   });
 
   it('ranks the photos by time once per model', () => {

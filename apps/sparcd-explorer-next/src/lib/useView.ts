@@ -2,7 +2,7 @@
 // model and filter change, however many components ask.
 
 import { useMemo } from 'react';
-import { applyFilters, isFiltered, type FilterResult, type FilterState, type Model } from '@/data';
+import { applyFilters, inViewWithout, isFiltered, type FilterResult, type FilterState, type InView, type Model } from '@/data';
 import { useStore } from '@/store';
 
 let last: { model: Model; filters: FilterState; result: FilterResult } | null = null;
@@ -10,6 +10,14 @@ let last: { model: Model; filters: FilterState; result: FilterResult } | null = 
 export function filtered(model: Model, filters: FilterState): FilterResult {
   if (last?.model !== model || last.filters !== filters) last = { model, filters, result: applyFilters(model, filters) };
   return last.result;
+}
+
+let lastInView: { model: Model; filters: FilterState; inView: InView } | null = null;
+
+/** What each filter's list or span has left. One pass per model and filter change, however many components ask. */
+export function inViewOf(model: Model, filters: FilterState): InView {
+  if (lastInView?.model !== model || lastInView.filters !== filters) lastInView = { model, filters, inView: inViewWithout(model, filters) };
+  return lastInView.inView;
 }
 
 export function useView() {

@@ -78,14 +78,16 @@ Feature: Filter the photos in view
     Then the locations filter reads "Locations"
     And I see the note "No locations were picked, so all are shown again" with Undo
 
-  Scenario: Select all and Clear all act on the species a search finds
+  Scenario: Select and Clear act on the species a search finds, and say so
     When I open the species filter
     And I search the species filter for "deer"
-    And I press "Clear all" in the species filter
+    And I press "Clear matches" in the species filter
     Then the species filter reads "Species: all but Deer (Mule)"
     And the photo count reads "10 of 11 photos"
-    When I press "Select all" in the species filter
+    When I press "Select matches" in the species filter
     Then the species filter reads "Species"
+    When I press "Clear search" in the species filter
+    Then the species filter offers "Select all" and "Clear all"
 
   Scenario: A search shows its × while it has text, and Esc clears it before closing
     When I open the species filter
@@ -124,6 +126,80 @@ Feature: Filter the photos in view
     When I press Only on "No location set" in the mountain range filter
     Then the mountain range filter reads "Mountain range: No location set"
     And the photo count reads "2 of 11 photos"
+
+  Scenario: Select area narrows the sidebar's values and every list
+    Then the species section reads "All 4 species"
+    And the locations section reads "All 5 locations"
+    And the mountain range section reads "All 2 mountain ranges"
+    And the dates section reads "Apr 2023 to Mar 2025"
+    And the elevation section reads "Any, 1,200 to 1,500 m"
+    When I click the hex holding "AB01"
+    Then the species section reads "2 of 4 species"
+    And the locations section reads "1 of 5 locations"
+    And the mountain range section reads "1 of 2 mountain ranges"
+    And the dates section reads "Apr 2023 to Mar 2025"
+    And the elevation section reads "Any, 1,200 m"
+    And the area filter reads "Area: 1 location"
+    When I open the locations filter
+    Then the locations filter lists "AB01"
+    And the locations filter offers no Only button
+    When I open the species filter
+    Then the species filter lists, in order, "Untagged photos, Bobcat, Deer (Mule)"
+    When I open the mountain range filter
+    Then the mountain range filter lists "AB0"
+    And the mountain range filter counts "1 loc." for "AB0"
+
+  Scenario: A species you unticked stays listed when Select area narrows it out of view
+    When I hide the species "Gray Fox"
+    And I click the hex holding "AB02"
+    And I open the species filter
+    Then the species filter lists, in order, "Untagged photos, Bobcat, Coyote, Deer (Mule), Gray Fox"
+    And "Gray Fox" is unticked in the species filter
+    And "Gray Fox" shows at zero in the species filter
+    And "Bobcat" does not show at zero in the species filter
+    When I tick "Gray Fox" in the species filter
+    Then the species filter lists, in order, "Untagged photos, Bobcat, Coyote, Deer (Mule), Gray Fox"
+    When I press Escape
+    And I open the species filter
+    Then the species filter lists, in order, "Untagged photos, Bobcat, Coyote, Deer (Mule)"
+    When I press "Clear all" in the species filter
+    Then the species filter reads "Species: none"
+    When I press "Select all" in the species filter
+    Then the species filter reads "Species"
+
+  Scenario: A location picked alone stays listed once it has nothing in view, and the unticked rows with nothing don't
+    When I filter locations to "AB02"
+    And I show the Charts
+    And I click the "Apr 2023" bar in the month chart
+    Then the table says "No photos match these filters"
+    When I open the locations filter
+    Then the locations filter lists "AB01, AB02"
+    And "AB02" is ticked in the locations filter
+    And "AB01" is unticked in the locations filter
+
+  Scenario: The Dates picker lists the years in view, and the Dates section keeps its buttons in place
+    When I click the hex holding "AB01"
+    And I open the dates filter
+    Then the dates picker lists the years "2023, 2025"
+    And the months of the dates filter run from "2023-04" to "2025-03"
+    And the year 2024 is disabled in the Dates section
+    And the year 2023 is enabled in the Dates section
+    When I press the year 2025 in the dates picker
+    Then the dates filter reads "Dates: 2025"
+
+  Scenario: Elevation spans the sites in view, and says what its filter leaves out
+    When I click the hex holding "AB02"
+    And I open the elevation filter
+    Then the elevation filter spans "1,350 m" to "1,500 m"
+    When I set the lowest elevation to 1400
+    Then the elevation filter says nothing is left out
+    And the photo count reads "3 of 11 photos"
+    When I clear the Area filter with its ×
+    And I open the elevation filter
+    Then the elevation filter spans "1,200 m" to "1,500 m"
+    And the elevation filter says "1 location with no elevation left out"
+    When I press the "Clear" button in the elevation filter
+    Then the elevation filter says nothing is left out
 
   Scenario: Hiding a species and picking years
     When I hide the species "Bobcat"
@@ -205,7 +281,7 @@ Feature: Filter the photos in view
 
   Scenario: When nothing matches, the table offers a big Reset
     When I filter species to "Coyote"
-    And I pick the year 2025 in the dates filter
+    And I click "Jan 2025" on the strip
     Then the table says "No photos match these filters"
     When I press the big "Reset filters" button
     Then the photo count reads "11 photos"

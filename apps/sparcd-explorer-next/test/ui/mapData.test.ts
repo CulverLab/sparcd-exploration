@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, onlyLocations, onlySpecies, shownPosition, siteHexes } from '../../src/data';
+import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, inViewWithout, onlyLocations, onlySpecies, shownPosition, siteHexes } from '../../src/data';
 import {
   HEX_STEPS,
   areaLocations,
@@ -218,7 +218,7 @@ describe('the grid at a display precision', () => {
     const coarse = siteHexes(model.sites, { coords: 'latlon', precision: at(0) });
     expect(coarse.cells[index('AA01')]).not.toBe(fine.cells[index('AA01')]);
     expect([...selectedHexes(model, coarse, area)]).toEqual([coarse.cells[index('AA01')]]);
-    expect(areaLocations(model, area, false)).toBe(2);
+    expect(areaLocations(model, area, false, inViewWithout(model, NO_FILTERS).sites.area)).toBe(2);
     // A click on the cell drawn as selected lets go of every site in it.
     expect(toggleHex(model, coarse, area, coarse.cells[index('AA01')]!)).toEqual([]);
   });

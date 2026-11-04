@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { fmtN } from '@/lib/format';
-import { enterDate, toggleYear } from '@/lib/months';
-import { useView } from '@/lib/useView';
+import { datesOffered, enterDate, toggleYear } from '@/lib/months';
+import { inViewOf, useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { ClearRow, useWithout } from './shared';
 
@@ -12,7 +12,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
  * in the field until it is a whole month, so a From after To only swaps on
  * what was meant.
  */
-function MonthField({ label, value, min, max, onEnter }: { label: string; value: string; min: string; max: string; onEnter: (month: string) => void }) {
+function MonthField({ label, value, min, max, onEnter }: { label: string; value: string; min?: string; max?: string; onEnter: (month: string) => void }) {
   const [typing, setTyping] = useState<string | null>(null);
   return (
     <label>
@@ -51,16 +51,13 @@ export function DatesPicker() {
     }
     return n;
   }, [model, without]);
-  const span = model.dateSpan;
-  if (!span) return <p className="fine">No photo in these collections has a readable date.</p>;
-  const years: number[] = [];
-  for (let y = Number(span.first.slice(0, 4)); y <= Number(span.last.slice(0, 4)); y++) years.push(y);
-  const min = span.first.slice(0, 7);
-  const max = span.last.slice(0, 7);
+  if (!model.dateSpan) return <p className="fine">No photo in these collections has a readable date.</p>;
+  const { years, min, max } = datesOffered(inViewOf(model, filters).dates, filters);
   return (
     <>
       <div className="sect">
         <h3>Years</h3>
+        {years.length === 0 && <p className="fine">No dated photos in view.</p>}
         <div className="yearchips">
           {years.map((y) => {
             const [photos, untagged] = perYear.get(y) ?? [0, 0];

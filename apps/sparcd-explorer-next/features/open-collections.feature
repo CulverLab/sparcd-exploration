@@ -88,7 +88,7 @@ Feature: Open collections
   Scenario: Opening other collections keeps the filters that still apply, with Undo
     Given I have opened "Alpha Basin"
     When I filter species to "Deer (Mule)"
-    And I filter locations to "AB02"
+    And I filter locations to "AB03"
     And I go back to choose collections
     And I click the row of "Alpha Basin"
     And I tick "Bravo Flats"

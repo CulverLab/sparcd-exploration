@@ -5,6 +5,7 @@ import {
   NO_LOCATION_NAME,
   activeFilters,
   elevationIn,
+  inViewWithout,
   listKeys,
   locationIdOf,
   locationKeyOf,
@@ -12,8 +13,10 @@ import {
   type ElevationUnit,
   type FilterDimension,
   type FilterState,
+  type InView,
   type ListDimension,
   type Model,
+  type Site,
 } from '@/data';
 import { fmtN, monthName, plural } from './format';
 import { areaLocations } from './mapData';
@@ -161,7 +164,9 @@ function dateRange(from: string | null, to: string | null): string | null {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function value(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean): string | null {
+const elevationRange = (lo: number, hi: number, unit: ElevationUnit) => `${fmtN(elevationIn(lo, unit))}–${fmtN(elevationIn(hi, unit))} ${unit}`;
+
+function value(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean, inView: InView): string | null {
   switch (dim) {
     case 'collections':
     case 'species':
@@ -169,7 +174,7 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
     case 'ranges':
       return listFilterValue(model, f, dim, separate);
     case 'area':
-      return plural(areaLocations(model, f.area, separate), 'location');
+      return plural(areaLocations(model, f.area, separate, inView.sites.area), 'location');
     case 'files':
       return 'not on the server';
     case 'dates': {
@@ -184,7 +189,7 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
     }
     case 'elevation': {
       const [lo, hi] = f.elevation!;
-      return `${fmtN(elevationIn(lo, unit))}–${fmtN(elevationIn(hi, unit))} ${unit}`;
+      return elevationRange(lo, hi, unit);
     }
   }
 }
@@ -195,53 +200,87 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
  */
 export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit, separate = false): FilterButton[] {
   const active = new Set(activeFilters(f));
+  const inView = inViewWithout(model, f);
   const dims: FilterDimension[] = ['collections', 'species', 'locations', 'area', 'files', 'dates', 'elevation', 'ranges'];
   return dims
     .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' || dim === 'files' ? active.has(dim) : true))
     .map((dim) => {
-      const v = active.has(dim) ? value(model, f, dim, unit, separate) : null;
+      const v = active.has(dim) ? value(model, f, dim, unit, separate, inView) : null;
       return { dim, name: NAMES[dim], label: v ? `${NAMES[dim]}: ${v}` : NAMES[dim], active: active.has(dim) };
     });
 }
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
-/** The elevation span the Elevation picker offers, in metres, rounded out to its 50 m steps. */
-export function elevationSpan(model: Model): [number, number] | null {
-  const known = model.sites.flatMap((s) => (s.elevation === null ? [] : [s.elevation]));
+/**
+ * The elevation span the Elevation picker offers, in metres, rounded out to
+ * its 50 m steps: the sites in view (`inView`, per site), widened to include
+ * the filter's own values.
+ */
+export function elevationSpan(model: Model, inView: ArrayLike<number>, own: [number, number] | null): [number, number] | null {
+  const known = model.sites.flatMap((s, i) => (inView[i] && s.elevation !== null ? [s.elevation] : []));
+  if (own) known.push(...own);
   if (!known.length) return null;
   return [Math.floor(Math.min(...known) / 50) * 50, Math.ceil(Math.max(...known) / 50) * 50];
 }
 
+/** The locations in view with no elevation: any elevation filter leaves them out. */
+export function noElevationLocations(model: Model, inView: ArrayLike<number>, separate: boolean): number {
+  return new Set(sitesIn(model, inView).flatMap((s) => (s.elevation === null ? [locationKeyOf(s, separate)] : []))).size;
+}
+
+const sitesIn = (model: Model, inView: ArrayLike<number>): Site[] => model.sites.filter((_, i) => inView[i]);
+
 /**
  * A sidebar section's value in plain words: what the filter keeps when it is
- * on ("Bobcat, Coyote"), else what there is ("All 14 species").
+ * on ("Bobcat, Coyote"); else what there is ("All 14 species"), or what the
+ * other filters leave of it ("6 of 14 species", "Jan 2024 to Jun 2024").
  */
-export function sectionValue(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean): string {
-  const on = activeFilters(f).includes(dim);
+export function sectionValue(model: Model, f: FilterState, dim: FilterDimension, unit: ElevationUnit, separate: boolean, inView: InView): string {
+  const active = activeFilters(f);
+  const on = active.includes(dim);
+  const narrowed = active.some((d) => d !== dim);
+  const left = (shown: number, all: number, one: string, many: string, whole: string) =>
+    narrowed && shown < all ? `${fmtN(shown)} of ${plural(all, one, many)}` : whole;
   switch (dim) {
     case 'collections': {
+      if (on) return cap(listFilterValue(model, f, dim, separate)!);
       const n = model.collections.length;
-      return on ? cap(listFilterValue(model, f, dim, separate)!) : n === 2 ? 'Both collections' : `All ${n} collections`;
+      const shown = new Set(sitesIn(model, inView.sites.collections).map((s) => s.collection)).size;
+      return left(shown, n, 'collection', 'collections', n === 2 ? 'Both collections' : `All ${n} collections`);
     }
-    case 'species':
-      return on ? cap(speciesWords(model, f)!) : `All ${plural(model.species.length, 'species', 'species')}`;
-    case 'locations':
-      return on ? cap(listFilterValue(model, f, dim, separate)!) : `All ${plural(locationItems(model, f, separate).length, 'location')}`;
+    case 'species': {
+      if (on) return cap(speciesWords(model, f)!);
+      const n = model.species.length;
+      return left(inView.species.reduce((sum, v) => sum + v, 0), n, 'species', 'species', `All ${plural(n, 'species', 'species')}`);
+    }
+    case 'locations': {
+      if (on) return cap(listFilterValue(model, f, dim, separate)!);
+      const n = locationItems(model, f, separate).length;
+      const shown = new Set(sitesIn(model, inView.sites.locations).map((s) => locationKeyOf(s, separate))).size;
+      return left(shown, n, 'location', 'locations', `All ${plural(n, 'location')}`);
+    }
     case 'ranges': {
+      if (on) return cap(listFilterValue(model, f, dim, separate)!);
       const n = listKeys(model, 'ranges').filter(Boolean).length;
-      return on ? cap(listFilterValue(model, f, dim, separate)!) : n ? `All ${plural(n, 'mountain range')}` : 'None named';
+      if (!n) return 'None named';
+      const shown = new Set(sitesIn(model, inView.sites.ranges).flatMap((s) => s.range || [])).size;
+      return left(shown, n, 'mountain range', 'mountain ranges', `All ${plural(n, 'mountain range')}`);
     }
     case 'dates': {
-      const span = model.dateSpan;
-      return on ? cap(value(model, f, dim, unit, separate)!) : span ? `${monthName(span.first)} to ${monthName(span.last)}` : 'No dates';
+      if (on) return cap(value(model, f, dim, unit, separate, inView)!);
+      const { first, last } = inView.dates;
+      if (!first || !last) return 'No dates';
+      return monthName(first) === monthName(last) ? monthName(first) : `${monthName(first)} to ${monthName(last)}`;
     }
     case 'area':
-      return on ? value(model, f, dim, unit, separate)! : 'Whole map';
+      return on ? value(model, f, dim, unit, separate, inView)! : 'Whole map';
     case 'elevation': {
-      if (on) return value(model, f, dim, unit, separate)!;
-      const span = elevationSpan(model);
-      return span ? `Any, ${fmtN(elevationIn(span[0], unit))} to ${fmtN(elevationIn(span[1], unit))} ${unit}` : 'Any';
+      if (on) return value(model, f, dim, unit, separate, inView)!;
+      const span = elevationSpan(model, inView.sites.elevation, null);
+      if (!span) return 'Any';
+      const [lo, hi] = [elevationIn(span[0], unit), elevationIn(span[1], unit)];
+      return lo === hi ? `Any, ${fmtN(lo)} ${unit}` : `Any, ${fmtN(lo)} to ${fmtN(hi)} ${unit}`;
     }
     case 'files': {
       const n = model.photos.filter((p) => p.missing).length;
@@ -274,14 +313,17 @@ export function filterWords(model: Model, f: FilterState, unit: ElevationUnit, s
   if (species) parts.push(`Species: ${species}`);
   const locations = list('locations');
   if (locations) parts.push(`Locations: ${locations}`);
-  if (f.area.length) parts.push(`Map area: ${plural(areaLocations(model, f.area, separate), 'location')}`);
+  if (f.area.length) parts.push(`Map area: ${plural(areaLocations(model, f.area, separate, inViewWithout(model, f).sites.area), 'location')}`);
   if (f.missing === 'only') parts.push('Only photos whose files are missing');
   const range = dateRange(f.dateFrom, f.dateTo);
   if (range) parts.push(`Dates: ${range}`);
   if (f.years.length) parts.push(`Years: ${[...f.years].sort().join(', ')}`);
   if (f.months.length) parts.push(`Months: ${[...f.months].sort((a, b) => a - b).map((m) => MONTHS[m - 1]).join(', ')}`);
   if (f.hours) parts.push(`Hours: ${pad(f.hours[0])}:00–${pad(f.hours[1])}:59`);
-  if (f.elevation) parts.push(`Elevation: ${value(model, f, 'elevation', unit, separate)}`);
+  if (f.elevation) {
+    const [lo, hi] = f.elevation;
+    parts.push(`Elevation: ${elevationRange(lo, hi, unit)}`);
+  }
   const ranges = list('ranges');
   if (ranges) parts.push(`Mountain range: ${ranges}`);
   if (tagShown && f.photoTag !== 'all') parts.push(f.photoTag === 'tagged' ? 'Tagged photos only' : 'Untagged photos only');

@@ -4,8 +4,10 @@ import {
   activeFilters,
   canReset,
   carryFilters,
+  applyFilters,
   carryList,
   clearFilter,
+  inViewWithout,
   isFiltered,
   listKeys,
   only,
@@ -483,5 +485,76 @@ describe('carrying the Locations filter across case', () => {
   it('keeps "all but pat26" leaving PAT26 out too', () => {
     const { state } = carryFilters(before, after, { ...NO_FILTERS, locations: { hidden: [pat26] } });
     expect(shown(state)).toEqual(['w.jpg']);
+  });
+});
+
+describe('what is in view per filter, in one pass', () => {
+  const missing = modelOf([a, b], { missing: [`sparcd-aaa/${mediaPath('u2', 'b1.jpg')}`] });
+  const SITE_DIMS = ['collections', 'locations', 'area', 'elevation', 'ranges'] as const;
+  const marked = (marks: Uint8Array) => [...marks].flatMap((v, i) => (v ? [i] : []));
+  const sorted = (items: Iterable<number>) => [...new Set(items)].sort((x, y) => x - y);
+
+  function expectSameAsSlowForm(m: typeof model, state: FilterState) {
+    const fast = inViewWithout(m, state);
+    for (const dim of SITE_DIMS) {
+      const slow = applyFilters(m, clearFilter(state, dim));
+      expect(marked(fast.sites[dim]), dim).toEqual(sorted(slow.photos.map((i) => m.photos[i].site)));
+    }
+    const species = applyFilters(m, clearFilter(state, 'species'));
+    expect(marked(fast.species)).toEqual(sorted(species.detections.map((d) => m.detections[d].species)));
+    expect(fast.untagged).toBe(species.photos.some((i) => !m.photos[i].tagged));
+    const dates = applyFilters(m, clearFilter(state, 'dates'))
+      .photos.map((i) => m.photos[i])
+      .filter((p) => p.date !== null);
+    const days = dates.map((p) => p.date!).sort();
+    expect(fast.dates.first).toBe(days[0] ?? null);
+    expect(fast.dates.last).toBe(days[days.length - 1] ?? null);
+    expect(sorted(fast.dates.years)).toEqual(sorted(dates.map((p) => p.year!)));
+  }
+
+  const northSite = model.sites[siteNamed(model, 'Alpha')].key;
+  const states: [string, Partial<FilterState>][] = [
+    ['no filter', {}],
+    ['one list', { species: onlySpecies(model, ['Lynx rufus']) }],
+    ['species and dates', { species: onlySpecies(model, ['Odocoileus hemionus']), years: [2024] }],
+    ['untagged unticked', { species: { hidden: [], hideUntagged: true }, elevation: [1500, 2500] }],
+    ['every species unticked', { species: { hidden: listKeys(model, 'species'), hideUntagged: true } }],
+    ['area and range', { area: [northSite], ranges: { hidden: ['AB0'] } }],
+    ['collection and hours', { collections: only(listKeys(model, 'collections'), ['sparcd-bbb::bbb']), hours: [22, 6] }],
+    ['location and elevation', { locations: onlyLocations(model, ['id:AA01', 'id:CD01']), elevation: [900, 1100] }],
+    [
+      'everything at once',
+      {
+        collections: only(listKeys(model, 'collections'), ['sparcd-aaa::aaa']),
+        species: onlySpecies(model, ['Lynx rufus']),
+        locations: onlyLocations(model, ['id:AA01']),
+        area: [northSite],
+        dateFrom: '2023-01-01',
+        dateTo: '2024-12-31',
+        years: [2023],
+        months: [5],
+        hours: [0, 12],
+        elevation: [500, 1500],
+        ranges: only(listKeys(model, 'ranges'), ['AA0']),
+      },
+    ],
+    ['nothing left', { years: [2030], ranges: { hidden: listKeys(model, 'ranges') } }],
+  ];
+
+  it.each(states)('equals the slow form: %s', (_, partial) => {
+    expectSameAsSlowForm(model, { ...NO_FILTERS, ...partial });
+  });
+
+  it.each(states)('equals the slow form with missing files left out, shown and alone: %s', (_, partial) => {
+    for (const files of ['hide', 'show', 'only'] as const) expectSameAsSlowForm(missing, { ...NO_FILTERS, ...partial, missing: files });
+  });
+
+  it('counts a photo failing exactly one filter only for that filter', () => {
+    const deerIn2023 = inViewWithout(model, { ...NO_FILTERS, species: onlySpecies(model, ['Odocoileus hemionus']), years: [2023] });
+    // a1 and a2 are 2023's: no deer. The species filter doesn't count them, Dates sees the deer's years.
+    expect(marked(deerIn2023.sites.locations)).toEqual([]);
+    expect(sorted(deerIn2023.dates.years)).toEqual([2024]);
+    expect(marked(deerIn2023.species).map((i) => model.species[i].key).sort()).toEqual(['Lynx rufus']);
+    expect(deerIn2023.untagged).toBe(true);
   });
 });

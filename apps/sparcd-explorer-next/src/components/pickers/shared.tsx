@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { applyFilters, clearFilter, type FilterDimension } from '@/data';
 import { useView } from '@/lib/useView';
 import { SearchField } from '../SearchField';
@@ -26,9 +26,23 @@ export type PickRow = {
 };
 
 /**
- * A list with every item ticked to start. Each row has its checkbox and an
- * Only button, shown on hover or focus (always on touch screens); Select all
- * and Clear all act on the rows a search leaves showing.
+ * The rows a list shows: those with something under the other filters, and
+ * your own choices, the smaller side of the ticks. Mostly ticked, the unticked
+ * rows stay so you can tick them back; mostly unticked, the ticked ones stay
+ * and the thousands of unticked ones with nothing in view don't.
+ */
+export function listedRows(rows: PickRow[]): PickRow[] {
+  const on = rows.filter((r) => r.ticked === true).length;
+  const off = rows.filter((r) => r.ticked === false).length;
+  return rows.filter((r) => !r.zero || r.ticked === 'some' || (r.ticked ? on <= off : off <= on));
+}
+
+/**
+ * A list with every item ticked to start. Each row has its checkbox and, with
+ * more than one row listed, an Only button, shown on hover or focus (always on
+ * touch screens). Select all and Clear all act on the whole list, or on the
+ * matches while a search is on. A row listed since the picker opened stays
+ * until it closes, so ticking one back doesn't take it from under the pointer.
  */
 export function ListPicker({
   title,
@@ -48,7 +62,12 @@ export function ListPicker({
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
-  const shown = search && q ? rows.filter((r) => r.find?.includes(q)) : rows;
+  const seen = useRef(new Set<string>());
+  for (const r of listedRows(rows)) seen.current.add(r.key);
+  const listed = rows.filter((r) => seen.current.has(r.key));
+  const searching = Boolean(search && q);
+  const shown = searching ? listed.filter((r) => r.find?.includes(q)) : listed;
+  const bulk = searching ? shown : rows;
   const id = `${title.toLowerCase().replace(/\W+/g, '-')}-search`;
   return (
     <>
@@ -56,11 +75,11 @@ export function ListPicker({
         <div className="row">
           <h3>{title}</h3>
           <div className="flex-1" />
-          <button type="button" className="linkbtn text-[12px]" disabled={shown.every((r) => r.ticked === true)} onClick={() => onTick(shown, true)}>
-            Select all
+          <button type="button" className="linkbtn text-[12px]" disabled={bulk.every((r) => r.ticked === true)} onClick={() => onTick(bulk, true)}>
+            {searching ? 'Select matches' : 'Select all'}
           </button>
-          <button type="button" className="linkbtn text-[12px]" disabled={shown.every((r) => r.ticked === false)} onClick={() => onTick(shown, false)}>
-            Clear all
+          <button type="button" className="linkbtn text-[12px]" disabled={bulk.every((r) => r.ticked === false)} onClick={() => onTick(bulk, false)}>
+            {searching ? 'Clear matches' : 'Clear all'}
           </button>
         </div>
         {search && (
@@ -88,12 +107,14 @@ export function ListPicker({
               {r.count !== undefined && <span className="c">{r.count}</span>}
               {r.sub && <span className="s">{r.sub}</span>}
             </label>
-            <button type="button" className="only" aria-label={`Only ${r.name}`} onClick={() => onOnly(r)}>
-              Only
-            </button>
+            {listed.length > 1 && (
+              <button type="button" className="only" aria-label={`Only ${r.name}`} onClick={() => onOnly(r)}>
+                Only
+              </button>
+            )}
           </div>
         ))}
-        {shown.length === 0 && <p className="fine px-1 py-2">Nothing matches that search.</p>}
+        {shown.length === 0 && <p className="fine px-1 py-2">{searching ? 'Nothing matches that search.' : 'Nothing in view here.'}</p>}
       </div>
       {rows.every((r) => r.ticked === false) && (
         <p className="fine" role="status">

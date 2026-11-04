@@ -340,7 +340,7 @@ Then('the month chart counts {int} detections in {string}', async ({ page }, n: 
 });
 
 When(/^I click the "(.*)" bar in the (species|hour|month) chart$/, async ({ page }, label: string, which: string) => {
-  await bar(page, label, which).locator('rect.bar').click({ force: true });
+  await bar(page, label, which).locator('rect.hit').click({ force: true });
 });
 
 When(/^I press (Enter|Space) on the "(.*)" bar in the (species|hour|month) chart$/, async ({ page }, key: string, label: string, which: string) => {

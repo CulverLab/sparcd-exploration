@@ -4,6 +4,7 @@ import { activityByLocation } from '../../src/lib/activity';
 import {
   clearDates,
   countByMonth,
+  datesOffered,
   datesToMonths,
   enterDate,
   monthAxis,
@@ -198,6 +199,14 @@ describe('Dates that cannot contradict themselves', () => {
     const range = state({ dateFrom: '2024-02-01', dateTo: '2024-05-31' });
     expect(enterDate(range, 'from', '')).toMatchObject({ dateFrom: null, dateTo: '2024-05-31' });
     expect(enterDate(range, 'to', '')).toMatchObject({ dateFrom: '2024-02-01', dateTo: null });
+  });
+
+  it('offers the years in view plus any picked, with month bounds spanning them and the range', () => {
+    const inView = { first: '2024-02-10', last: '2025-03-01', years: new Set([2024, 2025]) };
+    expect(datesOffered(inView, NO_FILTERS)).toEqual({ years: [2024, 2025], min: '2024-02', max: '2025-03' });
+    expect(datesOffered(inView, state({ years: [2021] }))).toEqual({ years: [2021, 2024, 2025], min: '2021-01', max: '2025-03' });
+    expect(datesOffered(inView, state({ dateFrom: '2023-05-01', dateTo: '2026-01-31' }))).toEqual({ years: [2024, 2025], min: '2023-05', max: '2026-01' });
+    expect(datesOffered({ first: null, last: null, years: new Set() }, NO_FILTERS)).toEqual({ years: [], min: undefined, max: undefined });
   });
 
   it('clearing dates keeps an hour picked in Charts', () => {

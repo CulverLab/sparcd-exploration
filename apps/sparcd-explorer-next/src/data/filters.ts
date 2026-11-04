@@ -328,7 +328,11 @@ export type FilterResult = {
   sitePass: boolean[];
 };
 
-function sitePasses(model: Model, state: FilterState): (site: Site) => boolean {
+/** One bit per filter a photo can fail. */
+const FAILS = { collections: 1, locations: 2, area: 4, elevation: 8, ranges: 16, dates: 32, species: 64, files: 128 } as const;
+
+/** Which of the filters that test a photo's site this site fails. */
+function siteFailures(model: Model, state: FilterState): (site: Site) => number {
   const hiddenSet = (f: ListFilter) => (f.hidden.length ? new Set(f.hidden) : null);
   const collections = model.collections.length > 1 ? hiddenSet(state.collections) : null;
   const locations = hiddenSet(state.locations);
@@ -336,14 +340,13 @@ function sitePasses(model: Model, state: FilterState): (site: Site) => boolean {
   const area = state.area.length ? new Set(state.area) : null;
   const { elevation } = state;
   return (site) => {
-    if (collections?.has(model.collections[site.collection].key)) return false;
-    if (locations?.has(site.key)) return false;
-    if (area && !area.has(site.key)) return false;
-    if (elevation && (site.elevation === null || site.elevation < elevation[0] || site.elevation > elevation[1])) {
-      return false;
-    }
-    if (ranges?.has(site.range)) return false;
-    return true;
+    let fails = 0;
+    if (collections?.has(model.collections[site.collection].key)) fails |= FAILS.collections;
+    if (locations?.has(site.key)) fails |= FAILS.locations;
+    if (area && !area.has(site.key)) fails |= FAILS.area;
+    if (elevation && (site.elevation === null || site.elevation < elevation[0] || site.elevation > elevation[1])) fails |= FAILS.elevation;
+    if (ranges?.has(site.range)) fails |= FAILS.ranges;
+    return fails;
   };
 }
 
@@ -375,7 +378,8 @@ function timePasses(state: FilterState): ((photo: Photo) => boolean) | null {
  * keep only the ticked species.
  */
 export function applyFilters(model: Model, state: FilterState): FilterResult {
-  const sitePass = model.sites.map(sitePasses(model, state));
+  const fails = siteFailures(model, state);
+  const sitePass = model.sites.map((site) => fails(site) === 0);
   const timeOk = timePasses(state);
   const { hidden, hideUntagged } = state.species;
   const off = new Set(hidden);
@@ -407,6 +411,80 @@ export function applyFilters(model: Model, state: FilterState): FilterResult {
     }
   }
   return { photos, total, detections, effort, sitePass };
+}
+
+/** The filters that test a photo's site. */
+export type SiteDimension = 'collections' | 'locations' | 'area' | 'elevation' | 'ranges';
+
+/** What each filter's own list or span has left, were that filter off. */
+export type InView = {
+  /** Per site: a photo there passes every filter but this one. */
+  sites: Record<SiteDimension, Uint8Array>;
+  /** Per species: a photo passing every filter but species has a tag of it. */
+  species: Uint8Array;
+  /** An untagged photo passes every filter but species. */
+  untagged: boolean;
+  /** The dated photos passing every filter but Dates: their first and last date, and their years. */
+  dates: { first: string | null; last: string | null; years: Set<number> };
+};
+
+/**
+ * What `applyFilters(model, clearFilter(state, dim))` would leave for every
+ * dimension, in one pass over the photos: the sidebar wants them all on every
+ * filter change. A photo failing no filter counts for every dimension, one
+ * failing exactly one counts only for that one, one failing more for none.
+ */
+export function inViewWithout(model: Model, state: FilterState): InView {
+  const n = model.sites.length;
+  const sites = { collections: new Uint8Array(n), locations: new Uint8Array(n), area: new Uint8Array(n), elevation: new Uint8Array(n), ranges: new Uint8Array(n) };
+  const species = new Uint8Array(model.species.length);
+  const years = new Set<number>();
+  let untagged = false;
+  let first: string | null = null;
+  let last: string | null = null;
+
+  const fails = siteFailures(model, state);
+  const siteFails = model.sites.map((site) => fails(site));
+  const timeOk = timePasses(state);
+  const { hidden, hideUntagged } = state.species;
+  const off = new Set(hidden);
+  const ticked = hidden.length ? model.species.map((s) => !off.has(s.key)) : null;
+  const { missing } = state;
+  const { detections } = model;
+  const speciesOk = (own: number[]) => {
+    if (!own.length) return !hideUntagged;
+    if (!ticked) return true;
+    for (const d of own) if (ticked[detections[d].species]) return true;
+    return false;
+  };
+
+  for (const p of model.photos) {
+    if (p.missing && missing === 'hide') continue;
+    // Two bits or more means two filters or more: `x & (x - 1)` clears the lowest.
+    let fail = siteFails[p.site];
+    if (missing === 'only' && !p.missing) fail |= FAILS.files;
+    if (fail & (fail - 1)) continue;
+    if (timeOk && !timeOk(p)) fail |= FAILS.dates;
+    if (fail & (fail - 1)) continue;
+    if (!speciesOk(p.detections)) fail |= FAILS.species;
+    if (fail & (fail - 1)) continue;
+
+    if (!fail || fail === FAILS.collections) sites.collections[p.site] = 1;
+    if (!fail || fail === FAILS.locations) sites.locations[p.site] = 1;
+    if (!fail || fail === FAILS.area) sites.area[p.site] = 1;
+    if (!fail || fail === FAILS.elevation) sites.elevation[p.site] = 1;
+    if (!fail || fail === FAILS.ranges) sites.ranges[p.site] = 1;
+    if (!fail || fail === FAILS.species) {
+      if (!p.tagged) untagged = true;
+      for (const d of p.detections) species[detections[d].species] = 1;
+    }
+    if ((!fail || fail === FAILS.dates) && p.date !== null) {
+      if (first === null || p.date < first) first = p.date;
+      if (last === null || p.date > last) last = p.date;
+      years.add(p.year!);
+    }
+  }
+  return { sites, species, untagged, dates: { first, last, years } };
 }
 
 /** The photos the Photos view lists for its Tagged / Untagged / All switch. */

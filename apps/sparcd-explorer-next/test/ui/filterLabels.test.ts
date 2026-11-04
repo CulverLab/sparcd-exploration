@@ -3,6 +3,7 @@ import {
   NO_FILTERS,
   activeFilters,
   clearFilter,
+  inViewWithout,
   listKeys,
   only,
   onlyLocations,
@@ -12,7 +13,17 @@ import {
   type FilterState,
   type Model,
 } from '../../src/data';
-import { filterButtons, filterWords, matchLegend, noneTicked, nothingTicked, photoCountLabel, sectionValue } from '../../src/lib/filterLabels';
+import {
+  elevationSpan,
+  filterButtons,
+  filterWords,
+  matchLegend,
+  noElevationLocations,
+  noneTicked,
+  nothingTicked,
+  photoCountLabel,
+  sectionValue,
+} from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
 const alpha = collection('Alpha', 'aaa').upload('u1', {
@@ -52,7 +63,8 @@ const hiding = (...names: string[]) => ({ hidden: sci(...names), hideUntagged: f
 
 const labels = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') =>
   filterButtons(model, { ...NO_FILTERS, ...f }, unit).map((b) => b.label);
-const section = (model: Model, f: FilterState, dim: FilterDimension, separate = false) => sectionValue(model, f, dim, 'm', separate);
+const section = (model: Model, f: FilterState, dim: FilterDimension, separate = false) =>
+  sectionValue(model, f, dim, 'm', separate, inViewWithout(model, f));
 
 describe('filter button labels', () => {
   it('read the filter names while nothing is filtered', () => {
@@ -307,7 +319,112 @@ describe('the filters in words, for a report', () => {
         wide,
         'ft',
       ),
-    ).toBe('Map area: 1 location · Years: 2023, 2024 · Months: Jan, Dec · Hours: 22:00–04:59 · Elevation: 3,281–4,921 ft · Mountain range: AA0, BB0');
+      // The area's one location has no photo left under the other filters.
+    ).toBe('Map area: 0 locations · Years: 2023, 2024 · Months: Jan, Dec · Hours: 22:00–04:59 · Elevation: 3,281–4,921 ft · Mountain range: AA0, BB0');
     expect(words({ dateFrom: '2023-09-14' })).toBe('Dates: from 2023-09-14');
+  });
+});
+
+// Eight photos at four locations in three ranges and two collections. AA01 and AA02 share a range.
+const north = collection('North', 'nnn')
+  .upload('u1', {
+    deployments: [deployment('AA01', 'One', 12.5, -100.25, 1000)],
+    media: [media('u1', 'a.jpg', 'AA01', '2023-03-01T10:00:00'), media('u1', 'b.jpg', 'AA01', '2023-04-01T10:00:00')],
+    observations: [observation('u1', 'a.jpg', 'AA01', '', { common: 'Bobcat', scientific: 'Lynx rufus' })],
+  })
+  .upload('u2', {
+    deployments: [deployment('AA02', 'Two', 12.6, -100.25, 1420)],
+    media: [media('u2', 'c.jpg', 'AA02', '2024-01-15T10:00:00')],
+    observations: [observation('u2', 'c.jpg', 'AA02', '', { common: 'Coyote', scientific: 'Canis latrans' })],
+  });
+const south = collection('South', 'sss')
+  .upload('u1', {
+    deployments: [deployment('BB01', 'Three', 13.5, -101.25, 2000)],
+    media: [media('u1', 'd.jpg', 'BB01', '2025-06-01T10:00:00')],
+    observations: [observation('u1', 'd.jpg', 'BB01', '', { common: 'Mule Deer', scientific: 'Odocoileus hemionus' })],
+  })
+  .upload('u2', { deployments: [deployment('0000', '', null, null, null)], media: [media('u2', 'e.jpg', '0000', '2025-07-01T10:00:00')] });
+const lands = modelOf([north, south]);
+const siteKey = (id: string) => lands.sites.find((s) => s.locationId === id)!.key;
+const onlyNorth = only(listKeys(lands, 'collections'), ['sparcd-nnn::nnn']);
+
+describe('a sidebar section with its filter off', () => {
+  it('says what there is while nothing narrows it', () => {
+    expect(section(lands, NO_FILTERS, 'collections')).toBe('Both collections');
+    expect(section(lands, NO_FILTERS, 'species')).toBe('All 3 species');
+    expect(section(lands, NO_FILTERS, 'locations')).toBe('All 4 locations');
+    expect(section(lands, NO_FILTERS, 'ranges')).toBe('All 2 mountain ranges');
+    expect(section(lands, NO_FILTERS, 'dates')).toBe('Mar 2023 to Jul 2025');
+    expect(section(lands, NO_FILTERS, 'elevation')).toBe('Any, 1,000 to 2,000 m');
+  });
+
+  it('says what the other filters leave of it', () => {
+    const f = { ...NO_FILTERS, area: [siteKey('AA02')] };
+    expect(section(lands, f, 'collections')).toBe('1 of 2 collections');
+    expect(section(lands, f, 'species')).toBe('1 of 3 species');
+    expect(section(lands, f, 'locations')).toBe('1 of 4 locations');
+    expect(section(lands, f, 'ranges')).toBe('1 of 2 mountain ranges');
+    expect(section(lands, f, 'dates')).toBe('Jan 2024');
+    expect(section(lands, f, 'elevation')).toBe('Any, 1,400 to 1,450 m');
+  });
+
+  it('counts by the grouping in force', () => {
+    const moved = modelOf(
+      collection('Moved', 'mmm')
+        .upload('u1', { deployments: [deployment('MM01', 'Old', 12.5, -100.25)], media: [media('u1', 'a.jpg', 'MM01', '2023-01-01T10:00:00')] })
+        .upload('u2', { deployments: [deployment('MM01', 'New', 12.7, -100.25)], media: [media('u2', 'b.jpg', 'MM01', '2024-01-01T10:00:00')] })
+        .upload('u3', { deployments: [deployment('NN01', 'Other', 13.7, -100.25)], media: [media('u3', 'c.jpg', 'NN01', '2024-01-01T10:00:00')] }),
+    );
+    const f = { ...NO_FILTERS, years: [2024] };
+    expect(section(moved, f, 'locations')).toBe('All 2 locations');
+    expect(section(moved, f, 'locations', true)).toBe('2 of 3 locations');
+  });
+
+  it('keeps "All" while the other filters leave every item', () => {
+    const f = { ...NO_FILTERS, years: [2023, 2024, 2025] };
+    expect(section(lands, f, 'species')).toBe('All 3 species');
+    expect(section(lands, f, 'collections')).toBe('Both collections');
+  });
+
+  it('leaves the words of a filter that is on as they are', () => {
+    const f = { ...NO_FILTERS, collections: onlyNorth, species: onlySpecies(lands, ['Lynx rufus']) };
+    expect(section(lands, f, 'collections')).toBe('North');
+    expect(section(lands, f, 'species')).toBe('Bobcat');
+    expect(section(lands, f, 'locations')).toBe('1 of 4 locations');
+  });
+
+  it('says so when the other filters leave nothing', () => {
+    const f = { ...NO_FILTERS, species: onlySpecies(lands, []) };
+    expect(section(lands, f, 'dates')).toBe('No dates');
+    expect(section(lands, f, 'elevation')).toBe('Any');
+    expect(section(lands, f, 'locations')).toBe('0 of 4 locations');
+  });
+});
+
+describe('the Map area value', () => {
+  it('counts the locations of the area still in view', () => {
+    const area = [siteKey('AA01'), siteKey('AA02'), siteKey('BB01')];
+    expect(section(lands, { ...NO_FILTERS, area }, 'area')).toBe('3 locations');
+    const narrowed = { ...NO_FILTERS, area, collections: onlyNorth };
+    expect(section(lands, narrowed, 'area')).toBe('2 locations');
+    expect(filterWords(lands, narrowed, 'm')).toBe('Collections: North · Map area: 2 locations');
+  });
+});
+
+describe('the Elevation picker', () => {
+  const inSites = (f: Partial<FilterState>) => inViewWithout(lands, { ...NO_FILTERS, ...f }).sites.elevation;
+
+  it('spans the sites in view, widened to include the filter’s own values', () => {
+    expect(elevationSpan(lands, inSites({ collections: onlyNorth }), null)).toEqual([1000, 1450]);
+    expect(elevationSpan(lands, inSites({ collections: onlyNorth }), [700, 900])).toEqual([700, 1450]);
+    expect(elevationSpan(lands, inSites({ species: onlySpecies(lands, []) }), null)).toBeNull();
+    expect(elevationSpan(lands, inSites({ species: onlySpecies(lands, []) }), [700, 900])).toEqual([700, 900]);
+  });
+
+  it('counts the locations with no elevation that the other filters leave', () => {
+    expect(noElevationLocations(lands, inSites({}), false)).toBe(1);
+    expect(noElevationLocations(lands, inSites({ collections: onlyNorth }), false)).toBe(0);
+    // Counted with the elevation filter itself off.
+    expect(noElevationLocations(lands, inSites({ elevation: [900, 1100] }), false)).toBe(1);
   });
 });

@@ -2,7 +2,7 @@
 // months count as `year * 12 + month - 1`, from the first month of the opened
 // data to the last, so every strip lines up with every other.
 
-import type { FilterState, Model } from '@/data';
+import type { FilterState, InView, Model } from '@/data';
 
 export type MonthAxis = { first: number; count: number };
 /** Per month: [photos, untagged photos, matching photos]. */
@@ -81,6 +81,17 @@ export function enterDate(f: FilterState, end: 'from' | 'to', month: string): Fi
 
 /** Lets the dates, years and months go. An hour picked in Charts stays. */
 export const clearDates = (f: FilterState): FilterState => ({ ...f, dateFrom: null, dateTo: null, years: [], months: [] });
+
+/**
+ * What the Dates picker offers: the years with photos under the other filters
+ * plus any you picked, and month bounds spanning them and the range entered.
+ */
+export function datesOffered(inView: InView['dates'], f: FilterState): { years: number[]; min: string | undefined; max: string | undefined } {
+  const months = [inView.first, inView.last, f.dateFrom, f.dateTo].flatMap((d) => (d ? [d.slice(0, 7)] : []));
+  for (const y of f.years) months.push(`${y}-01`, `${y}-12`);
+  months.sort();
+  return { years: [...new Set([...inView.years, ...f.years])].sort((a, b) => a - b), min: months[0], max: months[months.length - 1] };
+}
 
 /** The months a date range touches, clamped to the axis; null when the range is unset or misses the axis. */
 export function datesToMonths(from: string | null, to: string | null, axis: MonthAxis): [number, number] | null {

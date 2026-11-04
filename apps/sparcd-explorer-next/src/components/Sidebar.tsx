@@ -5,7 +5,7 @@ import { LIST_NOUNS, SECTION_NAMES, nothingTicked, sectionValue } from '@/lib/fi
 import { plural } from '@/lib/format';
 import { toggleYear } from '@/lib/months';
 import { PHONE, useMedia } from '@/lib/useMedia';
-import { useView } from '@/lib/useView';
+import { inViewOf, useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { Seg } from './Popover';
 import { ResetSlot } from './ResetSlot';
@@ -52,8 +52,12 @@ export function revealMap(): void {
   setTimeout(() => box.classList.remove('flash'), 1500);
 }
 
-/** Years with photos, one button each, in at most two even rows. */
-function Years({ filters, years }: { filters: FilterState; years: number[] }) {
+/**
+ * The years of the opened data, one button each, in at most two even rows.
+ * They all keep their place so the sections below never move; one with no
+ * photos under the other filters can't be picked.
+ */
+function Years({ filters, years, inView }: { filters: FilterState; years: number[]; inView: ReadonlySet<number> }) {
   const setFilters = useStore((s) => s.setFilters);
   const cols = years.length <= 5 ? years.length : years.length <= 10 ? Math.ceil(years.length / 2) : 5;
   return (
@@ -63,6 +67,7 @@ function Years({ filters, years }: { filters: FilterState; years: number[] }) {
           key={y}
           type="button"
           aria-pressed={filters.years.includes(y)}
+          disabled={!inView.has(y) && !filters.years.includes(y)}
           onClick={() => setFilters((f) => toggleYear(f, y))}
         >
           {y}
@@ -157,6 +162,7 @@ function SidePicker({ dim, onClose }: { dim: PickerDim; onClose: (refocus: boole
  */
 export function Sidebar() {
   const { model, filters, result, grouping, multi } = useView();
+  const inView = inViewOf(model, filters);
   const unit = useStore((s) => s.display.elevation);
   const side = useStore((s) => s.side);
   const setSide = useStore((s) => s.setSide);
@@ -256,7 +262,7 @@ export function Sidebar() {
         {dims.map((dim) => {
           const on = active.includes(dim);
           const label = SECTION_NAMES[dim];
-          const value = sectionValue(model, filters, dim, unit, grouping.separate);
+          const value = sectionValue(model, filters, dim, unit, grouping.separate, inView);
           const head =
             dim === 'files' ? (
               <div className="fsec-btn" id="fsec-files">
@@ -312,7 +318,7 @@ export function Sidebar() {
               )}
               {dim === 'dates' && model.dateSpan && (
                 <div className="fsec-inline">
-                  <Years filters={filters} years={yearsOf(model.dateSpan)} />
+                  <Years filters={filters} years={yearsOf(model.dateSpan)} inView={inView.dates.years} />
                   <button
                     type="button"
                     className="linkbtn"

@@ -1,23 +1,25 @@
-import { formatElevation } from '@/lib/format';
-import { useView } from '@/lib/useView';
+import { elevationSpan, noElevationLocations } from '@/lib/filterLabels';
+import { formatElevation, plural } from '@/lib/format';
+import { inViewOf, useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { ClearRow } from './shared';
 
 const STEP = 50;
 
 export function ElevationPicker() {
-  const { model, filters } = useView();
+  const { model, filters, grouping } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const unit = useStore((s) => s.display.elevation);
-  const known = model.sites.flatMap((s) => (s.elevation === null ? [] : [s.elevation]));
-  if (!known.length) return <p className="fine">No location in these collections has an elevation.</p>;
-  const lo = Math.floor(Math.min(...known) / STEP) * STEP;
-  const hi = Math.ceil(Math.max(...known) / STEP) * STEP;
-  const [a, b] = filters.elevation ?? [lo, hi];
+  const inSites = inViewOf(model, filters).sites.elevation;
+  const span = elevationSpan(model, inSites, filters.elevation);
+  if (!span) return <p className="fine">No location in view has an elevation.</p>;
+  const [lo, hi] = span;
+  const [a, b] = filters.elevation ?? span;
   const set = (x: number, y: number) => {
     const [from, to] = x <= y ? [x, y] : [y, x];
     setFilters((f) => ({ ...f, elevation: from <= lo && to >= hi ? null : [from, to] }));
   };
+  const leftOut = filters.elevation ? noElevationLocations(model, inSites, grouping.separate) : 0;
   return (
     <>
       <div className="sect">
@@ -35,6 +37,7 @@ export function ElevationPicker() {
         <p className="fine">
           Spans {formatElevation(lo, unit)} to {formatElevation(hi, unit)}
         </p>
+        {leftOut > 0 && <p className="fine">{plural(leftOut, 'location')} with no elevation left out</p>}
       </div>
       <ClearRow onClear={() => setFilters((f) => ({ ...f, elevation: null }))} />
     </>

@@ -524,6 +524,7 @@ button.fsec-btn:hover { background: var(--panelHover); }
 }
 .years button:hover { background: var(--paperHover); }
 .years button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--onAccent); }
+.years button:disabled { background: transparent; border-color: var(--ruleSoft); color: var(--inkMute); cursor: default; }
 .fsec-inline .linkbtn { justify-self: start; font-size: 14px; }
 .filesseg { display: grid; grid-template-columns: auto auto auto; width: 100%; }
 .filesseg button { padding: 4px 8px; font-size: 13.5px; white-space: normal; line-height: 1.15; }

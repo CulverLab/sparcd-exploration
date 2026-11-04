@@ -43,6 +43,7 @@ const FILTER_NAMES: Record<string, string> = {
   files: 'Photo files',
   'mountain range': 'Mountain range',
   collections: 'Collections',
+  elevation: 'Elevation',
 };
 const DIMS: Record<string, string> = {
   species: 'species',
@@ -52,6 +53,7 @@ const DIMS: Record<string, string> = {
   files: 'files',
   'mountain range': 'ranges',
   collections: 'collections',
+  elevation: 'elevation',
 };
 /** A section, read even while the sidebar is hidden. */
 const section = (page: Page, which: string) => page.locator(`#side .fsec[data-dim="${DIMS[which]}"]`);
@@ -102,7 +104,7 @@ When('I hide the species {string}', async ({ page }, species: string) => {
   await page.keyboard.press('Escape');
 });
 
-When(/^I open the (species|locations|mountain range|collections) filter$/, async ({ page }, filter: string) => {
+When(/^I open the (species|locations|mountain range|collections|dates|elevation) filter$/, async ({ page }, filter: string) => {
   await openFilter(page, FILTER_NAMES[filter]);
 });
 
@@ -123,7 +125,7 @@ When(/^I close the (species|locations|mountain range|collections) filter with it
   await expect(popover(page, FILTER_NAMES[filter])).toHaveCount(0);
 });
 
-When(/^I press "(Select all|Clear all)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, label: string, filter: string) => {
+When(/^I press "(Select all|Clear all|Select matches|Clear matches)" in the (species|locations|mountain range|collections) filter$/, async ({ page }, label: string, filter: string) => {
   await popover(page, FILTER_NAMES[filter]).getByRole('button', { name: label, exact: true }).click();
 });
 
@@ -174,6 +176,69 @@ Then('the species filter lists, in order, {string}', async ({ page }, list: stri
 
 Then('the mountain range filter lists {string}', async ({ page }, list: string) => {
   await expect(popover(page, 'Mountain range').locator('.opt .t')).toHaveText(list.split(', '));
+});
+
+Then('the mountain range filter counts {string} for {string}', async ({ page }, count: string, range: string) => {
+  await expect(popover(page, 'Mountain range').locator('.opt').filter({ hasText: range }).locator('.c')).toHaveText(count);
+});
+
+Then('the locations filter lists {string}', async ({ page }, list: string) => {
+  await expect(popover(page, 'Locations').locator('.opt .t .mono')).toHaveText(list.split(', '));
+});
+
+Then('the locations filter offers no Only button', async ({ page }) => {
+  await expect(popover(page, 'Locations').locator('.opt')).toHaveCount(1);
+  await expect(popover(page, 'Locations').locator('.opt .only')).toHaveCount(0);
+});
+
+Then(/^"(.*)" (shows|does not show) at zero in the species filter$/, async ({ page }, item: string, shows: string) => {
+  const { row } = pickerRow(page, 'species', item);
+  await (shows === 'shows' ? expect(row).toHaveClass(/\bzero\b/) : expect(row).not.toHaveClass(/\bzero\b/));
+});
+
+Then('the species filter offers {string} and {string}', async ({ page }, a: string, b: string) => {
+  for (const label of [a, b]) await expect(popover(page, 'Species').getByRole('button', { name: label, exact: true })).toBeVisible();
+});
+
+Then(/^the (species|locations|mountain range|dates|elevation) section reads "(.*)"$/, async ({ page }, which: string, text: string) => {
+  await expect(section(page, which).locator('.fsec-value')).toHaveText(text);
+});
+
+Then('the dates picker lists the years {string}', async ({ page }, list: string) => {
+  await expect(popover(page, 'Dates').locator('.yearchips button b')).toHaveText(list.split(', '));
+});
+
+Then('the months of the dates filter run from {string} to {string}', async ({ page }, min: string, max: string) => {
+  for (const label of ['From', 'To']) {
+    const field = popover(page, 'Dates').getByLabel(label, { exact: true });
+    await expect(field).toHaveAttribute('min', min);
+    await expect(field).toHaveAttribute('max', max);
+  }
+});
+
+Then(/^the year (\d+) is (disabled|enabled) in the Dates section$/, async ({ page }, year: string, state: string) => {
+  const button = filterBar(page).getByRole('group', { name: 'Years' }).getByRole('button', { name: year, exact: true });
+  await (state === 'disabled' ? expect(button).toBeDisabled() : expect(button).toBeEnabled());
+});
+
+Then('the elevation filter spans {string} to {string}', async ({ page }, lo: string, hi: string) => {
+  await expect(popover(page, 'Elevation').locator('p.fine').first()).toHaveText(`Spans ${lo} to ${hi}`);
+});
+
+When('I set the lowest elevation to {int}', async ({ page }, metres: number) => {
+  await popover(page, 'Elevation').getByLabel('Lowest').fill(String(metres));
+});
+
+Then('the elevation filter says {string}', async ({ page }, text: string) => {
+  await expect(popover(page, 'Elevation').getByText(text, { exact: true })).toBeVisible();
+});
+
+Then('the elevation filter says nothing is left out', async ({ page }) => {
+  await expect(popover(page, 'Elevation').getByText('left out')).toHaveCount(0);
+});
+
+When('I press the {string} button in the elevation filter', async ({ page }, label: string) => {
+  await popover(page, 'Elevation').getByRole('button', { name: label, exact: true }).click();
 });
 
 Then('the species filter lists {string} first, apart from the species', async ({ page }, item: string) => {

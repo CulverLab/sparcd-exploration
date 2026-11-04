@@ -193,10 +193,10 @@ export function toggleHex(model: Model, cells: SiteHexes, area: string[], id: st
   return area.some((k) => inside.has(k)) ? area.filter((k) => !inside.has(k)) : [...area, ...inside];
 }
 
-/** How many locations the area holds, by the grouping in force. */
-export function areaLocations(model: Model, area: string[], separate: boolean): number {
+/** How many of the area's locations are still in view (`inView`, per site), by the grouping in force. */
+export function areaLocations(model: Model, area: string[], separate: boolean, inView: ArrayLike<number>): number {
   const keys = new Set(area);
-  return new Set(model.sites.filter((s) => keys.has(s.key)).map((s) => locationKeyOf(s, separate))).size;
+  return new Set(model.sites.filter((s, i) => inView[i] && keys.has(s.key)).map((s) => locationKeyOf(s, separate))).size;
 }
 
 /** Two dragged corners as a box, whichever way the drag went. */
