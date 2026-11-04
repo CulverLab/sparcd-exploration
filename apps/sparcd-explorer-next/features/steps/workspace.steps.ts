@@ -703,7 +703,12 @@ When("I note the height of the table's controls", async ({ page, scratch }) => {
 });
 
 When('I scroll far down the table', async ({ page }) => {
-  await page.evaluate(() => scrollTo(0, document.getElementById('table')!.getBoundingClientRect().top + scrollY + 2500));
+  // Switching to the List puts the page back where it was, once the table has caught up and a frame later.
+  await settled(page);
+  await page.evaluate(async () => {
+    for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+    scrollTo(0, document.getElementById('table')!.getBoundingClientRect().top + scrollY + 2500);
+  });
 });
 
 Then(/^the table's controls sit just under (?:it|the top bar), on one line$/, async ({ page, scratch }) => {
