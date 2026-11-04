@@ -2,7 +2,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 import { ALPHA, ALPHA_UPLOADS, BRAVO, CHARLIE, addUpload, bucketOf, putCollection, uploadPrefix, type Upload } from './support/data';
-import { Given, Then, When, expect, settled, tableRows, viewButton, type Scratch } from './support/world';
+import { Given, Then, When, expect, settled, tableRows, viewButton, type Scratch, chooseLayout, titleMenu } from './support/world';
 
 // --- Grid ------------------------------------------------------------------------
 
@@ -12,7 +12,7 @@ const tileAt = (page: Page, time: string) => tiles(page).filter({ has: page.loca
 
 When('I show the Photos grid', async ({ page }) => {
   await viewButton(page, 'Photos').click();
-  await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'Grid' }).click();
+  await chooseLayout(page, 'Grid');
 });
 
 Given('the server refuses ranged reads', async ({ s3 }) => {
@@ -78,7 +78,7 @@ When('I scroll to the end of the grid', async ({ page }) => {
 
 Then('the grid shows {int} photos', async ({ page }, n: number) => {
   await expect(tiles(page)).toHaveCount(n);
-  await expect(page.locator('#table .tbl-foot')).toHaveText(`All ${n} shown`);
+  await expect(page.locator('#table .rowcount')).toHaveText(`${n} photo${n === 1 ? '' : 's'}`);
 });
 
 Then('every tile shows its own embedded thumbnail', async ({ page, s3 }) => {
@@ -297,6 +297,7 @@ const bar = (page: Page, label: string, which: string): Locator =>
 
 When('I show the Charts', async ({ page }) => {
   await viewButton(page, 'Charts').click();
+  await page.locator('#table .charts, #table .empty').first().waitFor();
 });
 
 Then(
@@ -430,8 +431,10 @@ Then('the server was never asked for those files', async ({ s3, scratch }) => {
 });
 
 Given('the photo files have been checked', async ({ page }) => {
-  await expect(page.locator('.updated')).toHaveText(/^Updated/);
-  await expect(page.locator('.updated')).not.toContainText('Checking photo files');
+  const status = (await titleMenu(page)).locator('.updated');
+  await expect(status).toHaveText(/^Updated/);
+  await expect(status).not.toContainText('Checking photo files');
+  await page.keyboard.press('Escape');
 });
 
 When('the file {string} of {string} is removed from the server', async ({ s3, scratch }, file: string, name: string) => {

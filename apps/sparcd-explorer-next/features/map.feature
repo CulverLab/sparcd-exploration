@@ -126,9 +126,11 @@ Feature: The map
     Then the map offers no "Sites" view
     And the map shows hexes with the counts "3" and "4"
 
-  Scenario: Photos with no location are counted on the map, never placed
-    Then the map says "2 photos have no location"
-    When I press "2 photos have no location"
+  Scenario: Photos with no location are counted in the data checks, never placed on the map
+    Then the map shows hexes with the counts "3" and "4"
+    When I open Data checks
+    Then I see "2 photos from 2025 have no location (ID 0000), and 1 of them is untagged."
+    When I press "Show these photos" in Data checks
     Then the grid shows 2 photos
     And the locations filter reads "Locations: No location set"
     And I see the note "Showing photos with no location" with Undo

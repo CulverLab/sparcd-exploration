@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { ALPHA, addUpload, cameraNamed } from './support/data';
-import { Given, Then, When, columnValues, expect } from './support/world';
+import { Given, Then, When, columnValues, expect, viewMenu } from './support/world';
 
 type Csv = { name: string; header: string[]; rows: string[][] };
 
@@ -27,7 +27,8 @@ function parseCsv(text: string): string[][] {
 }
 
 When('I export CSV', async ({ page, scratch }) => {
-  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
+  const menu = await viewMenu(page);
+  const [download] = await Promise.all([page.waitForEvent('download'), menu.getByRole('button', { name: 'Export CSV' }).click()]);
   const [header, ...rows] = parseCsv(await readFile((await download.path())!, 'utf8'));
   scratch.name = download.suggestedFilename();
   scratch.csv = { name: download.suggestedFilename(), header, rows } satisfies Csv;

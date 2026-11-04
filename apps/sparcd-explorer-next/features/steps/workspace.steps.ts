@@ -18,6 +18,10 @@ import {
   settled,
   tableRows,
   viewButton,
+  chooseLayout,
+  columnsEditor,
+  titleMenu,
+  viewMenu,
 } from './support/world';
 import { ALPHA, addUpload } from './support/data';
 
@@ -204,12 +208,12 @@ Then('the species filter offers {string} and {string}', async ({ page }, a: stri
   for (const label of [a, b]) await expect(popover(page, 'Species').getByRole('button', { name: label, exact: true })).toBeVisible();
 });
 
-Then(/^the (species|locations|mountain range|dates|elevation) section reads "(.*)"$/, async ({ page }, which: string, text: string) => {
+Then(/^the (species|locations|mountain range|dates|elevation|files) section reads "(.*)"$/, async ({ page }, which: string, text: string) => {
   await expect(section(page, which).locator('.fsec-value')).toHaveText(text);
 });
 
-Then('the dates picker lists the years {string}', async ({ page }, list: string) => {
-  await expect(popover(page, 'Dates').locator('.yearchips button b')).toHaveText(list.split(', '));
+Then('the dates picker offers the years {string}', async ({ page }, list: string) => {
+  await expect(popover(page, 'Dates').locator('.yearchips button:not(:disabled) b')).toHaveText(list.split(', '));
 });
 
 Then('the months of the dates filter run from {string} to {string}', async ({ page }, min: string, max: string) => {
@@ -220,8 +224,8 @@ Then('the months of the dates filter run from {string} to {string}', async ({ pa
   }
 });
 
-Then(/^the year (\d+) is (disabled|enabled) in the Dates section$/, async ({ page }, year: string, state: string) => {
-  const button = filterBar(page).getByRole('group', { name: 'Years' }).getByRole('button', { name: year, exact: true });
+Then(/^the year (\d+) is (disabled|enabled) in the dates picker$/, async ({ page }, year: string, state: string) => {
+  const button = popover(page, 'Dates').getByRole('group', { name: 'Years' }).getByRole('button', { name: new RegExp(`^${year}`) });
   await (state === 'disabled' ? expect(button).toBeDisabled() : expect(button).toBeEnabled());
 });
 
@@ -271,10 +275,6 @@ When(/^I clear the (Collections|Species|Area|Locations|Files|Dates) filter with 
   await page.getByRole('button', { name: `Clear ${FILTER_NAMES[name.toLowerCase()]} filter` }).click();
 });
 
-When('I press the year {int} in the Dates section', async ({ page }, year: number) => {
-  await filterBar(page).getByRole('group', { name: 'Years' }).getByRole('button', { name: String(year), exact: true }).click();
-});
-
 Then("Undo has taken Reset's place, with the focus on it", async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeFocused();
   await expect(resetButton(page)).toHaveCount(0);
@@ -292,7 +292,7 @@ const LAYOUT_PARTS = ['#figures', '#map', '#table .tbl-head'];
 const boxes = (page: Page) => Promise.all(LAYOUT_PARTS.map(async (sel) => (await page.locator(sel).boundingBox())!));
 
 When("I note where the figures, the map and the tables' tab row are", async ({ page, scratch }) => {
-  // The web fonts arriving can re-wrap the tools at tight widths, which isn't what's being watched for.
+  // The web fonts arriving can change widths, which isn't what's being watched for.
   await page.evaluate(() => document.fonts.ready.then(() => scrollTo(0, 0)));
   scratch.boxes = await boxes(page);
 });
@@ -467,7 +467,7 @@ Then('the page does not scroll sideways', async ({ page }) => {
 
 When(/^I show the (Locations|Species|Photos) table$/, async ({ page }, view: string) => {
   await viewButton(page, view).click();
-  if (view === 'Photos') await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click();
+  if (view === 'Photos') await chooseLayout(page, 'List');
 });
 
 Then(
@@ -532,16 +532,17 @@ Then('the sidebar has no {string} section', async ({ page }, name: string) => {
   await expect(filterButton(page, name)).toHaveCount(0);
 });
 
-Then('the figures list photos by collection', async ({ page }) => {
-  const line = page.getByRole('group', { name: 'By collection' });
-  await expect(line.locator(':scope > .bc-k')).toHaveText('By collection');
-  await expect(line.locator(':scope > .bc-item')).toHaveCount(2);
+Then('the title menu lists photos by collection', async ({ page }) => {
+  const menu = await titleMenu(page);
+  await expect(menu.getByRole('heading', { name: 'By collection' })).toBeVisible();
+  await expect(menu.locator('.bclist li')).toHaveCount(2);
+  await page.keyboard.press('Escape');
 });
 
 // --- Columns and Display --------------------------------------------------------
 
 When('I open the Columns editor', async ({ page }) => {
-  await page.getByRole('button', { name: 'Columns', exact: true }).click();
+  await columnsEditor(page);
 });
 
 When(/^I (hide|show) the "(.*)" column$/, async ({ page }, verb: string, label: string) => {
@@ -580,8 +581,7 @@ When('I set the precision to {int} decimals', async ({ page }, digits: number) =
 });
 
 When('I show the {string} and {string} columns', async ({ page }, a: string, b: string) => {
-  await page.getByRole('button', { name: 'Columns', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: /^Columns/ });
+  const editor = await columnsEditor(page);
   await editor.getByRole('checkbox', { name: a, exact: true }).check();
   await editor.getByRole('checkbox', { name: b, exact: true }).check();
   await page.keyboard.press('Escape');
@@ -639,17 +639,21 @@ Then('the first row is {string}', async ({ page }, id: string) => {
 
 // --- Data checks ----------------------------------------------------------------
 
-/** The quiet item in the top bar's status: "3 data checks", or "No data problems". */
+/** The entry in the title menu: "3 data checks", or "No data problems". */
 export const checksButton = (page: Page) => page.getByRole('button', { name: /data checks?$|^No data problems$/ });
 
 When('I open Data checks', async ({ page }) => {
+  await titleMenu(page);
   await checksButton(page).click();
   await expect(popover(page, 'Data checks')).toBeVisible();
 });
 
 Then('Data checks shows {int} problems', async ({ page }, n: number) => {
   await expect(popover(page, 'Data checks').locator('.dqlist li')).toHaveCount(n);
+  await page.keyboard.press('Escape');
+  await titleMenu(page);
   await expect(checksButton(page)).toHaveText(`${n} data check${n === 1 ? '' : 's'}`);
+  await checksButton(page).click();
 });
 
 When('I press {string} in Data checks', async ({ page }, label: string) => {
@@ -718,7 +722,7 @@ Then(/^the table's controls sit just under (?:it|the top bar), on one line$/, as
   // The tabs, and the tools beside them rather than wrapped under them.
   expect(box.height).toBeLessThan(80);
   if (scratch.toolsHeight !== undefined) expect(box.height).toBe(scratch.toolsHeight);
-  await expect(tools(page).getByRole('button', { name: 'Export CSV' })).toBeInViewport();
+  await expect(tools(page).getByRole('button', { name: 'View' })).toBeInViewport();
 });
 
 When("I note where the table's controls are", async ({ page, scratch }) => {
@@ -739,5 +743,15 @@ Then("the table's column headers sit just under the table's controls", async ({ 
 });
 
 Then('the table shows each location ID separately', async ({ page }) => {
-  await expect(page.locator('#table').getByRole('switch', { name: 'Show each location ID separately' })).toHaveAttribute('aria-checked', 'true');
+  await expect((await viewMenu(page)).getByRole('switch', { name: 'Show each location ID separately' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+});
+
+Then("the table's controls offer no {string}", async ({ page }, name: string) => {
+  await expect(tools(page).getByRole('button', { name })).toHaveCount(0);
+  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+});
+
+Then('there are {int} figures', async ({ page }, n: number) => {
+  await expect(page.locator('#figures .fig')).toHaveCount(n);
 });

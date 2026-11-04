@@ -7,12 +7,12 @@ S3 with read-only credentials and keeps a local copy in IndexedDB, so a
 collection opened before shows at once.
 
 It signs in once with the Tagger and Uploader, opens several collections
-together, and shows large figures for what is in view, a map of hexes (or
-exact sites where allowed) with the camera effort per month under it, and
+together, and shows four large figures for what is in view, a map of hexes
+(or exact sites where allowed), and
 Locations, Species and Photos tables, a photo grid with a detail view, and
-charts. Every part follows the filters in the left sidebar, which hides with
+charts led by the camera effort per month. Every part follows the filters in the left sidebar, which hides with
 the Filters button and keeps Reset and Undo in a fixed place; on phones the
-filters open as a sheet. Data checks sit in the top bar. Report prints what is in view or
+filters open as a sheet. Data checks sit in the title's menu. Report prints what is in view or
 saves it as a PDF, and downloads it as a spreadsheet, CSV files or a Camtrap DP
 package. Coordinates are never shown or exported more exact than the Display
 precision.
@@ -115,24 +115,24 @@ collections:
 2. Tick two collections; the button reads "Open 2 collections together". Open
    them and watch each one's steps; a collection opened before says it is
    instant.
-3. Check the header reads "<first> + 1 more", the filter bar has a Collections
-   filter, and In view has a By collection list.
+3. Check the title reads "<first> + 1 more", the sidebar has a Collections
+   row, and the title's menu has a By collection list.
 4. Filter Species to one animal, then Dates to a few months. Each button shows
    its value with a ×, and the count reads "N of M photos". Press Reset
    filters, then Undo in the note, and see both filters come back.
 5. Click a hex on the map, then use Select area to drag over a few more; an
    Area filter appears. Press Esc mid-drag to cancel, and "× Clear" to drop the
    area.
-6. Drag across a few months of the Camera effort strip; Dates follows. Clear it
+6. In Charts, drag across a few months of the Camera effort strip; Dates follows. Clear it
    with its "× Clear".
-7. Open Data checks: read each problem, press one button (for example "Show
+7. Open Data checks from the title's menu: read each problem, press one button (for example "Show
    these photos"), and Undo it. Turn on "Show each location ID separately" and
    off again. Where photos' files are missing, turn on "Include photos whose
    files are missing" and see the photo count grow.
-8. In Locations, Species and Photos, sort a column, hide one in Columns, and
-   Export CSV; the rows come in the table's order and the coordinates match
+8. In Locations, Species and Photos, sort a column, hide one in View, Columns…,
+   and Export CSV from View; the rows come in the table's order and the coordinates match
    the Display precision.
-9. In Photos, switch Grid and List and Tagged / Untagged / All while scrolled
+9. In Photos, switch Grid and List from View, and Tagged / Untagged / All while scrolled
    far down: the controls stay under the filter bar and each layout keeps its
    place. Videos show a first frame.
 10. Open a photo, step with the arrow keys, open full size, and close with Esc;
@@ -140,7 +140,7 @@ collections:
 11. In Charts, click a species, an hour and a month bar; each sets its filter,
     and a second click clears it. Press Save image and Save data on a chart:
     the PNG is on white in any theme, the CSV holds what the chart shows.
-12. Set Display to UTM and 2 decimals, then press Report. Untick Map, check the
+12. Set Display settings (the gear) to UTM and 2 decimals, then press Report. Untick Map, check the
     header reads your filters, "Prepared … by <you>" and "UTM, rounded to
     1,000 m". Press Print or save as PDF and look at the preview: only the
     report, on white paper.

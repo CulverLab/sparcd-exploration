@@ -177,13 +177,13 @@ Feature: Filter the photos in view
     And "AB02" is ticked in the locations filter
     And "AB01" is unticked in the locations filter
 
-  Scenario: The Dates picker lists the years in view, and the Dates section keeps its buttons in place
+  Scenario: The Dates picker keeps every year in its place, and only the years in view can be picked
     When I click the hex holding "AB01"
     And I open the dates filter
-    Then the dates picker lists the years "2023, 2025"
+    Then the dates picker offers the years "2023, 2025"
     And the months of the dates filter run from "2023-04" to "2025-03"
-    And the year 2024 is disabled in the Dates section
-    And the year 2023 is enabled in the Dates section
+    And the year 2024 is disabled in the dates picker
+    And the year 2023 is enabled in the dates picker
     When I press the year 2025 in the dates picker
     Then the dates filter reads "Dates: 2025"
 
@@ -210,16 +210,17 @@ Feature: Filter the photos in view
     Then the dates filter reads "Dates: 2024"
     And the photo count reads "5 of 11 photos"
 
-  Scenario: The year buttons in the Dates section pick years in place
-    When I press the year 2024 in the Dates section
+  Scenario: The year buttons in the Dates picker pick years in place
+    When I press the year 2024 in the dates picker
     Then the dates filter reads "Dates: 2024"
     And the photo count reads "5 of 11 photos"
-    When I press the year 2024 in the Dates section
+    When I press the year 2024 in the dates picker
     Then the dates filter reads "Dates"
 
   Scenario: A year and a range never stand together, and a From after To swaps them
-    When I drag the strip from "Jan 2024" to "May 2024"
-    And I press the year 2025 in the Dates section
+    When I show the Charts
+    And I drag the strip from "Jan 2024" to "May 2024"
+    And I press the year 2025 in the dates picker
     Then the dates filter reads "Dates: 2025"
     And the photo count reads "3 of 11 photos"
     When I enter "2024-01" as From in the dates filter
@@ -281,6 +282,7 @@ Feature: Filter the photos in view
 
   Scenario: When nothing matches, the table offers a big Reset
     When I filter species to "Coyote"
+    And I show the Charts
     And I click "Jan 2025" on the strip
     Then the table says "No photos match these filters"
     When I press the big "Reset filters" button

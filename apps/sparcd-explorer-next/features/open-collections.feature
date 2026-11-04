@@ -10,8 +10,10 @@ Feature: Open collections
     Then the header names "Alpha Basin + Bravo Flats"
     And the header offers "Change collections"
     And the sidebar has a "Collections" section
-    And the figures list photos by collection
-    And the Locations table has a "Collection" column
+    And the title menu lists photos by collection
+    When I open the Columns editor
+    And I show the "Collection" column
+    Then the Locations table has a "Collection" column
     And the photo count reads "14 photos"
 
   Scenario: One collection shows no collection controls
@@ -48,7 +50,7 @@ Feature: Open collections
     When a new upload arrives in "Alpha Basin"
     And I check for new uploads
     Then the photo count reads "12 photos"
-    And the header says "Updated just now"
+    And the title menu says "Updated just now"
 
   Scenario Outline: When the collections were last read shows in full at <width> pixels
     Given the screen is <width> pixels wide
@@ -108,7 +110,7 @@ Feature: Open collections
     When I pick "Bravo Flats" in By collection
     Then "Bravo Flats" is highlighted in By collection
     And By collection lists "Alpha Basin" then "Bravo Flats"
-    And "× Clear" shows at the end of the "By collection" line
+    And "× Clear" shows on the "By collection" line
     And By collection has not moved
     And the photo count reads "3 of 14 photos"
     When I press "× Clear" by the collections
@@ -132,18 +134,17 @@ Feature: Open collections
       | I press "× Clear" by the collections      |
       | I clear the Collections filter with its × |
 
-  Scenario: With three collections the title names the first and how many more, and By collection lists every one
+  Scenario: With three collections the title names the first and how many more, and the title menu lists every one
     Given I am signed in
     And the screen is 1100 pixels wide
     When I tick "Alpha Basin"
     And I tick "Bravo Flats"
     And I tick "Charlie Pond"
     And I press the open button
-    Then the header names "Alpha Basin + 2 more", with every name in its title
-    When I open "+ more" in By collection
-    Then the By collection list names "Alpha Basin, Bravo Flats, Charlie Pond"
-    When I pick "Charlie Pond" in the By collection list
-    Then "Charlie Pond" is picked in the By collection list
+    Then the header names "Alpha Basin + 2 more", with every name in its accessible name
+    And the By collection list names "Alpha Basin, Bravo Flats, Charlie Pond"
+    When I pick "Charlie Pond" in By collection
+    Then "Charlie Pond" is highlighted in By collection
     And the photo count reads "3 of 17 photos"
 
   @preview-3
@@ -205,6 +206,7 @@ Feature: Open collections
     And I open "Alpha Basin" and "Bravo Flats" together
     Then the header names "Alpha Basin + Bravo Flats"
     And no flag reads "collections"
-    And the Collection of "AB01" reads "2 collections", naming "Alpha Basin, Bravo Flats"
+    When I show the "Collection" and "Mountain range" columns
+    Then the Collection of "AB01" reads "2 collections", naming "Alpha Basin, Bravo Flats"
     When I tap the Collection of "AB01"
     Then a small list shows "Alpha Basin" and "Bravo Flats"

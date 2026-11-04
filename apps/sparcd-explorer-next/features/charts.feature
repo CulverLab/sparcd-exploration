@@ -123,5 +123,8 @@ Feature: Charts
     Then "Save image of Detections by species" is enabled
     And "Save data of Detections per month" is enabled
 
-  Scenario: The Table panel's Export CSV stays disabled on the Charts tab
-    Then "Export CSV" is disabled
+  Scenario: The Charts tab offers no View menu or Export CSV, and each chart saves its own
+    Then the table's controls offer no "View"
+    And the table's controls offer no "Export CSV"
+    And "Save image of Detections by species" is enabled
+    And "Save data of Detections per month" is enabled

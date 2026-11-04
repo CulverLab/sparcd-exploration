@@ -2,7 +2,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 import { exactSitesOrigin } from './support/s3mock';
-import { Then, USERNAME, When, columnValues, expect, openCollections, signIn, tableRows } from './support/world';
+import { Then, USERNAME, When, columnValues, expect, openCollections, signIn, tableRows, columnLabels, headerCells, mapMenu } from './support/world';
 
 // --- Map ------------------------------------------------------------------------
 
@@ -230,7 +230,8 @@ When('I sign in to the server that shows exact sites and open {string}', async (
 });
 
 When('I show sites on the map', async ({ page }) => {
-  await page.getByRole('group', { name: 'Map shows' }).getByRole('button', { name: 'Sites', exact: true }).click();
+  await (await mapMenu(page)).getByRole('radiogroup', { name: 'Map shows' }).getByRole('radio', { name: 'Sites', exact: true }).click();
+  await page.keyboard.press('Escape');
 });
 
 When('I drag a rectangle around the dot of {string}', async ({ page }, id: string) => {
@@ -250,12 +251,10 @@ When('I click the dot of {string}', async ({ page }, id: string) => {
 });
 
 Then('the map offers no {string} view', async ({ page }, mode: string) => {
-  await expect(page.getByRole('group', { name: 'Map shows' })).toHaveCount(0);
-  await expect(page.locator('#map').getByRole('button', { name: mode, exact: true })).toHaveCount(0);
-});
-
-Then('the map says {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.mapnote')).toHaveText(text);
+  const menu = await mapMenu(page);
+  await expect(menu.getByRole('radiogroup', { name: 'Map shows' })).toHaveCount(0);
+  await expect(menu.getByRole('radio', { name: mode, exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
 });
 
 /**
@@ -279,7 +278,8 @@ Then('the hex holding {string} has not moved', async ({ page, scratch }, id: str
 Then(
   'the basemaps are {string}, {string}, {string}, {string}, {string} and {string}',
   async ({ page }, a: string, b: string, c: string, d: string, e: string, f: string) => {
-    await expect(page.getByLabel('Basemap').locator('option')).toHaveText([a, b, c, d, e, f]);
+    await expect((await mapMenu(page)).getByRole('radiogroup', { name: 'Basemap' }).getByRole('radio')).toHaveText([a, b, c, d, e, f]);
+    await page.keyboard.press('Escape');
   },
 );
 
@@ -288,7 +288,8 @@ Then('the map credit reads {string}', async ({ page }, text: string) => {
 });
 
 When('I choose the {string} basemap', async ({ page }, name: string) => {
-  await page.getByLabel('Basemap').selectOption({ label: name });
+  await (await mapMenu(page)).getByRole('radiogroup', { name: 'Basemap' }).getByRole('radio', { name, exact: true }).click();
+  await page.keyboard.press('Escape');
 });
 
 Then('no tile came from a real tile server', async ({ tiles }) => {
@@ -323,6 +324,13 @@ const monthIndex = (label: string) => {
 const strip = (page: Page) => page.locator('svg.effort');
 
 async function monthCenter(page: Page, label: string): Promise<[number, number]> {
+  // A tab's click slides the tables up; the bar's place on screen holds once that has stopped.
+  await page.waitForTimeout(100);
+  await expect.poll(() => page.evaluate(() => new Promise((done) => {
+    const at = scrollY;
+    setTimeout(() => done(at === scrollY), 150);
+  }))).toBe(true);
+  await strip(page).scrollIntoViewIfNeeded();
   const bar = (await strip(page).locator(`g[data-month="${monthIndex(label)}"] rect`).first().boundingBox())!;
   return [bar.x + bar.width / 2, bar.y + bar.height / 2];
 }
@@ -366,7 +374,7 @@ Then('the strip shows {int} months with photos', async ({ page }, n: number) => 
 const legend = (page: Page) => page.getByRole('region', { name: 'Camera effort' }).locator('.tl-legend');
 
 Then('the strip is titled {string}', async ({ page }, title: string) => {
-  await expect(page.getByRole('region', { name: 'Camera effort' }).getByRole('heading', { level: 2 })).toHaveText(title);
+  await expect(page.getByRole('region', { name: 'Camera effort' }).getByRole('heading', { level: 3 })).toHaveText(title);
   await expect(strip(page)).toHaveAccessibleName(title);
 });
 
@@ -419,11 +427,23 @@ Then('the {string} figure reads {string}', async ({ page }, label: string, value
     .toBe(value);
 });
 
-Then('{string} explains {string}', async ({ page }, label: string, text: string) => {
-  const help = figure(page, label).locator('.qmark');
+Then('the {string} column explains {string}', async ({ page }, label: string, text: string) => {
+  const help = headerCells(page).filter({ hasText: label }).locator('.qmark');
   await help.focus();
-  await expect(help.getByRole('tooltip')).toHaveText(text);
-  await expect(help).toHaveAccessibleDescription(text);
+  await expect(help.locator('.qtip')).toHaveText(text);
+  await expect(help).toBeVisible();
+  await expect(help).toHaveAccessibleName(text);
+});
+
+Then('the table ends with the totals {string}', async ({ page }, list: string) => {
+  const labels = await columnLabels(page);
+  const cells = page.locator('#table tfoot td');
+  for (const part of list.split(', ')) {
+    const at = part.lastIndexOf(' ');
+    const label = part.slice(0, at);
+    await expect(cells.nth(labels.indexOf(label)), label).toHaveText(part.slice(at + 1));
+  }
+  await expect(cells.first()).toHaveText('Total');
 });
 
 const speciesName = (page: Page, name: string) => page.locator('#table .cellbtn').filter({ hasText: new RegExp(`^${name}$`) });

@@ -31,19 +31,22 @@ Feature: Tables of locations, species and photos
 
   Scenario: The Columns editor shows, hides, moves and resets columns, and remembers them
     When I open the Columns editor
-    And I hide the "Mountain range" column
+    And I hide the "Detections" column
+    And I show the "Mountain range" column
+    And I show the "Elevation" column
     And I show the "Easting" column
     And I move "Photos" up
-    Then the columns read "Location, Location ID, Activity, Coordinates, Photos, Elevation, Detections, Species, First photo, Last photo, Active days, Easting"
+    Then the columns read "Location, Location ID, Mountain range, Photos, Elevation, Active days, Easting"
     When I reload and reopen "Alpha Basin"
-    Then the columns read "Location, Location ID, Activity, Coordinates, Photos, Elevation, Detections, Species, First photo, Last photo, Active days, Easting"
+    Then the columns read "Location, Location ID, Mountain range, Photos, Elevation, Active days, Easting"
     When I open the Columns editor
     And I reset the columns to default
-    Then the columns read "Location, Location ID, Activity, Mountain range, Coordinates, Elevation, Photos, Detections, Species, First photo, Last photo, Active days"
+    Then the columns read "Location, Location ID, Photos, Detections, Active days"
 
   @US-001
   Scenario: UTM coordinates are plain integers at the display precision
-    When I switch the display to UTM
+    When I show the "Coordinates" and "Elevation" columns
+    And I switch the display to UTM
     And I show the "Easting" and "Northing" columns
     Then every easting and northing is a plain whole number
     And the Coordinates of "AB02" read "5N 817300 58700"

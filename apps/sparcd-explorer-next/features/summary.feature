@@ -1,26 +1,30 @@
 Feature: The figures
 
-  Large figures above the map say what the filters leave, each with "of" the
-  unfiltered total while a filter is on. The Species table, most detected
+  Four large figures above the map say what the filters leave, each with "of"
+  the unfiltered total while a filter is on. The Species table, most detected
   first, is a shortcut to each species' filter.
 
   Background:
     Given I have opened "Alpha Basin"
 
-  Scenario: The figures read the photos in view
+  Scenario: Four figures read the photos in view
     Then the "Photos" figure reads "11 64% tagged"
-    And the "Detections" figure reads "8"
     And the "Species" figure reads "4"
-    And the "Animals counted" figure reads "9"
     And the "Locations" figure reads "5"
-    And the "Active days" figure reads "10"
-    And "Active days" explains "Days with at least one photo, summed over locations"
+    And the "Dates" figure reads "Apr 2023 – Mar 2025"
+    And there are 4 figures
 
   Scenario: The figures count the locations with matching photos, while the table keeps every camera that ran
     When I filter species to "Coyote"
     Then the "Locations" figure reads "1 of 5"
-    And the "Photos" figure reads "1 100% tagged of 11"
+    And the "Photos" figure reads "1 100% tagged · of 11"
     And the Locations table still lists every location with photos
+
+  Scenario: Detections, Animals counted and Active days are read where they belong, with totals at each table's end
+    Then the table ends with the totals "Photos 11, Detections 8, Active days 10"
+    And the "Active days" column explains "Days with at least one photo, summed over locations"
+    When I show the Species table
+    Then the table ends with the totals "Detections 8, Animals counted 9, Locations 5"
 
   Scenario: A species in the Species table filters to it, and again lets it go
     When I show the Species table

@@ -7,8 +7,11 @@ Feature: Export the rows in view
     And I filter species to "Coyote"
     And I export CSV
     Then the file is named like "alpha-basin-<date>-locations.csv"
-    And the CSV has the header "Location,Location ID,Mountain range,Latitude,Longitude,Elevation (m),Photos,Detections,Species,First photo,Last photo,Active days"
+    And the CSV has the header "Location,Location ID,Photos,Detections,Active days,Latitude,Longitude"
     And the CSV row for "AB02" has latitude "0.53" and longitude "-150.15"
+    When I show the "Mountain range" and "Elevation" columns
+    And I export CSV
+    Then the CSV has the header "Location,Location ID,Mountain range,Elevation (m),Photos,Detections,Active days,Latitude,Longitude"
 
   @US-034
   Scenario: Photos export carries coordinates even when no coordinate column is shown

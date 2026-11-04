@@ -135,10 +135,10 @@ Feature: Report and downloads
     When I download "Camtrap DP package (.zip)" from More formats
     Then the package's deployment "AB07" is named "'=1+1"
 
-  Scenario: The report stays open as the window narrows past 1024 pixels
+  Scenario: The report stays open as the window narrows to a phone's
     Given I have opened "Alpha Basin"
     When I open the report
-    And the window narrows to 900 pixels
+    And the window narrows to 700 pixels
     Then the report is open
     When I close the report
     Then focus is back on the "Report & export" button

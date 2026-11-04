@@ -35,7 +35,7 @@ When('I close the report', async ({ page }) => {
 
 When('the window narrows to {int} pixels', async ({ page }, width: number) => {
   await page.setViewportSize({ width, height: 860 });
-  // Under 1024 px the Report button sits in the row above the figures.
+  // On a phone the Report button sits in the row above the figures.
   await expect(page.locator('.phoneacts #reportbtn')).toHaveCount(1);
 });
 

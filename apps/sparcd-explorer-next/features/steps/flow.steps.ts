@@ -14,6 +14,7 @@ import {
   photoCountText,
   signIn,
   signedIn,
+  titleMenu,
 } from './support/world';
 
 const COLLECTIONS: Record<string, { uuid: string }> = { 'Alpha Basin': ALPHA, 'Bravo Flats': BRAVO, 'Charlie Pond': CHARLIE };
@@ -121,7 +122,7 @@ When('I open {string} and {string} together', async ({ page }, a: string, b: str
 });
 
 When('I go back to choose collections', async ({ page }) => {
-  await page.getByRole('button', { name: /^Change collections?$/ }).click();
+  await (await titleMenu(page)).getByRole('button', { name: /^Change collections?$/ }).click();
   await expect(page.getByRole('heading', { name: 'Choose collections' })).toBeVisible();
 });
 
@@ -149,7 +150,8 @@ Then('the header names {string}', async ({ page }, name: string) => {
 });
 
 Then('the header offers {string}', async ({ page }, label: string) => {
-  await expect(page.locator('header').getByRole('button', { name: label })).toBeVisible();
+  await expect((await titleMenu(page)).getByRole('button', { name: label })).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 Given('reading {string} is slow', async ({ s3 }, name: string) => {
@@ -197,7 +199,8 @@ When('I reopen {string}', async ({ page, s3, scratch }, name: string) => {
 });
 
 Then('the workspace shows without reading the photo lists again', async ({ page, s3, scratch }) => {
-  await expect(page.locator('.updated')).toHaveText(/Updated/);
+  await expect((await titleMenu(page)).locator('.updated')).toHaveText(/Updated/);
+  await page.keyboard.press('Escape');
   const key = `${uploadPrefix(COLLECTIONS[scratch.collection as string], '2023.05.01.10.00.00_fielduser')}media.csv`;
   expect(s3.readCount(key)).toBe(scratch.reads);
 });
@@ -207,15 +210,15 @@ When('a new upload arrives in {string}', async ({ s3 }, name: string) => {
 });
 
 When('I check for new uploads', async ({ page }) => {
-  await page.getByRole('button', { name: 'Check for new uploads' }).click();
+  await (await titleMenu(page)).getByRole('button', { name: 'Check for new uploads' }).click();
 });
 
-Then('the header says {string}', async ({ page }, text: string) => {
-  await expect(page.locator('.updated')).toHaveText(text);
+Then('the title menu says {string}', async ({ page }, text: string) => {
+  await expect((await titleMenu(page)).locator('.updated')).toHaveText(text);
 });
 
 Then('the status reads {string} in full', async ({ page }, text: string) => {
-  const status = page.locator('.updated');
+  const status = (await titleMenu(page)).locator('.updated');
   await expect(status).toHaveText(text);
   await expect(status).toBeInViewport({ ratio: 1 });
   expect(await status.evaluate((el) => el.scrollWidth <= el.clientWidth), 'cut short').toBe(true);

@@ -3,13 +3,11 @@
 import type { Locator, Page } from '@playwright/test';
 import { putBulkCollections } from './support/bulk';
 import { ALPHA, BRAVO, addUpload, putCollection } from './support/data';
-import { Given, Then, When, columnLabels, expect, popover, tableRows, viewButton } from './support/world';
+import { Given, Then, When, columnLabels, expect, popover, tableRows, viewButton, titleMenu, viewMenu } from './support/world';
 
 const collectionList = (page: Page) => page.getByRole('list', { name: 'Collections' });
-const byCollection = (page: Page) => page.locator('#figures').getByRole('group', { name: 'By collection' });
-/** By collection's shown items, not the hidden copy it measures them with. */
-const byCollectionItems = (page: Page) => byCollection(page).locator(':scope > .bc-item');
-const byCollectionClear = (page: Page) => byCollection(page).getByRole('button', { name: 'Clear collection selection' });
+const byCollectionItems = async (page: Page) => (await titleMenu(page)).locator('.bclist li');
+const byCollectionClear = async (page: Page) => (await titleMenu(page)).getByRole('button', { name: 'Clear collection selection', includeHidden: true });
 
 // --- #1 Select all and Clear all in the chooser ----------------------------------
 
@@ -50,86 +48,62 @@ Then('{string} is not ticked', async ({ page }, name: string) => {
 // --- #2 Clearing a collection picked in By collection ----------------------------
 
 When('I pick {string} in By collection', async ({ page }, name: string) => {
-  await byCollection(page).getByRole('button', { name, exact: true }).click();
+  await (await titleMenu(page)).getByRole('button', { name, exact: true }).click();
 });
 
 Then('By collection lists {string} then {string}', async ({ page }, a: string, b: string) => {
-  await expect(byCollectionItems(page).locator('.linkbtn')).toHaveText([a, b]);
+  await expect((await byCollectionItems(page)).locator('.linkbtn')).toHaveText([a, b]);
 });
 
 Then('{string} is highlighted in By collection', async ({ page }, name: string) => {
-  const item = byCollectionItems(page).filter({ hasText: name });
+  const item = (await byCollectionItems(page)).filter({ hasText: name });
   await expect(item).toHaveClass(/\bon\b/);
   await expect(item.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
 });
 
 Then('neither {string} nor {string} is highlighted in By collection', async ({ page }, a: string, b: string) => {
-  const names = [a, b];
-  const line = byCollectionItems(page).getByRole('button');
-  const more = byCollection(page).getByRole('button', { name: /^\+ \d+ more$/ });
-  // Once the line has settled, its names and "+ N more" count every collection.
-  const counted = async () => (await line.count()) + ((await more.count()) ? Number(/\d+/.exec(await more.innerText())![0]) : 0);
-  await expect.poll(counted).toBe(names.length);
-  const shown = await line.count();
-  await expect(line).toHaveText(names.slice(0, shown));
-  for (const button of await line.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
-  await expect(byCollectionItems(page).and(page.locator('.on'))).toHaveCount(0);
-  if (shown === names.length) return;
-  await more.click();
-  const list = popover(page, 'By collection').locator('.bclist').getByRole('button');
-  await expect(list).toHaveText(names);
-  for (const button of await list.all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
-  await page.keyboard.press('Escape');
+  const items = await byCollectionItems(page);
+  await expect(items.locator('.linkbtn')).toHaveText([a, b]);
+  for (const button of await items.getByRole('button').all()) await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect(items.and(page.locator('.on'))).toHaveCount(0);
 });
 
-Then('"× Clear" shows at the end of the "By collection" line', async ({ page }) => {
-  const clear = byCollectionClear(page);
+Then('"× Clear" shows on the "By collection" line', async ({ page }) => {
+  const clear = await byCollectionClear(page);
   await expect(clear).toBeVisible();
   await expect(clear).toHaveText('×Clear');
-  const last = (await byCollectionItems(page).last().boundingBox())!;
+  const head = (await popover(page, 'Collections').getByRole('heading', { name: 'By collection' }).boundingBox())!;
   const box = (await clear.boundingBox())!;
-  expect(box.x).toBeGreaterThan(last.x + last.width);
-  expect(Math.abs(box.y + box.height / 2 - (last.y + last.height / 2))).toBeLessThan(4);
-});
-
-When('I open "+ more" in By collection', async ({ page }) => {
-  await byCollection(page).getByRole('button', { name: /^\+ \d+ more$/ }).click();
+  expect(box.x).toBeGreaterThan(head.x + head.width);
+  expect(Math.abs(box.y + box.height / 2 - (head.y + head.height / 2))).toBeLessThan(4);
 });
 
 Then('the By collection list names {string}', async ({ page }, names: string) => {
-  await expect(popover(page, 'By collection').locator('.bclist .linkbtn')).toHaveText(names.split(', '));
+  await expect((await titleMenu(page)).locator('.bclist .linkbtn')).toHaveText(names.split(', '));
 });
 
-When('I pick {string} in the By collection list', async ({ page }, name: string) => {
-  await popover(page, 'By collection').getByRole('button', { name, exact: true }).click();
-});
-
-Then('{string} is picked in the By collection list', async ({ page }, name: string) => {
-  await expect(popover(page, 'By collection').getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'true');
-});
-
-Then('the header names {string}, with every name in its title', async ({ page }, shown: string) => {
+Then('the header names {string}, with every name in its accessible name', async ({ page }, shown: string) => {
   const h1 = page.locator('h1.collname');
   await expect(h1).toHaveText(shown);
-  const all = await h1.getAttribute('title');
+  const all = await page.locator('#collname').getAttribute('aria-label');
   expect(all!.split(', ').length).toBeGreaterThan(2);
   await expect(h1).toHaveAccessibleName(all!);
 });
 
 Then('there is no "× Clear" by the collections', async ({ page }) => {
-  await expect(byCollectionClear(page)).toBeHidden();
+  await expect(await byCollectionClear(page)).toBeHidden();
 });
 
 When('I press "× Clear" by the collections', async ({ page }) => {
-  await byCollectionClear(page).click();
+  await (await byCollectionClear(page)).click();
 });
 
 When('I note where By collection is', async ({ page, scratch }) => {
-  scratch.byCollection = await byCollection(page).boundingBox();
+  scratch.byCollection = await (await titleMenu(page)).locator('.bclist').boundingBox();
 });
 
 Then('By collection has not moved', async ({ page, scratch }) => {
-  expect(await byCollection(page).boundingBox()).toEqual(scratch.byCollection);
+  expect(await (await titleMenu(page)).locator('.bclist').boundingBox()).toEqual(scratch.byCollection);
 });
 
 // --- #3 Clock skew, and opening what can be opened -------------------------------
@@ -225,7 +199,7 @@ function timeClick(page: Page, selector: string, text: string, ready: string): P
 
 const QUICK: Record<string, [string, string, string]> = {
   'showing the Photos grid': ['[aria-label="Tables"] [role="tab"]', 'Photos', "!!document.querySelector('.gallery .tile')"],
-  'switching to the List': ['[aria-label="Layout"] button', 'List', "!!document.querySelector('#table thead')?.textContent.includes('Date and time')"],
+  'switching to the List': ['[aria-label="Show as"] button', 'List', "!!document.querySelector('#table thead')?.textContent.includes('Date and time')"],
   'sorting the List by Species': [
     '#table th button',
     'Species',
@@ -236,7 +210,9 @@ const QUICK: Record<string, [string, string, string]> = {
 
 Then(/^(showing the Photos grid|switching to the List|sorting the List by Species) takes under a second$/, async ({ page }, what: string) => {
   const [selector, text, ready] = QUICK[what];
+  if (what === 'switching to the List') await viewMenu(page);
   expect(await timeClick(page, selector, text, ready)).toBeLessThan(1000);
+  await page.keyboard.press('Escape');
 });
 
 // --- #6 Location flags that explain themselves ----------------------------------
@@ -251,9 +227,7 @@ async function collectionCell(page: Page, id: string): Promise<Locator> {
 }
 
 Then('the {string} flag of {string} explains {string}', async ({ page }, label: string, id: string, tip: string) => {
-  const button = flag(page, label, id);
-  await expect(button).toHaveAttribute('title', tip);
-  await expect(button).toHaveAccessibleDescription(tip);
+  await expect(flag(page, label, id)).toHaveAccessibleDescription(tip);
 });
 
 When('I press the {string} flag of {string}', async ({ page }, label: string, id: string) => {
@@ -277,7 +251,6 @@ Then('no flag reads {string}', async ({ page }, text: string) => {
 Then('the Collection of {string} reads {string}, naming {string}', async ({ page }, id: string, text: string, names: string) => {
   const button = (await collectionCell(page, id)).getByRole('button');
   await expect(button).toHaveText(text);
-  await expect(button).toHaveAttribute('title', names);
   await expect(button).toHaveAccessibleDescription(names);
 });
 
