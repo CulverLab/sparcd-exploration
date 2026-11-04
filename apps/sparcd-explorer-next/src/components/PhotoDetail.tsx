@@ -178,6 +178,7 @@ export function PhotoDetail({
             </button>
           </div>
           <div>
+            <div className="taglabel">All tags on this photo</div>
             <h2 id="detail-title">{species.length ? species.map((s) => s.name).join(', ') : 'Untagged'}</h2>
             <div className="sci">{species.length ? species.map((s) => s.scientificName).filter(Boolean).join(', ') : 'Not tagged yet'}</div>
           </div>

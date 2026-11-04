@@ -87,6 +87,14 @@ Feature: Photos grid and detail
     Then the panel plays the video "CLIP2003.WEBM"
 
   @US-033 @US-001
+  Scenario: Under a species filter, the panel lists every tag on the photo and says so
+    Given I have opened "Alpha Basin"
+    When I filter species to "Bobcat"
+    And I show the Photos grid
+    And I open the photo taken at "2023-04-02 22:40:00"
+    Then the panel is titled "Bobcat, Deer (Mule)" with "Lynx rufus, Odocoileus hemionus"
+    And the panel labels them "All tags on this photo"
+
   Scenario: A photo opens over the page with all its details, and the arrow keys step through
     Given I have opened "Alpha Basin"
     When I show the Photos grid

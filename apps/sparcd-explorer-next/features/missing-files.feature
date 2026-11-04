@@ -17,6 +17,17 @@ Feature: Photos whose files aren't on the server
     Then 2 tiles say "File not found"
     And the server was never asked for those files
 
+  Scenario: With missing files included, the report's Locations total counts them too
+    Given "Alpha Basin" has a camera of its own whose 2 photos aren't on the server
+    And I have opened "Alpha Basin"
+    When I open Data checks
+    Then I see "2 photos are listed in the upload data, but their files aren't on the server (1 upload)."
+    When I switch on "Include photos whose files are missing"
+    Then the "Locations" figure reads "6"
+    When I press Escape
+    And I open the report
+    Then the report's Locations figure reads "6 of 6"
+
   Scenario: The check's action shows those photos alone
     Given "Alpha Basin" has an upload listing 2 photos whose files aren't on the server
     And I have opened "Alpha Basin"

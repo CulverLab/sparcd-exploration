@@ -194,7 +194,11 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
     coordinates,
   };
   const sum = useMemo(() => summarize(model, result, grouping), [model, result, grouping]);
-  const allLocations = useMemo(() => summarize(model, applyFilters(model, NO_FILTERS), grouping).locations, [model, grouping]);
+  const hideMissing = filters.missing === 'hide';
+  const allLocations = useMemo(
+    () => summarize(model, applyFilters(model, { ...NO_FILTERS, missing: hideMissing ? 'hide' : 'show' }), grouping).locations,
+    [model, hideMissing, grouping],
+  );
   const species = useMemo(() => speciesTable(model, result, opts), [model, result, grouping, order]);
   const locations = useMemo(() => orderedLocations(model, result, opts), [model, result, grouping, order]);
   const byCollection = useMemo(() => collectionsTable(model, result, opts, filters.collections.hidden), [model, result, grouping, filters.collections]);

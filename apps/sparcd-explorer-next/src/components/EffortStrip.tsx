@@ -198,11 +198,11 @@ export function EffortStrip() {
   return (
     <section className="effortband" aria-label="Camera effort">
       <div className="effhead">
-        <h2>Camera effort</h2>
+        <h2>Camera effort: photos per month</h2>
         <span className="tl-legend" aria-hidden="true">
           <span>
             <i className="sw ramp" />
-            Photos per month
+            Photos
           </span>
           <span>
             <i className="sw untag" />
@@ -224,7 +224,7 @@ export function EffortStrip() {
           height={H}
           tabIndex={0}
           role="slider"
-          aria-label="Photos per month"
+          aria-label="Camera effort: photos per month"
           aria-valuemin={0}
           aria-valuemax={axis.count - 1}
           aria-valuenow={at - axis.first}

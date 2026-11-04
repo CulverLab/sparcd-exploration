@@ -362,6 +362,11 @@ Then('the strip shows {int} months with photos', async ({ page }, n: number) => 
 
 const legend = (page: Page) => page.getByRole('region', { name: 'Camera effort' }).locator('.tl-legend');
 
+Then('the strip is titled {string}', async ({ page }, title: string) => {
+  await expect(page.getByRole('region', { name: 'Camera effort' }).getByRole('heading', { level: 2 })).toHaveText(title);
+  await expect(strip(page)).toHaveAccessibleName(title);
+});
+
 Then('the strip draws nothing inside its bars', async ({ page }) => {
   await expect(strip(page).locator('rect.match')).toHaveCount(0);
   await expect(legend(page).locator('.sw.match')).toHaveCount(0);

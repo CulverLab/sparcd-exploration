@@ -56,6 +56,10 @@ Then("the report's filters read {string}", async ({ page }, words: string) => {
   await expect(sheet(page).locator('.r-filters')).toHaveText(words);
 });
 
+Then("the report's Locations figure reads {string}", async ({ page }, text: string) => {
+  await expect(sheet(page).locator('.r-stats > div').filter({ hasText: /^Locations/ }).locator('dd')).toHaveText(text);
+});
+
 Then('the report says {string}', async ({ page }, text: string) => {
   await expect(sheet(page).locator('.r-head')).toContainText(text);
 });

@@ -212,6 +212,10 @@ Then('the panel is titled {string} with {string}', async ({ page }, title: strin
   await expect(panel(page).locator('.sci')).toHaveText(sci);
 });
 
+Then('the panel labels them {string}', async ({ page }, label: string) => {
+  await expect(panel(page).locator('.taglabel')).toHaveText(label);
+});
+
 Then('the panel reads {string} {string}', async ({ page }, name: string, value: string) => {
   await expect(field(page, name)).toHaveText(value);
 });
@@ -397,6 +401,17 @@ Given(/^"(.*)" has an upload listing (\d+) photos whose files aren't on the serv
   for (const key of keys) s3.delete(bucketOf(c), key);
   scratch.missing = keys;
   scratch.staleUpload = `${uploadPrefix(c, upload.stamp)}**`;
+});
+
+Given('{string} has a camera of its own whose {int} photos aren\'t on the server', async ({ s3 }, name: string, n: number) => {
+  const c = COLLECTIONS[name];
+  const upload: Upload = {
+    stamp: '2025.06.02.08.00.00_fielduser',
+    deployment: { id: 'AB08', name: 'Dry Fork', lat: 0.59, lon: -150.23, elevation: 1250 },
+    photos: Array.from({ length: n }, (_, i) => ({ file: `GONE${i}.JPG`, time: '2025-06-01T08:00:00' })),
+  };
+  addUpload(s3, c, upload);
+  for (const p of upload.photos) s3.delete(bucketOf(c), `${uploadPrefix(c, upload.stamp)}${p.file}`);
 });
 
 When(/^the photo files of that upload (can't|can) be listed(?: again)?$/, async ({ s3, scratch }, can: string) => {

@@ -710,7 +710,7 @@ path.st.sel { stroke: var(--warn); stroke-width: 3; }
   padding: 6px 14px 6px 16px; border-top: 1px solid var(--ruleSoft);
 }
 .effhead { display: grid; align-content: start; gap: 2px; min-width: 0; overflow: hidden; }
-.effhead h2 { font: 600 15px/20px var(--ui); }
+.effhead h2 { font: 600 15px/18px var(--ui); }
 .tl-legend { display: grid; font-size: 13px; line-height: 17px; color: var(--inkSoft); }
 .tl-legend > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sw { display: inline-block; width: 20px; height: 11px; vertical-align: -1px; margin-right: 6px; border: 1px solid var(--ruleSoft); }
@@ -1035,6 +1035,10 @@ table.data { border-collapse: separate; border-spacing: 0; min-width: 100%; font
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+.detail-side .taglabel {
+  font-size: 13px;
+  color: var(--inkMute);
 }
 .detail-side h2 {
   font: 500 24px/1.15 Newsreader, Georgia, serif;

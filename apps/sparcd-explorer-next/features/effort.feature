@@ -7,6 +7,12 @@ Feature: Camera effort
   Background:
     Given I have opened "Alpha Basin"
 
+  Scenario: The strip says it counts camera effort, every species included
+    Then the strip is titled "Camera effort: photos per month"
+    When I filter species to "Coyote"
+    Then the strip is titled "Camera effort: photos per month"
+    And the strip shows 6 months with photos
+
   Scenario: Dragging across months sets Dates, and × Clear lets them go
     When I drag the strip from "Jan 2024" to "May 2024"
     Then the dates filter reads "Dates: Jan 2024 – May 2024"
