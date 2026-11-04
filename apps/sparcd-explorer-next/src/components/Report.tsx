@@ -23,6 +23,7 @@ import {
   type Model,
   type ReportFacts,
 } from '@/data';
+import { basemapOf } from '@/lib/basemaps';
 import { hourCounts, linear, niceTicks } from '@/lib/charts';
 import { saveBlob } from '@/lib/download';
 import { filterWords, matchLegend } from '@/lib/filterLabels';
@@ -168,6 +169,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
   const config = useStore((s) => s.config)!;
   const loaded = useStore((s) => s.loaded);
   const mapMode = useStore((s) => s.mapMode);
+  const basemap = basemapOf(useStore((s) => s.basemap));
   const checks = useDataChecks();
   const [inc, setInc] = useState(included);
   const [menu, setMenu] = useState(false);
@@ -432,10 +434,11 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
                 display={display}
                 sites={sitesShown}
                 area={filters.area}
+                basemap={basemap}
               />
               <figcaption className="r-cap">
                 {sitesShown ? 'Dots sized by detections in view.' : 'Hexes shaded by detections in view; their size follows the coordinate precision.'}{' '}
-                No basemap.
+                Basemap: {basemap.credit}.
                 {unplaced > 0 && ` ${fmtN(unplaced)} ${unplaced === 1 ? 'photo has' : 'photos have'} no location and ${unplaced === 1 ? 'is' : 'are'} not on the map.`}
               </figcaption>
             </figure>,

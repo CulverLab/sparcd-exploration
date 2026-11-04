@@ -19,6 +19,7 @@ import {
   type Registries,
 } from '@/data';
 import type { Display } from '@/lib/format';
+import { BASEMAPS, DEFAULT_BASEMAP } from '@/lib/basemaps';
 import { readStored, writeStored } from '@/lib/storage';
 
 export type View = 'locations' | 'species' | 'photos' | 'charts';
@@ -81,6 +82,8 @@ type State = {
   /** Bumped by every open, cancel and account change. */
   openGeneration: number;
   mapMode: MapMode;
+  /** The map's basemap, which the report's map follows; remembered in this browser. */
+  basemap: string;
   /** Sites of the Locations row under the pointer or focus, lit on the map. */
   highlight: number[] | null;
   /** Set by a row or data-check action; a filter change or Reset lets it go. */
@@ -135,6 +138,7 @@ type State = {
   setSorting: (view: TableView, sorting: Sorting) => void;
   setDisplay: (display: Partial<Display>) => void;
   setMapMode: (mode: MapMode) => void;
+  setBasemap: (id: string) => void;
   setHighlight: (sites: number[] | null) => void;
   showToast: (message: string, undo?: () => void) => void;
   hideToast: () => void;
@@ -146,6 +150,7 @@ const SIDE_KEY = 'sparcd-explorer-sidebar';
 export const RESET_UNDO_MS = 8000;
 let resetTimer: ReturnType<typeof setTimeout> | undefined;
 const LAYOUT_KEY = 'sparcd-explorer-photo-layout';
+const BASEMAP_KEY = 'sparcd-explorer-basemap';
 // Every visit opens on Locations; a table view older builds remembered goes.
 writeStored('sparcd-explorer-view', null);
 
@@ -228,6 +233,7 @@ export const useStore = create<State>((set, get) => ({
   toast: null,
   openGeneration: 0,
   mapMode: 'hexes',
+  basemap: readStored(BASEMAP_KEY, DEFAULT_BASEMAP, (v): v is string => typeof v === 'string' && BASEMAPS.some((b) => b.id === v)),
   highlight: null,
   back: null,
   side: readStored(SIDE_KEY, true, (v): v is boolean => typeof v === 'boolean'),
@@ -451,6 +457,10 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setMapMode: (mapMode) => set({ mapMode }),
+  setBasemap: (basemap) => {
+    writeStored(BASEMAP_KEY, basemap);
+    set({ basemap });
+  },
   setHighlight: (highlight) => set({ highlight }),
   showToast: (message, undo) => set({ toast: { id: ++toastId, message, undo } }),
   hideToast: () => set({ toast: null }),

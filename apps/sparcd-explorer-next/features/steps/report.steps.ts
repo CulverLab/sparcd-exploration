@@ -83,8 +83,15 @@ Then("the report's Species table lists {string}", async ({ page }, names: string
 Then("the report's map shows hexes", async ({ page }) => {
   const map = section(page, 'Map');
   expect(await map.locator('svg.rmap polygon.hx').count()).toBeGreaterThan(0);
-  await expect(map.locator('figcaption')).toContainText('No basemap');
   await expect(map.locator('.scalebar text')).toHaveText(/^\d[\d,]* (k?m)$/);
+});
+
+Then("the report's map is drawn on {string} tiles and credits {string}", async ({ page }, tiles: string, credit: string) => {
+  const map = section(page, 'Map');
+  const hrefs = await map.locator('svg.rmap image').evaluateAll((all) => all.map((i) => i.getAttribute('href')!));
+  expect(hrefs.length).toBeGreaterThan(0);
+  expect(hrefs.every((h) => h.includes(tiles))).toBe(true);
+  await expect(map.locator('figcaption')).toContainText(`Basemap: ${credit}.`);
 });
 
 Then("the report's totals by collection read {string} and {string}", async ({ page }, a: string, b: string) => {

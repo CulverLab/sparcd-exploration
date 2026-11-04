@@ -1253,6 +1253,12 @@ dl.fields dd {
   stroke: var(--accent);
   stroke-width: 1;
   stroke-opacity: 0.75;
+  fill-opacity: 0.85;
+}
+/* Too small to shade on a wide map: a solid outline keeps it in sight, as on the page's map. */
+.rmap.tiny .hx:not(.out, .sel) {
+  stroke-width: 3;
+  stroke-opacity: 1;
 }
 .rmap .hx.s0 {
   fill: var(--sheet);
@@ -1273,7 +1279,8 @@ dl.fields dd {
   fill: var(--accent);
 }
 .rmap .hx.out {
-  fill: none;
+  fill: var(--sheet);
+  fill-opacity: 0.25;
   stroke-dasharray: 3 3;
   stroke-opacity: 0.5;
 }
@@ -1298,15 +1305,20 @@ dl.fields dd {
   stroke: var(--sheet);
 }
 .rmap .st.out {
-  fill: none;
+  fill: var(--sheet);
+  fill-opacity: 0.45;
   stroke: var(--inkMute);
 }
 .rmap .scalebar rect {
   fill: var(--ink);
+  stroke: var(--sheet);
 }
 .rmap .scalebar text {
   font: 500 12px 'JetBrains Mono', monospace;
   fill: var(--ink);
+  stroke: var(--sheet);
+  stroke-width: 3px;
+  paint-order: stroke;
 }
 .r-chart svg {
   display: block;

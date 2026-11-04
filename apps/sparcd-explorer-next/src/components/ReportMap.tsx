@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { hexCenter, siteHexes, type CoordDisplay, type FilterResult, type Model, type Position } from '@/data';
+import { tilesInFrame, type Basemap } from '@/lib/basemaps';
 import { fmtN } from '@/lib/format';
 import { hexStep, hexViews, selectedHexes, siteRadius, siteViews } from '@/lib/mapData';
 
@@ -20,9 +21,8 @@ function niceMetres(max: number): number {
 
 /**
  * The map for a printed report: the hexes (or, where exact sites are allowed
- * and shown, the sites) drawn on plain paper, framed on what is in view. No
- * basemap: tiles from other servers can't be copied into a page image, and the
- * cells already follow the coordinate precision.
+ * and shown, the sites) over the page's basemap, framed on what is in view. The
+ * tiles are plain images in the SVG, so it scales to the printed page.
  */
 export function ReportMap({
   model,
@@ -31,6 +31,7 @@ export function ReportMap({
   display,
   sites,
   area,
+  basemap,
 }: {
   model: Model;
   result: FilterResult;
@@ -40,6 +41,7 @@ export function ReportMap({
   /** Draw site dots instead of hexes. */
   sites: boolean;
   area: string[];
+  basemap: Basemap;
 }) {
   const { coords, precision } = display;
   const cells = useMemo(() => siteHexes(model.sites, { coords, precision }), [model, coords, precision]);
@@ -80,8 +82,23 @@ export function ReportMap({
   const barPx = metres / metresPerPx;
 
   return (
-    <svg className="rmap" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={sites ? 'Map of the camera sites in view' : 'Map of the hexes in view'}>
+    <svg className={`rmap${!sites && radius < 13 ? ' tiny' : ''}`} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={sites ? 'Map of the camera sites in view' : 'Map of the hexes in view'}>
       <rect className="bg" width={W} height={H} />
+      {basemap.layers.map((layer) =>
+        tilesInFrame(layer, { cx, cy, scale, width: W, height: H }).map((t) => (
+          // A hair larger than the tile, so no seam shows between neighbours once scaled.
+          <image
+            key={`${layer.url}|${t.x}|${t.y}`}
+            href={t.url}
+            x={t.x}
+            y={t.y}
+            width={t.size + 0.5}
+            height={t.size + 0.5}
+            preserveAspectRatio="none"
+            opacity={layer.opacity}
+          />
+        )),
+      )}
       {sites
         ? dots.map((d) => {
             const [x, y] = at(d.position);

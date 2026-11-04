@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
-import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
+import { BASEMAPS, basemapOf } from '@/lib/basemaps';
 import { attachTrackpad } from '@/lib/mapGestures';
 import { useMedia } from '@/lib/useMedia';
 import { fmtN, formatElevation } from '@/lib/format';
@@ -24,14 +24,12 @@ import {
   type HexView,
   type SiteView,
 } from '@/lib/mapData';
-import { readStored, writeStored } from '@/lib/storage';
 import { inViewOf, useView } from '@/lib/useView';
 import { useStore, type MapMode } from '@/store';
 import { Choices, Popover, usePopover } from './Popover';
 import { SelClear } from './SelClear';
 import { flashSection } from './Sidebar';
 
-const BASEMAP_KEY = 'sparcd-explorer-basemap';
 const MAX_ZOOM = 16;
 
 const STEP_CLASSES = Array.from({ length: HEX_STEPS + 1 }, (_, i) => `s${i}`);
@@ -151,9 +149,8 @@ export function MapBand() {
   // Exact site points follow the data layer's gate; elsewhere only hexes exist.
   const sitesAllowed = canShowExactSites(endpoint);
   const mode = sitesAllowed ? storedMode : 'hexes';
-  const [basemap, setBasemap] = useState(() =>
-    readStored(BASEMAP_KEY, DEFAULT_BASEMAP, (v): v is string => typeof v === 'string' && BASEMAPS.some((b) => b.id === v)),
-  );
+  const basemap = useStore((s) => s.basemap);
+  const setBasemap = useStore((s) => s.setBasemap);
   const [boxing, setBoxing] = useState(false);
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [clearAt, setClearAt] = useState<{ left: number; top: number } | null>(null);
@@ -491,10 +488,7 @@ export function MapBand() {
             mode={mode}
             onMode={setMapMode}
             basemap={basemap}
-            onBasemap={(id) => {
-              setBasemap(id);
-              writeStored(BASEMAP_KEY, id);
-            }}
+            onBasemap={setBasemap}
             sitesAllowed={sitesAllowed}
           />
         </div>

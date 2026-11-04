@@ -22,6 +22,16 @@ Feature: Report and downloads
     And I open the report
     Then the report includes "Summary, Camera effort, Locations, Activity by hour, Data checks"
 
+  @US-033
+  Scenario: The report's map sits on the basemap chosen on the page
+    Given I have opened "Alpha Basin"
+    When I open the report
+    Then the report's map is drawn on "USGSTopo" tiles and credits "USGS The National Map"
+    When I close the report
+    And I choose the "Esri Imagery" basemap
+    And I open the report
+    Then the report's map is drawn on "World_Imagery" tiles and credits "Esri World Imagery"
+
   @US-031
   Scenario: With two collections open, the report has totals by collection
     Given I am signed in
