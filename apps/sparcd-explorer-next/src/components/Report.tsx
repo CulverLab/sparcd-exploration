@@ -515,7 +515,7 @@ export function ReportSheet({ onClose }: { onClose: () => void }) {
               <p className="r-cap">Detections by hour of day, camera clock time. Shaded hours are night.</p>
               {result.detections.length ? (
                 <div className="r-chart chart">
-                  <HourChart hours={hours} filters={NO_FILTERS} />
+                  <HourChart hours={hours} />
                 </div>
               ) : (
                 <p className="r-none">No detections in view.</p>

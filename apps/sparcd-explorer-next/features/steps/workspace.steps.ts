@@ -87,6 +87,10 @@ Then('{string} is disabled', async ({ page }, label: string) => {
   await expect(page.getByRole('button', { name: label, exact: true })).toBeDisabled();
 });
 
+Then('{string} is enabled', async ({ page }, label: string) => {
+  await expect(page.getByRole('button', { name: label, exact: true })).toBeEnabled();
+});
+
 When('I filter species to {string}', async ({ page }, species: string) => {
   await pressOnly(page, 'species', species);
   await page.keyboard.press('Escape');

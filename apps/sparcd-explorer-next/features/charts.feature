@@ -74,3 +74,54 @@ Feature: Charts
     Then the dates filter reads "Dates: Jan 2024"
     When I click the "Jan 2024" bar in the month chart
     Then the dates filter reads "Dates"
+
+  Scenario: Save data downloads the species the chart shows
+    When I hide the species "Bobcat"
+    And I save the data of "Detections by species"
+    Then the file is named like "alpha-basin-<date>-species-chart.csv"
+    And the CSV has the header "Species,Scientific name,Detections"
+    And the CSV reads "Deer (Mule),Odocoileus hemionus,2" then "Coyote,Canis latrans,1" then "Gray Fox,Urocyon cinereoargenteus,1"
+
+  Scenario: Save data downloads every hour and every month on the axis
+    When I save the data of "Activity by hour of day"
+    Then the file is named like "alpha-basin-<date>-hour-chart.csv"
+    And the CSV has the header "Hour,Detections"
+    And the CSV has 24 rows
+    And the CSV has the row "22:00,2"
+    And the CSV has the row "21:00,1"
+    When I save the data of "Detections per month"
+    Then the file is named like "alpha-basin-<date>-month-chart.csv"
+    And the CSV has the header "Month,Detections"
+    And the CSV has 24 rows
+    And the CSV has the row "2023-04,3"
+    And the CSV has the row "2023-05,0"
+
+  Scenario Outline: Save image downloads a PNG 2000 pixels wide, whatever the window and the theme
+    Given the screen is <window> pixels wide
+    When I switch to the dark appearance
+    And I save the image of "<chart>"
+    Then the file is named like "alpha-basin-<date>-<file>-chart.png"
+    And the file is a PNG 2000 pixels wide
+    And the image has a white background and bars in the light palette
+
+    Examples:
+      | window | chart                   | file    |
+      | 1440   | Detections by species   | species |
+      | 1440   | Activity by hour of day | hour    |
+      | 700    | Detections per month    | month   |
+
+  Scenario: The save buttons are disabled when a chart has nothing to save
+    When I press Only on "Untagged photos" in the species filter
+    And I press Escape
+    Then "Save image of Detections by species" is disabled
+    And "Save data of Detections by species" is disabled
+    And "Save image of Activity by hour of day" is disabled
+    And "Save data of Activity by hour of day" is disabled
+    And "Save image of Detections per month" is disabled
+    And "Save data of Detections per month" is disabled
+    When I press "Reset filters"
+    Then "Save image of Detections by species" is enabled
+    And "Save data of Detections per month" is enabled
+
+  Scenario: The Table panel's Export CSV stays disabled on the Charts tab
+    Then "Export CSV" is disabled

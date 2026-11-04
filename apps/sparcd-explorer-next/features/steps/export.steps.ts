@@ -113,3 +113,49 @@ Then(/^the CSV lists the (locations|photos) in the table's order$/, async ({ pag
   expect(listed.length).toBeGreaterThan(1);
   expect(listed).toEqual(await columnValues(page, column));
 });
+
+// --- Saving a chart ------------------------------------------------------------------
+
+When('I save the data of {string}', async ({ page, scratch }, title: string) => {
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: `Save data of ${title}`, exact: true }).click()]);
+  const [header, ...rows] = parseCsv(await readFile((await download.path())!, 'utf8'));
+  scratch.name = download.suggestedFilename();
+  scratch.csv = { name: download.suggestedFilename(), header, rows } satisfies Csv;
+});
+
+Then('the CSV reads {string} then {string} then {string}', async ({ scratch }, a: string, b: string, c: string) => {
+  expect(csvOf(scratch).rows.map((r) => r.join(','))).toEqual([a, b, c]);
+});
+
+Then('the CSV has the row {string}', async ({ scratch }, row: string) => {
+  expect(csvOf(scratch).rows.map((r) => r.join(','))).toContain(row);
+});
+
+When('I save the image of {string}', async ({ page, scratch }, title: string) => {
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: `Save image of ${title}`, exact: true }).click()]);
+  scratch.name = download.suggestedFilename();
+  scratch.png = await readFile((await download.path())!);
+});
+
+Then('the file is a PNG {int} pixels wide', async ({ scratch }, width: number) => {
+  const png = scratch.png as Buffer;
+  expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  expect(png.readUInt32BE(16)).toBe(width);
+});
+
+Then('the image has a white background and bars in the light palette', async ({ page, scratch }) => {
+  const seen = await page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = Object.assign(document.createElement('canvas'), { width: image.naturalWidth, height: image.naturalHeight });
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(image, 0, 0);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let bars = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] === 0x0b && data[i + 1] === 0x33 && data[i + 2] === 0x58) bars++;
+    return { corner: [...data.subarray(0, 4)], bars };
+  }, (scratch.png as Buffer).toString('base64'));
+  expect(seen.corner).toEqual([255, 255, 255, 255]);
+  expect(seen.bars).toBeGreaterThan(100);
+});

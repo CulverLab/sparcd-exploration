@@ -867,6 +867,10 @@ table.data { border-collapse: separate; border-spacing: 0; min-width: 100%; font
 /* Charts */
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; padding: 20px; }
 .chart { margin: 0; min-width: 0; }
+.charthead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0 12px; }
+.chartsave { display: flex; flex: none; gap: 2px; }
+.chartsave .btn { padding: 6px 8px; font-size: 13px; }
+.chartsave .btn:disabled:hover { background: transparent; }
 .chart h3 { font: 500 20px/1.2 var(--display); }
 .chart p { margin: 3px 0 10px; font-size: 13px; color: var(--inkMute); }
 .chart.wide { grid-column: 1 / -1; }

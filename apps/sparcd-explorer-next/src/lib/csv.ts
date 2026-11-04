@@ -33,8 +33,8 @@ export function toCsv<R>(cols: Col<R>[], rows: R[]): string {
 
 const csvText = <R>(c: Col<R>, r: R): Cell => (c.value(r) === null ? null : cellText(c, r));
 
-/** `alpha-basin-2026-10-19-locations.csv`, or `alpha-and-bravo-…` for several collections. */
-export function csvFileName(collections: string[], view: string, today: Date): string {
+/** `alpha-basin-2026-10-19-locations.csv`, or `alpha-and-bravo-…` for several collections; another extension for another kind of file. */
+export function csvFileName(collections: string[], view: string, today: Date, extension = 'csv'): string {
   const base =
     collections.length === 1
       ? slug(collections[0])
@@ -42,5 +42,5 @@ export function csvFileName(collections: string[], view: string, today: Date): s
         ? `${slug(collections[0])}-and-${slug(collections[1])}`
         : `${slug(collections[0])}-and-${collections.length - 1}-more`;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${base}-${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}-${view}.csv`;
+  return `${base}-${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}-${view}.${extension}`;
 }
