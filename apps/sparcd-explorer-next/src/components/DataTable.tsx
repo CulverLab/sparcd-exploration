@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef, type SortingState } from '@tanstack/react-table';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { fmtN } from '@/lib/format';
 import { cellText, type Cell, type Col } from '@/lib/tables';
 
 export type DataTableProps<R> = {
@@ -21,6 +22,8 @@ export type DataTableProps<R> = {
   head?: (c: Col<R>) => ReactNode | undefined;
   /** A last column of per-row actions. */
   action?: { label: string; cell: (r: R) => ReactNode };
+  /** What the columns add up to, by column id, for a "Total" row at the table's end. */
+  total?: Record<string, string | number>;
   /** Where the page is about to scroll to as the table opens. */
   initialScroll?: number | null;
   empty: string;
@@ -44,6 +47,7 @@ export function DataTable<R>({
   cell,
   head,
   action,
+  total,
   empty,
   initialScroll,
 }: DataTableProps<R>) {
@@ -79,7 +83,7 @@ export function DataTable<R>({
   });
   const virtualizer = useWindowVirtualizer({
     count: rows.length,
-    estimateSize: () => 34,
+    estimateSize: () => 46,
     overscan: 12,
     scrollMargin: margin,
     initialOffset: initialScroll ?? (() => scrollY),
@@ -89,7 +93,8 @@ export function DataTable<R>({
   const after = items.length ? virtualizer.getTotalSize() - (items[items.length - 1].end - margin) : 0;
 
   // Column headers ride under the sticky bar and the table's own toolbar while
-  // the table scrolls past, even though a wide table scrolls sideways in its own box.
+  // the table scrolls past, and the totals along the screen's foot until the
+  // table's end comes up, even though a wide table scrolls sideways in its own box.
   useEffect(() => {
     const stick = () => {
       const t = tableRef.current;
@@ -98,13 +103,18 @@ export function DataTable<R>({
       const tools = t.closest('#table')?.querySelector('.tbl-head');
       const above = Math.max(bar.getBoundingClientRect().bottom, tools?.getBoundingClientRect().bottom ?? 0);
       const r = t.getBoundingClientRect();
-      const off = Math.min(Math.max(above - r.top, 0), Math.max(0, r.height - t.tHead.offsetHeight - 80));
+      const footH = t.tFoot?.offsetHeight ?? 0;
+      const off = Math.min(Math.max(above - r.top, 0), Math.max(0, r.height - t.tHead.offsetHeight - footH - 80));
       t.style.setProperty('--hy', `${off}px`);
+      if (footH) t.style.setProperty('--fy', `${Math.max(Math.min(innerHeight - r.bottom, 0), t.tHead.offsetHeight + footH - r.height)}px`);
     };
     stick();
+    const grown = new ResizeObserver(stick);
+    grown.observe(tableRef.current!);
     addEventListener('scroll', stick, { passive: true });
     addEventListener('resize', stick);
     return () => {
+      grown.disconnect();
       removeEventListener('scroll', stick);
       removeEventListener('resize', stick);
     };
@@ -116,28 +126,40 @@ export function DataTable<R>({
       <table ref={tableRef} className="data">
         <thead>
           <tr>
-            {table.getHeaderGroups()[0].headers.map((h) => {
+            {table.getHeaderGroups()[0].headers.map((h, i) => {
               const c = colById.get(h.id)!;
               const dir = h.column.getIsSorted();
               const label = head?.(c) ?? c.label;
+              const inner = h.column.getCanSort() ? (
+                <button type="button" onClick={h.column.getToggleSortingHandler()}>
+                  {label}
+                  {dir && (
+                    <span className="arr" aria-hidden="true">
+                      {dir === 'asc' ? '▲' : '▼'}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <span className="th">{label}</span>
+              );
               return (
                 <th
                   key={h.id}
-                  className={c.numeric ? 'n' : undefined}
+                  className={[c.numeric && 'n', i === 0 && 'first'].filter(Boolean).join(' ') || undefined}
                   aria-sort={dir ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                  title={c.title}
                 >
-                  {h.column.getCanSort() ? (
-                    <button type="button" onClick={h.column.getToggleSortingHandler()}>
-                      {label}
-                      {dir && (
-                        <span className="arr" aria-hidden="true">
-                          {dir === 'asc' ? '▲' : '▼'}
+                  {c.help ? (
+                    <span className="thwrap">
+                      {inner}
+                      <span className="qmark" tabIndex={0} role="img" aria-label={c.help}>
+                        ?
+                        <span className="qtip" aria-hidden="true">
+                          {c.help}
                         </span>
-                      )}
-                    </button>
+                      </span>
+                    </span>
                   ) : (
-                    <span className="th">{label}</span>
+                    inner
                   )}
                 </th>
               );
@@ -177,8 +199,8 @@ export function DataTable<R>({
                 onFocus={onRowHover && (() => onRowHover(r))}
                 onBlur={onRowHover && ((e) => !e.currentTarget.contains(e.relatedTarget) && onRowHover(null))}
               >
-                {cols.map((c) => (
-                  <td key={c.id} className={[c.numeric && 'n', c.mono && 'm', c.italic && 'sci'].filter(Boolean).join(' ') || undefined}>
+                {cols.map((c, i) => (
+                  <td key={c.id} className={[c.numeric && 'n', c.mono && 'm', c.italic && 'sci', i === 0 && 'first'].filter(Boolean).join(' ') || undefined}>
                     {cell?.(c, r) ?? cellText(c, r)}
                   </td>
                 ))}
@@ -192,8 +214,23 @@ export function DataTable<R>({
             </tr>
           )}
         </tbody>
+        {total && rows.length > 0 && (
+          <tfoot>
+            <tr>
+              {cols.map((c, i) => {
+                const v = i === 0 ? 'Total' : total[c.id];
+                return (
+                  <td key={c.id} className={[c.numeric && 'n', i === 0 && 'first'].filter(Boolean).join(' ') || undefined}>
+                    {typeof v === 'number' ? fmtN(v) : v}
+                  </td>
+                );
+              })}
+              {action && <td className="act" />}
+            </tr>
+          </tfoot>
+        )}
       </table>
-      <div className="tbl-foot">{rows.length ? `All ${rows.length.toLocaleString('en-US')} shown` : empty}</div>
+      {!rows.length && <div className="tbl-foot">{empty}</div>}
     </>
   );
 }

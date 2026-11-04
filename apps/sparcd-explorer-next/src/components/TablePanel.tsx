@@ -7,6 +7,7 @@ import {
   photosForTag,
   soleSpecies,
   speciesRows,
+  summarize,
   toggleSpecies,
   type FilterResult,
   type LocationRow,
@@ -36,13 +37,13 @@ import {
 } from '@/lib/tables';
 import { useTableView } from '@/lib/useTableView';
 import { useStore, type PhotoLayout, type TableView } from '@/store';
-import { ColumnsEditor } from './ColumnsEditor';
 import { DataChecksPanel } from './DataChecks';
 import { CollectionsCell, FlagTags } from './LocationCells';
 import { DataTable } from './DataTable';
 import { PhotoGrid, useSteadyRows } from './PhotoGrid';
 import { Seg } from './Popover';
 import { Tip, type TipAt } from './Tip';
+import { ViewMenu } from './ViewMenu';
 import { Charts, PhotoDetail } from './later';
 
 const NO_PHOTOS: PhotoRow[] = [];
@@ -266,6 +267,16 @@ export function TablePanel() {
     const panel = document.getElementById('table')!;
     return panel.getBoundingClientRect().top + scrollY + panel.clientTop - (document.getElementById('sticky-top')?.offsetHeight ?? 0);
   };
+  // The tab row peeks at the first screen's foot: a tab's click brings the tables up to it.
+  const reveal = () => scrollTo({ top: tableTop(), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  const revealing = useRef(false);
+  useEffect(() => {
+    if (!revealing.current || updating) return;
+    revealing.current = false;
+    // A frame on: a table's virtualizer sets the window's scroll as it mounts, which would stop the slide.
+    const frame = requestAnimationFrame(reveal);
+    return () => cancelAnimationFrame(frame);
+  }, [view, updating]);
   const switchLayout = (next: PhotoLayout) => {
     if (next === now.layout) return;
     const top = tableTop();
@@ -296,8 +307,33 @@ export function TablePanel() {
       : view === 'photos'
         ? plural(rows.length, 'photo')
         : view === 'charts'
-          ? plural(result.detections.length, 'detection')
+          ? ''
           : locationCount(rows as LocationRow[]);
+
+  // Each table's end: what its columns add up to. A location or a species is counted once however many rows share it.
+  const totals = useMemo((): Record<string, string | number> => {
+    const add = <R,>(list: R[], of: (r: R) => number) => list.reduce((n, r) => n + of(r), 0);
+    if (view === 'species') {
+      const list = rows as SpeciesRow[];
+      return {
+        dets: add(list, (r) => r.detections),
+        animals: add(list, (r) => r.animals),
+        locs: summarize(model, result, grouping).locations,
+        share: '100.0%',
+      };
+    }
+    if (view !== 'locations') return {};
+    const list = rows as LocationRow[];
+    return {
+      photos: add(list, (r) => r.photos),
+      tagged: add(list, (r) => r.tagged),
+      untagged: add(list, (r) => r.photos - r.tagged),
+      dets: add(list, (r) => r.detections),
+      days: add(list, (r) => r.activeDays),
+      sites: add(list, (r) => r.sites.length),
+      species: summarize(model, result, grouping).species,
+    };
+  }, [view, rows, model, result, grouping]);
 
   // The file lists the rows in the table's order.
   const exportCsv = () => {
@@ -338,11 +374,7 @@ export function TablePanel() {
     body = (
       <>
         <PhotoGrid model={grid.model} rows={grid.rows} onOpen={openDetail} initialScroll={restore.current} />
-        <div className="tbl-foot">
-          {photoOrder.length
-            ? `All ${photoOrder.length.toLocaleString('en-US')} shown`
-            : `No ${filters.photoTag === 'tagged' ? 'tagged' : 'untagged'} photos here.`}
-        </div>
+        {!photoOrder.length && <div className="tbl-foot">No {filters.photoTag === 'tagged' ? 'tagged' : 'untagged'} photos here.</div>}
       </>
     );
   } else if (tableView === 'locations') {
@@ -356,6 +388,7 @@ export function TablePanel() {
         rowClass={(r) => [flags(r).length && 'flag', r.photos === 0 && 'nomatch'].filter(Boolean).join(' ') || undefined}
         onRowHover={(r) => setHighlight(r && !r.noLocation ? r.sites : null)}
         head={(c) => (c.id === 'activity' && axis ? <ActivityHead ticks={ticks} onWidth={setSparkW} /> : undefined)}
+        total={totals}
         cell={(c, r) => {
           if (c.id === 'activity') {
             return axis ? (
@@ -380,7 +413,7 @@ export function TablePanel() {
           cell: (r) => (
             <button
               type="button"
-              className="linkbtn text-[12px]"
+              className="linkbtn"
               disabled={r.photos === 0}
               onClick={() => {
                 const from = scrollY;
@@ -413,6 +446,7 @@ export function TablePanel() {
         sorting={now.sorting.species}
         onSorting={(s) => setSorting('species', s)}
         rowKey={(r) => model.species[r.species].key}
+        total={totals}
         cell={(c, r) => {
           if (c.id === 'dets') {
             return (
@@ -455,7 +489,7 @@ export function TablePanel() {
         action={{
           label: 'Open',
           cell: (r) => (
-            <button type="button" className="linkbtn text-[12px]" onClick={(e) => openDetail(r, e.currentTarget)}>
+            <button type="button" className="linkbtn" onClick={(e) => openDetail(r, e.currentTarget)}>
               View
             </button>
           ),
@@ -479,7 +513,13 @@ export function TablePanel() {
               aria-selected={now.view === v}
               aria-controls="table-view"
               tabIndex={now.view === v ? 0 : -1}
-              onClick={() => setView(v)}
+              onClick={() => {
+                if (v === now.view) reveal();
+                else {
+                  revealing.current = true;
+                  setView(v);
+                }
+              }}
               onKeyDown={(e) => {
                 const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: VIEWS.length - 1 }[e.key];
                 if (to === undefined) return;
@@ -500,41 +540,17 @@ export function TablePanel() {
             </button>
           )}
           {now.view === 'photos' && (
-            <>
-              <Seg
-                className="seg"
-                label="Layout"
-                value={now.layout}
-                options={[
-                  ['grid', 'Grid'],
-                  ['list', 'List'],
-                ]}
-                onChange={switchLayout}
-              />
-              <Seg
-                className="seg"
-                label="Tagged"
-                value={now.filters.photoTag}
-                options={[
-                  ['tagged', 'Tagged'],
-                  ['untagged', 'Untagged'],
-                  ['all', 'All'],
-                ]}
-                onChange={setPhotoTag}
-              />
-              {now.layout === 'grid' && (
-                <Seg<'new' | 'old' | ''>
-                  className="seg"
-                  label="Order"
-                  value={now.sorting.photos[0]?.id === 'time' ? (now.sorting.photos[0].desc ? 'new' : 'old') : ''}
-                  options={[
-                    ['new', 'Newest first'],
-                    ['old', 'Oldest first'],
-                  ]}
-                  onChange={(order) => setSorting('photos', [{ id: 'time', desc: order === 'new' }])}
-                />
-              )}
-            </>
+            <Seg
+              className="seg quietseg"
+              label="Tagged"
+              value={now.filters.photoTag}
+              options={[
+                ['tagged', 'Tagged'],
+                ['untagged', 'Untagged'],
+                ['all', 'All'],
+              ]}
+              onChange={setPhotoTag}
+            />
           )}
           <span className={view === 'locations' ? 'rowcount locs' : 'rowcount'} aria-live="polite">
             {updating && (
@@ -550,30 +566,23 @@ export function TablePanel() {
                   </span>
                 ))}
           </span>
-          {(now.view === 'locations' || now.view === 'species') && (
-            <span className={grouping.separate ? 'septoggle on' : 'septoggle'}>
-              <span id="sep-label">Show each location ID separately</span>
-              <button
-                type="button"
-                role="switch"
-                className="switch"
-                aria-checked={now.grouping.separate}
-                aria-labelledby="sep-label"
-                onClick={() => setSeparate(!now.grouping.separate)}
-              />
-            </span>
+          {now.view !== 'charts' && (
+            <ViewMenu
+              title={view === 'species' ? 'Species' : view === 'photos' ? 'Photos list' : 'Locations'}
+              defs={defs}
+              prefs={prefs}
+              multi={multi}
+              onPrefs={change}
+              separate={now.grouping.separate}
+              onSeparate={setSeparate}
+              photos={
+                now.view === 'photos'
+                  ? { layout: now.layout, onLayout: switchLayout, sorting: now.sorting.photos, onSorting: (s) => setSorting('photos', s) }
+                  : null
+              }
+              onExport={exportCsv}
+            />
           )}
-          <ColumnsEditor
-            title={view === 'species' ? 'Species' : view === 'photos' ? 'Photos list' : 'Locations'}
-            defs={defs}
-            prefs={prefs}
-            multi={multi}
-            disabled={!tableView}
-            onChange={change}
-          />
-          <button type="button" className="btn" disabled={view === 'charts'} onClick={exportCsv}>
-            Export CSV
-          </button>
         </div>
       </div>
       <div className="tbl-wrap" id="table-view" role="tabpanel" aria-labelledby={`tab-${now.view}`}>

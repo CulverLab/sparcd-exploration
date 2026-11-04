@@ -5,8 +5,8 @@ import { frameJob, photoKey, useMissing, useThumb } from '@/lib/thumbs';
 import { useStore } from '@/store';
 
 // Tiles at least 150px wide (130px on phones), 3:2 pictures over a fixed caption.
-const GAP = 8;
-const CAPTION = 72;
+const GAP = 12;
+const CAPTION = 70;
 
 const panel = () => document.querySelector<HTMLElement>('#table .tbl-wrap');
 
@@ -130,7 +130,7 @@ export function PhotoGrid({
     if (Math.abs(top - margin) > 1) setMargin(top);
   });
 
-  const pad = width < 600 ? 6 : 10;
+  const pad = width < 600 ? 8 : 14;
   const minTile = width < 600 ? 130 : 150;
   const inner = Math.max(0, width - 2 * pad);
   const cols = Math.max(1, Math.floor((inner + GAP) / (minTile + GAP)));

@@ -9,7 +9,7 @@ export function FlagTags({ flags, onOpen }: { flags: Flag[]; onOpen: (flag: Flag
     <>
       {flags.map((f, i) => (
         <span key={f.check}>
-          <button type="button" className="tag" title={f.tip} aria-describedby={`${id}-${i}`} onClick={(e) => onOpen(f, e.currentTarget)}>
+          <button type="button" className="tag" aria-describedby={`${id}-${i}`} onClick={(e) => onOpen(f, e.currentTarget)}>
             {f.label}
           </button>
           <span id={`${id}-${i}`} hidden>
@@ -21,7 +21,7 @@ export function FlagTags({ flags, onOpen }: { flags: Flag[]; onOpen: (flag: Flag
   );
 }
 
-/** "2 collections", naming them on hover, and in a small list on a tap. */
+/** "2 collections", naming them in a small list on a press. */
 export function CollectionsCell({ names }: { names: string[] }) {
   const pop = usePopover();
   const id = useId();
@@ -32,7 +32,6 @@ export function CollectionsCell({ names }: { names: string[] }) {
         ref={pop.anchor}
         type="button"
         className="cellbtn"
-        title={all}
         aria-describedby={id}
         aria-haspopup="dialog"
         aria-expanded={pop.open}

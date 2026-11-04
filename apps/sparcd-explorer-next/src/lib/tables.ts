@@ -42,7 +42,8 @@ export type Col<R> = {
   /** Left out of CSV (a drawing, not a value). */
   noExport?: boolean;
   csvLabel?: string;
-  title?: string;
+  /** What a "?" beside the header explains. */
+  help?: string;
   /** Sort key and CSV value. */
   value: (r: R) => Cell;
   /**
@@ -299,22 +300,22 @@ export function locationColumns({ model, display }: TableContext): Col<LocationR
     {
       id: 'coll',
       label: 'Collection',
-      def: true,
+      def: false,
       multi: true,
       value: (r) => (r.collections.length > 1 ? `${r.collections.length} collections` : collectionNames(model, r.collections)[0]),
     },
-    { id: 'activity', label: 'Activity', def: true, sortable: false, noExport: true, value: () => null },
-    { id: 'range', label: 'Mountain range', def: true, value: (r) => r.range || null },
-    coordinatesColumn(pos, display, true),
-    elevationColumn((r) => r.elevation, display, true),
+    { id: 'activity', label: 'Activity', def: false, sortable: false, noExport: true, value: () => null },
+    { id: 'range', label: 'Mountain range', def: false, value: (r) => r.range || null },
+    coordinatesColumn(pos, display, false),
+    elevationColumn((r) => r.elevation, display, false),
     { id: 'photos', label: 'Photos', def: true, numeric: true, value: (r) => r.photos },
     { id: 'tagged', label: 'Tagged', def: false, numeric: true, value: (r) => r.tagged },
     { id: 'untagged', label: 'Untagged', def: false, numeric: true, value: (r) => r.photos - r.tagged },
     { id: 'dets', label: 'Detections', def: true, numeric: true, value: (r) => r.detections },
-    { id: 'species', label: 'Species', def: true, numeric: true, value: (r) => r.species },
-    { id: 'first', label: 'First photo', def: true, mono: true, value: (r) => r.firstDate },
-    { id: 'last', label: 'Last photo', def: true, mono: true, value: (r) => r.lastDate },
-    { id: 'days', label: 'Active days', def: true, numeric: true, title: ACTIVE_DAYS_HELP, value: (r) => r.activeDays },
+    { id: 'species', label: 'Species', def: false, numeric: true, value: (r) => r.species },
+    { id: 'first', label: 'First photo', def: false, mono: true, value: (r) => r.firstDate },
+    { id: 'last', label: 'Last photo', def: false, mono: true, value: (r) => r.lastDate },
+    { id: 'days', label: 'Active days', def: true, numeric: true, help: ACTIVE_DAYS_HELP, value: (r) => r.activeDays },
     ...positionColumns(pos, display),
     { id: 'sites', label: 'Camera positions', def: false, numeric: true, value: (r) => r.sites.length },
   ];
@@ -329,8 +330,8 @@ export function speciesColumns({ model, totalDetections }: TableContext): Col<Sp
     { id: 'animals', label: 'Animals counted', def: true, numeric: true, value: (r) => r.animals },
     { id: 'locs', label: 'Locations', def: true, numeric: true, value: (r) => r.locations },
     { id: 'photos', label: 'Photos', def: false, numeric: true, value: (r) => r.photos },
-    { id: 'first', label: 'First seen', def: true, mono: true, value: (r) => r.firstDate },
-    { id: 'last', label: 'Last seen', def: true, mono: true, value: (r) => r.lastDate },
+    { id: 'first', label: 'First seen', def: false, mono: true, value: (r) => r.firstDate },
+    { id: 'last', label: 'Last seen', def: false, mono: true, value: (r) => r.lastDate },
     {
       id: 'share',
       label: 'Share of detections',
@@ -361,7 +362,7 @@ export function photoColumns({ model, display }: TableContext): Col<PhotoRow>[] 
     { id: 'count', label: 'Count', def: true, numeric: true, value: (r) => (r.tagged ? r.count : null) },
     { id: 'location', label: 'Location', def: true, value: (r) => (site(r).noLocation ? 'No location set' : r.locationName || null) },
     { id: 'coll', label: 'Collection', def: true, multi: true, value: (r) => r.collection },
-    { id: 'tagged', label: 'Tagged', def: true, value: (r) => (r.tagged ? 'Yes' : 'No') },
+    { id: 'tagged', label: 'Tagged', def: false, value: (r) => (r.tagged ? 'Yes' : 'No') },
     { id: 'sci', label: 'Scientific name', def: false, italic: true, value: (r) => r.scientificNames || null },
     { id: 'locId', label: 'Location ID', def: false, mono: true, value: (r) => r.locationId || null },
     coordinatesColumn(pos, display, false),
