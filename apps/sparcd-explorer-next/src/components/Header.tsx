@@ -1,15 +1,15 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { activeFilters, type Precision } from '@/data';
 import { filtersName } from '@/lib/filterLabels';
 import { initials } from '@/lib/format';
-import { checkForUploads, stopChecking } from '@/lib/opening';
+import { stopChecking } from '@/lib/opening';
 import { currentTheme, setTheme } from '@/lib/theme';
-import { NARROW, PHONE, useMedia } from '@/lib/useMedia';
+import { PHONE, useMedia } from '@/lib/useMedia';
 import { useStore } from '@/store';
-import { DataChecksPanel, useDataChecks } from './DataChecks';
 import { ReportSheet } from './later';
 import { Popover, Seg, usePopover } from './Popover';
 import { ResetSlot } from './ResetSlot';
+import { TitleMenu } from './TitleMenu';
 
 /** Sibling tools, from this app's own base path, as the shared BrandSwitcher does. */
 function apps() {
@@ -29,16 +29,16 @@ function AppSwitcher() {
       <button
         ref={pop.anchor}
         type="button"
-        className="appsw"
+        className="iconbtn appsw"
         aria-label="Switch app"
         title="Switch app"
         aria-haspopup="menu"
         aria-expanded={pop.open}
         onClick={pop.toggle}
       >
-        {Array.from({ length: 9 }, (_, i) => (
-          <i key={i} />
-        ))}
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          {[1.5, 6.5, 11.5].flatMap((y) => [1.5, 6.5, 11.5].map((x) => <rect key={`${x} ${y}`} x={x} y={y} width="3" height="3" />))}
+        </svg>
       </button>
       {pop.open && (
         <Popover anchor={pop.anchor} label="SPARC'd apps" onClose={pop.close}>
@@ -76,12 +76,17 @@ function DisplayMenu() {
       <button
         ref={pop.anchor}
         type="button"
-        className="btn"
+        className="iconbtn"
+        aria-label="Display settings"
+        title="Display settings"
         aria-haspopup="dialog"
         aria-expanded={pop.open}
         onClick={pop.toggle}
       >
-        Display <span className="caret" />
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+          <path d="M8.6 2.5h2.8l.4 2.1 1.5.9 2-.7 1.4 2.4-1.6 1.4v1.8l1.6 1.4-1.4 2.4-2-.7-1.5.9-.4 2.1H8.6l-.4-2.1-1.5-.9-2 .7-1.4-2.4 1.6-1.4V9.1L3.3 7.7l1.4-2.4 2 .7 1.5-.9z" />
+          <circle cx="10" cy="10" r="2.4" />
+        </svg>
       </button>
       {pop.open && (
         <Popover anchor={pop.anchor} label="Display" onClose={pop.close}>
@@ -142,52 +147,6 @@ function DisplayMenu() {
   );
 }
 
-function ago(at: number, now: number): string {
-  const min = Math.floor((now - at) / 60_000);
-  if (min < 1) return 'Updated just now';
-  if (min < 60) return `Updated ${min} min ago`;
-  if (min < 24 * 60) return `Updated ${Math.floor(min / 60)} h ago`;
-  return `Updated ${new Date(at).toISOString().slice(0, 10)}`;
-}
-
-function Status() {
-  const checking = useStore((s) => s.checking);
-  const checkingFiles = useStore((s) => s.checkingFiles);
-  const checkedAt = useStore((s) => s.checkedAt);
-  const error = useStore((s) => s.checkError);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  useEffect(() => setNow(Date.now()), [checkedAt]);
-  return (
-    <>
-      <span className={error ? 'updated warn' : 'updated'} aria-live="polite">
-        {checking
-          ? 'Checking for new uploads…'
-          : error
-            ? `Couldn't check for new uploads. ${error}`
-            : checkedAt !== null && ago(checkedAt, now)}
-        {!checking && checkingFiles && ' · Checking photo files…'}
-      </span>
-      <button
-        type="button"
-        className={`iconbtn ${checking ? 'spin' : ''}`}
-        aria-label="Check for new uploads"
-        title="Check for new uploads"
-        disabled={checking}
-        onClick={() => void checkForUploads(true)}
-      >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-          <path d="M13.4 8.6A5.5 5.5 0 1 1 11.9 4" />
-          <path d="M12.6 1.8v2.8H9.8" />
-        </svg>
-      </button>
-    </>
-  );
-}
-
 function AccountMenu({ changeLabel }: { changeLabel: string }) {
   const pop = usePopover();
   const config = useStore((s) => s.config)!;
@@ -239,28 +198,7 @@ function AccountMenu({ changeLabel }: { changeLabel: string }) {
   );
 }
 
-/** Data checks as part of the status text: quiet, always in the same place. */
-function ChecksItem() {
-  const checks = useDataChecks();
-  const pop = usePopover();
-  const n = checks.length;
-  return (
-    <>
-      <button ref={pop.anchor} type="button" className="ckbtn" aria-haspopup="dialog" aria-expanded={pop.open} onClick={pop.toggle}>
-        {n > 0 && (
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <path d="M10 2.8 18 17H2z" strokeLinejoin="round" />
-            <path d="M10 8v4.2M10 14.4v.1" strokeLinecap="round" />
-          </svg>
-        )}
-        {n ? `${n} data check${n === 1 ? '' : 's'}` : 'No data problems'}
-      </button>
-      {pop.open && <DataChecksPanel anchor={pop.anchor} onClose={pop.close} />}
-    </>
-  );
-}
-
-/** In the top bar, or under 1024 px in `NarrowActions`: one at a time, so the id is the one shown. */
+/** In the top bar, or on a phone in `PhoneActions`: one at a time, so the id is the one shown. */
 function ReportButton() {
   const setReport = useStore((s) => s.setReport);
   return (
@@ -286,15 +224,6 @@ function Report() {
   );
 }
 
-function ChangeButton({ label, short }: { label: string; short?: boolean }) {
-  const showChooser = useStore((s) => s.showChooser);
-  return (
-    <button type="button" className="btn" aria-label={short ? label : undefined} onClick={() => (stopChecking(), showChooser())}>
-      {short ? 'Change' : label}
-    </button>
-  );
-}
-
 /** Pressed while the sidebar shows; on a phone it opens the Filters sheet. Its count is never hidden. */
 function FiltersButton() {
   const filters = useStore((s) => s.filters);
@@ -308,7 +237,7 @@ function FiltersButton() {
     <button
       type="button"
       id="filtersbtn"
-      className="btn filtersbtn"
+      className="btn quiet filtersbtn"
       aria-controls="side"
       aria-label={filtersName(filters)}
       aria-pressed={phone ? undefined : side}
@@ -329,51 +258,28 @@ function FiltersButton() {
   );
 }
 
-/** One or two names joined, else the first and "+ N more"; every name in the accessible name. */
-function Title() {
-  const names = useStore((s) => s.model!.collections.map((c) => c.name).join('\n')).split('\n');
-  const many = names.length > 2;
-  return (
-    <h1 className={many ? 'collname many' : 'collname'} title={names.join(', ')} aria-label={many ? names.join(', ') : undefined}>
-      {many ? (
-        <>
-          <span className="cn-first">{names[0]}</span>{' '}
-          <span className="cn-more">+ {names.length - 1} more</span>
-        </>
-      ) : (
-        names.join(' + ')
-      )}
-    </h1>
-  );
-}
-
 const useChangeLabel = () => (useStore((s) => s.model!.collections.length) > 1 ? 'Change collections' : 'Change collection');
 
 /**
- * The top bar. Under 1440 px "Change collections" reads "Change", leaving the
- * title room. Under 1024 px its actions move to `NarrowActions`, a row above
- * the figures.
+ * The top bar: on the left Filters, the Reset slot, the app switcher and the
+ * collection title with its menu; on the right Report & export, the only
+ * filled button, Display settings and the account. On a phone Report and
+ * Display move to `PhoneActions`, a row above the figures.
  */
 export function Header() {
-  const narrow = useMedia(NARROW);
-  const short = useMedia('(max-width: 1439px)');
+  const phone = useMedia(PHONE);
   const change = useChangeLabel();
   return (
     <header className="top" id="sticky-top">
       <FiltersButton />
       <ResetSlot slot="top" />
       <AppSwitcher />
-      <Title />
-      {!narrow && <ChangeButton label={change} short={short} />}
+      <TitleMenu changeLabel={change} />
       <div className="grow" />
-      {!narrow && (
+      {!phone && (
         <>
-          <div className="topstatus">
-            <ChecksItem />
-            <Status />
-          </div>
-          <DisplayMenu />
           <ReportButton />
+          <DisplayMenu />
         </>
       )}
       <AccountMenu changeLabel={change} />
@@ -382,20 +288,13 @@ export function Header() {
   );
 }
 
-export function NarrowActions() {
-  const narrow = useMedia(NARROW);
+export function PhoneActions() {
   const phone = useMedia(PHONE);
-  const change = useChangeLabel();
-  if (!narrow) return null;
+  if (!phone) return null;
   return (
     <div className="phoneacts">
-      <ChangeButton label={change} short={phone} />
       <ReportButton />
       <DisplayMenu />
-      <div className="phonestatus">
-        <ChecksItem />
-        <Status />
-      </div>
     </div>
   );
 }

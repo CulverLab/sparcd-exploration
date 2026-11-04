@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { photoTimeRanks } from '@/lib/tables';
 import { useStore } from '@/store';
 import { Figures } from './Figures';
-import { Header, NarrowActions } from './Header';
+import { Header, PhoneActions } from './Header';
 import { MapBand } from './MapBand';
 import { preloadLater } from './later';
 import { Sidebar } from './Sidebar';
@@ -11,10 +11,10 @@ import { Toast } from './Toast';
 
 /**
  * The top bar, the filter sidebar beside the main area, and in it the
- * figures, the map with the camera effort, then the tables. The page scrolls;
- * the top bar and the sidebar stay put. The map fills the first screen,
- * leaving the tables' tab row in sight at its foot, but is never under 420 px
- * with its effort strip: on a short screen the tab row waits below.
+ * figures, the map, then the tables. The page scrolls; the top bar and the
+ * sidebar stay put. The map fills the first screen, leaving the tables' tab
+ * row in sight at its foot, but is never under 260 px, or 420 px on a phone:
+ * on a short screen the tab row waits below.
  */
 export function Workspace() {
   const app = useRef<HTMLDivElement>(null);
@@ -33,7 +33,8 @@ export function Workspace() {
       const cs = getComputedStyle(row);
       const tabsH = tabs.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
       const mapTop = Math.ceil(map.getBoundingClientRect().top + scrollY - 0.01);
-      root.style.setProperty('--mapH', `${Math.max(420, innerHeight - mapTop - 16 - tabsH - 6)}px`);
+      const least = innerWidth < 760 ? 420 : 260;
+      root.style.setProperty('--mapH', `${Math.max(least, innerHeight - mapTop - 16 - tabsH - 6)}px`);
     };
     size();
     const observer = new ResizeObserver(size);
@@ -61,7 +62,7 @@ export function Workspace() {
         <Header />
         <Sidebar />
         <main className="main" id="main">
-          <NarrowActions />
+          <PhoneActions />
           <Figures />
           <MapBand />
           <TablePanel />

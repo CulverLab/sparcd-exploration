@@ -19,7 +19,5 @@ export function useMedia(query: string): boolean {
   );
 }
 
-/** Under 760 px: the Filters sheet in place of the sidebar. */
+/** Under 760 px: the Filters sheet in place of the sidebar, Report and Display in a row above the figures. */
 export const PHONE = '(max-width: 759px)';
-/** Under 1024 px: the top bar's actions move to a row above the figures. */
-export const NARROW = '(max-width: 1023px)';

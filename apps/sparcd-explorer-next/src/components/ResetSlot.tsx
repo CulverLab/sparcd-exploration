@@ -35,7 +35,7 @@ export function ResetSlot({ slot }: { slot: Slot }) {
         <button
           ref={undoRef}
           type="button"
-          className={slot === 'top' ? 'btn primary undobtn' : 'btn big primary undobtn'}
+          className={slot === 'top' ? 'btn quiet undobtn' : 'btn undobtn'}
           onClick={() => {
             hadUndoFocus.current = true;
             undoReset();
@@ -47,7 +47,7 @@ export function ResetSlot({ slot }: { slot: Slot }) {
           <i aria-hidden="true" />
         </button>
       ) : (
-        <button ref={resetRef} type="button" className={slot === 'top' ? 'btn resetbtn' : 'btn big resetbtn'} disabled={!active} onClick={() => reset(slot)}>
+        <button ref={resetRef} type="button" className={slot === 'top' ? 'btn quiet resetbtn' : 'btn resetbtn'} disabled={!active} onClick={() => reset(slot)}>
           Reset filters
         </button>
       )}
