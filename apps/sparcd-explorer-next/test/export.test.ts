@@ -222,11 +222,11 @@ describe('the Camtrap DP package', () => {
     expect(pack()['deployments.csv']).not.toContain('12.567890');
   });
 
-  it('keeps only the photos in view, and leaves out a species the filters hide', () => {
+  it('keeps only the photos in view, leaves out a species the filters hide, and keeps the cameras that saw none', () => {
     const files = pack(filter(model, { species: onlySpecies(model, ['Lynx rufus']) }));
     expect(parseMedia(files['media.csv']).map((m) => m.fileName)).toEqual(['a.jpg', 'd.jpg']);
     expect(parseObservations(files['observations.csv']).map((o) => o.scientificName)).toEqual(['Lynx rufus', 'Lynx rufus']);
-    expect(parseDeploymentsNullable(files['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', 'AA10']);
+    expect(parseDeploymentsNullable(files['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', '0000', 'AA10']);
   });
 
   it('keeps every observation row of a photo in view when no species is filtered, placeholders without a count', () => {
@@ -440,15 +440,15 @@ describe("the Photos view's tag switch", () => {
     expect([t.Photos, t['Tagged photos'], t['Untagged photos'], t.Detections]).toEqual([2, 2, 0, 3]);
   });
 
-  it('limits the Camtrap DP package to their media, observations and deployments', () => {
+  it('limits the Camtrap DP package to their media and observations, and keeps every camera that ran', () => {
     const tagged = packageOf(model, one, latlon2, resultForTag(model, filter(model), 'tagged'));
     expect(parseMedia(tagged['media.csv']).map((x) => x.fileName)).toEqual(['a.jpg', 'd.jpg']);
     expect(parseObservations(tagged['observations.csv'])).toHaveLength(3);
-    expect(parseDeploymentsNullable(tagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', 'AA10']);
+    expect(parseDeploymentsNullable(tagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', '0000', 'AA10']);
     const untagged = packageOf(model, one, latlon2, resultForTag(model, filter(model), 'untagged'));
     expect(parseMedia(untagged['media.csv']).map((x) => x.fileName)).toEqual(['b.jpg', 'c.jpg']);
     expect(parseObservations(untagged['observations.csv']).map((o) => o.observationType)).toEqual(['blank']);
-    expect(parseDeploymentsNullable(untagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', '0000']);
+    expect(parseDeploymentsNullable(untagged['deployments.csv']).map((d) => d.locationId)).toEqual(['AA01', '0000', 'AA10']);
   });
 });
 

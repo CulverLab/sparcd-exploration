@@ -881,7 +881,6 @@ table.data { border-collapse: separate; border-spacing: 0; min-width: 100%; font
 .chart .axis { stroke: var(--rule); stroke-width: 1; }
 .chart .night { fill: var(--ruleSoft); opacity: 0.55; }
 .chart .bar { fill: var(--accent); }
-.chart .bar.on { fill: var(--warn); }
 .chart .hit { fill: transparent; }
 .chart g.row { cursor: pointer; outline: none; }
 .chart g.row:hover .bar { filter: brightness(1.2); }

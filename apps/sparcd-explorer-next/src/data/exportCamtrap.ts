@@ -77,8 +77,9 @@ function coordinateNote(d: CoordDisplay): string {
 }
 
 /**
- * The package's files. Every deployment of an upload with a photo in view is
- * kept, every media row in view, and every observation row of those photos
+ * The package's files. Every deployment of an upload with camera effort in view
+ * is kept, since a camera that ran and saw none of the species picked is real
+ * data; every media row in view, and every observation row of those photos
  * except a species the filters leave out. Uploads that reuse a deployment ID
  * for a different row (a camera that moved) keep apart as `<id>#2`, `#3`, …,
  * so each photo keeps its own upload's position.
@@ -92,6 +93,8 @@ export function camtrapPackage(
 ): Record<string, string> {
   const inView = new Set<string>();
   for (const i of result.photos) inView.add(`${model.photos[i].collection}\n${model.photos[i].key}`);
+  const ran = new Set<string>();
+  for (const i of result.effort) ran.add(`${model.photos[i].collection}\n${model.photos[i].key}`);
   const uploadOf = new Map(model.uploads.map((u, i) => [`${u.collection}\n${u.folder}`, i]));
   const detectionAt = new Map(model.detections.map((d, i) => [`${model.photos[d.photo].upload}\n${d.row}`, i]));
   const shown = new Set(result.detections);
@@ -118,8 +121,8 @@ export function camtrapPackage(
   const observations: Observation[] = [];
   collections.forEach((c, ci) => {
     for (const u of c.uploads) {
+      if (!u.media.some((m) => ran.has(`${ci}\n${m.mediaPath}`))) continue;
       const mine = u.media.filter((m) => inView.has(`${ci}\n${m.mediaPath}`));
-      if (!mine.length) continue;
       const ids = new Map<string, string>();
       for (const d of u.deployments) {
         const id = packageId(d);
