@@ -138,7 +138,8 @@ collections:
 10. Open a photo, step with the arrow keys, open full size, and close with Esc;
     the page has not moved and focus is back on the photo.
 11. In Charts, click a species, an hour and a month bar; each sets its filter,
-    and a second click clears it.
+    and a second click clears it. Press Save image and Save data on a chart:
+    the PNG is on white in any theme, the CSV holds what the chart shows.
 12. Set Display to UTM and 2 decimals, then press Report. Untick Map, check the
     header reads your filters, "Prepared … by <you>" and "UTM, rounded to
     1,000 m". Press Print or save as PDF and look at the preview: only the
