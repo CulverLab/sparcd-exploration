@@ -292,7 +292,8 @@ const LAYOUT_PARTS = ['#figures', '#map', '#table .tbl-head'];
 const boxes = (page: Page) => Promise.all(LAYOUT_PARTS.map(async (sel) => (await page.locator(sel).boundingBox())!));
 
 When("I note where the figures, the map and the tables' tab row are", async ({ page, scratch }) => {
-  await page.evaluate(() => scrollTo(0, 0));
+  // The web fonts arriving can re-wrap the tools at tight widths, which isn't what's being watched for.
+  await page.evaluate(() => document.fonts.ready.then(() => scrollTo(0, 0)));
   scratch.boxes = await boxes(page);
 });
 

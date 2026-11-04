@@ -544,9 +544,9 @@ export function TablePanel() {
             )}
             {nothing
               ? ''
-              : count.split(/(?<=, )/).map((line) => (
+              : count.split(', ').map((line, i, all) => (
                   <span key={line} className="line">
-                    {line}
+                    {i < all.length - 1 ? `${line}, ` : line}
                   </span>
                 ))}
           </span>

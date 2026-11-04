@@ -243,7 +243,10 @@ When('I drag a rectangle around the dot of {string}', async ({ page }, id: strin
 });
 
 When('I click the dot of {string}', async ({ page }, id: string) => {
-  await page.locator(`path.st[data-site="${id}"]`).click({ force: true });
+  // A click right behind a drag's end counts as that drag's own click, and is swallowed.
+  await page.waitForTimeout(100);
+  // At the dot itself: AB03 and AB-03 sit on the same spot.
+  await page.locator(`path.st[data-site="${id}"]`).dispatchEvent('click');
 });
 
 Then('the map offers no {string} view', async ({ page }, mode: string) => {
