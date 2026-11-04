@@ -1,11 +1,39 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { fmtN } from '@/lib/format';
+import { enterDate, toggleYear } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
-import { ClearRow, toggled, useWithout } from './shared';
+import { ClearRow, useWithout } from './shared';
 
 const pad = (n: number) => String(n).padStart(2, '0');
-const lastDay = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+
+/**
+ * A month field. A year typed digit by digit reads 0002, then 0020: it stays
+ * in the field until it is a whole month, so a From after To only swaps on
+ * what was meant.
+ */
+function MonthField({ label, value, min, max, onEnter }: { label: string; value: string; min: string; max: string; onEnter: (month: string) => void }) {
+  const [typing, setTyping] = useState<string | null>(null);
+  return (
+    <label>
+      {label}
+      <input
+        className="field"
+        type="month"
+        min={min}
+        max={max}
+        value={typing ?? value}
+        onChange={(e) => {
+          const month = e.target.value;
+          if (month && !/^[1-9]\d{3}-\d{2}$/.test(month)) return setTyping(month);
+          setTyping(null);
+          onEnter(month);
+        }}
+        onBlur={() => setTyping(null)}
+      />
+    </label>
+  );
+}
 
 export function DatesPicker() {
   const { model, filters } = useView();
@@ -41,7 +69,7 @@ export function DatesPicker() {
                 key={y}
                 type="button"
                 aria-pressed={filters.years.includes(y)}
-                onClick={() => setFilters((f) => ({ ...f, years: toggled(f.years, y, !f.years.includes(y)) }))}
+                onClick={() => setFilters((f) => toggleYear(f, y))}
               >
                 <b>{y}</b>
                 <span>
@@ -55,30 +83,8 @@ export function DatesPicker() {
       <div className="sect">
         <h3>Range</h3>
         <div className="two">
-          <label>
-            From
-            <input
-              className="field"
-              type="month"
-              min={min}
-              max={max}
-              value={filters.dateFrom?.slice(0, 7) ?? ''}
-              onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value ? `${e.target.value}-01` : null }))}
-            />
-          </label>
-          <label>
-            To
-            <input
-              className="field"
-              type="month"
-              min={min}
-              max={max}
-              value={filters.dateTo?.slice(0, 7) ?? ''}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, dateTo: e.target.value ? `${e.target.value}-${pad(lastDay(e.target.value))}` : null }))
-              }
-            />
-          </label>
+          <MonthField label="From" min={min} max={max} value={filters.dateFrom?.slice(0, 7) ?? ''} onEnter={(month) => setFilters((f) => enterDate(f, 'from', month))} />
+          <MonthField label="To" min={min} max={max} value={filters.dateTo?.slice(0, 7) ?? ''} onEnter={(month) => setFilters((f) => enterDate(f, 'to', month))} />
         </div>
       </div>
       {filters.hours && (

@@ -59,6 +59,29 @@ export function monthsToDates(a: number, b: number): { dateFrom: string; dateTo:
   return { dateFrom: `${monthKey(lo)}-01`, dateTo: `${monthKey(hi)}-${pad(last)}` };
 }
 
+/** A year pressed or let go. The From and To range goes, so the two never contradict each other. */
+export function toggleYear(f: FilterState, year: number): FilterState {
+  const years = f.years.includes(year) ? f.years.filter((y) => y !== year) : [...f.years, year].sort((a, b) => a - b);
+  return { ...f, years, dateFrom: null, dateTo: null };
+}
+
+/**
+ * A From or To month entered, as `YYYY-MM`, or empty to let that end go. The
+ * years go. From stays on its month's first day and To on its last, and a
+ * From later than To swaps them.
+ */
+export function enterDate(f: FilterState, end: 'from' | 'to', month: string): FilterState {
+  const own = end === 'from' ? 'dateFrom' : 'dateTo';
+  if (!month) return { ...f, [own]: null };
+  const other = end === 'from' ? f.dateTo : f.dateFrom;
+  const m = monthIndex(month);
+  const dates = monthsToDates(m, other ? monthIndex(other) : m);
+  return { ...f, ...(other ? dates : { [own]: dates[own] }), years: [], months: [] };
+}
+
+/** Lets the dates, years and months go. An hour picked in Charts stays. */
+export const clearDates = (f: FilterState): FilterState => ({ ...f, dateFrom: null, dateTo: null, years: [], months: [] });
+
 /** The months a date range touches, clamped to the axis; null when the range is unset or misses the axis. */
 export function datesToMonths(from: string | null, to: string | null, axis: MonthAxis): [number, number] | null {
   if (!from && !to) return null;

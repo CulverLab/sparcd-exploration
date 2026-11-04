@@ -18,7 +18,6 @@ Feature: Camera effort
 
   Scenario Outline: The strip's × Clear clears Dates as the filter's × does, and Back goes with it
     When I drag the strip from "Jan 2024" to "May 2024"
-    And I pick the year 2024 in the dates filter
     And I press "Show photos" on the Locations row "AB02"
     Then the table's controls offer "Back to Locations" ahead of the other tools
     When <clear>
@@ -30,6 +29,16 @@ Feature: Camera effort
       | clear                               |
       | I press "× Clear" on the strip      |
       | I clear the Dates filter with its × |
+
+  Scenario: The strip's × Clear keeps an hour picked in Charts, and the filter's × clears it too
+    When I show the Charts
+    And I click the "05:00" bar in the hour chart
+    And I drag the strip from "Jan 2024" to "May 2024"
+    Then the dates filter reads "Dates: Jan 2024 – May 2024 +1"
+    When I press "× Clear" on the strip
+    Then the dates filter reads "Dates: hours 05:00–05:59"
+    When I clear the Dates filter with its ×
+    Then the dates filter reads "Dates"
 
   Scenario: A click picks one month, and a second click lets it go
     When I click "Jan 2024" on the strip

@@ -3,6 +3,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { activeFilters, type FilterDimension, type FilterState, type ListDimension } from '@/data';
 import { LIST_NOUNS, SECTION_NAMES, nothingTicked, sectionValue } from '@/lib/filterLabels';
 import { plural } from '@/lib/format';
+import { toggleYear } from '@/lib/months';
 import { PHONE, useMedia } from '@/lib/useMedia';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
@@ -14,7 +15,6 @@ import { ElevationPicker } from './pickers/ElevationPicker';
 import { LocationsPicker } from './pickers/LocationsPicker';
 import { RangePicker } from './pickers/RangePicker';
 import { SpeciesPicker } from './pickers/SpeciesPicker';
-import { toggled } from './pickers/shared';
 
 type PickerDim = Exclude<FilterDimension, 'area' | 'files'>;
 
@@ -63,7 +63,7 @@ function Years({ filters, years }: { filters: FilterState; years: number[] }) {
           key={y}
           type="button"
           aria-pressed={filters.years.includes(y)}
-          onClick={() => setFilters((f) => ({ ...f, years: toggled(f.years, y, !f.years.includes(y)).sort() }))}
+          onClick={() => setFilters((f) => toggleYear(f, y))}
         >
           {y}
         </button>

@@ -141,6 +141,27 @@ Feature: Filter the photos in view
     When I press the year 2024 in the Dates section
     Then the dates filter reads "Dates"
 
+  Scenario: A year and a range never stand together, and a From after To swaps them
+    When I drag the strip from "Jan 2024" to "May 2024"
+    And I press the year 2025 in the Dates section
+    Then the dates filter reads "Dates: 2025"
+    And the photo count reads "3 of 11 photos"
+    When I enter "2024-01" as From in the dates filter
+    Then the dates filter reads "Dates: from Jan 2024"
+    When I enter "2024-05" as To in the dates filter
+    Then the dates filter reads "Dates: Jan 2024 – May 2024"
+    When I enter "2024-09" as From in the dates filter
+    Then the dates filter reads "Dates: May 2024 – Sep 2024"
+    When I press the year 2023 in the dates picker
+    Then the dates filter reads "Dates: 2023"
+    And the From and To of the dates filter are empty
+
+  Scenario: Typing a year digit by digit into To doesn't swap it with From on the way
+    When I enter "2024-05" as From in the dates filter
+    And I enter "2024-09" as To in the dates filter
+    And I type the year "2025" into To in the dates filter
+    Then the dates filter reads "Dates: May 2024 – Sep 2025"
+
   Scenario: Reset clears every filter, and Undo in its place brings them back
     When I filter species to "Bobcat"
     And I pick the year 2024 in the dates filter

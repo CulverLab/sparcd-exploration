@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { onlySpecies } from '../../src/data';
+import { NO_FILTERS, onlySpecies, type FilterState } from '../../src/data';
 import { activityByLocation } from '../../src/lib/activity';
 import {
+  clearDates,
   countByMonth,
   datesToMonths,
+  enterDate,
   monthAxis,
   monthIndex,
   monthKey,
@@ -11,6 +13,7 @@ import {
   monthShade,
   monthsToDates,
   axisTicks,
+  toggleYear,
   type MonthAxis,
 } from '../../src/lib/months';
 import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
@@ -162,5 +165,42 @@ describe('months and the Dates filter', () => {
     expect(datesToMonths('2020-01-01', '2023-12-02', axis)).toEqual([NOV_2023, NOV_2023 + 1]);
     expect(datesToMonths(null, null, axis)).toBeNull();
     expect(datesToMonths('2030-01-01', null, axis)).toBeNull();
+  });
+});
+
+describe('Dates that cannot contradict themselves', () => {
+  const state = (f: Partial<FilterState>): FilterState => ({ ...NO_FILTERS, ...f });
+
+  it('a year click lets the range go and keeps the years in order', () => {
+    const range = state({ dateFrom: '2024-01-01', dateTo: '2024-05-31', hours: [5, 5] });
+    expect(toggleYear(range, 2025)).toMatchObject({ years: [2025], dateFrom: null, dateTo: null, hours: [5, 5] });
+    expect(toggleYear(state({ years: [2025] }), 2023).years).toEqual([2023, 2025]);
+    expect(toggleYear(state({ years: [2023, 2025] }), 2025).years).toEqual([2023]);
+  });
+
+  it('a From or To entry lets the years go', () => {
+    const years = state({ years: [2023], months: [4] });
+    expect(enterDate(years, 'from', '2024-02')).toMatchObject({ dateFrom: '2024-02-01', dateTo: null, years: [], months: [] });
+    expect(enterDate(years, 'to', '2024-02')).toMatchObject({ dateFrom: null, dateTo: '2024-02-29', years: [], months: [] });
+  });
+
+  it('keeps From on the first of its month and To on the last, whichever end was entered', () => {
+    expect(enterDate(state({ dateTo: '2024-05-31' }), 'from', '2024-02')).toMatchObject({ dateFrom: '2024-02-01', dateTo: '2024-05-31' });
+    expect(enterDate(state({ dateFrom: '2024-02-01' }), 'to', '2024-05')).toMatchObject({ dateFrom: '2024-02-01', dateTo: '2024-05-31' });
+  });
+
+  it('swaps a From later than To, and a To earlier than From', () => {
+    expect(enterDate(state({ dateFrom: '2024-02-01', dateTo: '2024-05-31' }), 'from', '2024-09')).toMatchObject({ dateFrom: '2024-05-01', dateTo: '2024-09-30' });
+    expect(enterDate(state({ dateFrom: '2024-02-01', dateTo: '2024-05-31' }), 'to', '2023-11')).toMatchObject({ dateFrom: '2023-11-01', dateTo: '2024-02-29' });
+  });
+
+  it('an emptied field lets only its own end go', () => {
+    const range = state({ dateFrom: '2024-02-01', dateTo: '2024-05-31' });
+    expect(enterDate(range, 'from', '')).toMatchObject({ dateFrom: null, dateTo: '2024-05-31' });
+    expect(enterDate(range, 'to', '')).toMatchObject({ dateFrom: '2024-02-01', dateTo: null });
+  });
+
+  it('clearing dates keeps an hour picked in Charts', () => {
+    expect(clearDates(state({ dateFrom: '2024-02-01', dateTo: '2024-05-31', years: [2024], months: [3], hours: [5, 5] }))).toEqual(state({ hours: [5, 5] }));
   });
 });

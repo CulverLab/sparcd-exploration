@@ -331,6 +331,28 @@ When('I pick the year {int} in the dates filter', async ({ page }, year: number)
   await page.keyboard.press('Escape');
 });
 
+When(/^I enter "(.*)" as (From|To) in the dates filter$/, async ({ page }, month: string, end: string) => {
+  await openFilter(page, 'Dates');
+  await popover(page, 'Dates').getByLabel(end, { exact: true }).fill(month);
+});
+
+When('I type the year {string} into To in the dates filter', async ({ page }, year: string) => {
+  await popover(page, 'Dates').getByLabel('To', { exact: true }).focus();
+  // From the month part to the year part, which reads 0002, 0020, 0202, 2025 as it is typed.
+  await page.keyboard.press('Tab');
+  await page.keyboard.type(year, { delay: 30 });
+});
+
+When('I press the year {int} in the dates picker', async ({ page }, year: number) => {
+  await openFilter(page, 'Dates');
+  await popover(page, 'Dates').getByRole('button', { name: new RegExp(`^${year}`) }).click();
+});
+
+Then('the From and To of the dates filter are empty', async ({ page }) => {
+  await expect(popover(page, 'Dates').getByLabel('From', { exact: true })).toHaveValue('');
+  await expect(popover(page, 'Dates').getByLabel('To', { exact: true })).toHaveValue('');
+});
+
 When('I press {string}', async ({ page }, label: string) => {
   await page.getByRole('button', { name: label, exact: true }).first().click();
 });

@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Po
 import { activeFilters, applyFilters, clearFilter, photosForTag } from '@/data';
 import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
-import { axisTicks, barFill, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
+import { axisTicks, barFill, clearDates, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { SelClear } from './SelClear';
@@ -25,7 +25,6 @@ const BASE = 72;
 export function EffortStrip() {
   const { model, filters, result } = useView();
   const setFilters = useStore((s) => s.setFilters);
-  const clear = useStore((s) => s.clearFilter);
   const tagShown = useStore((s) => s.view === 'photos');
   const legend = matchLegend(model, filters, tagShown);
   const wrap = useRef<HTMLDivElement>(null);
@@ -87,7 +86,7 @@ export function EffortStrip() {
 
   const setMonths = (a: number, b: number) =>
     setFilters((f) => ({ ...f, ...monthsToDates(a, b), years: [], months: [] }));
-  /** Lets the picked months go, as a second click on one does; "× Clear" clears all of Dates. */
+  /** Lets the picked months go, as a second click on one does; "× Clear" lets the years go too, and leaves an hour picked in Charts. */
   const clearMonths = () => setFilters((f) => ({ ...f, dateFrom: null, dateTo: null }));
   /** A click picks one month; a second click on the same month lets it go. */
   const pick = (m: number) => {
@@ -304,7 +303,7 @@ export function EffortStrip() {
             className="onstrip"
             style={{ left: Math.min(Math.max(bracketEnd - clearW, X0), W - clearW), top: 0 }}
             label="Clear dates"
-            onClick={() => clear('dates')}
+            onClick={() => setFilters(clearDates)}
           />
         )}
       </div>

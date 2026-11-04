@@ -115,9 +115,6 @@ export function ClearRow({ onClear, label = 'Clear' }: { onClear: () => void; la
   );
 }
 
-export const toggled = <T,>(list: T[], value: T, on: boolean): T[] =>
-  on ? [...list.filter((v) => v !== value), value] : list.filter((v) => v !== value);
-
 /** Whether every key is ticked, none is, or only some. */
 export function tickedOf(hidden: ReadonlySet<string>, keys: string[]): boolean | 'some' {
   const off = keys.filter((k) => hidden.has(k)).length;
