@@ -83,11 +83,19 @@ describe('chart bins', () => {
     expect(monthCounts(model, detections, axis)).toEqual([2, 0, 3]);
   });
 
-  it('leave each chart’s own filter out, so any bar can still be picked', () => {
-    const data = chartData(model, state({ species: onlySpecies(model, ['Lynx rufus']), hours: [23, 23], dateFrom: '2024-01-01', dateTo: '2024-01-31' }), axis);
-    // Species: January 2024, 23:00 → nothing. Hours: Bobcat in January. Months: Bobcat at 23:00.
-    expect(data.species).toEqual([]);
-    expect(data.hours[0] + data.hours[6]).toBe(2);
+  it('show only what is in view: a species filtered out is gone, and hours and months keep their axis', () => {
+    const data = chartData(model, filter(model, { species: onlySpecies(model, ['Lynx rufus']) }).detections, axis);
+    expect(data.species.map((s) => [model.species[s.species].name, s.detections])).toEqual([['Bobcat', 3]]);
+    expect(data.hours).toHaveLength(24);
+    expect([data.hours[23], data.hours[0], data.hours[6]]).toEqual([1, 1, 1]);
+    expect(data.months).toEqual([1, 0, 2]);
+  });
+
+  it('let every filter narrow every chart, its own too', () => {
+    const data = chartData(model, filter(model, { species: onlySpecies(model, ['Lynx rufus']), hours: [23, 23], dateFrom: '2023-11-01', dateTo: '2023-11-30' }).detections, axis);
+    expect(data.species.map((s) => s.detections)).toEqual([1]);
+    expect(data.hours.reduce((a, b) => a + b, 0)).toBe(1);
+    expect(data.hours[23]).toBe(1);
     expect(data.months).toEqual([1, 0, 0]);
   });
 });
@@ -115,22 +123,21 @@ describe('clicking a bar', () => {
 });
 
 describe('the active filter on the charts', () => {
-  it('lights the species ticked and dims the unticked ones', () => {
+  it('lights the species ticked', () => {
     expect(speciesBar(NO_FILTERS, 'Lynx rufus')).toBeNull();
     expect(speciesBar(state({ species: onlySpecies(model, ['Lynx rufus']) }), 'Lynx rufus')).toBe('on');
-    expect(speciesBar(state({ species: onlySpecies(model, ['Lynx rufus']) }), 'Odocoileus hemionus')).toBe('dim');
     expect(speciesBar(state({ species: { hidden: [], hideUntagged: true } }), 'Lynx rufus')).toBe('on');
   });
 
-  it('lights the hours picked, past midnight too', () => {
+  it('lights the hours picked, past midnight too, and leaves the rest plain', () => {
     expect(hourBar(NO_FILTERS, 3)).toBeNull();
-    expect([21, 23, 0, 4, 5].map((h) => hourBar(state({ hours: [22, 4] }), h))).toEqual(['dim', 'on', 'on', 'on', 'dim']);
+    expect([21, 23, 0, 4, 5].map((h) => hourBar(state({ hours: [22, 4] }), h))).toEqual([null, 'on', 'on', 'on', null]);
   });
 
-  it('lights the months the Dates filter keeps', () => {
+  it('lights the months the Dates filter keeps, and leaves the rest plain', () => {
     expect(monthBar(NO_FILTERS, NOV_2023, axis)).toBeNull();
     const jan = state({ dateFrom: '2024-01-01', dateTo: '2024-01-31' });
-    expect([NOV_2023, NOV_2023 + 2].map((m) => monthBar(jan, m, axis))).toEqual(['dim', 'on']);
+    expect([NOV_2023, NOV_2023 + 2].map((m) => monthBar(jan, m, axis))).toEqual([null, 'on']);
     expect(monthBar(state({ years: [2023] }), NOV_2023, axis)).toBe('on');
   });
 });

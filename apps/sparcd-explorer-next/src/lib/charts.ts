@@ -1,9 +1,10 @@
-// The Charts view as data. Each chart counts detections (one per species tag)
-// under every filter but its own, so any bar can be picked, and a click on a
-// bar toggles that filter. Hours and months are camera-local, read from the
-// timestamp text.
+// The Charts view as data. Each chart counts the detections in view (one per
+// species tag), so a species filtered out goes and the scale follows. A click
+// on a bar toggles that filter. Hours and months are camera-local, read from
+// the timestamp text, and keep their axis: a bar outside the filter drops to
+// zero and can still be picked.
 
-import { NO_FILTERS, applyFilters, type FilterState, type Model } from '@/data';
+import type { FilterState, Model } from '@/data';
 import { datesToMonths, monthPasses, monthsToDates, type MonthAxis } from './months';
 
 /** Round tick values (steps of 1, 2 or 5 × 10ⁿ, never below 1) from 0 to at least `max`. */
@@ -56,35 +57,32 @@ export function monthCounts(model: Model, detections: number[], axis: MonthAxis)
   return months;
 }
 
-/** The three charts' numbers, each under every filter but its own. */
-export function chartData(model: Model, f: FilterState, axis: MonthAxis | null) {
-  const without = (change: Partial<FilterState>) => applyFilters(model, { ...f, ...change }).detections;
+/** The three charts' numbers, from the detections in view. */
+export function chartData(model: Model, detections: number[], axis: MonthAxis | null) {
   return {
-    species: speciesCounts(model, without({ species: NO_FILTERS.species })),
-    hours: hourCounts(model, without({ hours: null })),
-    months: axis ? monthCounts(model, without({ dateFrom: null, dateTo: null, years: [], months: [] }), axis) : [],
+    species: speciesCounts(model, detections),
+    hours: hourCounts(model, detections),
+    months: axis ? monthCounts(model, detections, axis) : [],
   };
 }
 
-/** How a bar shows the active filter: picked (`on`), left out (`dim`), or plain when its filter is off. */
-export type BarState = 'on' | 'dim' | null;
+/** How a bar shows the active filter: picked (`on`), or plain. */
+export type BarState = 'on' | null;
 
 export function speciesBar(f: FilterState, key: string): BarState {
   const { hidden, hideUntagged } = f.species;
-  if (!hidden.length && !hideUntagged) return null;
-  return hidden.includes(key) ? 'dim' : 'on';
+  return (hidden.length || hideUntagged) && !hidden.includes(key) ? 'on' : null;
 }
 
 export const inHours = ([h0, h1]: [number, number], h: number): boolean => (h0 <= h1 ? h >= h0 && h <= h1 : h >= h0 || h <= h1);
 
 export function hourBar(f: FilterState, hour: number): BarState {
-  if (!f.hours) return null;
-  return inHours(f.hours, hour) ? 'on' : 'dim';
+  return f.hours && inHours(f.hours, hour) ? 'on' : null;
 }
 
 export function monthBar(f: FilterState, m: number, axis: MonthAxis): BarState {
   if (!f.dateFrom && !f.dateTo && !f.years.length && !f.months.length) return null;
-  return monthPasses(f, m, datesToMonths(f.dateFrom, f.dateTo, axis)) ? 'on' : 'dim';
+  return monthPasses(f, m, datesToMonths(f.dateFrom, f.dateTo, axis)) ? 'on' : null;
 }
 
 /** An hour bar: that hour alone, or no hours when it already was. */

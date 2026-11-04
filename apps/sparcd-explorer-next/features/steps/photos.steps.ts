@@ -308,6 +308,28 @@ Then(
   },
 );
 
+const speciesChartBars = (page: Page) =>
+  chart(page, 'species')
+    .getByRole('button')
+    .evaluateAll((bars) => bars.map((g) => g.getAttribute('aria-label')!.replace(/: (\d+) detections?$/, ' $1')));
+
+Then('the species chart reads {string} and {string}', async ({ page }, a: string, b: string) => {
+  await expect.poll(() => speciesChartBars(page)).toEqual([a, b]);
+});
+
+Then('the species chart reads {string}, {string} and {string}', async ({ page }, a: string, b: string, c: string) => {
+  await expect.poll(() => speciesChartBars(page)).toEqual([a, b, c]);
+});
+
+Then('the species chart has no {string} bar', async ({ page }, label: string) => {
+  await expect(bar(page, label, 'species')).toHaveCount(0);
+});
+
+Then("the species chart's scale ends at {int}", async ({ page }, top: number) => {
+  // The tick labels: the only text in the chart outside the rows.
+  await expect(chart(page, 'species').locator('g:not(.row) > text.mono').last()).toHaveText(String(top));
+});
+
 Then('the hour chart has 24 bars with the night shaded from 19:00 to 06:00', async ({ page }) => {
   const hours = chart(page, 'hour');
   await expect(hours.getByRole('button')).toHaveCount(24);
@@ -348,10 +370,10 @@ When(/^I press (Enter|Space) on the "(.*)" bar in the (species|hour|month) chart
   await page.keyboard.press(key === 'Space' ? ' ' : key);
 });
 
-Then(/^the "(.*)" bar in the (species|hour|month) chart is (highlighted|dimmed)$/, async ({ page }, label: string, which: string, state: string) => {
+Then(/^the "(.*)" bar in the (species|hour|month) chart is highlighted$/, async ({ page }, label: string, which: string) => {
   const g = bar(page, label, which);
-  await expect(g).toHaveAttribute('data-state', state === 'highlighted' ? 'on' : 'dim');
-  if (state === 'highlighted') await expect(g).toHaveAttribute('aria-pressed', 'true');
+  await expect(g).toHaveAttribute('data-state', 'on');
+  await expect(g).toHaveAttribute('aria-pressed', 'true');
 });
 
 Then(/^no bar in the (species|hour|month) chart is highlighted$/, async ({ page }, which: string) => {

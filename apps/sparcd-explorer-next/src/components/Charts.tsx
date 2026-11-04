@@ -225,10 +225,10 @@ function MonthChart({ months, axis, filters, onPick }: { months: number[]; axis:
 
 /** Three fixed charts of the detections in view. A bar is a shortcut to its filter. */
 export function Charts() {
-  const { model, filters } = useView();
+  const { model, filters, result } = useView();
   const setFilters = useStore((s) => s.setFilters);
   const axis = useMemo(() => monthAxis(model), [model]);
-  const data = useMemo(() => chartData(model, filters, axis), [model, filters, axis]);
+  const data = useMemo(() => chartData(model, result.detections, axis), [model, result, axis]);
   const species = data.species.map((s) => ({ key: model.species[s.species].key, name: model.species[s.species].name, n: s.detections }));
   return (
     <div className="charts">
