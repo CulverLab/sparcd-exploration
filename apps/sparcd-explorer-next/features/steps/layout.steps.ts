@@ -257,6 +257,22 @@ Then('the tab row peeks at the bottom of the first screen', async ({ page }) => 
   expect(tabs.y).toBeGreaterThan(size.height / 2);
 });
 
+Then('every hex with photos is outlined in the accent colour', async ({ page }) => {
+  await expect(page.locator('.leaflet-container.tiny-hexes')).toBeAttached();
+  const hexes = page.locator('path.hx:not(.out)');
+  await expect(hexes.first()).toBeAttached();
+  const accent = await page.evaluate(() => {
+    const probe = document.createElement('i');
+    probe.style.color = 'var(--accent)';
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  });
+  const strokes = await hexes.evaluateAll((all) => all.map((h) => getComputedStyle(h).stroke));
+  expect(new Set(strokes)).toEqual(new Set([accent]));
+});
+
 Then('the tab row sits just under the top bar', async ({ page }) => {
   await expect
     .poll(async () => {

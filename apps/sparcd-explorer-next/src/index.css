@@ -600,6 +600,8 @@ path.hx.s4 { fill: color-mix(in srgb, var(--accent) 76%, var(--accentSoft)); }
 path.hx.s5 { fill: var(--accent); }
 path.hx.out { fill: var(--paper); fill-opacity: 0.25; stroke: var(--inkMute); stroke-width: 1; stroke-dasharray: 3 3; stroke-opacity: 0.45; }
 .leaflet-container path.hx[aria-disabled='true'] { cursor: default; }
+/* Too small for a seam on a wide map: an outline in the hex's own colour keeps it in sight. */
+.tiny-hexes path.hx:not(.out) { stroke: var(--accent); stroke-width: 2; }
 path.hx:hover, path.hx:focus-visible { stroke: var(--ink); stroke-width: 2; stroke-opacity: 1; }
 path.hx.sel { stroke: var(--ink); stroke-width: 2.5; stroke-opacity: 1; stroke-dasharray: none; }
 path.hx.hl, path.st.hl { stroke: var(--ink); stroke-width: 3.5; stroke-opacity: 1; stroke-dasharray: none; }

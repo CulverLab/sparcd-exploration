@@ -227,6 +227,12 @@ Feature: The calm layout
     Then the tab row peeks at the bottom of the first screen
     And the first screen has no horizontal overflow
 
+  Scenario: On a map too wide for hex seams, each hex keeps an outline in the accent colour
+    Given there are 7 more collections of 10 photos each
+    And I am signed in
+    And I have opened 10 collections
+    Then every hex with photos is outlined in the accent colour
+
   Scenario: Pressing a tab at the foot of the first screen brings the tables up
     Given the screen is 1440 pixels wide and 900 high
     And I have opened "Alpha Basin"
