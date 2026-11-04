@@ -15,13 +15,13 @@ import {
 } from '../../src/data';
 import {
   elevationSpan,
-  filterButtons,
   filterWords,
   matchLegend,
   noElevationLocations,
   noneTicked,
   nothingTicked,
   photoCountLabel,
+  SECTION_NAMES,
   sectionValue,
 } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
@@ -61,21 +61,32 @@ const wide = modelOf(
 const sci = (...names: string[]) => names.map((n) => SEVEN.find((r) => r[1] === n)![2]);
 const hiding = (...names: string[]) => ({ hidden: sci(...names), hideUntagged: false });
 
-const labels = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') =>
-  filterButtons(model, { ...NO_FILTERS, ...f }, unit).map((b) => b.label);
+/** Each filter's words as its sidebar row gives them, with the row's name first while it's on. */
+const rows = (model: Model, f: FilterState, unit: 'm' | 'ft', separate = false) => {
+  const on = activeFilters(f);
+  const inView = inViewWithout(model, f);
+  const dims: FilterDimension[] = ['collections', 'species', 'locations', 'area', 'files', 'dates', 'elevation', 'ranges'];
+  return dims
+    .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' || dim === 'files' ? on.includes(dim) : true))
+    .map((dim) => ({
+      active: on.includes(dim),
+      label: on.includes(dim) ? `${SECTION_NAMES[dim]}: ${sectionValue(model, f, dim, unit, separate, inView)}` : SECTION_NAMES[dim],
+    }));
+};
+const labels = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') => rows(model, { ...NO_FILTERS, ...f }, unit).map((b) => b.label);
 const section = (model: Model, f: FilterState, dim: FilterDimension, separate = false) =>
   sectionValue(model, f, dim, 'm', separate, inViewWithout(model, f));
 
-describe('filter button labels', () => {
+describe('filter row labels', () => {
   it('read the filter names while nothing is filtered', () => {
     expect(labels({})).toEqual(['Species', 'Locations', 'Dates', 'Elevation', 'Mountain range']);
-    expect(filterButtons(single, NO_FILTERS, 'm').every((b) => !b.active)).toBe(true);
+    expect(rows(single, NO_FILTERS, 'm').every((b) => !b.active)).toBe(true);
   });
 
   it('show Collections only with several collections open, and Area only while one is selected', () => {
     expect(labels({}, both)[0]).toBe('Collections');
     expect(labels({ collections: only(listKeys(both, 'collections'), ['sparcd-bbb::bbb']) }, both)[0]).toBe('Collections: Bravo');
-    expect(labels({ area: [single.sites[0].key] })).toContain('Area: 1 location');
+    expect(labels({ area: [single.sites[0].key] })).toContain('Map area: 1 location');
   });
 });
 
@@ -88,24 +99,24 @@ describe('list filter labels', () => {
   });
 
   it('name one or two species unticked', () => {
-    expect(species(hiding('Gray Fox'))).toBe('Species: all but Gray Fox');
-    expect(species(hiding('Gray Fox', 'Raven'))).toBe('Species: all but Gray Fox, Raven');
+    expect(species(hiding('Gray Fox'))).toBe('Species: All but Gray Fox');
+    expect(species(hiding('Gray Fox', 'Raven'))).toBe('Species: All but Gray Fox, Raven');
   });
 
   it('count them otherwise', () => {
-    expect(species(onlySpecies(wide, sci('Bobcat', 'Coyote', 'Raven')))).toBe('Species: 3 of 7');
+    expect(species(onlySpecies(wide, sci('Bobcat', 'Coyote', 'Raven')))).toBe('Species: 3 of 7, no untagged photos');
     expect(species(hiding('Bobcat', 'Coyote', 'Raven'))).toBe('Species: 4 of 7');
   });
 
   it('count "Untagged photos" only when it is all that is unticked, or ticked', () => {
-    expect(species({ hidden: [], hideUntagged: true })).toBe('Species: no untagged');
-    expect(species({ ...hiding('Gray Fox'), hideUntagged: true })).toBe('Species: all but Gray Fox');
-    expect(species(onlySpecies(wide, sci('Bobcat'), true))).toBe('Species: Bobcat');
-    expect(species(onlySpecies(wide, [], true))).toBe('Species: untagged only');
+    expect(species({ hidden: [], hideUntagged: true })).toBe('Species: No untagged photos');
+    expect(species({ ...hiding('Gray Fox'), hideUntagged: true })).toBe('Species: All but Gray Fox, no untagged photos');
+    expect(species(onlySpecies(wide, sci('Bobcat'), true))).toBe('Species: Bobcat, untagged photos');
+    expect(species(onlySpecies(wide, [], true))).toBe('Species: Untagged photos only');
   });
 
   it('say none when nothing at all is ticked', () => {
-    expect(species(onlySpecies(wide, []))).toBe('Species: none');
+    expect(species(onlySpecies(wide, []))).toBe('Species: None');
     expect(noneTicked(wide, { ...NO_FILTERS, species: onlySpecies(wide, []) })).toBe('species');
     expect(noneTicked(wide, { ...NO_FILTERS, species: onlySpecies(wide, [], true) })).toBeNull();
     expect(noneTicked(wide, NO_FILTERS)).toBeNull();
@@ -119,7 +130,7 @@ describe('list filter labels', () => {
       }),
     );
     const cleared = { ...NO_FILTERS, species: { hidden: [], hideUntagged: true } };
-    expect(filterButtons(bare, cleared, 'm')[0].label).toBe('Species: no untagged');
+    expect(rows(bare, cleared, 'm')[0].label).toBe('Species: No untagged photos');
     expect(noneTicked(bare, cleared)).toBe('species');
     expect(noneTicked(bare, NO_FILTERS)).toBeNull();
   });
@@ -137,7 +148,7 @@ describe('list filter labels', () => {
   });
 
   it('read the filter name again once everything is ticked', () => {
-    const b = filterButtons(wide, { ...NO_FILTERS, species: { hidden: [], hideUntagged: false } }, 'm')[0];
+    const b = rows(wide, { ...NO_FILTERS, species: { hidden: [], hideUntagged: false } }, 'm')[0];
     expect(b).toMatchObject({ label: 'Species', active: false });
   });
 
@@ -145,10 +156,10 @@ describe('list filter labels', () => {
     const locations = (f: FilterState['locations']) => labels({ locations: f }, wide)[1];
     expect(locations(onlyLocations(wide, ['id:AA01', 'id:BB01']))).toBe('Locations: AA01, BB01');
     expect(locations(onlyLocations(wide, ['id:AA01', 'id:BB01', 'id:CC01', 'id:DD01', 'id:EE01', 'id:FF01']))).toBe(
-      'Locations: all but GG01',
+      'Locations: All but GG01',
     );
     expect(locations(onlyLocations(wide, ['id:AA01', 'id:BB01', 'id:CC01']))).toBe('Locations: 3 of 7');
-    expect(locations(onlyLocations(wide, []))).toBe('Locations: none');
+    expect(locations(onlyLocations(wide, []))).toBe('Locations: None');
     expect(labels({ locations: onlyLocations(both, ['none']) }, both)[2]).toBe('Locations: No location set');
   });
 
@@ -163,8 +174,8 @@ describe('list filter labels', () => {
         .upload('u3', { deployments: [deployment('BB01', 'Wash', 13.5, -100.25)], media: [media('u3', 'd.jpg', 'BB01', '2024-01-04T10:00:00')] }),
     );
     const f: FilterState = { ...NO_FILTERS, locations: onlyLocations(mixed, ['id:PAT26']) };
-    expect(filterButtons(mixed, f, 'm')[1].label).toBe('Locations: pat26');
-    expect(filterButtons(mixed, f, 'm', true)[1].label).toBe('Locations: pat26, PAT26');
+    expect(rows(mixed, f, 'm')[1].label).toBe('Locations: Pat26');
+    expect(rows(mixed, f, 'm', true)[1].label).toBe('Locations: Pat26, PAT26');
   });
 
   it('say when a location has only some of its sites ticked', () => {
@@ -185,14 +196,14 @@ describe('list filter labels', () => {
     const two = modelOf(c);
     const site = (name: string) => two.sites.find((s) => s.name === name)!.key;
     const f = (...hidden: string[]): FilterState => ({ ...NO_FILTERS, locations: { hidden: hidden.map(site) } });
-    const button = (state: FilterState, separate = false) => filterButtons(two, state, 'm', separate)[1];
+    const button = (state: FilterState, separate = false) => rows(two, state, 'm', separate)[1];
 
-    expect(button(f('North'), true).label).toBe('Locations: all but AA01');
-    expect(button(f('North'))).toMatchObject({ label: 'Locations: all but part of AA01', active: true });
+    expect(button(f('North'), true).label).toBe('Locations: All but AA01');
+    expect(button(f('North'))).toMatchObject({ label: 'Locations: All but part of AA01', active: true });
     expect(filterWords(two, f('North'), 'm')).toBe('Locations: all but part of AA01');
-    expect(button(f('North', 'Flat')).label).toBe('Locations: all but CC01, part of AA01');
+    expect(button(f('North', 'Flat')).label).toBe('Locations: All but CC01, part of AA01');
     expect(button(f('South', 'Wash', 'Flat', 'Dune')).label).toBe('Locations: EE01, part of AA01');
-    expect(button(f('North', 'Wash', 'Flat', 'Dune', 'Mesa')).label).toBe('Locations: part of AA01');
+    expect(button(f('North', 'Wash', 'Flat', 'Dune', 'Mesa')).label).toBe('Locations: Part of AA01');
     expect(noneTicked(two, f('North', 'Wash', 'Flat', 'Dune', 'Mesa'))).toBeNull();
     // The × and Reset clear it.
     expect(activeFilters(clearFilter(f('North'), 'locations'))).toEqual([]);
@@ -202,10 +213,10 @@ describe('list filter labels', () => {
   it('follow the same rules for mountain ranges and collections', () => {
     const ranges = (keep: string[]) => labels({ ranges: only(listKeys(wide, 'ranges'), keep) }, wide)[4];
     expect(ranges(['BB0', 'AA0'])).toBe('Mountain range: AA0, BB0');
-    expect(ranges(['AA0', 'BB0', 'CC0', 'DD0', 'EE0', 'FF0'])).toBe('Mountain range: all but GG0');
+    expect(ranges(['AA0', 'BB0', 'CC0', 'DD0', 'EE0', 'FF0'])).toBe('Mountain range: All but GG0');
     expect(ranges(['AA0', 'BB0', 'CC0'])).toBe('Mountain range: 3 of 7');
     expect(labels({ collections: { hidden: ['sparcd-aaa::aaa'] } }, both)[0]).toBe('Collections: Bravo');
-    expect(labels({ collections: { hidden: ['sparcd-aaa::aaa', 'sparcd-bbb::bbb'] } }, both)[0]).toBe('Collections: none');
+    expect(labels({ collections: { hidden: ['sparcd-aaa::aaa', 'sparcd-bbb::bbb'] } }, both)[0]).toBe('Collections: None');
   });
 });
 
@@ -229,16 +240,16 @@ describe('date and elevation labels', () => {
   it('show date ranges by month when they cover whole months', () => {
     expect(labels({ dateFrom: '2023-09-01', dateTo: '2025-09-30' })[2]).toBe('Dates: Sep 2023 – Sep 2025');
     expect(labels({ dateFrom: '2023-09-01', dateTo: '2023-09-30' })[2]).toBe('Dates: Sep 2023');
-    expect(labels({ dateFrom: '2023-09-01' })[2]).toBe('Dates: from Sep 2023');
-    expect(labels({ dateTo: '2024-02-29' })[2]).toBe('Dates: until Feb 2024');
+    expect(labels({ dateFrom: '2023-09-01' })[2]).toBe('Dates: From Sep 2023');
+    expect(labels({ dateTo: '2024-02-29' })[2]).toBe('Dates: Until Feb 2024');
     expect(labels({ dateFrom: '2023-09-14', dateTo: '2023-10-01' })[2]).toBe('Dates: 2023-09-14 – 2023-10-01');
   });
 
   it('show years, then how many more date filters there are', () => {
     expect(labels({ years: [2024, 2023] })[2]).toBe('Dates: 2023, 2024');
     expect(labels({ years: [2022, 2023, 2024] })[2]).toBe('Dates: 3 years');
-    expect(labels({ dateFrom: '2023-09-01', years: [2024] })[2]).toBe('Dates: from Sep 2023 +1');
-    expect(labels({ hours: [22, 4] })[2]).toBe('Dates: hours 22:00–04:59');
+    expect(labels({ dateFrom: '2023-09-01', years: [2024] })[2]).toBe('Dates: From Sep 2023 +1');
+    expect(labels({ hours: [22, 4] })[2]).toBe('Dates: Hours 22:00–04:59');
   });
 
   it('show elevation in the chosen unit', () => {

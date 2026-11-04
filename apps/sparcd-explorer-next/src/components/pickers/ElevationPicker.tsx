@@ -23,7 +23,7 @@ export function ElevationPicker() {
   return (
     <>
       <div className="sect">
-        <h3>Elevation</h3>
+        <h2 className="pk-title">Elevation</h2>
         <label htmlFor="elev-lo" className="row justify-between">
           <span>Lowest</span>
           <span className="mono">{formatElevation(a, unit)}</span>

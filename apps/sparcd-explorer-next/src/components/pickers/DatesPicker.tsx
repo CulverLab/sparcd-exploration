@@ -52,13 +52,19 @@ export function DatesPicker() {
     return n;
   }, [model, without]);
   if (!model.dateSpan) return <p className="fine">No photo in these collections has a readable date.</p>;
-  const { years, min, max } = datesOffered(inViewOf(model, filters).dates, filters);
+  const { years: offered, min, max } = datesOffered(inViewOf(model, filters).dates, filters);
+  const years: number[] = [];
+  for (let y = Number(model.dateSpan.first.slice(0, 4)); y <= Number(model.dateSpan.last.slice(0, 4)); y++) years.push(y);
   return (
     <>
       <div className="sect">
+        <h2 className="pk-title">Dates</h2>
+      </div>
+      <div className="sect">
         <h3>Years</h3>
-        {years.length === 0 && <p className="fine">No dated photos in view.</p>}
-        <div className="yearchips">
+        {offered.length === 0 && <p className="fine">No dated photos in view.</p>}
+        {/* Every year keeps its place; one with no photos under the other filters can't be picked. */}
+        <div className="yearchips" role="group" aria-label="Years">
           {years.map((y) => {
             const [photos, untagged] = perYear.get(y) ?? [0, 0];
             return (
@@ -66,6 +72,7 @@ export function DatesPicker() {
                 key={y}
                 type="button"
                 aria-pressed={filters.years.includes(y)}
+                disabled={!offered.includes(y)}
                 onClick={() => setFilters((f) => toggleYear(f, y))}
               >
                 <b>{y}</b>

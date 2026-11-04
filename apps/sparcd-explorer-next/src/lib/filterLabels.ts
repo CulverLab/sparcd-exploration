@@ -1,5 +1,4 @@
-// What each filter button says: its name when inactive, its value when active
-// ("Species: Bobcat, Coyote"), so the bar stays one line with no chip row.
+// What each filter says: its sidebar row's value, and the same words for a report.
 
 import {
   NO_LOCATION_NAME,
@@ -21,8 +20,6 @@ import {
 import { fmtN, monthName, plural } from './format';
 import { areaLocations } from './mapData';
 
-export type FilterButton = { dim: FilterDimension; name: string; label: string; active: boolean };
-
 /** What the sidebar calls each filter. */
 export const SECTION_NAMES: Record<FilterDimension, string> = {
   collections: 'Collections',
@@ -33,17 +30,6 @@ export const SECTION_NAMES: Record<FilterDimension, string> = {
   ranges: 'Mountain range',
   elevation: 'Elevation',
   files: 'Photo files',
-};
-
-const NAMES: Record<FilterDimension, string> = {
-  collections: 'Collections',
-  species: 'Species',
-  locations: 'Locations',
-  area: 'Area',
-  files: 'Files',
-  dates: 'Dates',
-  elevation: 'Elevation',
-  ranges: 'Mountain range',
 };
 
 /** What "No … selected" calls each list's items. */
@@ -192,22 +178,6 @@ function value(model: Model, f: FilterState, dim: FilterDimension, unit: Elevati
       return elevationRange(lo, hi, unit);
     }
   }
-}
-
-/**
- * The bar's buttons in order. Collections shows only with several collections
- * open, and Area only while a map area is selected.
- */
-export function filterButtons(model: Model, f: FilterState, unit: ElevationUnit, separate = false): FilterButton[] {
-  const active = new Set(activeFilters(f));
-  const inView = inViewWithout(model, f);
-  const dims: FilterDimension[] = ['collections', 'species', 'locations', 'area', 'files', 'dates', 'elevation', 'ranges'];
-  return dims
-    .filter((dim) => (dim === 'collections' ? model.collections.length > 1 : dim === 'area' || dim === 'files' ? active.has(dim) : true))
-    .map((dim) => {
-      const v = active.has(dim) ? value(model, f, dim, unit, separate, inView) : null;
-      return { dim, name: NAMES[dim], label: v ? `${NAMES[dim]}: ${v}` : NAMES[dim], active: active.has(dim) };
-    });
 }
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);

@@ -1,22 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { activeFilters, type FilterDimension, type FilterState, type ListDimension } from '@/data';
+import { activeFilters, type FilterDimension, type ListDimension } from '@/data';
 import { LIST_NOUNS, SECTION_NAMES, nothingTicked, sectionValue } from '@/lib/filterLabels';
 import { plural } from '@/lib/format';
-import { toggleYear } from '@/lib/months';
 import { PHONE, useMedia } from '@/lib/useMedia';
 import { inViewOf, useView } from '@/lib/useView';
 import { useStore } from '@/store';
-import { Seg } from './Popover';
 import { ResetSlot } from './ResetSlot';
 import { CollectionsPicker } from './pickers/CollectionsPicker';
 import { DatesPicker } from './pickers/DatesPicker';
 import { ElevationPicker } from './pickers/ElevationPicker';
+import { FilesPicker } from './pickers/FilesPicker';
 import { LocationsPicker } from './pickers/LocationsPicker';
 import { RangePicker } from './pickers/RangePicker';
 import { SpeciesPicker } from './pickers/SpeciesPicker';
 
-type PickerDim = Exclude<FilterDimension, 'area' | 'files'>;
+type PickerDim = Exclude<FilterDimension, 'area'>;
 
 const PICKERS: Record<PickerDim, () => JSX.Element> = {
   collections: CollectionsPicker,
@@ -25,12 +24,15 @@ const PICKERS: Record<PickerDim, () => JSX.Element> = {
   dates: DatesPicker,
   elevation: ElevationPicker,
   ranges: RangePicker,
+  files: FilesPicker,
 };
 
-/** The sections in their fixed order. Collections shows with several collections open, Photo files when files are missing. */
+/** The rows in their fixed order, the most used first. Collections shows with several collections open, Photo files when files are missing. */
 const ORDER: FilterDimension[] = ['collections', 'species', 'locations', 'dates', 'area', 'ranges', 'elevation', 'files'];
+/** The rows under the quiet "More" label. */
+const MORE: FilterDimension[] = ['ranges', 'elevation', 'files'];
 
-/** A hex click lights the Map area section and the Filters button for a moment, so the change is seen where it lives. */
+/** A hex click lights the Map area row and the Filters button for a moment, so the change is seen where it lives. */
 export function flashSection(dim: FilterDimension): void {
   for (const el of [document.querySelector(`.fsec[data-dim="${dim}"]`), document.getElementById('filtersbtn')]) {
     if (!el) continue;
@@ -41,7 +43,7 @@ export function flashSection(dim: FilterDimension): void {
   }
 }
 
-/** Takes the map into view and outlines it for a moment: the Map area section's click. */
+/** Takes the map into view and outlines it for a moment: the Map area row's click. */
 export function revealMap(): void {
   scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   const box = document.querySelector('.mapbox');
@@ -53,32 +55,7 @@ export function revealMap(): void {
 }
 
 /**
- * The years of the opened data, one button each, in at most two even rows.
- * They all keep their place so the sections below never move; one with no
- * photos under the other filters can't be picked.
- */
-function Years({ filters, years, inView }: { filters: FilterState; years: number[]; inView: ReadonlySet<number> }) {
-  const setFilters = useStore((s) => s.setFilters);
-  const cols = years.length <= 5 ? years.length : years.length <= 10 ? Math.ceil(years.length / 2) : 5;
-  return (
-    <div className="years" role="group" aria-label="Years" style={{ '--cols': cols } as React.CSSProperties}>
-      {years.map((y) => (
-        <button
-          key={y}
-          type="button"
-          aria-pressed={filters.years.includes(y)}
-          disabled={!inView.has(y) && !filters.years.includes(y)}
-          onClick={() => setFilters((f) => toggleYear(f, y))}
-        >
-          {y}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * A picker beside the sidebar, level with its section; full screen on a
+ * A picker beside the sidebar, level with its row; full screen on a
  * phone. Esc, its × or a click outside closes it. A list closed with nothing
  * ticked shows everything again, with Undo.
  */
@@ -116,12 +93,12 @@ function SidePicker({ dim, onClose }: { dim: PickerDim; onClose: (refocus: boole
 
   useEffect(() => {
     const el = ref.current!;
-    (el.querySelector<HTMLElement>('input[type="search"]') ?? el.querySelector<HTMLElement>('.pk-body input, .pk-body button:not([disabled])'))?.focus({
+    (el.querySelector<HTMLElement>('input[type="search"]') ?? el.querySelector<HTMLElement>('.pk-body input, .pk-body button:not([disabled]):not([tabindex="-1"])'))?.focus({
       preventScroll: true,
     });
     const down = (e: PointerEvent) => {
       const t = e.target as Element;
-      // A section's own click opens, switches or closes; the toast's Undo stays in reach.
+      // A row's own click opens, switches or closes; the toast's Undo stays in reach.
       if (el.contains(t) || t.closest?.('.fsec, .toast') || innerWidth < 760) return;
       closeRef.current(false);
     };
@@ -157,8 +134,9 @@ function SidePicker({ dim, onClose }: { dim: PickerDim; onClose: (refocus: boole
 }
 
 /**
- * The filters, one section each in a fixed order, with the result and Reset
- * at the top. Hidden or shown with the Filters button; a sheet on phones.
+ * The filters, one plain row each in a fixed order: name, value and chevron,
+ * with an × while it is on. The result and Reset sit at the top. Hidden or
+ * shown with the Filters button; a sheet on phones.
  */
 export function Sidebar() {
   const { model, filters, result, grouping, multi } = useView();
@@ -168,7 +146,6 @@ export function Sidebar() {
   const setSide = useStore((s) => s.setSide);
   const sheet = useStore((s) => s.sheet);
   const setSheet = useStore((s) => s.setSheet);
-  const setFilters = useStore((s) => s.setFilters);
   const clear = useStore((s) => s.clearFilter);
   const phone = useMedia(PHONE);
   const [open, setOpen] = useState<PickerDim | null>(null);
@@ -180,7 +157,7 @@ export function Sidebar() {
     const dim = open;
     if (!dim) return;
     if (refocus) {
-      // Rendered now, so a phone's sheet is no longer inert when its section takes the focus.
+      // Rendered now, so a phone's sheet is no longer inert when its row takes the focus.
       flushSync(() => setOpen(null));
       document.getElementById(`fsec-${dim}`)?.focus({ preventScroll: true });
     } else setOpen(null);
@@ -236,43 +213,35 @@ export function Sidebar() {
         </button>
       </div>
       <div className="side-head">
-        <div className="side-title">
-          <h2>Filters</h2>
-          <button
-            type="button"
-            className="btn quiet hidebtn"
-            aria-controls="side"
-            onClick={() => {
-              setSide(false);
-              document.getElementById('filtersbtn')?.focus({ preventScroll: true });
-            }}
-          >
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M9.5 3.5 5 8l4.5 4.5" />
-            </svg>
-            Hide
-          </button>
-        </div>
         <p className="result" aria-live="polite">
           {n ? `${n} ${n === 1 ? 'filter' : 'filters'} on` : 'No filters on'}
         </p>
         <ResetSlot slot="side" />
+        <button
+          type="button"
+          className="iconbtn hidebtn"
+          aria-controls="side"
+          aria-label="Hide filters"
+          title="Hide filters"
+          onClick={() => {
+            setSide(false);
+            document.getElementById('filtersbtn')?.focus({ preventScroll: true });
+          }}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M8 3.5 3.5 8 8 12.5M12.5 3.5 8 8l4.5 4.5" />
+          </svg>
+        </button>
       </div>
       <div className="side-list">
-        {dims.map((dim) => {
+        {dims.map((dim, i) => {
           const on = active.includes(dim);
           const label = SECTION_NAMES[dim];
           const value = sectionValue(model, filters, dim, unit, grouping.separate, inView);
-          const head =
-            dim === 'files' ? (
-              <div className="fsec-btn" id="fsec-files">
-                <span className="fsec-label">{label}</span>
-                <span className="fsec-value" title={value}>
-                  {value}
-                </span>
-              </div>
-            ) : (
-              <>
+          return (
+            <Fragment key={dim}>
+              {MORE.includes(dim) && !MORE.includes(dims[i - 1]) && <h3 className="side-more">More</h3>}
+              <div className={on ? 'fsec on' : 'fsec'} data-dim={dim}>
                 <button
                   type="button"
                   className="fsec-btn"
@@ -292,58 +261,28 @@ export function Sidebar() {
                   }}
                 >
                   <span className="fsec-label">{label}</span>
-                  <span className="fsec-value" title={value}>
-                    {value}
-                  </span>
+                  <span className="fsec-value">{value}</span>
                 </button>
                 <span className="fsec-chev" aria-hidden="true" />
-              </>
-            );
-          return (
-            <div key={dim} className={on ? 'fsec on' : 'fsec'} data-dim={dim}>
-              {head}
-              {on && (
-                <button
-                  type="button"
-                  className="fsec-x"
-                  aria-label={`Clear ${label} filter`}
-                  onClick={() => {
-                    if (open === dim) setOpen(null);
-                    clear(dim);
-                    document.getElementById(`fsec-${dim}`)?.focus({ preventScroll: true });
-                  }}
-                >
-                  ×
-                </button>
-              )}
-              {dim === 'dates' && model.dateSpan && (
-                <div className="fsec-inline">
-                  <Years filters={filters} years={yearsOf(model.dateSpan)} inView={inView.dates.years} />
+                {on && (
                   <button
                     type="button"
-                    className="linkbtn"
-                    onClick={() => (open === 'dates' ? closePicker(true) : (open && closePicker(false), setOpen('dates')))}
+                    className="fsec-x"
+                    aria-label={`Clear ${label} filter`}
+                    title={`Clear ${label} filter`}
+                    onClick={() => {
+                      if (open === dim) setOpen(null);
+                      clear(dim);
+                      document.getElementById(`fsec-${dim}`)?.focus({ preventScroll: true });
+                    }}
                   >
-                    More date options…
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                      <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                    </svg>
                   </button>
-                </div>
-              )}
-              {dim === 'files' && (
-                <div className="fsec-inline">
-                  <Seg
-                    className="seg filesseg"
-                    label="Photos whose files are missing"
-                    value={filters.missing}
-                    options={[
-                      ['hide', 'Hide missing'],
-                      ['show', 'Show'],
-                      ['only', 'Only missing'],
-                    ]}
-                    onChange={(missing) => setFilters((f) => ({ ...f, missing }))}
-                  />
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            </Fragment>
           );
         })}
       </div>
@@ -355,10 +294,4 @@ export function Sidebar() {
       {open && <SidePicker dim={open} onClose={closePicker} />}
     </aside>
   );
-}
-
-function yearsOf(span: { first: string; last: string }): number[] {
-  const years: number[] = [];
-  for (let y = Number(span.first.slice(0, 4)); y <= Number(span.last.slice(0, 4)); y++) years.push(y);
-  return years;
 }

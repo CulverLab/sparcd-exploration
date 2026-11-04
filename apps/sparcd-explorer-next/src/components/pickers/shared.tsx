@@ -73,12 +73,12 @@ export function ListPicker({
     <>
       <div className="sect">
         <div className="row">
-          <h3>{title}</h3>
+          <h2 className="pk-title">{title}</h2>
           <div className="flex-1" />
-          <button type="button" className="linkbtn text-[12px]" disabled={bulk.every((r) => r.ticked === true)} onClick={() => onTick(bulk, true)}>
+          <button type="button" className="linkbtn text-[14px]" disabled={bulk.every((r) => r.ticked === true)} onClick={() => onTick(bulk, true)}>
             {searching ? 'Select matches' : 'Select all'}
           </button>
-          <button type="button" className="linkbtn text-[12px]" disabled={bulk.every((r) => r.ticked === false)} onClick={() => onTick(bulk, false)}>
+          <button type="button" className="linkbtn text-[14px]" disabled={bulk.every((r) => r.ticked === false)} onClick={() => onTick(bulk, false)}>
             {searching ? 'Clear matches' : 'Clear all'}
           </button>
         </div>
