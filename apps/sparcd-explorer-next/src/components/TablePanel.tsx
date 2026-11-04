@@ -24,8 +24,10 @@ import { saveBlob } from '@/lib/download';
 import { fmtN, plural } from '@/lib/format';
 import {
   locationColumns,
+  locationCount,
   locationFlagger,
   photoColumns,
+  sortLocations,
   sortRows,
   speciesColumns,
   type Col,
@@ -212,10 +214,11 @@ export function TablePanel() {
     return locationRows(model, result, grouping);
   }, [view, model, result, grouping, filters.photoTag]);
   // Every table walks one order: the one its header sorts by.
-  const ordered = useMemo(
-    () => (view === 'charts' ? [] : sortRows(rows as never[], cols, sorting[view])),
-    [view, rows, cols, sorting],
-  );
+  const ordered = useMemo(() => {
+    if (view === 'charts') return [];
+    if (view === 'locations') return sortLocations(rows as LocationRow[], cols as Col<LocationRow>[], sorting.locations) as never[];
+    return sortRows(rows as never[], cols, sorting[view]);
+  }, [view, rows, cols, sorting]);
   const flags = useMemo(() => locationFlagger(model), [model]);
   // A location's flag opens Data checks beside it, on its own check.
   const flagAnchor = useRef<HTMLElement | null>(null);
@@ -294,7 +297,7 @@ export function TablePanel() {
         ? plural(rows.length, 'photo')
         : view === 'charts'
           ? plural(result.detections.length, 'detection')
-          : plural(rows.length, 'location');
+          : locationCount(rows as LocationRow[]);
 
   // The file lists the rows in the table's order.
   const exportCsv = () => {
@@ -350,7 +353,7 @@ export function TablePanel() {
         sorting={now.sorting.locations}
         onSorting={(s) => setSorting('locations', s)}
         rowKey={(r) => r.key}
-        rowClass={(r) => (flags(r).length ? 'flag' : undefined)}
+        rowClass={(r) => [flags(r).length && 'flag', r.photos === 0 && 'nomatch'].filter(Boolean).join(' ') || undefined}
         onRowHover={(r) => setHighlight(r && !r.noLocation ? r.sites : null)}
         head={(c) => (c.id === 'activity' && axis ? <ActivityHead ticks={ticks} onWidth={setSparkW} /> : undefined)}
         cell={(c, r) => {
@@ -378,6 +381,7 @@ export function TablePanel() {
             <button
               type="button"
               className="linkbtn text-[12px]"
+              disabled={r.photos === 0}
               onClick={() => {
                 const from = scrollY;
                 // The photos start at the table's top; the page stays put when that is already in view.
@@ -532,13 +536,19 @@ export function TablePanel() {
               )}
             </>
           )}
-          <span className="rowcount" aria-live="polite">
+          <span className={view === 'locations' ? 'rowcount locs' : 'rowcount'} aria-live="polite">
             {updating && (
               <span className="updating" role="status">
                 Updating…
               </span>
             )}
-            {nothing ? '' : count}
+            {nothing
+              ? ''
+              : count.split(/(?<=, )/).map((line) => (
+                  <span key={line} className="line">
+                    {line}
+                  </span>
+                ))}
           </span>
           {(now.view === 'locations' || now.view === 'species') && (
             <span className={grouping.separate ? 'septoggle on' : 'septoggle'}>

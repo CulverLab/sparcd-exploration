@@ -46,9 +46,8 @@ describe('test_search_filters', () => {
   });
 
   it('a species include filter leaves untagged images out', () => {
-    // Locations count camera effort, as the Locations table lists them, so a
-    // species filter leaves both cameras in.
-    expect(sitesAndImages({ species: onlySpecies(modelOf(fixture()), ['Owl']) })).toEqual([2, 2]);
+    // Locations count those with matching photos, so the camera that saw no owl isn't one.
+    expect(sitesAndImages({ species: onlySpecies(modelOf(fixture()), ['Owl']) })).toEqual([1, 2]);
   });
 
   it('a malformed media date leaves the date bounds alone', () => {

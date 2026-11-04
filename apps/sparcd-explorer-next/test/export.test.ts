@@ -1,7 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { parseDeploymentsNullable, parseMedia, parseObservations } from '@sparcd/camtrap';
 import { describe, expect, it } from 'vitest';
-import { CAMTRAP_PROFILE, buildModel, camtrapPackage, csvFiles, detectionsTable, exportFileName, formulaSafe, locationsTable, onlySpecies, photosTable, precisionWords, resultForTag, speciesTable, spreadsheetTables, summaryTable, tableCsv, xlsxBlob, zipBlob, type Display, type ExportOptions, type FilterResult, type LoadedCollection, type Model, type ReportFacts } from '../src/data';
+import { CAMTRAP_PROFILE, buildModel, camtrapPackage, collectionsTable, csvFiles, detectionsTable, exportFileName, formulaSafe, locationsTable, onlySpecies, photosTable, precisionWords, resultForTag, speciesTable, spreadsheetTables, summaryTable, tableCsv, xlsxBlob, zipBlob, type Display, type ExportOptions, type FilterResult, type LoadedCollection, type Model, type ReportFacts } from '../src/data';
 import { tableOrder } from '../src/lib/tables';
 import { collection, deployment, filter, media, observation } from './support/fixtures';
 
@@ -465,6 +465,24 @@ describe("downloads follow each table's sort", () => {
     expect(column(photosTable(model, filter(model), o), 'File name')).toEqual(['d.jpg', 'c.jpg', 'b.jpg', 'a.jpg']);
     const csv = csvFiles(model, filter(model), o);
     expect(csv['photos.csv'].split('\r\n').slice(1, 5).map((l) => l.split(',')[1])).toEqual(['d.jpg', 'c.jpg', 'b.jpg', 'a.jpg']);
+  });
+
+  it('keeps locations with no matching photos, last, in the same order as the table', () => {
+    const coyotes = filter(model, { species: onlySpecies(model, ['Canis latrans']) });
+    const ids = (o: ExportOptions) => column(locationsTable(model, coyotes, o), 'Location ID');
+    // No order given: by ID, which leaves no location last among the rest.
+    expect(ids(opts())).toEqual(['AA01', 'AA10', '0000']);
+    expect(ids(sorted(byDefault))).toEqual(['AA01', '0000', 'AA10']);
+    expect(ids(sorted({ ...byDefault, locations: [{ id: 'id', desc: true }] }))).toEqual(['AA01', 'AA10', '0000']);
+    expect(column(locationsTable(model, coyotes, sorted(byDefault)), 'Photos')).toEqual([1, 0, 0]);
+    const swapped = filter(model, { species: onlySpecies(model, ['Lynx rufus']) });
+    expect(column(locationsTable(model, swapped, opts()), 'Location ID')).toEqual(['AA01', 'AA10', '0000']);
+  });
+
+  it("counts a collection's locations with matching photos, as the Locations figure does", () => {
+    const coyotes = filter(model, { species: onlySpecies(model, ['Canis latrans']) });
+    expect(column(collectionsTable(model, coyotes, opts()), 'Locations')).toEqual([1]);
+    expect(summaryTable(model, coyotes, opts(), facts).rows.find((r) => r[0] === 'Locations')![1]).toBe(1);
   });
 
   it("keeps each photo's detections together, in the Photos order", () => {

@@ -56,7 +56,7 @@ describe('#400 date and species filters reduce the image count', () => {
       }),
   );
 
-  it('images and locations follow every filter, untagged images included; locations count camera effort', () => {
+  it('images and locations follow every filter, untagged images included; locations count those with matching photos', () => {
     const count = (state: Parameters<typeof filter>[1]) => {
       const s = summarize(model, filter(model, state), grouped);
       return [s.locations, s.photos];
@@ -64,7 +64,7 @@ describe('#400 date and species filters reduce the image count', () => {
     expect(count({})).toEqual([2, 3]);
     expect(count({ years: [2024] })).toEqual([2, 2]);
     expect(count({ dateFrom: '2024-06-01' })).toEqual([1, 1]);
-    expect(count({ species: onlySpecies(model, ['Owl']) })).toEqual([2, 1]);
+    expect(count({ species: onlySpecies(model, ['Owl']) })).toEqual([1, 1]);
   });
 });
 

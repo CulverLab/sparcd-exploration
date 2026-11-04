@@ -10,6 +10,7 @@ import { slug } from './slug';
 import {
   detectionRows,
   locationRows,
+  matchingFirst,
   photoRows,
   speciesRows,
   summarize,
@@ -66,13 +67,15 @@ const collectionNames = (model: Model, collections: number[]) => collections.map
 
 // --- Tables --------------------------------------------------------------------
 
-/** Locations by ID, "No location set" last. */
+/** Locations by ID, "No location set" last, then those with no photos under the filters. */
 export function sortedLocations(model: Model, rows: LocationRow[]): LocationRow[] {
-  return [...rows].sort(
-    (a, b) =>
-      Number(a.noLocation) - Number(b.noLocation) ||
-      natural(a.ids.join(), b.ids.join()) ||
-      natural(collectionNames(model, a.collections), collectionNames(model, b.collections)),
+  return matchingFirst(
+    [...rows].sort(
+      (a, b) =>
+        Number(a.noLocation) - Number(b.noLocation) ||
+        natural(a.ids.join(), b.ids.join()) ||
+        natural(collectionNames(model, a.collections), collectionNames(model, b.collections)),
+    ),
   );
 }
 
@@ -232,7 +235,7 @@ export function detectionsTable(model: Model, result: FilterResult, o: ExportOpt
 
 /**
  * Totals per open collection, less those the Collections filter unticks
- * (`hidden`): locations with camera effort, photos, tagged photos,
+ * (`hidden`): locations with matching photos, photos, tagged photos,
  * detections, species, and the first and last photo.
  */
 export function collectionsTable(model: Model, result: FilterResult, o: ExportOptions, hidden: string[] = []): Table {
@@ -245,13 +248,10 @@ export function collectionsTable(model: Model, result: FilterResult, o: ExportOp
     first: null as string | null,
     last: null as string | null,
   }));
-  for (const i of result.effort) {
-    const p = model.photos[i];
-    totals[p.collection].locations.add(locationKeyOf(model.sites[p.site], o.separate));
-  }
   for (const i of result.photos) {
     const p = model.photos[i];
     const t = totals[p.collection];
+    t.locations.add(locationKeyOf(model.sites[p.site], o.separate));
     t.photos++;
     if (p.tagged) t.tagged++;
     if (p.date !== null) {

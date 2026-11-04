@@ -48,7 +48,7 @@ describe('summarize', () => {
     expect(summarize(model, result, separate).locations).toBe(2);
   });
 
-  it('counts the locations the Locations table lists, even where the species filter finds nothing', () => {
+  it('counts the locations with matching photos, while the Locations table keeps the cameras that saw none', () => {
     const two = modelOf(
       collection()
         .upload('u1', {
@@ -64,8 +64,11 @@ describe('summarize', () => {
     );
     const bobcats = filter(two, { species: onlySpecies(two, ['Lynx rufus']) });
     const summary = summarize(two, bobcats, grouped);
-    expect(summary).toMatchObject({ locations: 2, photos: 1, activeDays: 2 });
-    expect(locationRows(two, bobcats, grouped)).toHaveLength(summary.locations);
+    expect(summary).toMatchObject({ locations: 1, photos: 1, activeDays: 2 });
+    expect(locationRows(two, bobcats, grouped).map((r) => [r.ids[0], r.photos, r.activeDays]).sort()).toEqual([
+      ['AA01', 1, 1],
+      ['BB01', 0, 1],
+    ]);
   });
 });
 

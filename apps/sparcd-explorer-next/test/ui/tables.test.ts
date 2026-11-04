@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { locationRows, photoRows, speciesRows } from '../../src/data';
-import { DEFAULT_SORTING } from '../../src/store';
-import { compareCells, orderBy, photoTimeRanks, sortRows, tableOrder, timeKey, type Cell, type Col } from '../../src/lib/tables';
+import { locationRows, onlySpecies, photoRows, speciesRows } from '../../src/data';
+import { DEFAULT_SORTING, type Sorting } from '../../src/store';
+import { compareCells, locationCount, orderBy, photoTimeRanks, sortRows, tableOrder, timeKey, type Cell, type Col } from '../../src/lib/tables';
 import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
 
 type Row = { id: string; n: number | null };
@@ -133,5 +133,51 @@ describe('the order downloads and the report follow', () => {
   it('leaves rows as they come for a sort on a column the table does not show, as the table does', () => {
     const rows = photoRows(model, result.photos);
     expect(order({ ...DEFAULT_SORTING, photos: [{ id: 'file', desc: true }] }).photos(rows)).toBe(rows);
+  });
+});
+
+describe('locations with no photos under the filters', () => {
+  const model = modelOf(
+    collection()
+      .upload('u1', {
+        deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+        media: [media('u1', 'a.jpg', 'AA01', '2024-01-01T10:00:00')],
+        observations: [observation('u1', 'a.jpg', 'AA01', '', { common: 'Deer', scientific: 'Odocoileus hemionus' })],
+      })
+      .upload('u2', {
+        deployments: [deployment('BB01', 'Bravo', 12.6, -100.25)],
+        media: [media('u2', 'b.jpg', 'BB01', '2024-01-02T10:00:00'), media('u2', 'c.jpg', 'BB01', '2024-01-03T10:00:00')],
+        observations: [
+          observation('u2', 'b.jpg', 'BB01', '', { common: 'Bobcat', scientific: 'Lynx rufus' }),
+          observation('u2', 'c.jpg', 'BB01', '', { common: 'Bobcat', scientific: 'Lynx rufus' }),
+        ],
+      })
+      .upload('u3', {
+        deployments: [deployment('CC01', 'Charlie', 12.7, -100.25)],
+        media: [media('u3', 'd.jpg', 'CC01', '2024-01-04T10:00:00')],
+        observations: [observation('u3', 'd.jpg', 'CC01', '', { common: 'Bobcat', scientific: 'Lynx rufus' })],
+      }),
+  );
+  const bobcats = filter(model, { species: onlySpecies(model, ['Lynx rufus']) });
+  const rows = locationRows(model, bobcats, { separate: false });
+  const display = { coords: 'latlon' as const, precision: { method: 'round' as const, digits: 3 }, elevation: 'm' as const };
+  const ids = (sorting: Sorting) =>
+    tableOrder({ model, display, totalDetections: 3 }, { ...DEFAULT_SORTING, locations: sorting }, false)
+      .locations(rows)
+      .map((r) => r.ids[0]);
+
+  it.each<[string, Sorting, string[]]>([
+    ['by ID, going up', [{ id: 'id', desc: false }], ['BB01', 'CC01', 'AA01']],
+    ['by ID, going down', [{ id: 'id', desc: true }], ['CC01', 'BB01', 'AA01']],
+    ['by photos, going up', [{ id: 'photos', desc: false }], ['CC01', 'BB01', 'AA01']],
+    ['by photos, going down', [{ id: 'photos', desc: true }], ['BB01', 'CC01', 'AA01']],
+  ])('go last sorted %s', (_, sorting, expected) => {
+    expect(ids(sorting)).toEqual(expected);
+  });
+
+  it('the row count says both when they differ', () => {
+    expect(locationCount(rows)).toBe('3 locations, 2 with matching photos');
+    expect(locationCount(locationRows(model, filter(model), { separate: false }))).toBe('3 locations');
+    expect(locationCount(rows.slice(0, 1))).toBe(rows[0].photos ? '1 location' : '1 location, 0 with matching photos');
   });
 });

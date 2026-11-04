@@ -217,6 +217,20 @@ Feature: Filter the photos in view
     When I clear the Species filter with its ×
     Then the figures, the map and the tables' tab row have not moved
 
+  Scenario Outline: The Locations count saying more moves nothing at <width> pixels
+    Given the screen is <width> pixels wide
+    When I note where the figures, the map and the tables' tab row are
+    And I filter species to "Coyote"
+    Then the figures, the map and the tables' tab row have not moved
+    And the table's count reads "5 locations, 1 with matching photos"
+
+    Examples:
+      | width |
+      | 1366  |
+      | 1280  |
+      | 1024  |
+      | 700   |
+
   Scenario: Hiding the sidebar is remembered, and changes only the main area's width
     When I note where the figures, the map and the tables' tab row are
     And I hide the sidebar

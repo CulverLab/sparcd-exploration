@@ -16,9 +16,9 @@ Feature: The figures
     And the "Active days" figure reads "10"
     And "Active days" explains "Days with at least one photo, summed over locations"
 
-  Scenario: The figures count the locations the Locations table lists, whatever species is picked
+  Scenario: The figures count the locations with matching photos, while the table keeps every camera that ran
     When I filter species to "Coyote"
-    Then the "Locations" figure reads "5 of 5"
+    Then the "Locations" figure reads "1 of 5"
     And the "Photos" figure reads "1 100% tagged of 11"
     And the Locations table still lists every location with photos
 

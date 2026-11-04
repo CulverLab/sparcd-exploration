@@ -548,6 +548,21 @@ When(/^I sort by "(.*)"(?: again)?$/, async ({ page }, label: string) => {
   await settled(page);
 });
 
+const locationRow = (page: Page, id: string) => tableRows(page).filter({ has: page.locator('td', { hasText: new RegExp(`^${escapeRe(id)}$`) }) });
+
+Then("the table's count reads {string}", async ({ page }, text: string) => {
+  await expect(page.locator('#table .rowcount')).toHaveText(text);
+});
+
+Then('the row {string} is not dimmed', async ({ page }, id: string) => {
+  await expect(locationRow(page, id)).not.toHaveClass(/\bnomatch\b/);
+});
+
+Then('the row {string} is dimmed, with {string} disabled', async ({ page }, id: string, action: string) => {
+  await expect(locationRow(page, id)).toHaveClass(/\bnomatch\b/);
+  await expect(locationRow(page, id).getByRole('button', { name: action })).toBeDisabled();
+});
+
 Then('the first row is {string}', async ({ page }, id: string) => {
   expect((await columnValues(page, 'Location ID'))[0]).toBe(id);
 });

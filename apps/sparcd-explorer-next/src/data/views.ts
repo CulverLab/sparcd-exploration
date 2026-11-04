@@ -27,7 +27,7 @@ function effortDays(model: Model, result: FilterResult, { separate }: Grouping):
 }
 
 export type Summary = {
-  /** Locations with camera effort in view, as the Locations table lists them. */
+  /** Locations with matching photos. The Locations table also lists the cameras that ran and saw none. */
   locations: number;
   photos: number;
   tagged: number;
@@ -48,9 +48,9 @@ export function summarize(model: Model, result: FilterResult, grouping: Grouping
   let tagged = 0;
   let firstDate: string | null = null;
   let lastDate: string | null = null;
-  for (const i of result.effort) locations.add(locationKeyOf(model.sites[model.photos[i].site], grouping.separate));
   for (const i of result.photos) {
     const p = model.photos[i];
+    locations.add(locationKeyOf(model.sites[p.site], grouping.separate));
     byCollection[p.collection].photos++;
     if (p.tagged) {
       tagged++;
@@ -111,9 +111,9 @@ export type LocationRow = {
 
 /**
  * One row per location with at least one photo in the camera-effort
- * population (every filter but species), so a location's active days count
- * whatever species is picked and the rows add up to the summary. Its
- * species-dependent columns can then read 0.
+ * population (every filter but species), so a camera that ran and saw none of
+ * the species picked is still there, with its active days. Its
+ * species-dependent columns then read 0.
  */
 export function locationRows(model: Model, result: FilterResult, grouping: Grouping): LocationRow[] {
   type Tally = {
@@ -186,6 +186,12 @@ export function locationRows(model: Model, result: FilterResult, grouping: Group
       activeDays: days.get(key)?.size ?? 0,
     };
   });
+}
+
+/** Locations with no photos under the filters go last, whatever the sort; each side keeps its order. */
+export function matchingFirst(rows: LocationRow[]): LocationRow[] {
+  const none = rows.filter((r) => r.photos === 0);
+  return none.length ? [...rows.filter((r) => r.photos > 0), ...none] : rows;
 }
 
 export type SpeciesRow = {

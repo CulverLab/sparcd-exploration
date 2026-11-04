@@ -70,6 +70,23 @@ Feature: Tables of locations, species and photos
     When I press Escape
     Then focus is back on the "moved" flag of "AB01"
 
+  Scenario: Under a species filter, cameras that saw none stay in the table, dimmed and last, in the CSV too
+    When I filter species to "Coyote"
+    Then the table's count reads "5 locations, 1 with matching photos"
+    And the first row is "AB02"
+    And the row "AB02" is not dimmed
+    And the row "AB01" is dimmed, with "Show photos" disabled
+    When I sort by "Location ID"
+    Then the first row is "AB02"
+    When I sort by "Photos"
+    Then the first row is "AB02"
+    When I sort by "Photos"
+    Then the first row is "AB02"
+    And the row "AB01" is dimmed, with "Show photos" disabled
+    When I export CSV
+    Then the CSV has 5 rows
+    And the CSV lists the locations in the table's order
+
   @preview-7
   Scenario: After "Show photos", Back returns to Locations as it was
     Given the screen is 1440 pixels wide and 560 high

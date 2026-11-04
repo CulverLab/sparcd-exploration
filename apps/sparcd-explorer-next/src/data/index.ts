@@ -91,6 +91,7 @@ export {
   detectionRows,
   hexBins,
   locationRows,
+  matchingFirst,
   photoRows,
   speciesRows,
   summarize,

@@ -10,6 +10,7 @@ import {
   formatDegrees,
   localTimeKey,
   locationGroupKey,
+  matchingFirst,
   reduceDegrees,
   shownPosition,
   type LocationRow,
@@ -23,7 +24,7 @@ import {
 import type { Sorting, TableView } from '@/store';
 import { andList, checkKey } from './checkText';
 import { loadPrefs, shownColumns } from './columnPrefs';
-import { fmtN, formatElevation, formatPosition, type Display } from './format';
+import { fmtN, formatElevation, formatPosition, plural, type Display } from './format';
 
 export type Cell = string | number | null;
 
@@ -188,18 +189,33 @@ export function timeKey(time: string): number | null {
   return localTimeKey(time);
 }
 
+/** Locations in the table's order: by its sort, with those that have no photos under the filters last. */
+export const sortLocations = (rows: LocationRow[], cols: Col<LocationRow>[], sorting: Sorting): LocationRow[] =>
+  matchingFirst(sortRows(rows, cols, sorting));
+
+/** "3 locations", or "3 locations, 1 with matching photos" when some have none. */
+export function locationCount(rows: LocationRow[]): string {
+  const matching = rows.filter((r) => r.photos > 0).length;
+  const all = plural(rows.length, 'location');
+  return matching === rows.length ? all : `${all}, ${fmtN(matching)} with matching photos`;
+}
+
 /**
  * Each table's rows in the order the page lists them: by its sort over the
  * columns it shows, for the downloads and the report to follow.
  */
 export function tableOrder(ctx: TableContext, sorting: Record<TableView, Sorting>, multi: boolean): TableOrder {
-  const by = <R>(view: TableView, defs: Col<R>[]): Reorder<R> => {
+  const shownOf = <R>(view: TableView, defs: Col<R>[]): Col<R>[] => {
     const shown = new Set(shownColumns(loadPrefs(view, defs), defs, multi));
-    const cols = defs.filter((c) => shown.has(c.id));
+    return defs.filter((c) => shown.has(c.id));
+  };
+  const by = <R>(view: TableView, defs: Col<R>[]): Reorder<R> => {
+    const cols = shownOf(view, defs);
     return (rows) => sortRows(rows, cols, sorting[view]);
   };
+  const locations = shownOf('locations', locationColumns(ctx));
   return {
-    locations: by('locations', locationColumns(ctx)),
+    locations: (rows) => sortLocations(rows, locations, sorting.locations),
     species: by('species', speciesColumns(ctx)),
     photos: by('photos', photoColumns(ctx)),
   };
