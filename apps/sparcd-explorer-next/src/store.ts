@@ -7,9 +7,9 @@ import {
   NO_FILTERS,
   accountKey,
   buildModel,
+  canReset,
   carryFilters,
   clearFilter,
-  isFiltered,
   resetFilters,
   type FileCheck,
   type FilterDimension,
@@ -123,7 +123,7 @@ type State = {
   drillDown: (message: string, change: (s: Snapshot) => Snapshot, scroll: number) => void;
   /** Back to where the last drill-down came from. */
   goBack: () => void;
-  /** Clear every filter; Undo takes the pressed slot's place for about 8 s. */
+  /** Clear every filter and the tag switch; Undo takes the pressed slot's place for about 8 s. */
   resetFilters: (from?: ResetSlot) => void;
   undoReset: () => void;
   setSide: (side: boolean) => void;
@@ -369,7 +369,7 @@ export const useStore = create<State>((set, get) => ({
     set({ back: null });
     get().withUndo(undo, (s) => ({ ...s, filters: clearFilter(s.filters, dim) }));
   },
-  setPhotoTag: (photoTag) => set({ filters: { ...get().filters, photoTag } }),
+  setPhotoTag: (photoTag) => set({ filters: { ...get().filters, photoTag }, resetUndo: null }),
 
   withUndo: (message, change) => {
     const { filters, separate, view, model: made } = get();
@@ -408,7 +408,7 @@ export const useStore = create<State>((set, get) => ({
 
   resetFilters: (from = 'side') => {
     const { filters, separate, view, model: made } = get();
-    if (!isFiltered(filters)) return;
+    if (!canReset(filters)) return;
     clearTimeout(resetTimer);
     resetTimer = setTimeout(() => set({ resetUndo: null }), RESET_UNDO_MS);
     set({

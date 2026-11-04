@@ -60,6 +60,7 @@ export {
   NO_FILTERS,
   activeFilters,
   applyFilters,
+  canReset,
   carryFilters,
   carryList,
   clearFilter,

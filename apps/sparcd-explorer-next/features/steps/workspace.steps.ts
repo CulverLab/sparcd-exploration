@@ -420,6 +420,10 @@ When('I choose {string} in the Photos switch', async ({ page }, which: string) =
   await page.getByRole('group', { name: 'Tagged' }).getByRole('button', { name: which, exact: true }).click();
 });
 
+Then('the Photos switch reads {string}', async ({ page }, which: string) => {
+  await expect(page.getByRole('group', { name: 'Tagged' }).getByRole('button', { name: which, exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
 Then('every row reads {string}', async ({ page }, text: string) => {
   for (const value of await columnValues(page, 'Species')) expect(value).toBe(text);
 });

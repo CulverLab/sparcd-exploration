@@ -153,6 +153,18 @@ Feature: Filter the photos in view
     And the photo count reads "1 of 11 photos"
     And "Reset filters" is back in its place
 
+  Scenario: Reset clears the Photos tag switch, and Undo brings it back
+    When I show the Photos grid
+    Then "Reset filters" is disabled
+    When I choose "Tagged" in the Photos switch
+    Then the grid shows 7 photos
+    When I press "Reset filters"
+    Then the Photos switch reads "All"
+    And the grid shows 11 photos
+    When I press Undo
+    Then the Photos switch reads "Tagged"
+    And the grid shows 7 photos
+
   Scenario: Undo running out with the focus on it hands the focus to the Filters button
     When I filter species to "Bobcat"
     And I press "Reset filters"

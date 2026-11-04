@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { isFiltered } from '@/data';
+import { canReset } from '@/data';
 import { useStore, type ResetSlot as Slot } from '@/store';
 
 /**
@@ -8,7 +8,7 @@ import { useStore, type ResetSlot as Slot } from '@/store';
  * keeps its size in every state, so nothing moves.
  */
 export function ResetSlot({ slot }: { slot: Slot }) {
-  const active = useStore((s) => isFiltered(s.filters));
+  const active = useStore((s) => canReset(s.filters));
   const undo = useStore((s) => s.resetUndo);
   const reset = useStore((s) => s.resetFilters);
   const undoReset = useStore((s) => s.undoReset);

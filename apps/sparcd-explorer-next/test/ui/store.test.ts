@@ -210,6 +210,26 @@ describe('changing collections', () => {
   });
 });
 
+describe('Reset and the Photos tag switch', () => {
+  it('clears the switch with nothing else on, and Undo puts it back', () => {
+    open(alpha);
+    useStore.getState().setPhotoTag('tagged');
+    useStore.getState().resetFilters();
+    expect(useStore.getState().filters.photoTag).toBe('all');
+    expect(useStore.getState().resetUndo).not.toBeNull();
+    useStore.getState().undoReset();
+    expect(useStore.getState().filters.photoTag).toBe('tagged');
+  });
+
+  it('lets Undo go when the switch changes after a Reset, as any filter change does', () => {
+    open(alpha);
+    useStore.getState().setPhotoTag('tagged');
+    useStore.getState().resetFilters();
+    useStore.getState().setPhotoTag('untagged');
+    expect(useStore.getState().resetUndo).toBeNull();
+  });
+});
+
 describe('Undo', () => {
   const herd = (coyote: boolean): LoadedCollection => {
     const c = collection('Herd', 'hhh').upload('u1', {

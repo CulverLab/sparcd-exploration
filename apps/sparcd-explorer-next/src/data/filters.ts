@@ -44,7 +44,7 @@ export type FilterState = {
   /** Inclusive metres. */
   elevation: [number, number] | null;
   ranges: ListFilter;
-  /** Which photos the Photos view lists. A view setting: counts and Reset ignore it. */
+  /** Which photos the Photos view lists. A view setting: the filter count ignores it, and Reset clears it. */
   photoTag: PhotoTag;
   /**
    * Photos whose files aren't in storage: left out (`hide`, the default),
@@ -114,10 +114,13 @@ export function activeFilters(state: FilterState): FilterDimension[] {
 
 export const isFiltered = (state: FilterState): boolean => activeFilters(state).length > 0;
 
-/** Clear every filter. `undo` is the state to put back. */
+/** Whether Reset has anything to clear: a filter, or the Photos view's tag switch. */
+export const canReset = (state: FilterState): boolean => isFiltered(state) || state.photoTag !== 'all';
+
+/** Clear every filter and the tag switch. `undo` is the state to put back. */
 export function resetFilters(state: FilterState): { state: FilterState; undo: FilterState } {
   const missing = state.missing === 'hide' ? 'hide' : 'show';
-  return { state: { ...NO_FILTERS, photoTag: state.photoTag, missing }, undo: state };
+  return { state: { ...NO_FILTERS, missing }, undo: state };
 }
 
 // --- The list pickers ---------------------------------------------------------

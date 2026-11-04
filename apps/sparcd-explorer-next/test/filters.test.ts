@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_FILTERS,
   activeFilters,
+  canReset,
   carryFilters,
   carryList,
   clearFilter,
@@ -291,13 +292,21 @@ describe('reset and undo', () => {
     expect(files(undo)).toEqual(files(busy));
   });
 
-  it('leaves the Photos view’s switch alone', () => {
-    expect(resetFilters(busy).state.photoTag).toBe('untagged');
+  it('clears the Photos view’s switch too, and Undo has it back', () => {
+    const { state, undo } = resetFilters(busy);
+    expect(state.photoTag).toBe('all');
+    expect(undo.photoTag).toBe('untagged');
   });
 
-  it('knows when nothing is filtered, so Reset can be disabled', () => {
-    expect(isFiltered(NO_FILTERS)).toBe(false);
+  it('can reset while the Photos view’s switch is on, which counts as no filter', () => {
+    expect(canReset(NO_FILTERS)).toBe(false);
+    expect(canReset({ ...NO_FILTERS, photoTag: 'tagged' })).toBe(true);
+    expect(canReset({ ...NO_FILTERS, years: [2024] })).toBe(true);
     expect(isFiltered({ ...NO_FILTERS, photoTag: 'tagged' })).toBe(false);
+  });
+
+  it('knows when nothing is filtered', () => {
+    expect(isFiltered(NO_FILTERS)).toBe(false);
     expect(isFiltered({ ...NO_FILTERS, months: [3] })).toBe(true);
     expect(isFiltered({ ...NO_FILTERS, species: { hidden: [], hideUntagged: true } })).toBe(true);
   });
