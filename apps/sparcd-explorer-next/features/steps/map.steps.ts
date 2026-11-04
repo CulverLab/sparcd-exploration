@@ -175,13 +175,18 @@ Then(
 );
 
 When('I click the hex holding {string}', async ({ page }, id: string) => {
-  await (await hexOf(page, id)).click();
+  // A hex with nothing in view says it's disabled, and a click on it still has to do nothing.
+  await (await hexOf(page, id)).click({ force: true });
 });
 
 Then('the hex holding {string} is outlined as selected', async ({ page }, id: string) => {
   const hex = await hexOf(page, id);
   await expect(hex).toHaveClass(/\bsel\b/);
   await expect(hex).toHaveAttribute('aria-pressed', 'true');
+});
+
+Then("the hex holding {string} says it can't be picked", async ({ page }, id: string) => {
+  await expect(await hexOf(page, id)).toHaveAttribute('aria-disabled', 'true');
 });
 
 Then('the hex holding {string} is not outlined as selected', async ({ page }, id: string) => {
@@ -235,6 +240,10 @@ When('I drag a rectangle around the dot of {string}', async ({ page }, id: strin
   await page.mouse.down();
   await page.mouse.move(cx + 10, cy + 10, { steps: 6 });
   await page.mouse.up();
+});
+
+When('I click the dot of {string}', async ({ page }, id: string) => {
+  await page.locator(`path.st[data-site="${id}"]`).click({ force: true });
 });
 
 Then('the map offers no {string} view', async ({ page }, mode: string) => {

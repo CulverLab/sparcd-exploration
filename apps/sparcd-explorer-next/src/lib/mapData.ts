@@ -187,10 +187,33 @@ export function selectedHexes(model: Model, cells: SiteHexes, area: string[]): S
   return out;
 }
 
-/** A hex click: a cell drawn as selected lets all its sites go, any other takes them all in. */
-export function toggleHex(model: Model, cells: SiteHexes, area: string[], id: string): string[] {
-  const inside = new Set(sitesInHexes(model, cells, [id]));
-  return area.some((k) => inside.has(k)) ? area.filter((k) => !inside.has(k)) : [...area, ...inside];
+/**
+ * Of these site keys, the ones the map can take in: those with photos under
+ * every filter but Map area (`inView`, per site). A place outside the current
+ * area counts, so an area can grow.
+ */
+export function sitesStillInView(model: Model, keys: string[], inView: ArrayLike<number>): string[] {
+  const wanted = new Set(keys);
+  return model.sites.flatMap((s, i) => (inView[i] && wanted.has(s.key) ? [s.key] : []));
+}
+
+/**
+ * A hex click: a cell drawn as selected lets all its sites go, any other takes
+ * in those still in view. With none, `area` comes back as it is.
+ */
+export function toggleHex(model: Model, cells: SiteHexes, area: string[], id: string, inView: ArrayLike<number>): string[] {
+  const inside = sitesInHexes(model, cells, [id]);
+  const keys = new Set(inside);
+  if (area.some((k) => keys.has(k))) return area.filter((k) => !keys.has(k));
+  const taken = sitesStillInView(model, inside, inView);
+  return taken.length ? [...area, ...taken] : area;
+}
+
+/** A site click, by the same rules as a hex click. */
+export function toggleSite(model: Model, area: string[], site: number, inView: ArrayLike<number>): string[] {
+  const { key } = model.sites[site];
+  if (area.includes(key)) return area.filter((k) => k !== key);
+  return inView[site] ? [...area, key] : area;
 }
 
 /** How many of the area's locations are still in view (`inView`, per site), by the grouping in force. */

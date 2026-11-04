@@ -630,6 +630,7 @@ path.hx.s3 { fill: color-mix(in srgb, var(--accent) 60%, var(--accentSoft)); }
 path.hx.s4 { fill: color-mix(in srgb, var(--accent) 80%, var(--accentSoft)); }
 path.hx.s5 { fill: var(--accent); }
 path.hx.out { fill: var(--paper); fill-opacity: 0.2; stroke-dasharray: 3 3; stroke-opacity: 0.6; }
+.leaflet-container path.hx[aria-disabled='true'] { cursor: default; }
 path.hx:hover, path.hx:focus-visible { stroke: var(--ink); stroke-width: 2; stroke-opacity: 1; }
 path.hx.sel { stroke: var(--warn); stroke-width: 3; stroke-opacity: 1; stroke-dasharray: none; }
 path.hx.hl, path.st.hl { stroke: var(--ink); stroke-width: 3.5; stroke-opacity: 1; stroke-dasharray: none; }

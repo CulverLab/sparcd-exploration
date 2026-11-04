@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, inViewWithout, onlyLocations, onlySpecies, shownPosition, siteHexes } from '../../src/data';
+import { NO_FILTERS, applyFilters, hexCenter, hexOf, hexRing, hexSizeFor, inViewWithout, onlyLocations, onlySpecies, shownPosition, siteHexes, type FilterState } from '../../src/data';
 import {
   HEX_STEPS,
   areaLocations,
@@ -13,7 +13,9 @@ import {
   siteViews,
   sitesInBox,
   sitesInHexes,
+  sitesStillInView,
   toggleHex,
+  toggleSite,
   unplacedPhotos,
 } from '../../src/lib/mapData';
 import { EXACT, cellsOf, collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
@@ -210,7 +212,8 @@ describe('the grid at a display precision', () => {
 
   it('keeps the Area filter when the precision changes the grid', () => {
     const fine = siteHexes(model.sites, { coords: 'latlon', precision: at(3) });
-    const area = toggleHex(model, fine, [], fine.cells[index('AA01')]!);
+    const inView = inViewWithout(model, NO_FILTERS).sites.area;
+    const area = toggleHex(model, fine, [], fine.cells[index('AA01')]!, inView);
     expect(area.sort()).toEqual([model.sites[index('AA01')].key, model.sites[index('AA02')].key].sort());
     const photos = applyFilters(model, { ...NO_FILTERS, area }).photos;
     expect(photos).toHaveLength(3);
@@ -220,7 +223,7 @@ describe('the grid at a display precision', () => {
     expect([...selectedHexes(model, coarse, area)]).toEqual([coarse.cells[index('AA01')]]);
     expect(areaLocations(model, area, false, inViewWithout(model, NO_FILTERS).sites.area)).toBe(2);
     // A click on the cell drawn as selected lets go of every site in it.
-    expect(toggleHex(model, coarse, area, coarse.cells[index('AA01')]!)).toEqual([]);
+    expect(toggleHex(model, coarse, area, coarse.cells[index('AA01')]!, inView)).toEqual([]);
   });
 
   it('a rectangle takes in the sites of the cells it touches', () => {
@@ -229,3 +232,61 @@ describe('the grid at a display precision', () => {
     expect(sitesInHexes(model, cells, picked)).toEqual([model.sites[index('BB01')].key]);
   });
 });
+
+describe('taking places into the Map area', () => {
+  const keyOf = (id: string) => model.sites.find((s) => s.locationId === id)!.key;
+  const site = (id: string) => model.sites.findIndex((s) => s.locationId === id);
+  const hexOf_ = (id: string) => cells.cells[site(id)]!;
+  const inViewUnder = (f: Partial<FilterState>) => inViewWithout(model, { ...NO_FILTERS, ...f }).sites.area;
+
+  it('a hex click takes in only the sites still in view under the other filters', () => {
+    const inView = inViewUnder({ locations: onlyLocations(model, ['id:AA01']) });
+    expect(toggleHex(model, cells, [], hexOf_('AA01'), inView)).toEqual([keyOf('AA01')]);
+  });
+
+  it('a hex click on a hex with nothing in view does nothing', () => {
+    const area: string[] = [];
+    expect(toggleHex(model, cells, area, hexOf_('BB01'), inViewUnder({ locations: onlyLocations(model, ['id:AA01']) }))).toBe(area);
+  });
+
+  it('a hex outside the current area can still be added, so an area can grow', () => {
+    const area = [keyOf('AA01')];
+    expect(cells.cells[site('AA01')]).not.toBe(hexOf_('BB01'));
+    expect(toggleHex(model, cells, area, hexOf_('BB01'), inViewUnder({ area }))).toEqual([keyOf('AA01'), keyOf('BB01')]);
+  });
+
+  it('taking a hex off the area works whatever is in view', () => {
+    const area = [keyOf('BB01')];
+    expect(toggleHex(model, cells, area, hexOf_('BB01'), inViewUnder({ area, locations: onlyLocations(model, ['id:AA01']) }))).toEqual([]);
+  });
+
+  it('a site click follows the same rules', () => {
+    const inView = inViewUnder({ locations: onlyLocations(model, ['id:AA01']) });
+    const none: string[] = [];
+    expect(toggleSite(model, none, site('AA01'), inView)).toEqual([keyOf('AA01')]);
+    expect(toggleSite(model, none, site('BB01'), inView)).toBe(none);
+    expect(toggleSite(model, [keyOf('BB01')], site('BB01'), inView)).toEqual([]);
+  });
+
+  it('a rectangle in either mode keeps only the sites still in view', () => {
+    const inView = inViewUnder({ locations: onlyLocations(model, ['id:AA01']) });
+    const hexes = sitesInHexes(model, cells, [hexOf_('AA01'), hexOf_('BB01')]);
+    expect(hexes.length).toBeGreaterThan(1);
+    expect(sitesStillInView(model, hexes, inView)).toEqual([keyOf('AA01')]);
+    expect(sitesStillInView(model, [keyOf('BB01')], inView)).toEqual([]);
+  });
+
+  it('a species filter counts: a camera with no matching photos is not in view', () => {
+    const inView = inViewUnder({ species: onlySpecies(model, ['Odocoileus hemionus']) });
+    const taken = sitesStillInView(model, model.sites.map((s) => s.key), inView);
+    expect(taken).toEqual(fileSites(model, filter(model, { species: onlySpecies(model, ['Odocoileus hemionus']) }).photos));
+  });
+
+  it('the area counts the locations still in view when other filters narrow later', () => {
+    const area = [keyOf('AA01'), keyOf('AA02'), keyOf('BB01')];
+    expect(areaLocations(model, area, false, inViewUnder({ area }))).toBe(3);
+    expect(areaLocations(model, area, false, inViewUnder({ area, locations: onlyLocations(model, ['id:AA01']) }))).toBe(1);
+  });
+});
+
+const fileSites = (m: typeof model, photos: number[]) => [...new Set(photos.map((i) => m.sites[m.photos[i].site].key))].sort((a, b) => m.sites.findIndex((s) => s.key === a) - m.sites.findIndex((s) => s.key === b));

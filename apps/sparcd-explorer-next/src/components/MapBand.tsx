@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
@@ -19,13 +19,15 @@ import {
   siteViews,
   sitesInBox,
   sitesInHexes,
+  sitesStillInView,
   toggleHex,
+  toggleSite,
   unplacedPhotos,
   type HexView,
   type SiteView,
 } from '@/lib/mapData';
 import { readStored, writeStored } from '@/lib/storage';
-import { useView } from '@/lib/useView';
+import { inViewOf, useView } from '@/lib/useView';
 import { useStore } from '@/store';
 import { useShowTarget } from './DataChecks';
 import { EffortStrip } from './EffortStrip';
@@ -38,7 +40,6 @@ const MAX_ZOOM = 16;
 
 const STEP_CLASSES = Array.from({ length: HEX_STEPS + 1 }, (_, i) => `s${i}`);
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const toggled = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 const cellIds = (cells: SiteHexes) => new Set(cells.cells.flatMap((id) => (id ? [id] : [])));
 const latLng = (p: { lat: number; lon: number }) => L.latLng(p.lat, p.lon);
 
@@ -89,6 +90,10 @@ function placesBounds(cells: SiteHexes, inView?: Set<string>): L.LatLngBounds | 
 
 export function MapBand() {
   const { model, filters, result, grouping, multi } = useView();
+  const takeable = inViewOf(model, filters).sites.area;
+  // The layers' click handlers live across filter changes, and read this at the click.
+  const takeableRef = useRef(takeable);
+  takeableRef.current = takeable;
   const endpoint = useStore((s) => s.config!.endpoint);
   const display = useStore((s) => s.display);
   const storedMode = useStore((s) => s.mapMode);
@@ -137,6 +142,18 @@ export function MapBand() {
   const fitKey = model.collections.map((c) => c.key).join('\n');
   const fitKeyRef = useRef(fitKey);
   fitKeyRef.current = fitKey;
+
+  /** A change to the Map area, lighting its section. A click that takes nothing in changes nothing. */
+  const changeArea = useCallback(
+    (change: (area: string[]) => string[]) => {
+      const { area } = useStore.getState().filters;
+      const next = change(area);
+      if (next === area) return;
+      setFilters((f) => ({ ...f, area: next }));
+      flashSection('area');
+    },
+    [setFilters],
+  );
 
   // --- The map itself --------------------------------------------------------
   useEffect(() => {
@@ -215,10 +232,7 @@ export function MapBand() {
       const ring = hexRing(cells.grid, id).slice(0, 6).map(latLng);
       const center = latLng(hexCenter(cells.grid, id));
       const poly = L.polygon(ring, { weight: 1 }).addTo(group);
-      const toggle = () => {
-        setFilters((f) => ({ ...f, area: toggleHex(model, cells, f.area, id) }));
-        flashSection('area');
-      };
+      const toggle = () => changeArea((area) => toggleHex(model, cells, area, id, takeableRef.current));
       poly.on('click', toggle);
       poly.bindTooltip('', { sticky: true, direction: 'top', className: 'maptip', opacity: 1 });
       const el = poly.getElement() as SVGPathElement;
@@ -253,7 +267,7 @@ export function MapBand() {
       group.remove();
       layers.clear();
     };
-  }, [map, model, cells, mode, setFilters]);
+  }, [map, model, cells, mode, changeArea]);
 
   const selected = useMemo(() => selectedHexes(model, cells, filters.area), [model, cells, filters.area]);
   const lit = useMemo(() => {
@@ -275,6 +289,7 @@ export function MapBand() {
         ['leaflet-interactive hx', h.inView ? `s${step}` : 'out', on && 'sel', lit?.hexes.has(h.hex) && 'hl'].filter(Boolean).join(' '),
       );
       el.setAttribute('aria-pressed', String(on));
+      el.setAttribute('aria-disabled', String(!on && !h.sites.some((i) => takeable[i])));
       el.setAttribute(
         'aria-label',
         `${h.locations.map((l) => l.ids.join(', ')).join(', ')}: ${fmtN(h.detections)} detections, ${fmtN(h.photos)} photos`,
@@ -287,7 +302,7 @@ export function MapBand() {
         label.firstElementChild!.textContent = h.inView ? shortCount(h.detections) : '';
       }
     }
-  }, [map, mode, hexes, selected, lit, model, multi]);
+  }, [map, mode, hexes, selected, lit, model, multi, takeable]);
 
   // --- Sites (only where exact points are allowed) ------------------------------
   useEffect(() => {
@@ -298,10 +313,7 @@ export function MapBand() {
       if (!site.position) return;
       // Drawn where the tables put it, never more exact.
       const dot = L.circleMarker(latLng(shownPosition(site.position, { coords, precision })), { radius: 4, weight: 1.2 }).addTo(group);
-      dot.on('click', () => {
-        setFilters((f) => ({ ...f, area: toggled(f.area, site.key) }));
-        flashSection('area');
-      });
+      dot.on('click', () => changeArea((area) => toggleSite(model, area, i, takeableRef.current)));
       dot.bindTooltip('', { direction: 'top', className: 'maptip', opacity: 1 });
       (dot.getElement() as SVGPathElement).dataset.site = site.locationId;
       layers.set(i, dot);
@@ -310,7 +322,7 @@ export function MapBand() {
       group.remove();
       layers.clear();
     };
-  }, [map, model, mode, coords, precision, setFilters]);
+  }, [map, model, mode, coords, precision, changeArea]);
 
   useEffect(() => {
     if (!map || mode !== 'sites') return;
@@ -390,14 +402,12 @@ export function MapBand() {
     const a = map.containerPointToLatLng([d.x0, d.y0]);
     const b = map.containerPointToLatLng([d.x1, d.y1]);
     const box = boxOf({ lat: a.lat, lon: a.lng }, { lat: b.lat, lon: b.lng });
-    const picked =
+    const inBox =
       mode === 'sites'
         ? sitesInBox(model, { coords, precision }, box)
         : sitesInHexes(model, cells, hexesInBox(cells.grid, hexes.map((h) => h.hex), box));
-    if (picked.length) {
-      setFilters((f) => ({ ...f, area: [...new Set([...f.area, ...picked])] }));
-      flashSection('area');
-    }
+    const picked = sitesStillInView(model, inBox, takeable);
+    if (picked.length) changeArea((area) => [...new Set([...area, ...picked])]);
   };
 
   const legendMax = Math.max(0, ...hexes.map((h) => h.detections));

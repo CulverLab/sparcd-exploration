@@ -42,6 +42,40 @@ Feature: The map
     And the area filter reads "Area: 3 locations"
     And the photo count reads "5 of 11 photos"
 
+  Scenario: Select area takes only the places still in view, and an area can grow
+    When I filter locations to "AB02"
+    And I press "Select area"
+    And I drag a rectangle over the middle of the hex holding "AB02"
+    Then the area filter reads "Area: 1 location"
+    And the "Locations" figure reads "1 of 5"
+    When I click the hex holding "AB01"
+    Then the area filter reads "Area: 1 location"
+    And the hex holding "AB01" is not outlined as selected
+    When I clear the Locations filter with its ×
+    And I click the hex holding "AB01"
+    Then the area filter reads "Area: 2 locations"
+    And the hex holding "AB01" is outlined as selected
+    When I click the hex holding "AB01"
+    Then the area filter reads "Area: 1 location"
+
+  Scenario: A hex with nothing in view does nothing, and taking a hex off still works
+    When I click the hex holding "AB02"
+    And I filter species to "Coyote"
+    Then the area filter reads "Area: 1 location"
+    When I click the hex holding "AB01"
+    Then the area filter reads "Area: 1 location"
+    And the hex holding "AB01" is not outlined as selected
+    And the hex holding "AB01" says it can't be picked
+    When I click the hex holding "AB02"
+    Then the area filter reads "Area"
+
+  Scenario: The Map area value counts the area's locations still in view when other filters narrow later
+    When I click the hex holding "AB02"
+    Then the area filter reads "Area: 3 locations"
+    When I press Only on "AB03" in the locations filter
+    Then the area filter reads "Area: 1 location"
+    And the "Locations" figure reads "1 of 5"
+
   Scenario: Select area in Sites mode takes in only the sites inside the box
     When I sign in to the server that shows exact sites and open "Alpha Basin"
     And I show sites on the map
@@ -72,6 +106,20 @@ Feature: The map
     Then the map shows 2 hexes
     And the hex holding "AB02" is outlined as selected
     And the hex holding "AB01" is not outlined as selected
+
+  Scenario: Sites mode takes only the sites still in view, by box and by click
+    When I sign in to the server that shows exact sites and open "Alpha Basin"
+    And I show sites on the map
+    And I filter locations to "AB02"
+    And I press "Select area"
+    And I drag a rectangle around the dot of "AB03"
+    Then the area filter reads "Area"
+    When I click the dot of "AB03"
+    Then the area filter reads "Area"
+    When I click the dot of "AB02"
+    Then the area filter reads "Area: 1 location"
+    When I click the dot of "AB02"
+    Then the area filter reads "Area"
 
   @US-001
   Scenario: Exact sites are not offered on this server
