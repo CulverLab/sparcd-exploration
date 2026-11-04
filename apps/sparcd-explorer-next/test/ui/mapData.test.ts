@@ -16,7 +16,6 @@ import {
   sitesStillInView,
   toggleHex,
   toggleSite,
-  unplacedPhotos,
 } from '../../src/lib/mapData';
 import { EXACT, cellsOf, collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
 
@@ -78,9 +77,10 @@ describe('hexes on the map', () => {
     expect(bravo).toMatchObject({ inView: true, photos: 0, detections: 0 });
   });
 
-  it('never place photos with no location, and count them', () => {
-    expect(unplacedPhotos(model, filter(model))).toBe(2);
-    expect(unplacedPhotos(model, filter(model, { species: onlySpecies(model, ['Lynx rufus']) }))).toBe(0);
+  it('never place photos with no location', () => {
+    const all = filter(model);
+    const placed = hexViews(model, all, false, cells).reduce((n, h) => n + h.photos, 0);
+    expect(placed).toBe(all.photos.length - 2);
   });
 });
 

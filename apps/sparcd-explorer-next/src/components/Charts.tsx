@@ -19,6 +19,7 @@ import { fmtN } from '@/lib/format';
 import { monthAxis, monthLabel, yearOf, type MonthAxis } from '@/lib/months';
 import { useView } from '@/lib/useView';
 import { useStore } from '@/store';
+import { EffortStrip } from './EffortStrip';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -264,7 +265,7 @@ function ChartHead({ title, subtitle, disabled, onImage, onData }: { title: stri
 
 const anyOf = (counts: number[]) => counts.some((n) => n > 0);
 
-/** Three fixed charts of the detections in view. A bar is a shortcut to its filter. */
+/** The camera effort, a date brush, then three fixed charts of the detections in view. A bar is a shortcut to its filter. */
 export function Charts() {
   const { model, filters, result, grouping } = useView();
   const setFilters = useStore((s) => s.setFilters);
@@ -296,6 +297,7 @@ export function Charts() {
   const monthSub = axis ? `${monthLabel(axis.first)} to ${monthLabel(axis.first + axis.count - 1)}` : 'No photo here has a readable date.';
   return (
     <div className="charts">
+      <EffortStrip />
       <figure className="chart">
         <ChartHead
           title={speciesTitle}

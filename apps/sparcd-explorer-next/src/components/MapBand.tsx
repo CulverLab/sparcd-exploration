@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { canShowExactSites, checkNoLocation, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
+import { canShowExactSites, hexCenter, hexRing, locationIdOf, shownPosition, siteHexes, type Model, type SiteHexes } from '@/data';
 import { BASEMAPS, DEFAULT_BASEMAP, basemapOf } from '@/lib/basemaps';
 import { attachTrackpad } from '@/lib/mapGestures';
 import { useMedia } from '@/lib/useMedia';
-import { describeCheck } from '@/lib/checkText';
 import { fmtN, formatElevation } from '@/lib/format';
 import {
   HEX_STEPS,
@@ -22,16 +21,13 @@ import {
   sitesStillInView,
   toggleHex,
   toggleSite,
-  unplacedPhotos,
   type HexView,
   type SiteView,
 } from '@/lib/mapData';
 import { readStored, writeStored } from '@/lib/storage';
 import { inViewOf, useView } from '@/lib/useView';
-import { useStore } from '@/store';
-import { useShowTarget } from './DataChecks';
-import { EffortStrip } from './EffortStrip';
-import { Seg } from './Popover';
+import { useStore, type MapMode } from '@/store';
+import { Choices, Popover, usePopover } from './Popover';
 import { SelClear } from './SelClear';
 import { flashSection } from './Sidebar';
 
@@ -88,6 +84,56 @@ function placesBounds(cells: SiteHexes, inView?: Set<string>): L.LatLngBounds | 
   return points.length ? L.latLngBounds(points) : null;
 }
 
+/** The Map button and its menu: Hexes or Sites where exact points are allowed, and the basemap. */
+function MapMenu({
+  mode,
+  onMode,
+  basemap,
+  onBasemap,
+  sitesAllowed,
+}: {
+  mode: MapMode;
+  onMode: (mode: MapMode) => void;
+  basemap: string;
+  onBasemap: (id: string) => void;
+  sitesAllowed: boolean;
+}) {
+  const pop = usePopover();
+  return (
+    <>
+      <button ref={pop.anchor} type="button" className="mapbtn" aria-haspopup="dialog" aria-expanded={pop.open} onClick={pop.toggle}>
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 2.5 16 6.3 9 10.1 2 6.3z" />
+          <path d="m2 9.2 7 3.8 7-3.8M2 12.1l7 3.8 7-3.8" />
+        </svg>
+        Map
+      </button>
+      {pop.open && (
+        <Popover anchor={pop.anchor} label="Map" align="right" className="mappop" onClose={pop.close}>
+          {sitesAllowed && (
+            <div className="sect">
+              <h3>Show</h3>
+              <Choices
+                label="Map shows"
+                value={mode}
+                options={[
+                  ['hexes', 'Hexes'],
+                  ['sites', 'Sites'],
+                ]}
+                onChange={onMode}
+              />
+            </div>
+          )}
+          <div className="sect">
+            <h3>Basemap</h3>
+            <Choices label="Basemap" value={basemap} options={BASEMAPS.map((b) => [b.id, b.name])} onChange={onBasemap} />
+          </div>
+        </Popover>
+      )}
+    </>
+  );
+}
+
 export function MapBand() {
   const { model, filters, result, grouping, multi } = useView();
   const takeable = inViewOf(model, filters).sites.area;
@@ -101,7 +147,6 @@ export function MapBand() {
   const setFilters = useStore((s) => s.setFilters);
   const clearFilter = useStore((s) => s.clearFilter);
   const highlight = useStore((s) => s.highlight);
-  const show = useShowTarget();
 
   // Exact site points follow the data layer's gate; elsewhere only hexes exist.
   const sitesAllowed = canShowExactSites(endpoint);
@@ -122,12 +167,6 @@ export function MapBand() {
     () => (mode === 'sites' ? siteViews(model, result, { coords, precision }) : []),
     [mode, model, result, coords, precision],
   );
-  const unplaced = useMemo(() => unplacedPhotos(model, result), [model, result]);
-  const noLocationAction = useMemo(() => {
-    const [check] = checkNoLocation(model);
-    const action = check && describeCheck(model, check).action;
-    return action?.kind === 'show' ? action.target : null;
-  }, [model]);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -413,11 +452,10 @@ export function MapBand() {
   const legendMax = Math.max(0, ...hexes.map((h) => h.detections));
   const credit = basemapOf(basemap).credit;
 
-  const setView = useStore((s) => s.setView);
   const zoom = (by: number) => map?.setZoom(map.getZoom() + by, { animate: !matchMedia('(prefers-reduced-motion: reduce)').matches });
 
   return (
-    <section id="map" className="mapregion" aria-label="Map and camera effort">
+    <section id="map" className="mapregion" aria-label="Map">
       <div
         ref={wrapRef}
         className={boxing ? 'mapbox boxing' : 'mapbox'}
@@ -425,22 +463,19 @@ export function MapBand() {
           if (suppressClick.current) e.stopPropagation();
         }}
       >
+        <div className="leafmap" role="group" aria-label="Map of camera locations" />
+        <div className="zoomctl" role="group" aria-label="Zoom">
+          <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(1)}>
+            +
+          </button>
+          <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(-1)}>
+            −
+          </button>
+        </div>
         <div className="mapctl">
-          {sitesAllowed && (
-            <Seg
-              className="seg onmap"
-              label="Map shows"
-              value={mode}
-              options={[
-                ['hexes', 'Hexes'],
-                ['sites', 'Sites'],
-              ]}
-              onChange={setMapMode}
-            />
-          )}
           <button
             type="button"
-            className="btn tool onmap"
+            className="mapbtn"
             aria-pressed={boxing}
             onClick={() => {
               setDrag(null);
@@ -452,68 +487,31 @@ export function MapBand() {
             </svg>
             Select area
           </button>
-          <div className="zoomgrp onmap" role="group" aria-label="Zoom">
-            <span aria-hidden="true">Zoom</span>
-            <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(-1)}>
-              −
-            </button>
-            <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(1)}>
-              +
-            </button>
-          </div>
-          <div className="mapright">
-            <label className="sr" htmlFor="basemap">
-              Basemap
-            </label>
-            <select
-              id="basemap"
-              className="field basemapsel onmap"
-              value={basemap}
-              onChange={(e) => {
-                setBasemap(e.target.value);
-                writeStored(BASEMAP_KEY, e.target.value);
-              }}
-            >
-              {BASEMAPS.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn onmap"
-              onClick={() => {
-                setView('photos');
-                document.getElementById('table')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-              }}
-            >
-              See these photos
-            </button>
-          </div>
+          <MapMenu
+            mode={mode}
+            onMode={setMapMode}
+            basemap={basemap}
+            onBasemap={(id) => {
+              setBasemap(id);
+              writeStored(BASEMAP_KEY, id);
+            }}
+            sitesAllowed={sitesAllowed}
+          />
         </div>
-        <div className="leafmap" role="group" aria-label="Map of camera locations" />
-        <div className="mapfoot">
-          {unplaced > 0 && noLocationAction && (
-            <button type="button" className="mapnote" onClick={() => show(noLocationAction)}>
-              {fmtN(unplaced)} {unplaced === 1 ? 'photo has' : 'photos have'} no location
-            </button>
+        <div className="legend" aria-hidden="true">
+          {mode === 'hexes' ? (
+            <>
+              Detections
+              <span className="ramp">
+                {Array.from({ length: HEX_STEPS }, (_, i) => (
+                  <i key={i} className={`s${i + 1}`} />
+                ))}
+              </span>
+              <span className="mono">{fmtN(legendMax)}</span>
+            </>
+          ) : (
+            'Dot size: detections'
           )}
-          <div className="legend" aria-hidden="true">
-            {mode === 'hexes' ? (
-              <>
-                Detections in view
-                <span className="ramp">
-                  {Array.from({ length: HEX_STEPS }, (_, i) => (
-                    <i key={i} className={`s${i + 1}`} />
-                  ))}
-                </span>
-                <span className="mono">{fmtN(legendMax)}</span>
-              </>
-            ) : (
-              'Dot size: detections'
-            )}
-          </div>
         </div>
         {pinchHint && trackpad && (
           <div className="maphint corner" role="status">
@@ -555,7 +553,6 @@ export function MapBand() {
           </div>
         )}
       </div>
-      <EffortStrip />
     </section>
   );
 }

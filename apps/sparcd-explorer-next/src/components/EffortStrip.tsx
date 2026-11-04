@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { activeFilters, applyFilters, clearFilter, photosForTag } from '@/data';
+import { activeFilters, applyFilters, clearFilter } from '@/data';
 import { matchLegend } from '@/lib/filterLabels';
 import { fmtN } from '@/lib/format';
 import { axisTicks, barFill, clearDates, countByMonth, datesToMonths, monthAxis, monthLabel, monthPasses, monthsToDates } from '@/lib/months';
@@ -10,23 +10,22 @@ import { Tip, type TipAt } from './Tip';
 
 // Geometry of the strip, in pixels: a left gutter for the scale, bars between
 // `TOP` and `BASE`, year labels under the axis.
-const H = 92;
+const H = 104;
 const X0 = 52;
 const TOP = 8;
-const BASE = 72;
+const BASE = 84;
 
 /**
- * Camera effort per month across the opened data: every filter but Dates,
- * species and the tag switch, so the time context stays in sight while dates
- * are picked. What a species filter or the tag switch keeps is drawn as an
- * inner bar. Drag or click to set Dates; arrows move a cursor and Enter or
- * Space picks.
+ * Camera effort per month across the opened data, at the top of the Charts
+ * tab: every filter but Dates and species, so the time context stays in sight
+ * while dates are picked. What a species filter keeps is drawn as an inner
+ * bar. Drag or click to set Dates; arrows move a cursor and Enter or Space
+ * picks.
  */
 export function EffortStrip() {
   const { model, filters, result } = useView();
   const setFilters = useStore((s) => s.setFilters);
-  const tagShown = useStore((s) => s.view === 'photos');
-  const legend = matchLegend(model, filters, tagShown);
+  const legend = matchLegend(model, filters, false);
   const wrap = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
   const clearRef = useRef<HTMLButtonElement>(null);
@@ -50,20 +49,15 @@ export function EffortStrip() {
   // Without a Dates filter that is the page's own result; with one, the strip's own.
   const dated = activeFilters(filters).includes('dates');
   const effort = useMemo(() => (dated ? applyFilters(model, clearFilter(filters, 'dates')) : result), [dated, model, filters, result]);
-  // Switching to Photos changes what the inner bars show only under the Tagged switch.
-  const inner = legend ? (tagShown ? filters.photoTag : 'all') : null;
-  const counts = useMemo(
-    () => countByMonth(model, effort.effort, inner ? photosForTag(model, effort.photos, inner) : []),
-    [model, effort, inner],
-  );
+  const counts = useMemo(() => countByMonth(model, effort.effort, legend ? effort.photos : []), [model, effort, legend]);
   const max = Math.max(1, ...[...counts.values()].map((c) => c[0]));
   const range = axis && datesToMonths(filters.dateFrom, filters.dateTo, axis);
 
   if (!axis) {
     return (
-      <section className="effortband" aria-label="Camera effort">
+      <section className="chart wide effortband" aria-label="Camera effort">
         <div className="effhead">
-          <h2>Camera effort</h2>
+          <h3>Camera effort</h3>
         </div>
         <div ref={wrap} className="strip">
           <p className="fine">No photo here has a readable date.</p>
@@ -196,9 +190,9 @@ export function EffortStrip() {
   const clearW = clearRef.current?.offsetWidth ?? 72;
 
   return (
-    <section className="effortband" aria-label="Camera effort">
+    <section className="chart wide effortband" aria-label="Camera effort">
       <div className="effhead">
-        <h2>Camera effort: photos per month</h2>
+        <h3>Camera effort: photos per month</h3>
         <span className="tl-legend" aria-hidden="true">
           <span>
             <i className="sw ramp" />

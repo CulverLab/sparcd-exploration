@@ -115,13 +115,6 @@ export function siteViews(model: Model, result: FilterResult, display: CoordDisp
 
 const pick = (t: SiteTally) => ({ photos: t.photos, detections: t.detections, inView: t.effort });
 
-/** Photos in view whose location is "No location set": never placed on the map. */
-export function unplacedPhotos(model: Model, result: FilterResult): number {
-  let n = 0;
-  for (const i of result.photos) if (model.sites[model.photos[i].site].noLocation) n++;
-  return n;
-}
-
 /** How dark a hex is: 0 for no detections, then 1 to `HEX_STEPS` on a square-root scale. */
 export const HEX_STEPS = 5;
 export function hexStep(count: number, max: number): number {
