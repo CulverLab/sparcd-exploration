@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { locationRows, photoRows } from '../../src/data';
-import { csvColumns, csvFileName, toCsv } from '../../src/lib/csv';
+import { csvColumns, csvFileName, toCsv, withCollection } from '../../src/lib/csv';
 import type { Display } from '../../src/lib/format';
 import { locationColumns, photoColumns, type Col } from '../../src/lib/tables';
 import { collection, deployment, filter, media, modelOf, observation } from '../support/fixtures';
@@ -121,5 +121,13 @@ describe('CSV file name', () => {
     expect(csvFileName(['Alpha Basin', 'Bravo Flats'], 'photos', day)).toBe('alpha-basin-and-bravo-flats-2026-10-19-photos.csv');
     expect(csvFileName(['Alpha', 'Bravo', 'Charlie'], 'species', day)).toBe('alpha-and-2-more-2026-10-19-species.csv');
     expect(csvFileName(['Cañon Seco'], 'locations', day)).toBe('canon-seco-2026-10-19-locations.csv');
+  });
+});
+
+describe('withCollection', () => {
+  it('puts Collection after the location ID, or first without one, and leaves a shown one where it is', () => {
+    expect(withCollection(['name', 'id', 'photos'])).toEqual(['name', 'id', 'coll', 'photos']);
+    expect(withCollection(['name', 'photos'])).toEqual(['coll', 'name', 'photos']);
+    expect(withCollection(['coll', 'id'])).toEqual(['coll', 'id']);
   });
 });

@@ -19,6 +19,16 @@ export function csvColumns<R>(defs: Col<R>[], shown: string[], display: Display)
   return [...new Set(ids)].map((id) => byId.get(id)!).filter((c) => !c.noExport);
 }
 
+/**
+ * A locations file's columns with several collections open: the same location
+ * ID can sit in two of them, so the file always says which.
+ */
+export function withCollection(shown: string[]): string[] {
+  if (shown.includes('coll')) return shown;
+  const at = shown.indexOf('id') + 1;
+  return [...shown.slice(0, at), 'coll', ...shown.slice(at)];
+}
+
 const quote = (v: Cell): string => {
   const s = v === null ? '' : typeof v === 'string' ? formulaSafe(v) : String(v);
   return /[",\r\n]|^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;

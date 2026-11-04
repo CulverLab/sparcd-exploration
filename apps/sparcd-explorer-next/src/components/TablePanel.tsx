@@ -20,7 +20,7 @@ import { activityByLocation } from '@/lib/activity';
 import { LIST_NOUNS, matchLegend, noneTicked } from '@/lib/filterLabels';
 import { axisTicks, barFill, monthAxis, monthLabel, type AxisTick, type MonthAxis, type MonthCounts } from '@/lib/months';
 import { loadPrefs, savePrefs, shownColumns, type ColumnPrefs } from '@/lib/columnPrefs';
-import { csvColumns, csvFileName, toCsv } from '@/lib/csv';
+import { csvColumns, csvFileName, toCsv, withCollection } from '@/lib/csv';
 import { saveBlob } from '@/lib/download';
 import { fmtN, plural } from '@/lib/format';
 import {
@@ -337,7 +337,7 @@ export function TablePanel() {
 
   // The file lists the rows in the table's order.
   const exportCsv = () => {
-    const csvCols = csvColumns(defs, shown, display);
+    const csvCols = csvColumns(defs, view === 'locations' && multi ? withCollection(shown) : shown, display);
     saveBlob(
       csvFileName(model.collections.map((c) => c.name), view, new Date()),
       new Blob([toCsv(csvCols, ordered)], { type: 'text/csv;charset=utf-8' }),

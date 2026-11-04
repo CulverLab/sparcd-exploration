@@ -218,7 +218,8 @@ export function DataTable<R>({
           <tfoot>
             <tr>
               {cols.map((c, i) => {
-                const v = i === 0 ? 'Total' : total[c.id];
+                // The first column with no total of its own, so reordering never hides a number.
+                const v = i === cols.findIndex((x) => total[x.id] === undefined) ? 'Total' : total[c.id];
                 return (
                   <td key={c.id} className={[c.numeric && 'n', i === 0 && 'first'].filter(Boolean).join(' ') || undefined}>
                     {typeof v === 'number' ? fmtN(v) : v}
