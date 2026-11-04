@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { NO_FILTERS, activeFilters, clearFilter, listKeys, only, onlyLocations, onlySpecies, resetFilters, type FilterState } from '../../src/data';
-import { filterButtons, filterWords, matchLegend, noneTicked, nothingTicked, photoCountLabel } from '../../src/lib/filterLabels';
+import {
+  NO_FILTERS,
+  activeFilters,
+  clearFilter,
+  listKeys,
+  only,
+  onlyLocations,
+  onlySpecies,
+  resetFilters,
+  type FilterDimension,
+  type FilterState,
+  type Model,
+} from '../../src/data';
+import { filterButtons, filterWords, matchLegend, noneTicked, nothingTicked, photoCountLabel, sectionValue } from '../../src/lib/filterLabels';
 import { collection, deployment, media, modelOf, observation } from '../support/fixtures';
 
 const alpha = collection('Alpha', 'aaa').upload('u1', {
@@ -40,6 +52,7 @@ const hiding = (...names: string[]) => ({ hidden: sci(...names), hideUntagged: f
 
 const labels = (f: Partial<FilterState>, model = single, unit: 'm' | 'ft' = 'm') =>
   filterButtons(model, { ...NO_FILTERS, ...f }, unit).map((b) => b.label);
+const section = (model: Model, f: FilterState, dim: FilterDimension, separate = false) => sectionValue(model, f, dim, 'm', separate);
 
 describe('filter button labels', () => {
   it('read the filter names while nothing is filtered', () => {
@@ -185,6 +198,22 @@ describe('list filter labels', () => {
 });
 
 describe('date and elevation labels', () => {
+  it('name the photos with no location "No location set" among mountain ranges', () => {
+    const f = (ranges: FilterState['ranges']) => ({ ...NO_FILTERS, ranges });
+    expect(listKeys(both, 'ranges')).toEqual(['AA0', '']);
+    expect(labels({ ranges: { hidden: [''] } }, both)[5]).toBe('Mountain range: AA0');
+    expect(labels({ ranges: { hidden: ['AA0'] } }, both)[5]).toBe('Mountain range: No location set');
+    expect(filterWords(both, f({ hidden: [''] }), 'm')).toBe('Mountain range: AA0');
+    expect(filterWords(both, f({ hidden: ['AA0'] }), 'm')).toBe('Mountain range: No location set');
+  });
+
+  it('count mountain ranges without "No location set"', () => {
+    expect(section(both, NO_FILTERS, 'ranges')).toBe('All 1 mountain range');
+    const onlyBravo = modelOf(bravo);
+    expect(listKeys(onlyBravo, 'ranges')).toEqual(['']);
+    expect(section(onlyBravo, NO_FILTERS, 'ranges')).toBe('None named');
+  });
+
   it('show date ranges by month when they cover whole months', () => {
     expect(labels({ dateFrom: '2023-09-01', dateTo: '2025-09-30' })[2]).toBe('Dates: Sep 2023 – Sep 2025');
     expect(labels({ dateFrom: '2023-09-01', dateTo: '2023-09-30' })[2]).toBe('Dates: Sep 2023');

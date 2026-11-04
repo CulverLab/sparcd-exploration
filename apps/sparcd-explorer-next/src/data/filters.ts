@@ -4,12 +4,13 @@
 // Location filters (collections, locations, area, elevation, mountain range)
 // test the photo's site; time filters test the photo's camera-local
 // timestamp; the species filter tests its detections. An active filter on a
-// value a photo lacks (no position, no elevation, no timestamp, no mountain
-// range) leaves it out.
+// value a photo lacks (no position, no elevation, no timestamp) leaves it out.
 //
 // The list pickers (collections, species, locations, mountain ranges) start
 // with every item ticked. Their state is what is unticked, so an empty list
-// is no filter and an item new to the open collections starts ticked.
+// is no filter and an item new to the open collections starts ticked. "No
+// location set" is an item of the mountain ranges, with the empty key: the
+// only site without a range is the no-location one.
 
 import { dayNumber } from './time';
 import type { Model, Photo, Site } from './model';
@@ -144,8 +145,10 @@ export function listKeys(model: Model, dim: ListDimension): string[] {
       return model.species.map((s) => s.key);
     case 'locations':
       return photoSites(model).map((s) => s.key);
-    case 'ranges':
-      return [...new Set(model.sites.map((s) => s.range).filter(Boolean))].sort();
+    case 'ranges': {
+      const named = [...new Set(model.sites.map((s) => s.range).filter(Boolean))].sort();
+      return photoSites(model).some((s) => !s.range) ? [...named, ''] : named;
+    }
   }
 }
 
@@ -336,7 +339,7 @@ function sitePasses(model: Model, state: FilterState): (site: Site) => boolean {
     if (elevation && (site.elevation === null || site.elevation < elevation[0] || site.elevation > elevation[1])) {
       return false;
     }
-    if (ranges && (!site.range || ranges.has(site.range))) return false;
+    if (ranges?.has(site.range)) return false;
     return true;
   };
 }

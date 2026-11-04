@@ -2,6 +2,7 @@
 // ("Species: Bobcat, Coyote"), so the bar stays one line with no chip row.
 
 import {
+  NO_LOCATION_NAME,
   activeFilters,
   elevationIn,
   listKeys,
@@ -102,7 +103,7 @@ function listItems(model: Model, f: FilterState, dim: ListDimension, separate: b
       ? (key: string) => model.species.find((s) => s.key === key)!.name
       : dim === 'collections'
         ? (key: string) => model.collections.find((c) => c.key === key)!.name
-        : (key: string) => key;
+        : (key: string) => key || NO_LOCATION_NAME;
   return listKeys(model, dim).map((key) => ({ label: label(key), ticked: !hidden.has(key) }));
 }
 
@@ -228,7 +229,7 @@ export function sectionValue(model: Model, f: FilterState, dim: FilterDimension,
     case 'locations':
       return on ? cap(listFilterValue(model, f, dim, separate)!) : `All ${plural(locationItems(model, f, separate).length, 'location')}`;
     case 'ranges': {
-      const n = listKeys(model, 'ranges').length;
+      const n = listKeys(model, 'ranges').filter(Boolean).length;
       return on ? cap(listFilterValue(model, f, dim, separate)!) : n ? `All ${plural(n, 'mountain range')}` : 'None named';
     }
     case 'dates': {

@@ -134,12 +134,16 @@ describe('applyFilters, one dimension at a time', () => {
     expect(files({ elevation: [1000, 2000] })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'b1.jpg', 'b2.jpg']);
   });
 
-  it('mountain range; a location with none is outside it once the filter is on', () => {
+  it('mountain range; "no location set" is an item of its own, listed last', () => {
     const ranges = (keep: string[]) => files({ ranges: only(listKeys(model, 'ranges'), keep) });
-    expect(listKeys(model, 'ranges')).toEqual(['AA0', 'AB0', 'CD0']);
+    expect(listKeys(model, 'ranges')).toEqual(['AA0', 'AB0', 'CD0', '']);
+    // Only on a range drops the photos with no location.
     expect(ranges(['AB0'])).toEqual(['b1.jpg', 'b2.jpg']);
     expect(ranges(['AA0', 'CD0'])).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'c1.jpg']);
-    expect(files({ ranges: { hidden: ['AB0'] } })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'c1.jpg']);
+    expect(ranges([''])).toEqual(['n1.jpg']);
+    // Unticking one range keeps them.
+    expect(files({ ranges: { hidden: ['AB0'] } })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'c1.jpg', 'n1.jpg']);
+    expect(files({ ranges: { hidden: [''] } })).toEqual(['a1.jpg', 'a2.jpg', 'a3.jpg', 'b1.jpg', 'b2.jpg', 'c1.jpg']);
   });
 
   it('the Photos view’s tagged / untagged / all switch', () => {

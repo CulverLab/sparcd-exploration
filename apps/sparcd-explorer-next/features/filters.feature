@@ -112,6 +112,19 @@ Feature: Filter the photos in view
     Then the locations filter reads "Locations: all but AB03"
     And the photo count reads "10 of 11 photos"
 
+  Scenario: Unticking a mountain range keeps the photos with no location, and Only on a range drops them
+    When I open the mountain range filter
+    Then the mountain range filter lists "AB-, AB0, No location set"
+    When I untick "AB0" in the mountain range filter
+    Then the mountain range filter reads "Mountain range: AB-, No location set"
+    And the photo count reads "3 of 11 photos"
+    When I press Only on "AB0" in the mountain range filter
+    Then the mountain range filter reads "Mountain range: AB0"
+    And the photo count reads "8 of 11 photos"
+    When I press Only on "No location set" in the mountain range filter
+    Then the mountain range filter reads "Mountain range: No location set"
+    And the photo count reads "2 of 11 photos"
+
   Scenario: Hiding a species and picking years
     When I hide the species "Bobcat"
     Then the species filter reads "Species: all but Bobcat"

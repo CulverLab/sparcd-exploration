@@ -172,6 +172,10 @@ Then('the species filter lists, in order, {string}', async ({ page }, list: stri
   await expect(popover(page, 'Species').locator('.opt .t')).toHaveText(list.split(', '));
 });
 
+Then('the mountain range filter lists {string}', async ({ page }, list: string) => {
+  await expect(popover(page, 'Mountain range').locator('.opt .t')).toHaveText(list.split(', '));
+});
+
 Then('the species filter lists {string} first, apart from the species', async ({ page }, item: string) => {
   const first = popover(page, 'Species').locator('.opt').first();
   await expect(first).toHaveClass(/apart/);
