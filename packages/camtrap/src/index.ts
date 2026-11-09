@@ -623,7 +623,8 @@ export type ObservationInput = {
  * The full edited state for one image. `observations` is the *complete*
  * replacement set for this media id — `[]` means detag. `timestamp` stamps the
  * image's observation rows (col 4); when it is blank, each row keeps the time it
- * had and new rows take the earliest time the image's rows hold.
+ * (or its Undo restoration row) had and new rows take the image's earliest
+ * camera time.
  * `mediaTimestamp`, when set, also rewrites the media row's col 4 (a synced
  * time correction).
  */
@@ -731,14 +732,21 @@ export function mergeMedia(canonicalMediaCsv: string, edits: MediaEdit[]): strin
   return serializeCsvRows(rows);
 }
 
-/** The earliest non-blank col 4 among an image's observation rows, or ''. */
-function earliestTime(rows: string[][]): string {
-  let earliest = '';
+// A camera time is plain YYYY-MM-DDTHH:MM:SS, so text order is time order.
+// A fraction or a zone marks when someone uploaded or tagged the image.
+const CAMERA_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+
+/** The time a new row takes when the edit has none: the image's earliest camera time, else its first time, else ''. */
+function heldTime(rows: string[][]): string {
+  let camera = '';
+  let first = '';
   for (const row of rows) {
     const time = row[OBS_COL.timestamp] ?? '';
-    if (time && (!earliest || time < earliest)) earliest = time;
+    if (!time) continue;
+    first ||= time;
+    if (CAMERA_TIME.test(time) && (!camera || time < camera)) camera = time;
   }
-  return earliest;
+  return camera || first;
 }
 
 export type MergeObservationsOptions = {
@@ -776,8 +784,8 @@ export function mergeObservations(
     // A blank time never replaces one the rows hold. SPARC'd web left some
     // media.csv times blank while their observation rows kept the camera's
     // time, and the Tagger's time for an image comes from media.csv.
-    const held = e.timestamp ? '' : earliestTime(existing);
-    const timeFor = (prior?: string[]) => e.timestamp || prior?.[OBS_COL.timestamp] || held;
+    const held = e.timestamp ? '' : heldTime(existing);
+    const timeFor = (template?: string[]) => e.timestamp || template?.[OBS_COL.timestamp] || held;
     const positive = e.observations
       .filter(positiveCount)
       .map((o, i) => {
@@ -785,7 +793,7 @@ export function mergeObservations(
           (row) => !used.has(row) && isAnimalRow(row) && row[OBS_COL.scientificName] === o.scientificName,
         );
         if (prior) used.add(prior);
-        return buildObservationRow(e, o, genId(e.mediaId, i), timeFor(prior), prior);
+        return buildObservationRow(e, o, genId(e.mediaId, i), timeFor(prior ?? o.restorationRow), prior);
       });
     built.set(
       e.mediaId,
