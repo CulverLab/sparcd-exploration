@@ -147,6 +147,18 @@ function sentence(model: Model, check: DataCheck): CheckLine {
         },
       };
     }
+    case 'times-from-tags': {
+      const n = check.photos.length;
+      const sites = [...new Set(check.photos.map((p) => model.sites[model.photos[p].site].key))];
+      return {
+        text: `${n === 1 ? '1 photo has' : `${fmtN(n)} photos have`} no date in ${n === 1 ? 'its' : 'their'} upload's photo list, so ${n === 1 ? 'its date comes' : 'their dates come'} from ${n === 1 ? 'its' : 'their'} tags (${check.uploads === 1 ? '1 upload' : `${fmtN(check.uploads)} uploads`}).`,
+        action: {
+          label: n === 1 ? 'Show its location' : 'Show their locations',
+          kind: 'show',
+          target: { locations: sites, view: 'photos', message: 'Showing photos dated from their tags' },
+        },
+      };
+    }
     case 'bad-timestamps': {
       const n = check.photos.length;
       const upload = model.uploads[check.upload];

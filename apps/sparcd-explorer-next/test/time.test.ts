@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { checkBadTimestamps, dayNumber, formatTimestamp24, parseLocalTimestamp } from '../src/data';
-import { collection, deployment, media, modelOf } from './support/fixtures';
+import type { UploadMetaJson } from '@sparcd/camtrap';
+import { buildModel, checkBadTimestamps, checkTimesFromTags, dayNumber, formatTimestamp24, parseLocalTimestamp } from '../src/data';
+import { collection, deployment, media, modelOf, observation } from './support/fixtures';
 
 describe('parseLocalTimestamp', () => {
   it('reads the camera wall clock with no UTC conversion', () => {
@@ -76,5 +77,68 @@ describe('formatTimestamp24', () => {
   it('shows a missing timestamp as empty', () => {
     expect(formatTimestamp24(null)).toBe('');
     expect(formatTimestamp24(undefined)).toBe('');
+  });
+});
+
+describe('photos whose media.csv has no time', () => {
+  // SPARC'd web wrote these rows blank; the tags kept the camera's time.
+  const U = '2024.03.05.10.00.00_fielduser';
+  const OWL = { common: 'Owl' };
+  const upload = (observations: ReturnType<typeof observation>[], mediaTime = '') =>
+    collection().upload(U, {
+      deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+      media: [media(U, 'a.jpg', 'AA01', mediaTime)],
+      observations,
+    });
+  const photo = (c: ReturnType<typeof upload>, missing: string[] = []) => modelOf(c, { missing }).photos[0];
+
+  it('take the camera time from their tags, marked as such', () => {
+    const p = photo(upload([observation(U, 'a.jpg', 'AA01', '2024-03-01T23:40:00', OWL)]));
+    expect(p).toMatchObject({ timestamp: '2024-03-01T23:40:00', date: '2024-03-01', year: 2024, month: 3, hour: 23, timeFromTags: true });
+    expect(p.timeKey).toBe(parseLocalTimestamp('2024-03-01T23:40:00')!.key);
+  });
+
+  it('take the earliest when the tags disagree', () => {
+    const p = photo(
+      upload([
+        observation(U, 'a.jpg', 'AA01', '2024-03-02T08:00:00', OWL),
+        observation(U, 'a.jpg', 'AA01', '2024-03-01T07:00:00', { common: 'Fox' }),
+      ]),
+    );
+    expect(p.timestamp).toBe('2024-03-01T07:00:00');
+  });
+
+  it('ignore upload and tagging times: a fraction, a zone, or a date after the upload', () => {
+    for (const time of ['2024-03-01T10:00:00.123Z', '2024-03-01T10:00:00+00:00', '2024-03-01T10:00:00.123456', '2024-03-01T10:00', '2024-03-06T10:00:00']) {
+      const p = photo(upload([observation(U, 'a.jpg', 'AA01', time, OWL)]));
+      expect(p, time).toMatchObject({ timestamp: '', date: null, timeKey: null, timeFromTags: false });
+    }
+    expect(photo(upload([observation(U, 'a.jpg', 'AA01', '2024-03-05T09:00:00', OWL)])).date).toBe('2024-03-05');
+  });
+
+  it('bound the date by UploadMeta.json when the upload has one', () => {
+    const loaded = upload([observation(U, 'a.jpg', 'AA01', '2024-03-04T09:00:00', OWL)]).build();
+    loaded.uploads[0].meta = { uploadDate: { date: { year: 2024, month: 3, day: 3 } } } as UploadMetaJson;
+    expect(buildModel([loaded]).photos[0].date).toBeNull();
+  });
+
+  it('keep the time media.csv has, whatever the tags say', () => {
+    const p = photo(upload([observation(U, 'a.jpg', 'AA01', '2024-03-01T07:00:00', OWL)], '2024-03-02T08:00:00'));
+    expect(p).toMatchObject({ timestamp: '2024-03-02T08:00:00', timeFromTags: false });
+  });
+
+  it('are counted in their own data check, and left out of the unreadable one', () => {
+    const c = collection().upload(U, {
+      deployments: [deployment('AA01', 'Alpha', 12.5, -100.25)],
+      media: [media(U, 'a.jpg', 'AA01'), media(U, 'b.jpg', 'AA01'), media(U, 'gone.jpg', 'AA01')],
+      observations: [
+        observation(U, 'a.jpg', 'AA01', '2024-03-01T07:00:00', OWL),
+        observation(U, 'b.jpg', 'AA01', '2024-03-05T17:00:00.123Z', OWL),
+        observation(U, 'gone.jpg', 'AA01', '2024-03-01T08:00:00', OWL),
+      ],
+    });
+    const model = modelOf(c, { missing: [`sparcd-test/${media(U, 'gone.jpg', 'AA01').mediaPath}`] });
+    expect(checkTimesFromTags(model)).toEqual([{ kind: 'times-from-tags', photos: [0], uploads: 1 }]);
+    expect(checkBadTimestamps(model)).toEqual([{ kind: 'bad-timestamps', upload: 0, photos: [1] }]);
   });
 });

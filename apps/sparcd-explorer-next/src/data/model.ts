@@ -17,7 +17,7 @@ import { isNoLocation, mountainRange } from './locationIds';
 import { registryKey, type RegistryLocation } from './locations';
 import type { LoadedCollection } from './open';
 import { speciesNamer, type Species, type SpeciesName } from './species';
-import { parseLocalTimestamp } from './time';
+import { parseLocalTimestamp, type LocalTime } from './time';
 
 export const NO_LOCATION_NAME = 'No location set';
 export const NO_LOCATION_KEY = 'none';
@@ -52,6 +52,7 @@ export type Photo = {
   fileName: string;
   mimeType: string;
   video: boolean;
+  /** media.csv's time, or the camera time from its tags when that's blank (`timeFromTags`). */
   timestamp: string;
   /** Sort key in camera-clock order, or null when the timestamp doesn't parse. */
   timeKey: number | null;
@@ -61,6 +62,8 @@ export type Photo = {
   year: number | null;
   month: number | null;
   hour: number | null;
+  /** media.csv has no time for it, so `timestamp` is the camera time its observations.csv rows hold. */
+  timeFromTags: boolean;
   /** At least one observation names a species. Placeholders and removal-only rows don't. */
   tagged: boolean;
   /** media.csv lists it, but its file isn't in storage. Left out of everything until shown. */
@@ -116,6 +119,32 @@ const VIDEO = /^video\/|\.(mp4|mov|avi)$/i;
 
 function stampOf(folder: string): string {
   return folder.replace(/\/$/, '').split('/').pop() ?? folder;
+}
+
+const timeFields = (t: LocalTime | null) => ({
+  date: t?.date ?? null,
+  day: t?.day ?? null,
+  year: t?.year ?? null,
+  month: t?.month ?? null,
+  hour: t?.hour ?? null,
+  timeKey: t?.key ?? null,
+});
+
+// SPARC'd web left some media.csv times blank: it fills them in only when an
+// upload finishes, and only for photos that already carried its tags. Their
+// observations.csv rows often still hold the camera's time. Only the plain
+// form is the camera's: a fraction or a zone marks when someone uploaded or
+// tagged the photo, and a time after the upload can't be a capture.
+const CAMERA_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+const STAMP_DATE = /^(\d{4})\.(\d{2})\.(\d{2})\./;
+
+/** Gives a photo with no media.csv time the earliest camera time its tag rows hold, up to `lastDate`. */
+function takeTagTime(photo: Photo, timestamp: string, lastDate: string | null): void {
+  const text = timestamp.trim();
+  if (!CAMERA_TIME.test(text)) return;
+  const t = parseLocalTimestamp(text);
+  if (!t || (lastDate !== null && t.date > lastDate) || (photo.timeKey !== null && t.key >= photo.timeKey)) return;
+  Object.assign(photo, { timestamp: text, ...timeFields(t), timeFromTags: true });
 }
 
 /** `missing`: the photo files storage lacks, as `bucket/key` (see `checkPhotoFiles`). */
@@ -190,14 +219,11 @@ export function buildModel(
 
     for (const u of c.uploads) {
       const meta = u.meta?.uploadDate?.date;
-      const ui =
-        m.uploads.push({
-          collection: ci,
-          folder: u.folder,
-          stamp: stampOf(u.folder),
-          user: u.meta?.uploadUser ?? '',
-          date: meta ? `${meta.year}-${String(meta.month).padStart(2, '0')}-${String(meta.day).padStart(2, '0')}` : null,
-        }) - 1;
+      const stamp = stampOf(u.folder);
+      const date = meta ? `${meta.year}-${String(meta.month).padStart(2, '0')}-${String(meta.day).padStart(2, '0')}` : null;
+      const ui = m.uploads.push({ collection: ci, folder: u.folder, stamp, user: u.meta?.uploadUser ?? '', date }) - 1;
+      const stampDate = STAMP_DATE.exec(stamp);
+      const uploaded = date ?? (stampDate ? `${stampDate[1]}-${stampDate[2]}-${stampDate[3]}` : null);
 
       // By convention an upload has one deployment row; media match it by
       // deployment ID, else take the upload's first row.
@@ -212,7 +238,6 @@ export function buildModel(
       const photoOfKey = new Map<string, number>();
       for (const media of u.media) {
         const site = siteOfDeployment.get(media.deploymentId) ?? firstSite ?? noLocationSite(ci);
-        const t = parseLocalTimestamp(media.timestamp);
         photoOfKey.set(
           media.mediaPath,
           m.photos.push({
@@ -224,12 +249,8 @@ export function buildModel(
             mimeType: media.mimeType,
             video: VIDEO.test(media.mimeType) || VIDEO.test(media.mediaPath),
             timestamp: media.timestamp,
-            date: t?.date ?? null,
-            day: t?.day ?? null,
-            year: t?.year ?? null,
-            month: t?.month ?? null,
-            hour: t?.hour ?? null,
-            timeKey: t?.key ?? null,
+            ...timeFields(parseLocalTimestamp(media.timestamp)),
+            timeFromTags: false,
             tagged: false,
             missing: missing?.has(`${c.ref.bucket}/${media.mediaPath}`) ?? false,
             detections: NO_DETECTIONS,
@@ -241,7 +262,9 @@ export function buildModel(
       u.observations.forEach((o, row) => {
         const pi = photoOfKey.get(o.mediaId);
         if (pi === undefined) return;
-        addComment(m.photos[pi], o.tags);
+        const photo = m.photos[pi];
+        if (photo.date === null || photo.timeFromTags) takeTagTime(photo, o.timestamp, uploaded);
+        addComment(photo, o.tags);
         // Removal and correction markers never name a present species; only
         // the row's own species does (#467).
         const named = nameSpecies(o.scientificName, commonNameFromComments(o.tags));
@@ -253,7 +276,6 @@ export function buildModel(
         }
         const count = Number.isFinite(o.count) ? o.count! : 0;
         const di = m.detections.push({ collection: ci, photo: pi, species: si, count, row }) - 1;
-        const photo = m.photos[pi];
         if (photo.detections === NO_DETECTIONS) photo.detections = [];
         photo.detections.push(di);
         photo.tagged = true;

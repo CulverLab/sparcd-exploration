@@ -404,6 +404,17 @@ Given(/^"(.*)" has an upload listing (\d+) photos whose files aren't on the serv
   scratch.staleUpload = `${uploadPrefix(c, upload.stamp)}**`;
 });
 
+Given('{string} has an upload whose photo list left the dates blank', async ({ s3 }, name: string) => {
+  addUpload(s3, COLLECTIONS[name], {
+    stamp: '2025.06.03.08.00.00_fielduser',
+    deployment: { id: 'AB02', name: 'Cedar Draw', lat: 0.53, lon: -150.15, elevation: 1500 },
+    photos: [
+      { file: 'BLANK1.JPG', time: '2025-05-20T07:15:00', mediaTime: '', species: [{ sci: 'Canis latrans', common: 'Coyote' }] },
+      { file: 'BLANK2.JPG', time: '2025-05-21T08:30:00', mediaTime: '', species: [{ sci: 'Canis latrans', common: 'Coyote' }] },
+    ],
+  });
+});
+
 Given('{string} has a camera of its own whose {int} photos aren\'t on the server', async ({ s3 }, name: string, n: number) => {
   const c = COLLECTIONS[name];
   const upload: Upload = {

@@ -64,3 +64,12 @@ Feature: Data checks
     When I open Data checks
     And I press "Show which" in Data checks
     Then I see "2025.05.01.08.00.00_interrupted"
+
+  Scenario: Photos whose upload left their dates blank are dated from their tags
+    Given "Alpha Basin" has an upload whose photo list left the dates blank
+    And I have opened "Alpha Basin"
+    When I open Data checks
+    Then I see "2 photos have no date in their upload's photo list, so their dates come from their tags (1 upload)."
+    When I show the Photos grid
+    And I open the photo taken at "2025-05-20 07:15:00"
+    Then the panel reads "Date and time" "2025-05-20 07:15:00 (from its tags)"

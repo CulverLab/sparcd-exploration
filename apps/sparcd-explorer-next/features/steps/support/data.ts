@@ -20,7 +20,10 @@ export const uploadPrefix = (c: { uuid: string }, stamp: string) => `Collections
 type Deployment = { id: string; name: string; lat: number | null; lon: number | null; elevation: number | null };
 type Photo = {
   file: string;
+  /** The camera's time, as the tags hold it. */
   time: string;
+  /** What media.csv holds instead, when not `time`: SPARC'd web left some blank. */
+  mediaTime?: string;
   species?: { sci: string; common: string; count?: number }[];
   /** `image/jpeg` unless given. */
   mime?: string;
@@ -59,7 +62,7 @@ function putUpload(s3: MockS3, c: { uuid: string }, u: Upload): void {
     u.photos
       .map((p) => {
         const key = `${prefix}${p.file}`;
-        return row({ 0: key, 1: dep, 2: key, 4: p.time, 5: key, 6: p.file, 7: p.mime ?? 'image/jpeg', 9: 'false' }, 11);
+        return row({ 0: key, 1: dep, 2: key, 4: p.mediaTime ?? p.time, 5: key, 6: p.file, 7: p.mime ?? 'image/jpeg', 9: 'false' }, 11);
       })
       .join('\n'),
   );

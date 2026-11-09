@@ -17,6 +17,7 @@ export type SharedLocationCheck = {
   spans: { collection: number; first: string | null; last: string | null }[];
 };
 export type BadTimestampsCheck = { kind: 'bad-timestamps'; upload: number; photos: number[] };
+export type TimesFromTagsCheck = { kind: 'times-from-tags'; photos: number[]; uploads: number };
 export type UnreadableCheck = { kind: 'unreadable'; collection: number; folder: string; file: string; message: string };
 export type MissingFilesCheck = { kind: 'missing-files'; photos: number; uploads: number };
 export type UncheckedFilesCheck = { kind: 'unchecked-files'; uploads: number };
@@ -30,6 +31,7 @@ export type DataCheck =
   | HiddenUploadsCheck
   | SharedLocationCheck
   | BadTimestampsCheck
+  | TimesFromTagsCheck
   | UnreadableCheck
   | MissingFilesCheck
   | UncheckedFilesCheck;
@@ -149,6 +151,18 @@ export function checkBadTimestamps(model: Model): BadTimestampsCheck[] {
   return [...byUpload].map(([upload, photos]) => ({ kind: 'bad-timestamps', upload, photos }));
 }
 
+/** Photos dated from their tags because media.csv has no time for them. */
+export function checkTimesFromTags(model: Model): TimesFromTagsCheck[] {
+  const photos: number[] = [];
+  const uploads = new Set<number>();
+  model.photos.forEach((p, i) => {
+    if (!p.timeFromTags || p.missing) return;
+    photos.push(i);
+    uploads.add(p.upload);
+  });
+  return photos.length ? [{ kind: 'times-from-tags', photos, uploads: uploads.size }] : [];
+}
+
 /** Files that could not be read; their rows are missing from every count. */
 export function checkUnreadable(model: Model): UnreadableCheck[] {
   return model.problems.map((p) => ({ kind: 'unreadable', ...p }));
@@ -182,6 +196,7 @@ export function dataChecks(model: Model, unchecked = 0): DataCheck[] {
     ...checkMoved(model),
     ...checkNearDuplicateIds(model),
     ...checkNoCoordinates(model),
+    ...checkTimesFromTags(model),
     ...checkBadTimestamps(model),
     ...checkMixedCaseIds(model),
   ];

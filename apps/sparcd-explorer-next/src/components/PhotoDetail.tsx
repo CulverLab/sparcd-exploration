@@ -113,7 +113,7 @@ export function PhotoDetail({
   const tags = photo.detections.map((d) => model.detections[d]);
   const species = [...new Set(tags.map((t) => t.species))].map((s) => model.species[s]);
   const fields: [string, string][] = [
-    ['Date and time', formatTimestamp24(photo.timestamp) || '—'],
+    ['Date and time', photo.timeFromTags ? `${formatTimestamp24(photo.timestamp)} (from its tags)` : formatTimestamp24(photo.timestamp) || '—'],
     ['Count', tags.length ? tags.map((t) => `${fmtN(t.count)} ${model.species[t.species].name}`).join(', ') : '—'],
     ['Collection', model.collections[photo.collection].name],
     ['Location', site.noLocation ? 'No location set' : site.name || '—'],

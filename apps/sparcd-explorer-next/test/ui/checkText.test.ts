@@ -82,6 +82,23 @@ describe('data check sentences', () => {
     );
   });
 
+  it('photos dated from their tags, with an action that shows their locations', () => {
+    const U = '2024.03.05.10.00.00_fielduser';
+    const dated = modelOf(
+      collection('Tags', 'ttt').upload(U, {
+        deployments: [deployment('AA01', 'Spring', 12.5, -100.25)],
+        media: [media(U, 'a.jpg', 'AA01'), media(U, 'b.jpg', 'AA01')],
+        observations: [
+          observation(U, 'a.jpg', 'AA01', '2024-03-01T05:00:00', { common: 'Owl' }),
+          observation(U, 'b.jpg', 'AA01', '2024-03-02T05:00:00', { common: 'Owl' }),
+        ],
+      }),
+    );
+    const line = describeCheck(dated, dataChecks(dated).find((c) => c.kind === 'times-from-tags')!);
+    expect(line.text).toBe("2 photos have no date in their upload's photo list, so their dates come from their tags (1 upload).");
+    expect(line.action).toMatchObject({ label: 'Show their locations', kind: 'show', target: { view: 'photos' } });
+  });
+
   it('a file that could not be read, with Try again', () => {
     const line = describeCheck(model, {
       kind: 'unreadable',

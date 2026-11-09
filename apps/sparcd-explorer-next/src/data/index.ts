@@ -114,6 +114,7 @@ export {
   checkNoCoordinates,
   checkNoLocation,
   checkSharedLocations,
+  checkTimesFromTags,
   checkUnreadable,
   dataChecks,
   type DataCheck,
