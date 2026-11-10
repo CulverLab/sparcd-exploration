@@ -1,5 +1,5 @@
 import { parseMedia, MEDIA_COL, parseObservations, parseCsvRows, serializeCsvRows, OBS_COL } from '@sparcd/camtrap';
-import { When, Then, expect, focusFrame, speciesApply, openWorkspace, openSettings } from './support/world';
+import { Given, When, Then, expect, focusFrame, gridCell, speciesApply, openWorkspace, openSettings } from './support/world';
 import { BUCKET, PREFIX_A, observationsCsv } from './support/data';
 const path = `${PREFIX_A}IMG002.JPG`;
 const status = (page: import('@playwright/test').Page) => page.getByTestId('automatic-save');
@@ -362,4 +362,24 @@ Then('the removed image stays absent and its original media object is untouched'
   expect(parseMedia(s3.text(BUCKET, `${PREFIX_A}media.csv`)).some(row => row.mediaId === path)).toBe(false);
   expect(s3.get(BUCKET, path)!.body.toString('base64')).toBe(scratch.originalImage);
   expect(parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).some(row => row.mediaId === path && row.scientificName === 'Puma concolor')).toBe(false);
+});
+
+// Some uploads have a blank media.csv time while their observation rows hold the camera's time.
+const IMG001 = `${PREFIX_A}IMG001.JPG`;
+Given("the photo list left IMG001's capture time blank while its Mule Deer tag holds it", async ({ page, s3 }) => {
+  const rows = parseCsvRows(s3.text(BUCKET, `${PREFIX_A}media.csv`))
+    .map(row => row[MEDIA_COL.mediaId] === IMG001 ? row.map((value, i) => i === MEDIA_COL.timestamp ? '' : value) : row);
+  s3.put(BUCKET, `${PREFIX_A}media.csv`, serializeCsvRows(rows), 'text/csv');
+  await page.reload(); await openWorkspace(page);
+  await expect(gridCell(page, 'IMG001.JPG')).toContainText('Mule Deer');
+});
+When('Coyote is added to IMG001 and automatically saved', async ({ page }) => {
+  await focusFrame(page, 'IMG001.JPG'); await speciesApply(page, 'Canis latrans').click(); await saved(page);
+});
+Then("both of IMG001's saved tags hold the camera's time", async ({ s3 }) => {
+  const tags = parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).filter(o => o.mediaId === IMG001 && o.scientificName);
+  expect(tags.map(o => [o.scientificName, o.timestamp]).sort()).toEqual([
+    ['Canis latrans', '2024-01-10T08:00:00'],
+    ['Odocoileus hemionus', '2024-01-10T08:00:00'],
+  ]);
 });

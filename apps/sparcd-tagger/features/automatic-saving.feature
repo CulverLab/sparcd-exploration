@@ -187,3 +187,8 @@ Feature: Completed collection edits save automatically with one-level Undo
     Then the removed image is reported as a retained conflict
     When current storage is explicitly chosen
     Then the removed image stays absent and its original media object is untouched
+
+  Scenario: Tagging a photo whose photo list has no time keeps the time on its tags
+    Given the photo list left IMG001's capture time blank while its Mule Deer tag holds it
+    When Coyote is added to IMG001 and automatically saved
+    Then both of IMG001's saved tags hold the camera's time
