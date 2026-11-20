@@ -50,15 +50,26 @@ People who already sign in to SPARC'd can keep the access key and secret they
 use today. `import` stores them as that person's key, wrapped under
 `ACCESS_MASTER_KEY` like an issued one, with the same environment as `init`:
 
+Enter the secret at the hidden prompt. This example starts a temporary Bash
+process, so it works from Bash or Zsh and does not retain `IMPORT_SECRET` in
+your current shell. Replace `existing-key-id` with the person's access key;
+append `--admin` if needed.
+
 ```sh
-IMPORT_SECRET='...' node access/cli.mjs import \
-  --name "Ana Pérez" --email ana@example.org --access-key <their key id> [--admin]
+bash -c '
+  IFS= read -r -s -p "Existing secret: " IMPORT_SECRET || exit 1
+  printf "\n"
+  export IMPORT_SECRET
+  exec node access/cli.mjs import "$@"
+' -- --name "Ana Pérez" --email ana@example.org --access-key existing-key-id
 ```
 
 The secret comes from `--secret`, or from `IMPORT_SECRET` when the flag is
-absent, which keeps it out of shell history. It is never printed. The person is
-active straight away with no collections; an admin grants those in the admin
-app. A reset retires the imported key like any other.
+absent. A literal secret typed in either `--secret` or an inline environment
+assignment can be saved in shell history; the hidden prompt above avoids that.
+The import command never prints the secret. The person is active straight away
+with no collections; an admin grants those in the admin app. A reset retires
+the imported key like any other.
 
 Run imports one at a time. The duplicate-key check reads the people it loaded
 at start, so two imports of the same key id racing each other could both land.
