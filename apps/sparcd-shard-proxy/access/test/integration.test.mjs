@@ -10,6 +10,7 @@ import {
   DeleteObjectCommand, ListObjectsV2Command, HeadBucketCommand,
   CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import {
   startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest, rawTarget,
@@ -526,6 +527,15 @@ describe('the access table', () => {
     );
   });
 
+  test('the Tagger\'s original baseline is writable at identify, once', async () => {
+    const key = `${prefixA}/.sparcd-tagger-original/media.csv`;
+    const write = () => people.carol.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'first', headers: { 'if-none-match': '*' },
+    });
+    assert.equal((await write()).status, 200);
+    assert.equal((await write()).status, 412);
+  });
+
   test('DeleteObject needs run', async () => {
     const key = `${prefixA}/doomed.jpg`;
     await people.bob.s3().send(new PutObjectCommand({ Bucket: BUCKET_A, Key: key, Body: 'x' }));
@@ -868,6 +878,25 @@ describe('signature handling', () => {
     const tooLong = await fetch(await people.alice.presign(path, 7200));
     assert.equal(tooLong.status, 403);
     assert.match(await tooLong.text(), /exceeds one hour/);
+  });
+
+  test('a presigned GET from the AWS SDK presigner works', async () => {
+    const url = await getSignedUrl(
+      people.alice.s3(), new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }),
+      { expiresIn: 3600 },
+    );
+    const res = await fetch(url);
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.equal(await res.text(), `image-bytes-${UUID_A}`);
+  });
+
+  test('a presigned GET honours the unsigned Range a video seek sends', async () => {
+    const res = await fetch(await people.alice.presign(path, 900), {
+      headers: { range: 'bytes=6-10' },
+    });
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), `bytes 6-10/${`image-bytes-${UUID_A}`.length}`);
+    assert.equal(await res.text(), 'bytes');
   });
 
   test('a presigned GET still obeys the rules', async () => {

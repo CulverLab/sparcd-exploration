@@ -33,7 +33,8 @@ proxy are built against it independently.
    allowlist below reach the upstream; any other `x-amz-*` header on the request is a
    403, so a client that grew a new one fails loudly instead of being silently
    stripped. A header from the ordinary forward list travels only if it is in
-   `SignedHeaders`. Response headers are an allowlist too. Responses that name a bucket
+   `SignedHeaders`, except `Range` on a GET: it only narrows a read the signature
+   already allows, and a presigned URL signs only `host`. Response headers are an allowlist too. Responses that name a bucket
    are **rebuilt**, not filtered, and a response whose text still carries the namespace
    anywhere but a `Key` or a `Prefix` is a 502 rather than a pass. Every answer —
    S3, JSON API and refusal alike — carries `Cache-Control: no-store`, overriding
