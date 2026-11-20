@@ -270,3 +270,78 @@ describe('classified_by provenance', () => {
     expect(out[0].classificationTimestamp).toBe('2024-01-20T14:30:00.000Z');
   });
 });
+
+describe('a blank edit time keeps the times the rows hold', () => {
+  // SPARC'd web left some media.csv times blank; the Tagger stamps rows from
+  // media.csv, so its edit time is blank while the rows hold the camera's time.
+  const row = (mediaId: string, timestamp: string, scientificName: string, type = 'animal') => {
+    const r = new Array<string>(20).fill('');
+    r[OBS_COL.observationId] = `${mediaId}:${scientificName}`;
+    r[OBS_COL.deploymentId] = DEP;
+    r[OBS_COL.mediaId] = mediaId;
+    r[OBS_COL.timestamp] = timestamp;
+    r[OBS_COL.observationType] = type;
+    r[OBS_COL.scientificName] = scientificName;
+    r[OBS_COL.count] = '1';
+    return r;
+  };
+  const A = k('A.JPG');
+  const B = k('B.JPG');
+  const csv = serializeCsvRows([
+    row(A, '2024-01-10T08:00:00.000Z', 'Odocoileus hemionus'),
+    row(A, '2024-01-09T05:30:00', 'Canis latrans'),
+    row(B, '2024-01-09T06:00:00', 'Lynx rufus'),
+  ]);
+  const timesOf = (out: string, mediaId: string) =>
+    Object.fromEntries(parseObservations(out).filter((o) => o.mediaId === mediaId).map((o) => [o.scientificName || o.observationType, o.timestamp]));
+  const edit = (observations: MediaEdit['observations'], timestamp = ''): MediaEdit => ({ mediaId: A, deploymentId: DEP, timestamp, observations });
+
+  it('keeps each species row its own time, and gives a new species the earliest', () => {
+    const out = mergeObservations(csv, [
+      edit([
+        { scientificName: 'Odocoileus hemionus', count: 2 },
+        { scientificName: 'Canis latrans', count: 1 },
+        { scientificName: 'Puma concolor', count: 1 },
+      ]),
+    ]);
+    expect(timesOf(out, A)).toEqual({
+      'Odocoileus hemionus': '2024-01-10T08:00:00.000Z',
+      'Canis latrans': '2024-01-09T05:30:00',
+      'Puma concolor': '2024-01-09T05:30:00',
+    });
+    expect(timesOf(out, B)).toEqual({ 'Lynx rufus': '2024-01-09T06:00:00' });
+  });
+
+  it('gives the placeholder row of a full detag the earliest time', () => {
+    expect(timesOf(mergeObservations(csv, [edit([])]), A)).toEqual({ blank: '2024-01-09T05:30:00' });
+  });
+
+  it('still stamps every row with a time the edit has', () => {
+    const out = mergeObservations(csv, [edit([{ scientificName: 'Canis latrans', count: 1 }, { scientificName: 'Puma concolor', count: 1 }], '2024-01-09T05:31:00')]);
+    expect(timesOf(out, A)).toEqual({ 'Canis latrans': '2024-01-09T05:31:00', 'Puma concolor': '2024-01-09T05:31:00' });
+  });
+
+  it('keeps the time of a species restored by Undo', () => {
+    const removed = row(A, '2024-01-10T08:00:00', 'Odocoileus hemionus');
+    const restored = { scientificName: 'Odocoileus hemionus', count: 1, restorationRow: removed };
+    const afterRemoval = serializeCsvRows([row(A, '2024-01-09T05:30:00', 'Canis latrans')]);
+    expect(timesOf(mergeObservations(afterRemoval, [edit([{ scientificName: 'Canis latrans', count: 1 }, restored])]), A)).toEqual({
+      'Canis latrans': '2024-01-09T05:30:00',
+      'Odocoileus hemionus': '2024-01-10T08:00:00',
+    });
+    expect(timesOf(mergeObservations('', [edit([restored])]), A)).toEqual({ 'Odocoileus hemionus': '2024-01-10T08:00:00' });
+  });
+
+  it("gives a new species the image's camera time over an upload or tagging time, else its first time", () => {
+    const newSpecies = [{ scientificName: 'Puma concolor', count: 1 }];
+    const mixed = serializeCsvRows([row(A, '2024-01-09T00:00:00.900Z', 'Odocoileus hemionus', 'blank'), row(A, '2024-01-10T05:00:00', 'Canis latrans', 'blank')]);
+    expect(timesOf(mergeObservations(mixed, [edit(newSpecies)]), A)).toEqual({ 'Puma concolor': '2024-01-10T05:00:00' });
+    const noCamera = serializeCsvRows([row(A, '2024-01-09T00:00:00.900Z', 'Odocoileus hemionus', 'blank'), row(A, '2024-01-09T00:00:00Z', 'Canis latrans', 'blank')]);
+    expect(timesOf(mergeObservations(noCamera, [edit(newSpecies)]), A)).toEqual({ 'Puma concolor': '2024-01-09T00:00:00.900Z' });
+  });
+
+  it('leaves a new image with no rows and no time blank', () => {
+    const out = mergeObservations(csv, [{ ...edit([{ scientificName: 'Canis latrans', count: 1 }]), mediaId: k('NEW.JPG') }]);
+    expect(timesOf(out, k('NEW.JPG'))).toEqual({ 'Canis latrans': '' });
+  });
+});

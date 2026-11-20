@@ -698,6 +698,19 @@ describe('buildSyncPlan → mergeObservations round trip', () => {
     ]);
   });
 
+  it('a tag edit on an image whose media.csv time is blank keeps the times its rows hold', () => {
+    // SPARC'd web left some media.csv times blank; the observation rows kept the camera's time.
+    const blankImages = X_IMAGES.map((img) => ({ ...img, baseTimestamp: '' }));
+    const draftObs = [obs('Odocoileus hemionus', 2, 'Mule Deer'), obs('Canis latrans', 1, 'Coyote'), obs('Lynx rufus', 1, 'Bobcat')];
+    const plan = buildSyncPlan(blankImages, { [KX]: draft({ mediaPath: KX, observations: draftObs }) }, null);
+    const rows = parseObservations(mergeObservations(X_OBS_CSV, plan.tagEdits)).filter((r) => r.mediaId === KX);
+    expect(rows.map((r) => [r.scientificName, r.timestamp])).toEqual([
+      ['Odocoileus hemionus', '2024-01-10T08:00:00'],
+      ['Canis latrans', '2024-01-10T08:00:00'],
+      ['Lynx rufus', '2024-01-10T08:00:00'],
+    ]);
+  });
+
   it('preserve-by-inaction: a time-only edit leaves both species rows untouched', () => {
     // Base has two species; the user changes ONLY the timestamp. The tag set is
     // unchanged, so the edit must route to timeEdits (observations:[]) — never
