@@ -57,7 +57,8 @@ Settings bucket:
      keys: [{ accessKeyId, wrappedSecret, createdAt, retiredAt? }],
      invite?: { tokenHash, expiresAt }, createdBy, createdAt, updatedAt }`
   `wrappedSecret` is AES-256-GCM under `ACCESS_MASTER_KEY` (base64, 32 bytes):
-  `v1.<iv b64url>.<ciphertext+tag b64url>`. Access key ids are `SPK` + 17 base32 chars.
+  `v1.<iv b64url>.<ciphertext+tag b64url>`. Issued access key ids are `SPK` + 17 base32 chars; a key may also be an
+  existing SPARC'd id, imported with `cli.mjs import`, and is treated the same way.
 - `Settings/access/generation.json` `{ generation: <int> }`, bumped on every access change.
 - `Settings/activity/<YYYY-MM-DD>/<epochMs>-<8 hex>.ndjson`, immutable, one object per
   flush (every 5 s or 200 lines, and on shutdown).
