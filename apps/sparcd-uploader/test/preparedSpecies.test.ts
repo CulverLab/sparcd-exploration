@@ -18,6 +18,8 @@ describe('prepared vocabulary', () => {
     expect(snapshot.overrides).toEqual({ 'Canis latrans': 'y' });
     expect(snapshot.profileId).toBe(keyProfileId(cfg.endpoint, cfg.accessKey));
     expect(snapshot.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+    expect(JSON.stringify(snapshot)).not.toContain(cfg.accessKey);
     expect(snapshot.species).toEqual(species);
     expect(JSON.stringify(snapshot)).not.toContain(cfg.secretKey);
     species[0].commonName = 'Changed after preparation';
@@ -37,15 +39,15 @@ describe('prepared vocabulary', () => {
 
   it('requires explicit assignment review for different accounts, collections and changed lists', async () => {
     const snapshot = await snapshotPreparation(cfg, collection, result);
-    expect(assessPreparedAssignment(snapshot, result, cfg, collection.key, [])).toEqual({ missing: [], changed: false });
+    expect(await assessPreparedAssignment(snapshot, result, cfg, collection.key, [])).toEqual({ missing: [], changed: false });
     const reordered = { ...result, species: result.species.map(({ key, scientificName, commonName, iconUrl, keyBinding }) => ({ key, scientificName, commonName, iconUrl, keyBinding })) };
-    expect(assessPreparedAssignment(snapshot, reordered, cfg, collection.key, []).changed).toBe(false);
+    expect((await assessPreparedAssignment(snapshot, reordered, cfg, collection.key, [])).changed).toBe(false);
     for (const [account, key] of [['other', collection.key], [cfg.accessKey, 'bucket::two']]) {
-      expect(assessPreparedAssignment(snapshot, result, { ...cfg, accessKey: account }, key, []).changed).toBe(true);
+      expect((await assessPreparedAssignment(snapshot, result, { ...cfg, accessKey: account }, key, [])).changed).toBe(true);
     }
     const changed = { ...result, species: [] };
     const tags = [{ scientificName: 'Canis latrans' }, { scientificName: 'Requested name', requestedSpecies: 'Requested name' }];
-    expect(assessPreparedAssignment(snapshot, changed, cfg, collection.key, tags).missing).toEqual(['Canis latrans', 'Requested name']);
+    expect((await assessPreparedAssignment(snapshot, changed, cfg, collection.key, tags)).missing).toEqual(['Canis latrans', 'Requested name']);
     expect(tags).toHaveLength(2);
   });
 });

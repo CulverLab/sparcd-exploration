@@ -17,6 +17,9 @@
 
 import Dexie, { type Table } from 'dexie';
 import { validPreparedSpecies, copyPreparedSpecies, type PreparedSpecies } from './preparedSpecies';
+import { deriveFlipOwnerScope, isValidFlipOwnerScope, type FlipOwnerConnection } from './ownerScope';
+export { canonicalFlipEndpoint, deriveFlipOwnerScope, isValidFlipOwnerScope } from './ownerScope';
+export type { FlipOwnerConnection } from './ownerScope';
 export { validPreparedSpecies } from './preparedSpecies';
 export type { PreparedSpecies } from './preparedSpecies';
 
@@ -116,6 +119,10 @@ export interface FlipRecord {
   taggerUser?: string;
   /** Optional for legacy records; new local tagging requires preparation. */
   preparedSpecies?: PreparedSpecies;
+  /** Non-secret, endpoint-and-login scope. Missing/invalid legacy rows are quarantined. */
+  ownerScope?: string;
+  /** Monotonic record revision; all supported writes increment it for safe discard checks. */
+  revision?: number;
 }
 
 class FlipDb extends Dexie {
@@ -128,6 +135,7 @@ class FlipDb extends Dexie {
     this.version(1).stores({ records: 'id' });
     this.version(2).stores({ records: 'id', vocabularies: 'id' });
     this.version(3).stores({ records: 'id', vocabularies: 'id', preparations: 'id' });
+    this.version(4).stores({ records: 'id, ownerScope', vocabularies: 'id', preparations: 'id' });
   }
 }
 
@@ -149,7 +157,13 @@ export function mergeTags(
 }
 
 export async function writeFlipRecord(record: FlipRecord): Promise<void> {
-  await flipDb.records.put(record);
+  if (!isValidFlipOwnerScope(record.ownerScope)) {
+    throw new Error('A valid connected-login owner scope is required before creating a Tagger handoff.');
+  }
+  await flipDb.transaction('rw', flipDb.records, async () => {
+    const existing = await flipDb.records.get(record.id);
+    await flipDb.records.put({ ...record, revision: (existing?.revision ?? 0) + 1 });
+  });
 }
 
 /**
@@ -158,21 +172,116 @@ export async function writeFlipRecord(record: FlipRecord): Promise<void> {
  * tools already have an honest "no such batch" state. Version 1 remains
  * readable for explicit legacy preparation; version 2 requires a snapshot.
  */
-export async function readFlipRecord(id: string): Promise<FlipRecord | undefined> {
-  const rec = await flipDb.records.get(id);
-  if (rec?.v !== 1 && rec?.v !== 2) return undefined;
-  const usedAt = new Date().toISOString();
-  await flipDb.records.update(id, { usedAt });
-  return { ...rec, usedAt };
+export async function readFlipRecord(id: string, expectedOwnerScope?: string): Promise<FlipRecord | undefined> {
+  return flipDb.transaction('rw', flipDb.records, async () => {
+    const rec = await flipDb.records.get(id);
+    if (rec?.v !== 1 && rec?.v !== 2) return undefined;
+    if (expectedOwnerScope !== undefined && (!isValidFlipOwnerScope(expectedOwnerScope) || rec.ownerScope !== expectedOwnerScope)) return undefined;
+    const usedAt = new Date().toISOString();
+    const revision = (rec.revision ?? 0) + 1;
+    const updated = { ...rec, usedAt, revision };
+    await flipDb.records.put(updated);
+    return updated;
+  });
 }
 
-export async function flipRecordUnavailableReason(id: string): Promise<string> {
+export async function flipRecordUnavailableReason(id: string, expectedOwnerScope?: string): Promise<string> {
   const record = await flipDb.records.get(id);
+  if (expectedOwnerScope !== undefined && (!isValidFlipOwnerScope(expectedOwnerScope) || record?.ownerScope !== expectedOwnerScope)) {
+    return 'This batch is not available for the connected login. Reopen it from Uploader using the login that started it; saved work has been kept.';
+  }
   return record ? 'This batch uses an unsupported app version. Reconnect and reopen a compatible updated app. The stored batch has been kept unchanged.' : 'The local batch is missing. Browser storage may have been cleared; reselect your originals in Uploader.';
 }
 
-export async function deleteFlipRecord(id: string): Promise<void> {
-  await flipDb.records.delete(id);
+export async function deleteFlipRecord(id: string, expectedOwnerScope?: string): Promise<boolean> {
+  if (expectedOwnerScope === undefined) {
+    await flipDb.records.delete(id);
+    return true;
+  }
+  return flipDb.transaction('rw', flipDb.records, async () => {
+    const record = await flipDb.records.get(id);
+    if (!record || record.ownerScope !== expectedOwnerScope) return false;
+    await flipDb.records.delete(id);
+    return true;
+  });
+}
+
+export type FlipRecordSnapshot = { id: string; ownerScope: string; revision: number; fingerprint: string; record: FlipRecord };
+
+async function stableValue(value: unknown): Promise<unknown> {
+  if (value === undefined) return { $undefined: true };
+  if (value instanceof Blob) {
+    const bytes = new Uint8Array(await value.arrayBuffer());
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return { $blob: [value.type, value.size, Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')] };
+  }
+  if (value instanceof Date) return { $date: value.toISOString() };
+  if (Array.isArray(value)) return Promise.all(value.map(stableValue));
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (typeof FileSystemHandle !== 'undefined' && value instanceof FileSystemHandle) {
+      return { $handle: [record.kind, record.name] };
+    }
+    return Object.fromEntries(await Promise.all(Object.keys(record).sort().map(async (key) => [key, await stableValue(record[key])] as const)));
+  }
+  return value;
+}
+
+async function flipFingerprint(record: FlipRecord): Promise<string> {
+  return JSON.stringify(await stableValue(record));
+}
+
+/** Read only this login's records without bumping usedAt or changing retention. */
+export async function snapshotOwnedFlipRecords(ownerScope: string): Promise<FlipRecordSnapshot[]> {
+  if (!isValidFlipOwnerScope(ownerScope)) return [];
+  const records = await flipDb.records.where('ownerScope').equals(ownerScope).toArray();
+  return Promise.all(records
+    // An unsupported version can still contain recoverable work. Ownership
+    // and the complete snapshot are enough to offer an explicit decision;
+    // do not silently omit it from Disconnect review.
+    .filter((record) => isValidFlipOwnerScope(record.ownerScope))
+    .map(async (record) => ({
+      id: record.id,
+      ownerScope,
+      revision: record.revision ?? 0,
+      fingerprint: await flipFingerprint(record),
+      record: structuredClone(record),
+    })));
+}
+
+async function sameDirectoryEntry(a: FileSystemDirectoryHandle | undefined, b: FileSystemDirectoryHandle | undefined): Promise<boolean> {
+  if (!a || !b) return a === b;
+  if (typeof a.isSameEntry !== 'function') return false;
+  try { return await a.isSameEntry(b); } catch { return false; }
+}
+
+/**
+ * Atomically delete only the unchanged owner-scoped rows the user confirmed.
+ * Changed/new rows survive and are returned for an updated confirmation.
+ */
+export async function discardOwnedFlipSnapshot(
+  ownerScope: string,
+  snapshot: FlipRecordSnapshot[],
+): Promise<{ deleted: number; retainedChanged: number }> {
+  if (!isValidFlipOwnerScope(ownerScope)) return { deleted: 0, retainedChanged: 0 };
+  let deleted = 0;
+  let retainedChanged = 0;
+  await flipDb.transaction('rw', flipDb.records, async () => {
+    for (const item of snapshot) {
+      if (item.ownerScope !== ownerScope) continue;
+      const current = await flipDb.records.get(item.id);
+      if (!current || current.ownerScope !== ownerScope) continue;
+      // Keep the read, complete-content comparison, and delete in one
+      // IndexedDB read-write transaction so another tab cannot change a row
+      // between confirmation validation and deletion.
+      const fingerprint = await Dexie.waitFor(flipFingerprint(current));
+      const sameHandle = await Dexie.waitFor(sameDirectoryEntry(current.dirHandle, item.record.dirHandle));
+      if ((current.revision ?? 0) !== item.revision || fingerprint !== item.fingerprint || !sameHandle) { retainedChanged++; continue; }
+      await flipDb.records.delete(item.id);
+      deleted++;
+    }
+  });
+  return { deleted, retainedChanged };
 }
 
 /** Legacy v1 retention only. Prepared v2 work is never expired implicitly. */
@@ -193,8 +302,12 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * an index for.
  */
 export async function pruneFlipRecords(now = Date.now()): Promise<number> {
-  const cutoff = new Date(now - MAX_AGE_MS).toISOString();
-  return flipDb.records.filter((r) => r.v === 1 && (r.usedAt ?? r.createdAt) < cutoff).delete();
+  const cutoff = now - MAX_AGE_MS;
+  return flipDb.records.filter((record) => {
+    if (record.v !== 1) return false;
+    const timestamp = Date.parse(record.usedAt ?? record.createdAt);
+    return Number.isFinite(timestamp) && timestamp < cutoff;
+  }).delete();
 }
 
 // Sweep on first import, in both tools. Nothing waits on it and nothing depends
@@ -210,11 +323,13 @@ void pruneFlipRecords().catch(() => {});
 export async function updateFlipTags(
   id: string,
   partial: Record<string, FlipObservation[]>,
+  expectedOwnerScope?: string,
 ): Promise<void> {
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
     if (!rec) throw new Error('This local batch is no longer stored. Keep this tab open and retry after checking browser storage.');
-    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, partial), usedAt: new Date().toISOString() });
+    if (expectedOwnerScope !== undefined && rec.ownerScope !== expectedOwnerScope) throw new Error('This local batch is not available for the connected login. Its saved work has been kept.');
+    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, partial), usedAt: new Date().toISOString(), revision: (rec.revision ?? 0) + 1 });
   });
 }
 
@@ -223,11 +338,13 @@ export async function finishFlipRecord(
   id: string,
   tags: Record<string, FlipObservation[]>,
   taggerUser: string,
+  expectedOwnerScope?: string,
 ): Promise<void> {
   await flipDb.transaction('rw', flipDb.records, async () => {
     const rec = await flipDb.records.get(id);
     if (!rec) throw new Error('This local batch is no longer stored. Keep this tab open and retry after checking browser storage.');
-    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, tags), taggerUser, usedAt: new Date().toISOString() });
+    if (expectedOwnerScope !== undefined && rec.ownerScope !== expectedOwnerScope) throw new Error('This local batch is not available for the connected login. Its saved work has been kept.');
+    await flipDb.records.put({ ...rec, tags: mergeTags(rec.tags, tags), taggerUser, usedAt: new Date().toISOString(), revision: (rec.revision ?? 0) + 1 });
   });
 }
 
@@ -238,21 +355,22 @@ export async function savePreparedSpecies(snapshot: PreparedSpecies): Promise<vo
   await flipDb.vocabularies.put({ id: 'selected', snapshot: copyPreparedSpecies(snapshot) });
 }
 
-export async function loadPreparedSpecies(scope?: { endpoint: string; accessKey: string }): Promise<PreparedSpecies | null> {
+export async function loadPreparedSpecies(scope?: FlipOwnerConnection): Promise<PreparedSpecies | null> {
   const value = (await flipDb.vocabularies.get('selected'))?.snapshot;
   if (!validPreparedSpecies(value)) return null;
-  if (scope && (value.endpoint !== scope.endpoint || value.account !== scope.accessKey)) return null;
+  if (scope && value.ownerScope !== await deriveFlipOwnerScope(scope)) return null;
   return value;
 }
 
 /** A legacy handoff may be prepared explicitly; existing snapshots never change. */
-export async function bindPreparedSpecies(id: string, snapshot: PreparedSpecies): Promise<void> {
+export async function bindPreparedSpecies(id: string, snapshot: PreparedSpecies, expectedOwnerScope?: string): Promise<void> {
   if (!validPreparedSpecies(snapshot)) throw new Error('Prepare species online before tagging.');
   await flipDb.transaction('rw', flipDb.records, async () => {
     const record = await flipDb.records.get(id);
     if (!record) throw new Error('This local batch is no longer available.');
+    if (expectedOwnerScope !== undefined && record.ownerScope !== expectedOwnerScope) throw new Error('This local batch is not available for the connected login. Its saved work has been kept.');
     if (validPreparedSpecies(record.preparedSpecies)) throw new Error('This batch already has its own prepared species list.');
-    await flipDb.records.update(id, { v: 2, preparedSpecies: copyPreparedSpecies(snapshot) });
+    await flipDb.records.update(id, { v: 2, preparedSpecies: copyPreparedSpecies(snapshot), revision: (record.revision ?? 0) + 1 });
   });
 }
 

@@ -62,7 +62,7 @@ test('automatic master cache supports offline optional tagging, while a failed r
   await expect(app.continueButton()).toBeDisabled();
   expect((await app.readFlipRecords())[0].preparedSpecies).toEqual(cached);
   expect((await app.readFlipRecords())[0].tags['SDCARD/OFFLINE.JPG'][0]).toMatchObject({ scientificName: 'Canis latrans', count: 1 });
-  expect(await app.cachedSpecies()).toMatchObject({sourceHash:lastValid.sourceHash,species:lastValid.species,account:lastValid.account});
+  expect(await app.cachedSpecies()).toMatchObject({sourceHash:lastValid.sourceHash,species:lastValid.species,ownerScope:lastValid.ownerScope});
   expect(s3.puts).toHaveLength(0);
 });
 

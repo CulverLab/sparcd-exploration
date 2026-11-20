@@ -394,7 +394,9 @@ export class App {
     await this.page.evaluate(
       async ({ url, id, tags, taggerUser }) => {
         const flip = await import(/* @vite-ignore */ url);
-        await flip.finishFlipRecord(id, tags, taggerUser);
+        const record = await flip.flipDb.records.get(id);
+        if (!record?.ownerScope) throw new Error('The prepared handoff has no verified owner scope.');
+        await flip.finishFlipRecord(id, tags, taggerUser, record.ownerScope);
       },
       { url: `${APP_PATH}@fs${FLIP_MODULE}`, id, tags, taggerUser },
     );

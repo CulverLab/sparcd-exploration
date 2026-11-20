@@ -29,6 +29,7 @@ for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as 
         await button.click();
         return pending;
       }
+      const originalConnection = await page.evaluate(() => JSON.parse(sessionStorage.getItem('sparcd-connection-tab') ?? 'null'));
       let chooser = await openPicker();
       if (!replace) {
         if (path === 'Flip files') await chooser.setFiles([]);
@@ -76,7 +77,18 @@ for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as 
         await expect(page.getByRole('alert').filter({ hasText: 'The batch or connection changed' })).toBeVisible();
         await expect(app.activeStep()).toContainText('Choose');
         await expect(page.getByRole('button', { name: 'Tag species before upload', exact: true })).toHaveCount(0);
-        // A new explicit recovery belongs to the replacement session.
+        if (path.startsWith('Flip')) {
+          // A fresh picker cannot authorize another login to adopt this handoff.
+          await selectOriginal(await openPicker());
+          await expect(page.getByRole('alert').filter({ hasText: 'not available for the connected login' })).toBeVisible();
+          await page.evaluate(config => {
+            const channel = new BroadcastChannel('sparcd-connection-live');
+            const current = JSON.parse(localStorage.getItem('sparcd-connection-revision') ?? 'null');
+            channel.postMessage({ protocol: 1, revision: { counter: (current?.revision?.counter ?? 0) + 1, id: crypto.randomUUID() }, connected: true, type: 'connect', config });
+            channel.close();
+          }, originalConnection);
+          await expect(page.locator('header')).not.toContainText('replacement.example');
+        }
         await selectOriginal(await openPicker());
       }
       await app.waitForInspected();

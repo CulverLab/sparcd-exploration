@@ -1,5 +1,5 @@
 import { useOnline } from '@sparcd/auth-ui';
-import { bindPreparedSpecies, readFlipRecord, validPreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, flipRecordUnavailableReason, bindPreparedSpecies, readFlipRecord, validPreparedSpecies } from '@sparcd/flip';
 import { WorkflowNotice } from '../components/WorkflowNotice';
 import { loadMasterSpecies, refreshMasterSpecies } from '../lib/masterSpecies';
 import { acceptPreparationSpecies, readBoundPreparationSpecies, readPreparation } from '../lib/preparation';
@@ -23,6 +23,7 @@ import {
   adoptRecord,
   reselectFlip,
   handOffToTagger,
+  returningFlipOwnerScope,
   reopenTagger,
   resumeFromFlip,
   returningFlipId,
@@ -166,11 +167,16 @@ export function NewUpload() {
               const guard = recoveryGuard();
               void (async () => {
                 await flushPreparation();
-                let saved = flipId ? (await readFlipRecord(flipId))?.preparedSpecies : (await readPreparation())?.species ?? await readBoundPreparationSpecies();
+                const cfg = useStore.getState().s3Config;
+                const ownerScope = flipId ? cfg ? await deriveFlipOwnerScope(cfg) : returningFlipOwnerScope() ?? undefined : undefined;
+                if (flipId && !ownerScope) throw new Error('Reconnect with the login that owns this batch before reopening Tagger.');
+                const record = flipId ? await readFlipRecord(flipId, ownerScope) : undefined;
+                guard();
+                if (flipId && !record) throw new Error(await flipRecordUnavailableReason(flipId, ownerScope));
+                let saved = flipId ? record?.preparedSpecies : (await readPreparation())?.species ?? await readBoundPreparationSpecies();
                 guard();
                 if (saved && !validPreparedSpecies(saved)) throw new Error('This batch’s saved species list cannot be read by this version. Your files and tags are unchanged. Use a compatible version to continue tagging.');
                 if (!validPreparedSpecies(saved)) {
-                  const cfg = useStore.getState().s3Config;
                   saved = await loadMasterSpecies(cfg ?? undefined);
                   if (!saved && cfg && online) {
                     try { saved = await refreshMasterSpecies(cfg, () => { try { guard(); return true; } catch { return false; } }); }
@@ -178,7 +184,7 @@ export function NewUpload() {
                   }
                   guard();
                   if (!saved) throw new Error('The species list is not available on this device. Connect online to download the Settings species list, then try tagging again. You can keep selecting and inspecting files.');
-                  if (flipId) await bindPreparedSpecies(flipId, saved);
+                  if (flipId) await bindPreparedSpecies(flipId, saved, ownerScope);
                   else await acceptPreparationSpecies(saved);
                 }
                 guard();
@@ -351,9 +357,8 @@ function useFlipReturn(): FlipPending | null {
   useEffect(() => {
     const id = returningFlipId();
     if (!id) return;
-    void resumeFromFlip(id).then((r) => setState(r.kind === 'restored' ? null : r)).catch(async () => {
-      const { readFlipRecord } = await import('@sparcd/flip');
-      try { const record = await readFlipRecord(id); setState(record ? { kind: 'needs-reselect', record } : { kind: 'not-found' }); } catch { setState({ kind: 'not-found' }); }
+    void resumeFromFlip(id).then((r) => setState(r.kind === 'restored' ? null : r)).catch(() => {
+      setState({ kind: 'not-found', message: 'This batch is unavailable for the connected login. Its saved work has been kept.' });
     });
   }, []);
 

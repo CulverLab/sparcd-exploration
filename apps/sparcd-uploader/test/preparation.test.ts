@@ -249,7 +249,7 @@ it('queues owned completion after an in-flight save and does not resurrect it on
 
 it('does not replace a batch-bound legacy catalog with a newly refreshed master catalog', async () => {
   store.getState().resetBatch(); await journal.flushPreparation(); memory.rows.clear();
-  const legacy = { v: 1 as const, endpoint: 'https://legacy.test', account: 'person', collectionKey: 'legacy::one', collectionName: 'Legacy', sourceBucket: 'legacy', sourceKey: 'Collections/one/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'legacy', overrides: {}, species: [{ key:'Legacy species',scientificName:'Legacy species',commonName:'Legacy',iconUrl:'',keyBinding:null }] };
+  const legacy = { v: 2 as const, endpoint: 'https://legacy.test', ownerScope: 'flip-owner-v1:' + 'a'.repeat(64), collectionKey: 'legacy::one', collectionName: 'Legacy', sourceBucket: 'legacy', sourceKey: 'Collections/one/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'legacy', overrides: {}, species: [{ key:'Legacy species',scientificName:'Legacy species',commonName:'Legacy',iconUrl:'',keyBinding:null }] };
   await journal.acceptPreparationSpecies(legacy);
   const file = new File(['bytes'], 'legacy.jpg');
   store.getState().setFiles([{id:'SD/legacy.jpg',relPath:'SD/legacy.jpg',fileName:'legacy.jpg',size:file.size,mediaKind:'image',file}]);
@@ -267,7 +267,7 @@ it('retains an unreadable future batch catalog rather than overwriting it during
   const file=new File(['bytes'],'future.jpg');
   store.getState().setFiles([{id:'SD/future.jpg',relPath:'SD/future.jpg',fileName:'future.jpg',size:file.size,mediaKind:'image',file}]);
   await journal.flushPreparation();
-  await journal.acceptPreparationSpecies({v:1,endpoint:'https://master.test',account:'person',collectionKey:'Settings/species.json',collectionName:'Master',sourceBucket:'settings',sourceKey:'Settings/species.json',sourceHash:'a'.repeat(64),preparedAt:new Date().toISOString(),profileId:'master',overrides:{},species:[{key:'New',scientificName:'New',commonName:'New',iconUrl:'',keyBinding:null}]});
+  await journal.acceptPreparationSpecies({v:2,endpoint:'https://master.test',ownerScope:'flip-owner-v1:'+'a'.repeat(64),collectionKey:'Settings/species.json',collectionName:'Master',sourceBucket:'settings',sourceKey:'Settings/species.json',sourceHash:'a'.repeat(64),preparedAt:new Date().toISOString(),profileId:'master',overrides:{},species:[{key:'New',scientificName:'New',commonName:'New',iconUrl:'',keyBinding:null}]});
   await journal.flushPreparation();
   expect((await journal.readPreparation())?.species).toEqual(future);
   store.getState().resetBatch();await journal.flushPreparation();memory.rows.clear();
@@ -275,7 +275,7 @@ it('retains an unreadable future batch catalog rather than overwriting it during
 
 it('uses a refreshed master list for an immediately selected next batch without replacing the current batch catalog', async () => {
   store.getState().resetBatch(); await journal.flushPreparation(); memory.rows.clear();
-  const old = { v: 1 as const, endpoint: 'https://master.test', account: 'person', collectionKey: 'Settings/species.json', collectionName: 'Master', sourceBucket: 'settings', sourceKey: 'Settings/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'master', overrides: {}, species: [{ key: 'Old', scientificName: 'Old', commonName: 'Old', iconUrl: '', keyBinding: null }] };
+  const old = { v: 2 as const, endpoint: 'https://master.test', ownerScope: 'flip-owner-v1:' + 'a'.repeat(64), collectionKey: 'Settings/species.json', collectionName: 'Master', sourceBucket: 'settings', sourceKey: 'Settings/species.json', sourceHash: 'a'.repeat(64), preparedAt: new Date().toISOString(), profileId: 'master', overrides: {}, species: [{ key: 'Old', scientificName: 'Old', commonName: 'Old', iconUrl: '', keyBinding: null }] };
   const fresh = { ...old, sourceHash: 'b'.repeat(64), species: [...old.species, { ...old.species[0], key: 'New', scientificName: 'New', commonName: 'New' }] };
   const select = (name: string) => {
     const file = new File(['bytes'], name);
