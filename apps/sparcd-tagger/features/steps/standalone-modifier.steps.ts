@@ -147,6 +147,9 @@ Then('a {string} interrupts {string} without tagging', async ({ page, s3 }, inte
 
 Then('a standalone {string} tap tags Ghost once from the {string} Adjust control', async ({ page, s3 }, modifier: string, control: string) => {
   await page.getByRole('button', { name: 'Adjust ▾' }).click();
+  // Let the popup's scheduled autofocus finish before choosing another control;
+  // a focus change during the modifier tap correctly cancels the gesture.
+  await expect(page.getByLabel('Brightness', { exact: true })).toBeFocused();
   const target = control === 'Keep values' ? page.getByLabel('Keep values') : page.getByLabel('Brightness');
   await target.focus();
   await expect(target).toBeFocused();
