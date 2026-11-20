@@ -108,6 +108,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     const edit = page.getByRole('button', { name: 'Edit tags', exact: true });
     await expect(edit).toBeEnabled();
     await edit.click();
+    await continueWithMasterSpecies(page);
     await page.waitForURL(/\/tagger\/\?batch=/);
     await expect(page.locator('button[title="OFFLINE.JPG"]')).toContainText('Coyote');
     const [reopened] = await app.readFlipRecords();
