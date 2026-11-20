@@ -1,11 +1,11 @@
 import { useOnline } from '@sparcd/auth-ui';
-import { deriveFlipOwnerScope, flipRecordUnavailableReason, bindPreparedSpecies, readFlipRecord, validPreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, selectPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import { WorkflowNotice } from '../components/WorkflowNotice';
-import { loadMasterSpecies, refreshMasterSpecies } from '../lib/masterSpecies';
-import { acceptPreparationSpecies, readBoundPreparationSpecies, readPreparation } from '../lib/preparation';
+import { choosePreparationSpecies } from '../lib/preparation';
+import { SpeciesListChooser } from '../components/SpeciesListChooser';
 import { PreparationRecovery, PreparationSaveStatus } from '../components/PreparationRecovery';
 import { flushPreparation, recoveryGuard, missingRemovalStatus, missingRemovalVersion, subscribeMissingRemoval, retryMissingOriginalRemovals, isMissingRemovalPending } from '../lib/preparation';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../store';
 import type { Severity } from '../lib/validation';
 import { StepIndicator } from '../components/StepIndicator';
@@ -102,10 +102,12 @@ export function NewUpload() {
   const validations = useStore((s) => s.validations);
   const batchToken = useStore((s) => s.batchToken);
   const flipId = useStore((s) => s.flipId);
+  const s3Config = useStore((s) => s.s3Config);
   const online = useOnline();
   const [notice, setNotice] = useState<{title:string;message:string} | null>(null);
   const [tagError, setTagError] = useState('');
   const [tagging, setTagging] = useState(false);
+  const [speciesChooserOpen, setSpeciesChooserOpen] = useState(false);
   const resetBatch = useStore((s) => s.resetBatch);
   const setStep = useStore((s) => s.setStep);
 
@@ -128,6 +130,27 @@ export function NewUpload() {
   const recoveryHeading = useRef<HTMLHeadingElement>(null);
   const showRecoveryRegion = missingOriginals.length > 0 || removalPending || removalMessage.startsWith('Removed ');
   void removalVersion;
+
+  const cancelSpeciesChooser = useCallback(() => {
+    setSpeciesChooserOpen(false);
+    setTagging(false);
+  }, []);
+
+  const continueWithSpecies = useCallback(async (snapshot: PreparedSpecies) => {
+    const guard = recoveryGuard();
+    await flushPreparation();
+    guard();
+    if (flipId) {
+      const cfg = useStore.getState().s3Config;
+      const ownerScope = cfg ? await deriveFlipOwnerScope(cfg) : returningFlipOwnerScope() ?? undefined;
+      guard();
+      if (!ownerScope) throw new Error('Reconnect with the login that owns this batch before reopening Tagger.');
+      await selectPreparedSpecies(flipId, snapshot, ownerScope);
+    }
+    else await choosePreparationSpecies(snapshot);
+    guard();
+    await (flipId ? reopenTagger(flipId) : handOffToTagger());
+  }, [flipId]);
 
   // Clicking a severity counter filters the list to just those files —
   // scrolling a 5000-row list for the one flagged file is not an option.
@@ -170,37 +193,13 @@ export function NewUpload() {
           <button
             disabled={!summary.ready || tagging || removalPending}
             onClick={() => {
-              setTagging(true); setTagError('');
-              const guard = recoveryGuard();
-              void (async () => {
-                await flushPreparation();
-                const cfg = useStore.getState().s3Config;
-                const ownerScope = flipId ? cfg ? await deriveFlipOwnerScope(cfg) : returningFlipOwnerScope() ?? undefined : undefined;
-                if (flipId && !ownerScope) throw new Error('Reconnect with the login that owns this batch before reopening Tagger.');
-                const record = flipId ? await readFlipRecord(flipId, ownerScope) : undefined;
-                guard();
-                if (flipId && !record) throw new Error(await flipRecordUnavailableReason(flipId, ownerScope));
-                let saved = flipId ? record?.preparedSpecies : (await readPreparation())?.species ?? await readBoundPreparationSpecies();
-                guard();
-                if (saved && !validPreparedSpecies(saved)) throw new Error('This batch’s saved species list cannot be read by this version. Your files and tags are unchanged. Use a compatible version to continue tagging.');
-                if (!validPreparedSpecies(saved)) {
-                  saved = await loadMasterSpecies(cfg ?? undefined);
-                  if (!saved && cfg && online) {
-                    try { saved = await refreshMasterSpecies(cfg, () => { try { guard(); return true; } catch { return false; } }); }
-                    catch { throw new Error('The species list could not be downloaded. Check your connection and access, then try tagging again. Your files and tags are unchanged.'); }
-                  }
-                  guard();
-                  if (!saved) throw new Error('The species list is not available on this device. Connect online to download the Settings species list, then try tagging again. You can keep selecting and inspecting files.');
-                  if (flipId) await bindPreparedSpecies(flipId, saved, ownerScope);
-                  else await acceptPreparationSpecies(saved);
-                }
-                guard();
-                await (flipId ? reopenTagger(flipId) : handOffToTagger());
-              })().catch(error => { setNotice({title:'Tagging species',message:(error as Error).message}); setTagging(false); });
+              setTagError('');
+              setTagging(true);
+              setSpeciesChooserOpen(true);
             }}
             title={
               flipId
-                ? 'Go back to the tagger and pick up where you left off'
+                ? 'Choose a species list, then return to the Tagger'
                 : summary.ready
                   ? 'Identify species in the Tagger before uploading'
                   : 'Resolve files that need attention first'
@@ -213,6 +212,14 @@ export function NewUpload() {
           </button>
         )}
       </div>
+
+      <SpeciesListChooser
+        open={speciesChooserOpen}
+        online={online}
+        cfg={s3Config}
+        onCancel={cancelSpeciesChooser}
+        onContinue={continueWithSpecies}
+      />
 
       {step === 'drop' && !flip && <ResumeNotice />}
       {notice && <WorkflowNotice title={notice.title} onClose={() => setNotice(null)}><p>{notice.message}</p></WorkflowNotice>}

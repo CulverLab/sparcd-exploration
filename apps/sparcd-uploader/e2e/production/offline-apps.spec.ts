@@ -4,6 +4,7 @@ import { App } from '../../features/steps/app';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage } from '../../features/steps/fixtures-data';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 
 test('an interrupted coordinated update preserves the active offline release and pending Inspect work', async ({ page, context }) => {
   const { readFile, writeFile } = await import('node:fs/promises');
@@ -87,14 +88,16 @@ test('journal quota failure blocks handoff without losing Inspect and exposes a 
   await app.dropFolder([jpegAt('QUOTA.JPG', '2026:07:01 12:00:00')]); await app.waitForInspected();
   await expect(page.getByRole('alert').filter({ hasText: 'Local preparation could not be saved.' })).toBeVisible();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
-  await app.expectStep('Verify');
-  await expect(page.getByRole('alertdialog')).toContainText('Keep this tab open');
-  await page.getByRole('alertdialog').getByRole('button', { name: 'OK', exact: true }).click();
+  await continueWithMasterSpecies(page);
+  const chooser = page.getByRole('dialog', { name: 'Choose a species list' });
+  await expect(chooser.getByRole('alert')).toContainText('Local preparation could not be saved');
+  await chooser.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(await app.readFlipRecords()).toEqual([]);
   await page.evaluate(() => (window as any).__restoreQuotaFault());
   await page.getByRole('button', { name: 'Retry saving preparation' }).click();
   await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(page);
   await expect(page.locator('button[title="QUOTA.JPG"]')).toBeVisible();
   expect((await app.readFlipRecords())[0].files[0].sha256).toMatch(/^[a-f0-9]{64}$/);
 });

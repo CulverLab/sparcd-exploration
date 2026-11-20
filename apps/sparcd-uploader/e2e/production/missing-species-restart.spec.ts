@@ -1,3 +1,4 @@
+import { continueWithMasterSpecies } from './tagging-helpers';
 import { waitForOfflineApps } from './offline-readiness';
 import { test, expect, chromium, type BrowserContext } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -61,9 +62,11 @@ for (const installed of [false, true]) test(`${installed ? 'PWA' : 'browser'} co
     const tag = page.getByRole('button', { name: 'Tag species before upload', exact: true });
     await expect(tag).toBeEnabled();
     await tag.click();
-    const notice = page.getByRole('alertdialog', { name: 'Tagging species' });
-    await expect(notice).toContainText('The species list is not available on this device');
-    await notice.getByRole('button', { name: 'OK', exact: true }).click();
+    const chooser = page.getByRole('dialog', { name: 'Choose a species list' });
+    await expect(chooser).toContainText('You’re offline, and no species lists are saved on this device.');
+    await expect(chooser.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+    expect(await app.readFlipRecords()).toHaveLength(0);
+    await chooser.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect.poll(async () => (await app.listedFiles())[0]?.hasThumbnail).toBe(true);
     const before = await app.listedFiles();
     expect(before).toHaveLength(1);
@@ -80,6 +83,7 @@ for (const installed of [false, true]) test(`${installed ? 'PWA' : 'browser'} co
     await expect.poll(() => app.listedFiles()).toEqual(before);
     await context!.setOffline(true);
     await tag.click();
+    await continueWithMasterSpecies(page);
     await expect(page.locator('button[title="UNPREPARED.JPG"]')).toBeVisible();
     await expect(page.locator('div.group').filter({ hasText: 'Canis latrans' }).first()).toBeVisible();
     passed = true;

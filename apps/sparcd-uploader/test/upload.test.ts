@@ -2051,73 +2051,20 @@ describe('preparation ownership follows upload sessions', () => {
 });
 
 
-describe('resumed official species validation', () => {
-  it.each(['valid', 'removed', 'unavailable'] as const)('cancels a pending species check before its late %s response without writing or losing retryability', async state => {
-    const session = makeSession(['done']);
-    session.bundle!.observationsCsv = serializeObservations([{ observationId: 'obs', mediaId: session.files[0].remoteKey!, deploymentId: 'deployment', timestamp: '2026-07-01T12:00:00Z', observationType: 'animal', scientificName: 'Canis latrans', count: 2, tags: '' }]);
-    const original = structuredClone(session);
-    const client = makeClient(session.files);
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const response = gate.then(() => {
-      if (state === 'unavailable') throw forbidden();
-      return new TextEncoder().encode(JSON.stringify([{ name: 'Species', scientificName: state === 'valid' ? 'Canis latrans' : 'Casper' }]));
-    });
-    client.getObject.mockImplementation(() => response);
-    mocks.client = client;
-    const snapshots: UploadSnapshot[] = [];
-    const run = resumeUpload({ config: CONFIG, session, attached: new Map(), concurrency: manual(1) }, snap => { snapshots.push(snap); });
-    expect(snapshots.at(-1)?.phase).toBe('preparing');
-    run.cancel();
-    try {
-      await run.done;
-      expect(snapshots.at(-1)?.error).toBe('cancelled');
-      const updates = snapshots.length;
-      release();
-      await response.catch(() => {});
-      await new Promise(resolve => setTimeout(resolve, 0));
-      expect(snapshots).toHaveLength(updates);
-      expect(client.writeImmutableStream).not.toHaveBeenCalled();
-      expect(client.writeImmutable).not.toHaveBeenCalled();
-      expect(mocks.markBatchComplete).not.toHaveBeenCalled();
-      expect(session).toEqual(original);
-      // The same saved upload can still resume after cancellation.
-      client.getObject.mockResolvedValue(new TextEncoder().encode(JSON.stringify([{ name: 'Coyote', scientificName: 'Canis latrans' }])));
-      let last: UploadSnapshot | null = null;
-      const retry = resumeUpload({ config: CONFIG, session, attached: new Map(), concurrency: manual(1) }, snap => { last = snap; });
-      expect((await collect(retry, () => last)).phase).toBe('done');
-    } finally { release(); }
-  });
-
-  it.each(['valid', 'removed', 'unavailable'] as const)('checks the saved bundle and destination before writes when species are %s', async state => {
+describe('resumed tagged publication', () => {
+  it('does not gate a saved upload on destination vocabulary', async () => {
     const session = makeSession(['done']);
     session.bundle!.observationsCsv = serializeObservations([{observationId:'obs',mediaId:session.files[0].remoteKey!,deploymentId:'deployment',timestamp:'2026-07-01T12:00:00Z',observationType:'animal',scientificName:'Canis latrans',count:2,tags:''}]);
-    // Old sessions may have no file-level preTags; the persisted CSV is authoritative.
+    // Old sessions may have no file-level preTags; the persisted CSV is authoritative,
+    // but destination vocabulary is not an upload authorization gate.
     expect(session.files[0].preTags).toBeUndefined();
-    const original = structuredClone(session);
     const client = makeClient(session.files);
-    const stat = client.statObject.getMockImplementation()!;
-    client.statObject.mockImplementation(async(bucket:string,key:string)=>bucket==='settings'&&key==='Settings/species.json'?{size:100,metadata:{}}:stat(bucket,key));
-    Object.assign(client,{listBuckets:vi.fn(async()=>['settings'])});
-    client.getObject.mockImplementation(async(bucket:string,key:string)=>{
-      if(key==='Collections/collection/species.json') throw Object.assign(new Error('missing'),{name:'NoSuchKey'});
-      if(bucket==='settings'&&key==='Settings/species.json'){
-        if(state==='unavailable') throw forbidden();
-        return new TextEncoder().encode(JSON.stringify([{name:state==='valid'?'Coyote':'Ghost',scientificName:state==='valid'?'Canis latrans':'Casper'}]));
-      }
-      return new Uint8Array();
-    });
     mocks.client=client;let last:UploadSnapshot|null=null;
     const run=resumeUpload({config:CONFIG,session,attached:new Map(),concurrency:manual(1)},snap=>{last=snap});
     const snap=await collect(run,()=>last);
-    expect(client.getObject).toHaveBeenCalledWith('bucket','Collections/collection/species.json');
-    if(state==='valid'){
-      expect(snap.phase).toBe('done');expect(mocks.markBatchComplete).toHaveBeenCalled();
-    }else{
-      expect(snap.phase).toBe('error');expect(snap.speciesWarning).toContain(state==='removed'?'Canis latrans':'could not be checked');
-      expect(snap.autoRetry).toBe(false);
-      expect(client.writeImmutableStream).not.toHaveBeenCalled();expect(client.writeImmutable).not.toHaveBeenCalled();
-      expect(mocks.markBatchComplete).not.toHaveBeenCalled();expect(session).toEqual(original);
-    }
+    expect(snap.phase).toBe('done');
+    expect(client.getObject).not.toHaveBeenCalled();
+    expect(client.writeImmutable).toHaveBeenCalled();
+    expect(mocks.markBatchComplete).toHaveBeenCalled();
   });
 });

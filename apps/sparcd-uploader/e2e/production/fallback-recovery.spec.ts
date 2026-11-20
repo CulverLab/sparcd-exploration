@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { App } from '../../features/steps/app';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage } from '../../features/steps/fixtures-data';
+import { continueWithMasterSpecies } from './tagging-helpers';
 import { jpegAt } from '../../features/steps/batches';
 
 for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as const) {
@@ -19,6 +20,7 @@ for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as 
       await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
       if (path.startsWith('Flip')) {
         await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+        await continueWithMasterSpecies(page);
         await page.waitForURL(/\/tagger\/\?batch=/);
         const record = (await app.readFlipRecords())[0];
         await page.goto(record.returnUrl);

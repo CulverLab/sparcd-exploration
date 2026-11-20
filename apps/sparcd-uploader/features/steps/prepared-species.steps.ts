@@ -11,13 +11,10 @@ Given('Alpha has a collection-specific species list', async ({ app }) => {
 });
 
 Then('the optional tagging feature uses the saved master species', async ({ app }) => {
-  const panel=app.page.getByTestId('species-panel');
-  await expect(panel.getByText('Coyote',{exact:true})).toBeVisible();
-  await expect(panel.getByText('Ghost',{exact:true})).toBeVisible();
-  await expect(panel.getByText('Alpha Coyote',{exact:true})).toHaveCount(0);
   const [record]=await app.readFlipRecords();
   expect(record.preparedSpecies.collectionKey).toBe('Settings/species.json');
   expect(record.preparedSpecies.sourceKey).toBe('Settings/species.json');
+  expect(record.preparedSpecies.species.map((item: { scientificName: string }) => item.scientificName)).toEqual(['Canis latrans', 'Casper']);
   expect(JSON.stringify(record.preparedSpecies)).not.toContain('test-secret-key');
 });
 
@@ -56,35 +53,6 @@ Then('the last valid catalog preserves Inspect and optional tagging',async({app}
   await expect(app.continueButton()).toBeEnabled();expect(await app.listedFiles()).toHaveLength(4);
 });
 
-When('the assigned species list is {string}', async ({ app }, change: string) => {
-  const rows = [{ name: 'Ghost', scientificName: 'Casper', speciesIconURL: '', keyBinding: 'G' }];
-  if (change === 'renamed') rows.push({ name: 'Updated Coyote', scientificName: 'Canis latrans', speciesIconURL: '', keyBinding: 'C' });
-  app.s3.put(BUCKET_A, scopedKey, JSON.stringify(rows), { contentType: 'application/json' });
-});
-
-Then('Describe handles the species check for {string}', async ({ app }, change: string) => {
-  await app.continueToAssign();
-  await app.waitForCollections();
-  if (change === 'removed') {
-    const popup=app.page.getByRole('alertdialog',{name:'Resolve species before uploading'});
-    await expect(popup).toContainText('Canis latrans');
-    await popup.getByRole('button',{name:'OK',exact:true}).click();
-  }
-  await app.setUploader('Anita');
-  await app.chooseDeployment('Bear Canyon');
-  await app.fillRequiredUploadComments();
-  const review = app.page.getByRole('region', { name: 'Species review' });
-  if(change==='renamed') {
-    await expect(review).toContainText('Species checked against the current official list.');
-    await expect(app.continueButton()).toBeEnabled();
-  } else {
-    await expect(review).toContainText('Canis latrans');
-    await expect(app.continueButton()).toBeDisabled();
-  }
-  await app.page.getByRole('button', { name: 'Back', exact: true }).click();
-  expect((await app.listedFiles()).find((file) => file.name === 'IMG_0002.JPG')?.species).toBe('Coyote×1');
-});
-
 When('the handoff preparation becomes {string}', async ({ app }, problem: string) => {
   await expect.poll(async () => (await app.readFlipRecords())[0]?.tags['SDCARD/IMG_0002.JPG']?.[0]?.scientificName).toBe('Canis latrans');
   const [record] = await app.readFlipRecords();
@@ -103,6 +71,7 @@ Then('the Tagger explains preparation recovery and preserves the batch', async (
 async function prepareTaggedBatchWithOriginalProblem(app: App, problem: 'unavailable' | 'changed', targetNames = ['IMG_0001.JPG']): Promise<void> {
   await app.stubTagger();
   await app.page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue', exact: true }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   const id = new URL(app.page.url()).searchParams.get('batch')!;
   const tags = {
@@ -268,6 +237,7 @@ Then('the file stays absent after recovery reload and Edit tags return', async (
   await app.waitForInspected();
   expect((await app.listedFiles()).map(file => file.name)).not.toContain('IMG_0001.JPG');
   await app.page.getByRole('button', { name: 'Edit tags', exact: true }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue', exact: true }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   await app.page.goto(`${APP_PATH}?flip=${id}`);
   await app.seedPickedFolder(available);
@@ -292,6 +262,7 @@ When('the storage login is disconnected and deferred', async ({ app }) => {
 Then("Edit tags remains available with the batch's prepared species", async ({ app }) => {
   const id = app.notes.flipId as string;
   await app.page.getByRole('button', { name: 'Edit tags', exact: true }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue', exact: true }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   const params = new URL(app.page.url()).searchParams;
   expect(params.get('batch')).toBe(id);

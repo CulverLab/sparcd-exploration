@@ -1,4 +1,3 @@
-import { checkResumedSpecies, OfficialSpeciesError } from './officialSpecies';
 // Upload orchestration. Runs the full publish sequence for one bundle:
 //
 //   1. Stream every image blob under the upload prefix (bounded concurrency,
@@ -110,7 +109,6 @@ export type UploadSnapshot = {
   lanes?: number; // live blob-lane target, so the UI can show what adaptive settled on
   error?: string;
   /** A blocked resume must warn in whichever Uploader section is visible. */
-  speciesWarning?: string;
   // A partial run whose every failure was a lost connection: nothing needs
   // fixing, so the app retries it on its own.
   autoRetry?: boolean;
@@ -1616,22 +1614,10 @@ export function resumeUpload(
     writes: metadataWrites(bundle),
   };
 
-  let cancelValidation = () => {};
   const done = (async () => {
     try {
       Object.assign(runner.snap, { phase: 'preparing' as UploadPhase });
       runner.log('info', `resuming ${batch.uploadPrefix}/`);
-      // Cancelling releases the run immediately, even if the list request is
-      // stalled. A late response cannot reach runOnce or publish any writes.
-      const cancelled = new Promise<never>((_, reject) => {
-        cancelValidation = () => reject(new Error('cancelled'));
-      });
-      try {
-        await Promise.race([checkResumedSpecies(getClient(config), session), cancelled]);
-      } finally {
-        cancelValidation = () => {};
-      }
-      if (runner.isCancelled()) throw new Error('cancelled');
       await runner.runOnce(plan);
       if (runner.isCancelled()) throw new Error('cancelled');
       if (runner.snap.phase !== 'partial') {
@@ -1650,12 +1636,11 @@ export function resumeUpload(
         return;
       }
       runner.snap.phase = 'error';
-      if (err instanceof OfficialSpeciesError) { runner.snap.speciesWarning = err.message; runner.snap.autoRetry = false; }
       runner.snap.error = err instanceof Error ? err.message : String(err);
       runner.log('error', runner.snap.error);
       runner.emit(true);
     }
   })();
 
-  return { cancel: () => { runner.cancel(); cancelValidation(); }, done };
+  return { cancel: () => { runner.cancel(); }, done };
 }
