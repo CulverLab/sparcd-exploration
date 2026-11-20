@@ -30,7 +30,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'node e2e/production/server.mjs',
-    url: `${baseURL}/sparcd-exploration/uploader/`,
+    url: `${baseURL}${process.env.PAGES_ROOT ?? '/sparcd-exploration/'}uploader/`,
     reuseExistingServer: false,
     timeout: 30_000,
   },

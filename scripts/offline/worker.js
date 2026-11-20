@@ -1,6 +1,7 @@
 /* RELEASE is injected by build-offline.mjs. Keep this worker data-free. */
 const cacheName = `sparcd-apps-${RELEASE.version}`;
 const allowed = new Map(RELEASE.assets.map(asset => [asset.url, asset.hash]));
+const familyRoot = new URL('./', self.location.href).pathname;
 const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
 async function complete(cache) {
   for (const asset of RELEASE.assets) {
@@ -48,8 +49,8 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin || request.headers.has('Authorization')) return;
   // Navigation queries carry only local batch/return IDs; never store the URL.
-  const entry = /^\/sparcd-exploration\/(uploader|tagger)\/(?:index\.html)?$/.exec(url.pathname);
-  const path = request.mode === 'navigate' && entry ? `/sparcd-exploration/${entry[1]}/index.html` : url.pathname;
+  const entry = url.pathname.startsWith(familyRoot) && /^(uploader|tagger)\/(?:index\.html)?$/.exec(url.pathname.slice(familyRoot.length));
+  const path = request.mode === 'navigate' && entry ? `${familyRoot}${entry[1]}/index.html` : url.pathname;
   if (!allowed.has(path) || (url.search && request.mode !== 'navigate')) return;
   event.respondWith((async () => {
     const cache = await caches.open(cacheName);
