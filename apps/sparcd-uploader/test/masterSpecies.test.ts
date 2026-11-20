@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const memory = vi.hoisted(() => ({ saved: null as any, result: null as any }));
-vi.mock('@sparcd/flip', async original => ({ ...await original<typeof import('@sparcd/flip')>(),
-  loadPreparedSpecies: async (scope?: any) => !scope || memory.saved?.account === scope.accessKey ? memory.saved : null,
+vi.mock('@sparcd/flip', async original => { const api = await original<typeof import('@sparcd/flip')>(); return { ...api,
+  loadPreparedSpecies: async (scope?: any) => !scope || memory.saved?.ownerScope === await api.deriveFlipOwnerScope(scope) ? memory.saved : null,
   savePreparedSpecies: async (value: any) => { memory.saved = structuredClone(value); },
-}));
+}; });
 vi.mock('@sparcd/s3-safe', async original => ({ ...await original<typeof import('@sparcd/s3-safe')>(),
   loadSpeciesVocabulary: vi.fn(async () => { if (memory.result instanceof Error) throw memory.result; return memory.result; }),
 }));
@@ -21,6 +21,8 @@ it('fetches only the Settings master list and makes it available for Login Later
   expect(loadSpeciesVocabulary).toHaveBeenCalledWith({});
   expect((await loadMasterSpecies())?.species[0].scientificName).toBe('Coyote');
   expect(JSON.stringify(memory.saved)).not.toContain('NEVER-SAVE');
+  expect(JSON.stringify(memory.saved)).not.toContain(cfg.accessKey);
+  expect((await loadMasterSpecies(cfg))?.ownerScope).toBe(memory.saved.ownerScope);
   expect(await loadMasterSpecies({ ...cfg, accessKey: 'other' })).toBeNull();
 });
 it.each(['denied', 'empty', 'invalid'])('keeps the last valid master catalog when refresh is %s', async failure => {
@@ -37,12 +39,4 @@ it('does not accept a late download after the connection changes or treat a lega
   await refreshMasterSpecies(cfg);
   memory.saved.collectionKey = 'collection::legacy';
   expect(await loadMasterSpecies()).toBeNull();
-});
-
-it('reports every missing official species, including legacy requested names, without changing tags', async () => {
-  const {checkOfficialSpecies}=await import('../src/lib/preparedSpecies');
-  const tags=[{scientificName:'Coyote'},{scientificName:'Removed'},{scientificName:'Requested',requestedSpecies:'Requested'}];
-  const original=structuredClone(tags);
-  expect(await checkOfficialSpecies(cfg,{key:'bucket::one'} as any,tags)).toEqual(['Removed','Requested']);
-  expect(tags).toEqual(original);
 });

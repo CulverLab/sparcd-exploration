@@ -14,7 +14,6 @@ Feature: Identify species before the batch is uploaded
   Background:
     Given a folder of media has been scanned
     And the New upload section is showing the Verify step
-    And species have been prepared for local tagging
 
   @A1
   Scenario: Tagging is offered as soon as the batch is fit to upload

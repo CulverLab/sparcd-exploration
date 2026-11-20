@@ -9,7 +9,7 @@ test('mixed preparation recovery restores verified tags and retains every origin
   const app = new App(page, s3); await app.connect();
   const specs = ['GOOD.JPG', 'MISSING.JPG', 'CHANGED.JPG'].map(name => jpegAt(name, '2026:07:01 12:00:00'));
   await app.dropFolder(specs); await app.waitForInspected();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   // Model a pre-existing tagged journal. Inspection and recovery use real
   // media, workers, and the production IndexedDB implementation.
   const saved = await page.evaluate(async () => {
@@ -36,14 +36,14 @@ test('mixed preparation recovery restores verified tags and retains every origin
     await expect(problems).toContainText('CHANGED.JPG: content hash differs');
     await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Tag species before upload', exact: true })).toBeDisabled();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   }
   await page.getByRole('button', { name: 'Reselect original files', exact: true }).click();
   await app.seedPickedFolder(specs);
   await page.getByRole('button', { name: 'Reselect saved batch folder', exact: true }).click();
   await app.waitForInspected();
   await expect(page.getByRole('region', { name: 'Original files need recovery' })).toHaveCount(0);
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   const restored = await page.evaluate(async id => {
     const open = indexedDB.open('sparcd-flip');
     const db: IDBDatabase = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });

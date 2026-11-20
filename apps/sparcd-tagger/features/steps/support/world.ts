@@ -52,7 +52,7 @@ export const collectionButton = (page: Page, name: string): Locator =>
   collectionRail(page).getByRole('button').filter({ hasText: name });
 
 export const uploadRow = (page: Page, user: string): Locator =>
-  page.locator('button').filter({ hasText: user }).filter({ hasText: 'Open →' });
+  page.locator('[data-upload-row]').filter({ hasText: user });
 
 /** The species-panel row for a species, addressed by its scientific name. */
 export const speciesRow = (page: Page, scientific: string): Locator =>

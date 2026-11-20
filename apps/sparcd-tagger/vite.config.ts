@@ -12,7 +12,8 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, '**/.features-gen/**'],
   },
   // Served from a subpath on GitHub Pages: culverlab.github.io/sparcd-exploration/tagger/
-  base: '/sparcd-exploration/tagger/',
+  // A fork with another repo name sets PAGES_ROOT.
+  base: `${process.env.PAGES_ROOT ?? '/sparcd-exploration/'}tagger/`,
   server: { port: 5312 },
   plugins: [react()],
   resolve: {

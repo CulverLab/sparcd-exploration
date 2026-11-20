@@ -22,6 +22,10 @@ Feature: Completed collection edits save automatically with one-level Undo
     When the connection returns
     Then the Coyote is saved without manual controls or per-edit snapshots
 
+  Scenario: A transient network change preserves the active Overview workspace
+    When connectivity changes while Find and the Overview selection are active
+    Then the workspace and Find state survive offline and reconnection without another write
+
   Scenario: A review can be undone without deleting its provenance
     When an existing identification is reviewed and automatically saved
     And the latest automatic action is undone

@@ -3,6 +3,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { AwsClient } from 'aws4fetch';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { verifySignature, canonicalQueryString, encodeRfc3986, sha256hex } from '../sigv4.mjs';
 import {
@@ -16,6 +18,7 @@ import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
   newInvite, inviteMatches, hashToken,
 } from '../keys.mjs';
+import { importProblem } from '../cli.mjs';
 import { makeUpstream, normalizeIfMatch } from '../upstream.mjs';
 import { makeStore, GENERATION_KEY, PEOPLE_PREFIX } from '../store.mjs';
 
@@ -147,6 +150,29 @@ describe('sigv4 presigned form', () => {
     const input = await presign('https://shard.example.org/t-sparcd/a/b.jpg', 900);
     input.url = new URL(input.url.toString().replace('/a/b.jpg', '/a/c.jpg'));
     assert.equal((await verifySignature(input)).error, 'signature mismatch');
+  });
+
+  // aws4fetch and the AWS SDK do not build the same query: the SDK adds
+  // X-Amz-Content-Sha256, and that is the URL the browser apps actually send.
+  test('a URL from the AWS SDK presigner verifies and classifies', async () => {
+    const client = new S3Client({
+      endpoint: 'https://shard.example.org', region: 'us-east-1', forcePathStyle: true,
+      credentials: KEY,
+      requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED',
+    });
+    const url = new URL(await getSignedUrl(
+      client, new GetObjectCommand({ Bucket: 't-sparcd', Key: 'a/b.jpg' }), { expiresIn: 3600 },
+    ));
+    assert.equal(url.searchParams.get('X-Amz-Content-Sha256'), 'UNSIGNED-PAYLOAD');
+    const headers = new Headers();
+    const out = await verifySignature({
+      method: 'GET', url, headers, lookupSecret: lookup, allowPresigned: true,
+    });
+    assert.equal(out.error, undefined);
+    assert.equal(
+      classify({ method: 'GET', bucket: 't-sparcd', key: 'a/b.jpg', query: url.searchParams, headers }),
+      'GetObject',
+    );
   });
 });
 
@@ -329,6 +355,19 @@ describe('the access table', () => {
     );
   });
 
+  test('identify writes the original baseline, and nothing else beside it', () => {
+    const original = `${base}/Uploads/2026.01.01.00.00.00_jo/.sparcd-tagger-original`;
+    for (const leaf of ['media.csv', 'observations.csv', 'deployments.csv', 'UploadMeta.json', 'manifest.json']) {
+      assert.equal(at('PutObject', `${original}/${leaf}`, 'identify').allow, true, leaf);
+    }
+    for (const key of [
+      `${original}/a.jpg`,
+      `${original}/sub/media.csv`,
+      `${original}/../media.csv`,
+    ]) assert.equal(at('PutObject', key, 'identify').allow, false, key);
+    assert.equal(at('PutObject', `${original}/media.csv`, 'look').allow, false);
+  });
+
   test('the rule itself refuses dot segments for every Tagger file', () => {
     const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
     for (const leaf of ['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json']) {
@@ -454,6 +493,7 @@ describe('activity shaping', () => {
   test('writes split into identify, upload and list-change', () => {
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/media.csv' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'upload');
+    assert.equal(eventKind('PutObject', { isSettings: false, key: 'Collections/u/Uploads/s/.sparcd-tagger-original/manifest.json' }), 'identify');
     assert.equal(eventKind('PutObject', { isSettings: true, key: 'Settings/locations.json' }), 'list-change');
     assert.equal(eventKind('DeleteObject', { isSettings: false, key: 'Collections/u/Uploads/s/a.jpg' }), 'collection-change');
   });
@@ -499,6 +539,46 @@ describe('credential wrapping and invites', () => {
     assert.equal(inviteMatches(undefined, token), false);
     const expired = { tokenHash: hashToken(token), expiresAt: new Date(Date.now() - 1).toISOString() };
     assert.equal(inviteMatches(expired, token), false);
+  });
+});
+
+describe('importing an existing login', () => {
+  const ok = { name: 'Ana', email: 'ana@example.org', accessKey: 'ana.perez', secret: 'long-enough' };
+  const holder = (accessKeyId, extra = {}) => ({ email: 'x@example.org', keys: [{ accessKeyId, ...extra }], ...extra });
+
+  test('a MinIO-style id and secret are accepted', () => {
+    assert.equal(importProblem(ok, []), null);
+    assert.equal(importProblem({ ...ok, accessKey: 'abc' }, []), null);
+    assert.equal(importProblem({ ...ok, accessKey: 'A'.repeat(128) }, []), null);
+  });
+
+  test('ids a SigV4 credential cannot carry are refused', () => {
+    for (const accessKey of [undefined, '', 'ab', 'A'.repeat(129), 'has/slash', 'has space', 'tab\there', 'ana,x', 'ana=x']) {
+      assert.match(importProblem({ ...ok, accessKey }, []), /access key must be/, String(accessKey));
+    }
+  });
+
+  test('a short or missing secret is refused', () => {
+    for (const secret of [undefined, '', '1234567']) {
+      assert.match(importProblem({ ...ok, secret }, []), /secret must be/, String(secret));
+    }
+    assert.equal(importProblem({ ...ok, secret: '12345678' }, []), null);
+  });
+
+  test('a name and an email are both needed', () => {
+    assert.match(importProblem({ ...ok, name: '' }, []), /name and email/);
+    assert.match(importProblem({ ...ok, email: undefined }, []), /name and email/);
+  });
+
+  test('a key id any person holds, retired or not, is refused', () => {
+    assert.match(importProblem(ok, [holder('ana.perez')]), /access key already belongs/);
+    assert.match(
+      importProblem(ok, [holder('ana.perez', { retiredAt: '2026-01-01T00:00:00.000Z' })]),
+      /access key already belongs/);
+  });
+
+  test('an email a person already has is refused, whatever the case', () => {
+    assert.match(importProblem(ok, [{ email: ' Ana@Example.org ', keys: [] }]), /email already belongs/);
   });
 });
 

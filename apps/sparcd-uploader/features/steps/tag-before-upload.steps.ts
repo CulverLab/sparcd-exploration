@@ -22,13 +22,16 @@ const tagButton = (app: App) => app.page.getByRole('button', { name: 'Tag specie
 async function handOff(app: App): Promise<string> {
   await app.stubTagger();
   await tagButton(app).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   return new URL(app.page.url()).searchParams.get('batch')!;
 }
 
 /** Come back the way the Tagger's Done button does. */
 async function handBack(app: App, id: string): Promise<void> {
-  await app.page.goto(`${APP_PATH}?flip=${id}`);
+  const record = (await app.readFlipRecords()).find(item => item.id === id);
+  if (!record?.ownerScope) throw new Error('The returned batch has no verified owner scope.');
+  await app.page.goto(`${APP_PATH}?flip=${encodeURIComponent(id)}&ownerScope=${encodeURIComponent(record.ownerScope)}`);
 }
 
 // --- offering the hand-off --------------------------------------------------
@@ -105,6 +108,7 @@ Then("the browser goes to the Tagger carrying the batch's id", async ({ app }) =
 
 When('"Tag species before upload" is chosen through the unified dev origin', async ({ app }) => {
   await tagButton(app).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/sparcd-exploration\/tagger\/\?batch=/);
   app.notes.flipId = new URL(app.page.url()).searchParams.get('batch')!;
 });
@@ -129,6 +133,11 @@ Then('the real Tagger opens the batch written by the Uploader', async ({ app }) 
   const [record] = await app.readFlipRecords();
   expect(record.id).toBe(app.notes.flipId);
   expect(record.files).toHaveLength(4);
+  expect(record.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+  expect(new URL(app.page.url()).searchParams.get('ownerScope')).toBe(record.ownerScope);
+  expect(JSON.stringify(record)).not.toContain('testkey');
+  expect(JSON.stringify(record)).not.toContain('testsecret');
+  app.notes.ownerScope = record.ownerScope;
 });
 
 When('Coyote is applied in the real Tagger', async ({ app }) => {
@@ -165,6 +174,9 @@ Then('the Uploader receives Coyote from the shared hand-off record', async ({ ap
 Then('the hand-off records Anita as the tagger', async ({ app }) => {
   const [record] = await app.readFlipRecords();
   expect(record.taggerUser).toBe('anita');
+  expect(record.ownerScope).toBe(app.notes.ownerScope);
+  expect(JSON.stringify(record)).not.toContain('testkey');
+  expect(JSON.stringify(record)).not.toContain('testsecret');
 });
 
 // --- coming back ------------------------------------------------------------
@@ -321,6 +333,7 @@ Then('the action row offers "Edit tags" instead of "Tag species before upload"',
 
 Then('choosing it returns to the Tagger with the same batch id', async ({ app }) => {
   await app.page.getByRole('button', { name: 'Edit tags' }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   expect(new URL(app.page.url()).searchParams.get('batch')).toBe(app.notes.flipId);
 });

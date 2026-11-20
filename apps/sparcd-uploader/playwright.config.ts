@@ -29,7 +29,12 @@ export default defineConfig({
   },
   projects: [{
     name: 'chromium',
+    grepInvert: /touch at a narrow viewport/,
     use: { ...devices['Desktop Chrome'], ...(useSystemChrome ? { channel: 'chrome' as const } : {}) },
+  }, {
+    name: 'chromium-touch-removal',
+    grep: /touch at a narrow viewport/,
+    use: { ...devices['Pixel 7'], channel: useSystemChrome ? 'chrome' as const : undefined },
   }],
   webServer: {
     command: `pnpm dev --port ${port} --strictPort`,

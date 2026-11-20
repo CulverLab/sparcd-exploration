@@ -8,6 +8,7 @@ import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage, COLLECTION_A_NAME } from '../../features/steps/fixtures-data';
 import { verifyRecoveredUpload } from './acceptance-helpers';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 
 test.use({ trace: 'off' });
 test('prepared production apps and inspected batch survive a real offline Chrome restart and local handoff', async ({ baseURL }, info) => {
@@ -41,7 +42,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await page.locator('#mountainRange').fill('Saved mountain range');
     await page.locator('#dateCollected').fill('2026-07-01');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     await close();
 
     page = await launch(true, 'offline-recovery');
@@ -61,6 +62,7 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
     await app.waitForInspected();
     await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+    await continueWithMasterSpecies(page);
     await expect(page.getByText('Local batch · 1 files · from Uploader')).toBeVisible();
     await expect(page.getByText('Showing saved thumbnails.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -97,10 +99,33 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     await app.seedPickedFolder(specs);
     await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
     await app.waitForInspected();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     const [record] = await app.readFlipRecords();
     expect(record.tags['SDCARD/OFFLINE.JPG'][0].scientificName).toBe('Canis latrans');
     expect(record.preparedSpecies.species.length).toBeGreaterThan(0);
+    expect(s3Requests).toEqual([]);
+    // A returned offline batch can reopen the same tagging session without login.
+    const edit = page.getByRole('button', { name: 'Edit tags', exact: true });
+    await expect(edit).toBeEnabled();
+    await edit.click();
+    await continueWithMasterSpecies(page);
+    await page.waitForURL(/\/tagger\/\?batch=/);
+    await expect(page.locator('button[title="OFFLINE.JPG"]')).toContainText('Coyote');
+    const [reopened] = await app.readFlipRecords();
+    expect(reopened.id).toBe(record.id);
+    expect(reopened.preparedSpecies).toEqual(record.preparedSpecies);
+    expect(reopened.tags).toEqual(record.tags);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.locator('#user').fill('offline-person');
+    await page.getByRole('button', { name: 'Tag', exact: true }).click();
+    await page.getByRole('button', { name: 'Done · back to Uploader' }).click();
+    await page.waitForURL(/\/uploader\/\?flip=/);
+    if (await later.isVisible()) await later.click();
+    await page.getByRole('button', { name: 'Reselect folder instead', exact: true }).click();
+    await app.seedPickedFolder(specs);
+    await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+    await app.waitForInspected();
+    expect((await app.readFlipRecords())[0].tags).toEqual(record.tags);
     expect(s3Requests).toEqual([]);
     await verifyRecoveredUpload(app, context!, 'OFFLINE.JPG', 'offline-person', {
       mountainRange: 'Saved mountain range',

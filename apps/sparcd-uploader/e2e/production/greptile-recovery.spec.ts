@@ -4,6 +4,7 @@ import { App } from '../../features/steps/app';
 import { S3Mock } from '../../features/steps/s3mock';
 import { seedDefaultStorage } from '../../features/steps/fixtures-data';
 import { jpegAt } from '../../features/steps/batches';
+import { continueWithMasterSpecies } from './tagging-helpers';
 async function prepare(app: App) {
   await app.waitForSpeciesCache();
 }
@@ -25,7 +26,7 @@ for (const nativeFolderAPI of [false, true]) test(`individual-file preparation r
   let app = new App(page, s3); await app.open({ noFolderPicker: true }); await app.connect(); await prepare(app);
   const spec = jpegAt('ROOT.JPG', '2026:07:01 12:00:00');
   await app.pickFiles([spec]); await app.waitForInspected();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   let current = page;
   if (nativeFolderAPI) {
     current = await context.newPage(); app = new App(current, s3); await app.open();
@@ -45,6 +46,7 @@ for (const nativeFolderAPI of [false, true]) test(`individual-file preparation r
   await expect(recovery.getByRole('alert')).toContainText('content hash differs');
   await select(spec.bytes!); await app.waitForInspected();
   await current.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(current);
   await current.waitForURL(/\/tagger\/\?batch=/);
   const record = (await app.readFlipRecords())[0];
   expect(record.files[0].relPath).toBe('ROOT.JPG');
@@ -64,7 +66,7 @@ for (const failSave of [false, true]) test(`Settings Disconnect confirms ${failS
   await app.dropFolder([jpegAt('KEEP.JPG', '2026:07:01 12:00:00')]); await app.waitForInspected();
   if (failSave) await expect(page.getByRole('alert').filter({ hasText: 'Local preparation could not be saved.' })).toBeVisible();
   else {
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
     await page.evaluate(() => new Promise<void>((resolve, reject) => {
       const request = indexedDB.open('sparcd-flip');
       request.onsuccess = () => {
@@ -88,7 +90,7 @@ for (const failSave of [false, true]) test(`Settings Disconnect confirms ${failS
     await page.evaluate(() => (window as any).__restorePreparationWrite());
     await app.gotoSection('New upload');
     await page.getByRole('button', { name: 'Retry saving preparation' }).click();
-    await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   }
   await app.gotoSection('Settings');
   await disconnect.click(); await dialog.getByRole('button', { name: 'Review preparations' }).click();
@@ -121,16 +123,17 @@ for (const source of ['saved handle', 'newly selected handle']) test(`recovery p
   if (source === 'saved handle') {
     await useRealHandle(); await page.getByRole('button', { name: 'Drop a folder of JPEGs or MP4 videos, or choose a folder', exact: true }).click();
   } else await app.dropFolder(originals);
-  await app.waitForInspected(); await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await app.waitForInspected(); await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   await page.reload();
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
   if (source === 'saved handle') await recovery.getByRole('button', { name: 'Reopen saved folder' }).click();
   else { await useRealHandle(); await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click(); }
-  await app.waitForInspected(); await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await app.waitForInspected(); await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   await page.reload();
   await recovery.getByRole('button', { name: 'Reopen saved folder' }).click();
   await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
+  await continueWithMasterSpecies(page);
   await page.waitForURL(/\/tagger\/\?batch=/);
   await expect(page.getByText('Showing saved thumbnails.', { exact: false })).toHaveCount(0);
   await page.locator('button[title="SOURCE.JPG"]').dblclick();

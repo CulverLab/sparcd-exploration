@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSpeciesVocabulary, type SafeS3Client } from '@sparcd/s3-safe';
 import { useKeyBindings, keyProfileId, activeKeyProfile } from '@sparcd/auth-ui';
-import { assessPreparedAssignment, snapshotPreparation, stagePreparation } from '../src/lib/preparedSpecies';
+import { snapshotPreparation, stagePreparation, stageSavedPreparation } from '../src/lib/preparedSpecies';
 
 const cfg = { endpoint: 'https://storage.test', accessKey: 'person', secretKey: 'NEVER-PERSIST', region: 'us-east-1', forcePathStyle: true };
 const collection = { key: 'bucket::one', bucket: 'bucket', uuid: 'one', name: 'One', organization: null, contact: null, description: null };
@@ -18,6 +18,8 @@ describe('prepared vocabulary', () => {
     expect(snapshot.overrides).toEqual({ 'Canis latrans': 'y' });
     expect(snapshot.profileId).toBe(keyProfileId(cfg.endpoint, cfg.accessKey));
     expect(snapshot.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+    expect(JSON.stringify(snapshot)).not.toContain(cfg.accessKey);
     expect(snapshot.species).toEqual(species);
     expect(JSON.stringify(snapshot)).not.toContain(cfg.secretKey);
     species[0].commonName = 'Changed after preparation';
@@ -35,19 +37,16 @@ describe('prepared vocabulary', () => {
     expect((await snapshotPreparation(cfg, collection, next)).species[0].commonName).toBe('New name');
   });
 
-  it('requires explicit assignment review for different accounts, collections and changed lists', async () => {
+  it('reconciles a locally saved vocabulary against its original source when selected offline', async () => {
     const snapshot = await snapshotPreparation(cfg, collection, result);
-    expect(assessPreparedAssignment(snapshot, result, cfg, collection.key, [])).toEqual({ missing: [], changed: false });
-    const reordered = { ...result, species: result.species.map(({ key, scientificName, commonName, iconUrl, keyBinding }) => ({ key, scientificName, commonName, iconUrl, keyBinding })) };
-    expect(assessPreparedAssignment(snapshot, reordered, cfg, collection.key, []).changed).toBe(false);
-    for (const [account, key] of [['other', collection.key], [cfg.accessKey, 'bucket::two']]) {
-      expect(assessPreparedAssignment(snapshot, result, { ...cfg, accessKey: account }, key, []).changed).toBe(true);
-    }
-    const changed = { ...result, species: [] };
-    const tags = [{ scientificName: 'Canis latrans' }, { scientificName: 'Requested name', requestedSpecies: 'Requested name' }];
-    expect(assessPreparedAssignment(snapshot, changed, cfg, collection.key, tags).missing).toEqual(['Canis latrans', 'Requested name']);
-    expect(tags).toHaveLength(2);
+    stageSavedPreparation(snapshot);
+    const source = `${snapshot.sourceBucket}/${snapshot.sourceKey}`;
+    expect(activeKeyProfile(useKeyBindings.getState()).speciesSources?.[source]?.acceptedSpecies).toMatchObject([
+      { scientificName: 'Canis latrans', commonName: 'Coyote', keyBinding: 'C' },
+    ]);
+    expect(activeKeyProfile(useKeyBindings.getState()).speciesSources?.[source]?.pendingSpeciesChange).toBeUndefined();
   });
+
 });
 
 it.each(['[]', undefined])('uses production settings fallback for an empty/missing collection (%s)', async (raw) => {
