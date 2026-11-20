@@ -33,7 +33,8 @@ proxy are built against it independently.
    allowlist below reach the upstream; any other `x-amz-*` header on the request is a
    403, so a client that grew a new one fails loudly instead of being silently
    stripped. A header from the ordinary forward list travels only if it is in
-   `SignedHeaders`. Response headers are an allowlist too. Responses that name a bucket
+   `SignedHeaders`, except `Range` on a GET: it only narrows a read the signature
+   already allows, and a presigned URL signs only `host`. Response headers are an allowlist too. Responses that name a bucket
    are **rebuilt**, not filtered, and a response whose text still carries the namespace
    anywhere but a `Key` or a `Prefix` is a 502 rather than a pass. Every answer —
    S3, JSON API and refusal alike — carries `Cache-Control: no-store`, overriding
@@ -56,7 +57,8 @@ Settings bucket:
      keys: [{ accessKeyId, wrappedSecret, createdAt, retiredAt? }],
      invite?: { tokenHash, expiresAt }, createdBy, createdAt, updatedAt }`
   `wrappedSecret` is AES-256-GCM under `ACCESS_MASTER_KEY` (base64, 32 bytes):
-  `v1.<iv b64url>.<ciphertext+tag b64url>`. Access key ids are `SPK` + 17 base32 chars.
+  `v1.<iv b64url>.<ciphertext+tag b64url>`. Issued access key ids are `SPK` + 17 base32 chars; a key may also be an
+  existing SPARC'd id, imported with `cli.mjs import`, and is treated the same way.
 - `Settings/access/generation.json` `{ generation: <int> }`, bumped on every access change.
 - `Settings/activity/<YYYY-MM-DD>/<epochMs>-<8 hex>.ndjson`, immutable, one object per
   flush (every 5 s or 200 lines, and on shutdown).

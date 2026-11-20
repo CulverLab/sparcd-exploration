@@ -1,6 +1,7 @@
 import type { Page, Locator } from '@playwright/test';
 import {
   Given,
+  uploadRow,
   When,
   Then,
   expect,
@@ -784,7 +785,7 @@ Given('an upload with thousands of images is open', async ({ page, s3 }) => {
   await page.reload();
   await connect(page);
   await selectCollection(page);
-  await page.locator('button').filter({ hasText: 'priortagger' }).filter({ hasText: 'Open →' }).click();
+  await uploadRow(page, 'priortagger').getByRole('button', { name: 'Open →', exact: true }).click();
   await expect(page.getByText('1 / 3000')).toBeVisible();
 });
 

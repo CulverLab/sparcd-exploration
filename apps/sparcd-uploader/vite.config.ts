@@ -9,7 +9,8 @@ const pkg = (name: string, entry: string) =>
 
 export default defineConfig({
   // Served from a subpath on GitHub Pages: culverlab.github.io/sparcd-exploration/uploader/
-  base: '/sparcd-exploration/uploader/',
+  // A fork with another repo name sets PAGES_ROOT.
+  base: `${process.env.PAGES_ROOT ?? '/sparcd-exploration/'}uploader/`,
   server: { port: 5311 },
   plugins: [react()],
   // The dep scanner doesn't follow Web Workers, so exifr and hash-wasm (only

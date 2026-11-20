@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { listDirtyDrafts } from '../lib/db';
 import { resetLocalState } from '../lib/reset';
+import { useRequestTaggerDisconnect } from '../components/DisconnectRequest';
 
 const kicker = 'font-body text-[11px] font-[600] tracking-[0.16em] uppercase text-inkSoft mb-1.5';
 const input =
@@ -33,6 +34,7 @@ export function Settings() {
   const setSortSpeciesByRecent = useStore((s) => s.setSortSpeciesByRecent);
   const cfg = useStore((s) => s.s3Config);
   const disconnect = useStore((s) => s.disconnect);
+  const requestDisconnect = useRequestTaggerDisconnect();
   const setSection = useStore((s) => s.setSection);
 
   // Logout clears all local data so the next user gets a clean app. Guard it:
@@ -43,7 +45,7 @@ export function Settings() {
 
   async function logout() {
     if (pendingSave) return;
-    if (cfg) { disconnect(); return; }
+    if (cfg) { requestDisconnect(); return; }
     const dirty = await listDirtyDrafts();
     if (dirty.length > 0) {
       setPendingDirty(dirty.length);
@@ -270,7 +272,9 @@ export function Settings() {
               Disconnect
             </button>
             <p id="disconnect-help" className="mt-2 text-[13px] text-inkMute font-body">
-              Logs you out after pending saves finish. Your saved Undo remains scoped to this account in this browser. Disconnect before leaving a shared or public computer.
+              {pendingSave
+                ? 'Finish pending saves before disconnecting. Open the upload from Recovery and retry or resolve its save.'
+                : 'Disconnect ends this storage session. Local handoffs can be kept for this login or explicitly discarded; collection files are unchanged.'}
             </p>
           </>
         ) : (

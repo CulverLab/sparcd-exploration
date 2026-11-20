@@ -11,7 +11,9 @@ without species preparation; local tagging does not silently substitute defaults
 The shared production loader uses non-empty collection species first and falls
 back to settings only for missing/empty collection files. Invalid or denied
 sources remain errors. The existing source-aware local key-profile reconciliation
-runs before accepting a snapshot. The snapshot records account/endpoint,
+runs before accepting a snapshot. The snapshot records a versioned, non-secret
+owner scope derived from the canonical endpoint and effective Access key ID,
+alongside the endpoint and
 collection, source, semantic SHA-256, preparation time, entries and key overrides;
 it contains no secret or signed credentials. Once bound to a batch, it is not
 replaced by a new shared session or another preparation.

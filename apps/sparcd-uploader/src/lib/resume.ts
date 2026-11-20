@@ -268,7 +268,7 @@ export async function reconcileReselect(
  * back to a transient `<input webkitdirectory>` FileList otherwise.
  */
 export async function reselectFolder(
-  fallbackList?: FileList,
+  fallbackList?: ArrayLike<File>,
 ): Promise<{ scanned: ScannedFile[]; handle?: FileSystemDirectoryHandle } | null> {
   if (fallbackList) return { scanned: scanFileList(fallbackList) };
   if (supportsDirectoryHandle) {

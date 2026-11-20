@@ -50,6 +50,15 @@ jobs:
       - name: Build both apps and run production Chrome coverage
         run: pnpm --filter sparcd-uploader test:production:offline
 
+      - name: Verify offline apps under a renamed fork's Pages root
+        env:
+          PAGES_ROOT: /sparcd-access-preview/
+        run: |
+          pnpm --filter sparcd-uploader build
+          pnpm --filter sparcd-tagger build
+          node scripts/build-offline.mjs
+          pnpm --filter sparcd-uploader exec playwright test --config playwright.production.config.ts --project=production-infrastructure pages-root.spec.ts
+
       - name: Preserve failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

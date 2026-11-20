@@ -1,5 +1,5 @@
 import { parseMedia, MEDIA_COL, parseObservations, parseCsvRows, serializeCsvRows, OBS_COL } from '@sparcd/camtrap';
-import { When, Then, expect, focusFrame, speciesApply, openWorkspace, openSettings } from './support/world';
+import { When, Then, expect, focusFrame, speciesApply, openWorkspace, openSettings, openFindFilter, selectedTiles, focusedTile, sectionTab } from './support/world';
 import { BUCKET, PREFIX_A, observationsCsv } from './support/data';
 const path = `${PREFIX_A}IMG002.JPG`;
 const status = (page: import('@playwright/test').Page) => page.getByTestId('automatic-save');
@@ -55,6 +55,7 @@ Then('both species edits reach shared storage', async ({ s3 }) => {
 });
 When('a completed edit loses connectivity before automatic saving', async ({ page, s3, scratch }) => {
   scratch.snapshotKeys = s3.keys(BUCKET).filter(key => key.includes('.sparcd-tagger-snapshots/'));
+  await sectionTab(page, 'Tag').click();
   await focusFrame(page, 'IMG002.JPG'); await speciesApply(page, 'Canis latrans').click();
   await page.context().setOffline(true);
 });
@@ -64,6 +65,40 @@ Then('further collection edits and Undo are disabled', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Undo latest action', exact: true })).toBeDisabled();
 });
 When('the connection returns', async ({ page }) => { await page.context().setOffline(false); });
+When('connectivity changes while Find and the Overview selection are active', async ({ page, s3, scratch }) => {
+  await saved(page);
+  await sectionTab(page, 'Tag').click();
+  await openFindFilter(page);
+  await page.getByLabel('Find image', { exact: true }).fill('IMG00');
+  await page.getByLabel('Match text', { exact: true }).fill('IMG');
+  await expect(page.locator('#image-filter-panel')).toBeVisible();
+  // Find navigation clears selection by design. Establish a known multi-
+  // selection after Find is active, using the existing selection gesture.
+  await page.locator('[data-testid="overview-image"][data-image-name="IMG001.JPG"]').click();
+  await page.locator('[data-testid="overview-image"][data-image-name="IMG002.JPG"]').click({ modifiers: ['ControlOrMeta'] });
+  await expect(selectedTiles(page)).toHaveCount(2);
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG002.JPG');
+  scratch.selectedOffline = await selectedTiles(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-image-name')));
+  scratch.findBeforeOffline = await page.getByLabel('Find image', { exact: true }).inputValue();
+  scratch.filterBeforeOffline = await page.getByLabel('Match text', { exact: true }).inputValue();
+  scratch.putsBeforeOffline = s3.puts.length;
+  await page.context().setOffline(true);
+  await expect(status(page)).toContainText('Pending/reconnecting');
+});
+Then('the workspace and Find state survive offline and reconnection without another write', async ({ page, s3, scratch }) => {
+  await expect(page.getByTestId('tag-workspace')).toBeVisible();
+  await expect(page.locator('#image-filter-panel')).toBeVisible();
+  await expect(page.getByLabel('Find image', { exact: true })).toHaveValue(scratch.findBeforeOffline as string);
+  await expect(page.getByLabel('Match text', { exact: true })).toHaveValue(scratch.filterBeforeOffline as string);
+  expect(await selectedTiles(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-image-name')))).toEqual(scratch.selectedOffline);
+  await expect(focusedTile(page)).toHaveAttribute('title', 'IMG002.JPG');
+  await expect(page.getByRole('button', { name: 'Apply Coyote', exact: true })).toBeDisabled();
+  await page.context().setOffline(false);
+  await saved(page);
+  await expect(page.getByRole('button', { name: 'Apply Coyote', exact: true })).toBeEnabled();
+  expect(s3.puts.length).toBe(scratch.putsBeforeOffline);
+  await expect(page.getByRole('button', { name: 'Find & filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
+});
 When('an existing identification is reviewed and automatically saved', async ({ page }) => {
   await focusFrame(page, 'IMG001.JPG'); await speciesApply(page, 'Odocoileus hemionus').click(); await saved(page);
 });
@@ -141,6 +176,7 @@ async function denyNextMetadata(page: import('@playwright/test').Page) {
   });
 }
 When('an automatic save fails after publishing observations', async ({ page }) => {
+  await sectionTab(page, 'Tag').click();
   await denyNextMetadata(page); await focusFrame(page, 'IMG002.JPG'); await speciesApply(page, 'Canis latrans').click();
 });
 When('the Undo fails after publishing its observations', async ({ page }) => {

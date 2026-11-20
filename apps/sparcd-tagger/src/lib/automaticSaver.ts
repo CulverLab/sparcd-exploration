@@ -5,7 +5,7 @@ import type { TagImage } from './workspace';
 import type { Deployment } from '@sparcd/camtrap';
 
 export type SavePhase = 'loading' | 'saved' | 'saving' | 'pending' | 'failed' | 'conflict' | 'recovery';
-export type SaveView = { phase: SavePhase; message: string; pending: boolean; undoReason: string; canEdit: boolean };
+export type SaveView = { phase: SavePhase; message: string; pending: boolean; undoReason: string; canEdit: boolean; failure?: 'repair' | 'retry'; retrying?: boolean; setupFailed?: boolean; updatedAt?: number };
 export type RemoteView = { images: TagImage[]; location: Deployment | null; writtenFields?: import('./automaticModel').ValueChange['field'][]; canonical?: import('./sync').CanonicalState };
 export class SaveConflict extends Error {}
 export type SaveServices = {
@@ -36,22 +36,30 @@ export class AutomaticSaver {
   private disposed = false;
   private undoing = false;
   private retryDelay = 1000;
+  private retrying = false;
+  private checking = false;
+  private awaitingRetry = false;
 
   constructor(record: AutomaticRecord, private services: SaveServices) { this.record = record; }
-  async open(): Promise<void> {
+  async open(options: { checkOnly?: boolean } = {}): Promise<void> {
     const stored = await db.automatic.get(this.record.id);
     if (stored) { this.record = stored; this.version = stored.version ?? 0; }
+    this.retrying = !!this.record.saveFailure;
     if (this.record.conflictReason) this.publish('conflict', `Save conflict — ${this.record.conflictReason}`);
     else if (this.record.recoveryBranches?.length) this.publish('conflict', 'Pending edits from another tab were retained. Reload and review all retained changes before continuing.');
     else if (this.record.adoptionRequired) this.publish('recovery', 'Existing pending work needs recovery confirmation for this account and destination.');
-    else if (this.record.actions.length || this.record.flight) { this.publish('saving', 'Saving…'); this.schedule(); }
+    else if (this.record.actions.length || this.record.flight) {
+      this.awaitingRetry = !!options.checkOnly;
+      if (this.awaitingRetry) this.publish('failed', 'Earlier changes remain unsaved. Select Retry save.');
+      else { this.publish('saving', 'Saving…'); this.schedule(); }
+    }
     else this.publish('saved', 'Saved');
   }
   private publish(phase: SavePhase, message: string): void {
     const pending = !!this.record.actions.length || !!this.record.flight || !!this.record.adoptionRequired || !!this.record.recoveryBranches?.length || !!this.persistenceError;
     const reason = !this.online ? 'Undo requires an online connection.' : phase !== 'saved' || pending
       ? 'Undo is unavailable while saving or recovering pending work.' : this.record.undoReason ?? (!this.record.undo ? 'No completed action to undo for this account and upload.' : '');
-    this.view = { phase, message, pending, undoReason: reason, canEdit: this.online && !this.committing && !['loading', 'pending', 'conflict', 'recovery', 'failed'].includes(phase) && !this.persistenceError && !this.undoing };
+    this.view = { phase, message, pending, updatedAt: Date.now(), undoReason: reason, failure: phase === 'failed' ? (this.record.saveFailure === 'repair' ? 'repair' : 'retry') : undefined, retrying: this.retrying && phase === 'saving', canEdit: this.online && !this.committing && !['loading', 'pending', 'conflict', 'recovery', 'failed'].includes(phase) && !this.persistenceError && !this.undoing };
     if (!this.disposed) this.services.changed(this.view);
   }
   private persist(clearJournal = false, drafts: import('./db').DraftRecord[] = []): Promise<void> {
@@ -99,6 +107,7 @@ export class AutomaticSaver {
   }
   setOnline(online: boolean): void {
     this.online = online;
+    if (this.awaitingRetry) { this.publish('failed', 'Earlier changes remain unsaved. Select Retry save.'); return; }
     if (!online) this.publish('pending', 'Pending/reconnecting — editing is paused.');
     else if (this.record.conflictReason) this.publish('conflict', `Save conflict — ${this.record.conflictReason}`);
     else if (this.record.recoveryBranches?.length) this.publish('conflict', 'Pending edits from another tab were retained. Reload and review all retained changes before continuing.');
@@ -117,6 +126,7 @@ export class AutomaticSaver {
     return rows.some(row => row.id !== this.record.id && !!(row.actions.length || row.flight || row.adoptionRequired || row.recoveryBranches?.length));
   }
   flush(): Promise<boolean> {
+    if (this.checking || this.awaitingRetry) return Promise.resolve(false);
     clearTimeout(this.idle); clearTimeout(this.maximum); this.maximum = undefined;
     if (this.running) return this.running;
     if (!this.online || this.record.conflictReason || ['conflict', 'recovery', 'loading'].includes(this.view.phase)) return Promise.resolve(false);
@@ -153,7 +163,7 @@ export class AutomaticSaver {
           undo = await this.services.prepareUndo(undo, result);
           if (this.record.undo?.id !== undo.id) undo = this.record.undo;
         }
-        this.record = { ...this.record, actions: this.record.actions.filter(a => !flight.ids.includes(a.id)), flight: undefined, undo, pendingDrafts: this.record.actions.some(a => !flight.ids.includes(a.id)) ? this.record.pendingDrafts : {} };
+        this.record = { ...this.record, actions: this.record.actions.filter(a => !flight.ids.includes(a.id)), flight: undefined, saveFailure: undefined, undo, pendingDrafts: this.record.actions.some(a => !flight.ids.includes(a.id)) ? this.record.pendingDrafts : {} };
         const reviewLegacy = this.record.reviewLegacyAfterFlight && this.record.actions.length > 0;
         const legacyReviewReason = 'The interrupted legacy write is recovered. Review the retained pending changes before reapplying or discarding them.';
         // Commit the review requirement with the flight acknowledgement, so
@@ -177,6 +187,7 @@ export class AutomaticSaver {
         }
       }
       this.retryDelay = 1000;
+      this.retrying = false;
       this.publish('saved', 'Saved');
       return true;
     }).catch(async error => {
@@ -187,21 +198,65 @@ export class AutomaticSaver {
         this.publish(this.online ? 'conflict' : 'pending', this.online ? `Save conflict — ${error.message}` : 'Pending/reconnecting — editing is paused.');
       }
       else if (!this.online || retryableTransport(error)) {
+        this.record = { ...this.record, saveFailure: 'retrying' };
+        if (!this.persistenceError) { try { await this.persist(); } catch { /* Retain the original recovery record. */ } }
+        if (this.persistenceError instanceof SaveConflict) { this.publish('conflict', this.persistenceError.message); return false; }
         this.publish('pending', 'Pending/reconnecting — editing is paused.');
         clearTimeout(this.retryTimer);
         this.retryTimer = setTimeout(() => { if (this.online && !this.disposed) void this.retry(); }, this.retryDelay);
         this.retryDelay = Math.min(30_000, this.retryDelay * 2);
-      } else this.publish('failed', `Save failed — ${error instanceof Error ? error.message : String(error)}`);
+      } else {
+        this.record = { ...this.record, saveFailure: isAccessFailure(error) ? 'repair' : 'retry' };
+        if (!this.persistenceError) { try { await this.persist(); } catch { /* Pending actions remain retained. */ } }
+        if (this.persistenceError instanceof SaveConflict) { this.publish('conflict', this.persistenceError.message); return false; }
+        this.publish('failed', `Save failed — ${error instanceof Error ? error.message : String(error)}`);
+      }
       return false;
     }).finally(() => { if (this.running === operation) this.running = null; });
     this.running = operation;
     return operation;
   }
   retry(): Promise<boolean> {
+    if (this.checking) return Promise.resolve(false);
+    if (!this.online && this.awaitingRetry) { this.publish('failed', 'Earlier changes remain unsaved. Select Retry save when connected.'); return Promise.resolve(false); }
     if (!this.online) { this.publish('pending', 'Pending/reconnecting — editing is paused.'); return Promise.resolve(false); }
     if (this.record.conflictReason || this.view.phase === 'conflict' || this.record.adoptionRequired) return Promise.resolve(false);
+    this.awaitingRetry = false;
+    this.retrying = true;
     this.publish('saving', 'Retrying save…');
     return this.flush();
+  }
+  /** Reconfirm a failed read without publishing edits or consuming Undo. */
+  async recheck(): Promise<boolean> {
+    if (this.disposed || !this.online || this.running || this.undoing || this.checking ||
+        this.view.phase !== 'failed' || this.view.pending) return false;
+    this.checking = true;
+    this.publish('loading', 'Checking save status…');
+    try {
+      return await this.locked(async () => {
+        const checkRecovery = async () => {
+          const current = await db.automatic.get(this.record.id);
+          if ((current?.version ?? 0) !== this.version || current?.actions.length || current?.flight ||
+              current?.adoptionRequired || current?.conflictReason || current?.recoveryBranches?.length || await this.otherPending())
+            throw new SaveConflict('Save recovery changed. Reload to review retained work before continuing.');
+        };
+        await this.writes;
+        await checkRecovery();
+        await this.services.current();
+        if (this.disposed) return false;
+        if (!this.online) throw new Error('Save status could not be confirmed while offline.');
+        // Accepted work in another tab need not acquire this network lock.
+        // Re-read its durable version after the remote read before claiming Saved.
+        await checkRecovery();
+        if (this.disposed) return false;
+        this.retrying = false;
+        this.publish('saved', 'Saved');
+        return true;
+      });
+    } catch (error) {
+      if (!this.disposed) this.publish(error instanceof SaveConflict ? 'conflict' : 'failed', error instanceof Error ? error.message : String(error));
+      return false;
+    } finally { this.checking = false; }
   }
   async undo(): Promise<boolean> {
     if (this.view.undoReason || this.running || this.undoing) return false;
@@ -233,6 +288,7 @@ export class AutomaticSaver {
     return this.record.actions.length ? this.flush() : false;
   }
   async adopt(): Promise<void> {
+    this.awaitingRetry = false;
     this.record = { ...this.record, adoptionRequired: false };
     await this.persist(false, Object.values(this.record.pendingDrafts ?? {}));
     this.publish('saving', 'Recovering existing pending work…');
@@ -240,6 +296,7 @@ export class AutomaticSaver {
   }
   async resolve(reapply: boolean): Promise<void> {
     if (!this.online || this.running) return;
+    this.awaitingRetry = false;
     await this.locked(async () => {
       const stored = await db.automatic.get(this.record.id);
       if ((stored?.version ?? 0) !== this.version) throw new SaveConflict('Reload first to review the pending work retained by both tabs.');
@@ -261,7 +318,7 @@ export class AutomaticSaver {
       const actionsToSave = resolved ?? this.record.actions;
       const latest = actionsToSave.filter(action => !action.undoOf && action.changes.length).at(-1);
       this.record = { ...this.record, recoveryBranches: undefined, flight: undefined, conflictReason: undefined,
-        actions: reapply ? actionsToSave.filter(action => action.changes.length) : [],
+        saveFailure: undefined, actions: reapply ? actionsToSave.filter(action => action.changes.length) : [],
         pendingDrafts: reapply ? this.record.pendingDrafts : {},
         undo: reapply ? latest ?? this.record.undo : null,
         undoReason: reapply && latest ? undefined : this.record.undoReason,
@@ -285,4 +342,14 @@ function retryableTransport(error: unknown): boolean {
   if (['AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch'].includes(details.code ?? '')) return false;
   const cause = error instanceof Error ? error.cause : undefined;
   return !!cause && cause !== error && retryableTransport(cause);
+}
+
+/** A validated login does not guarantee permission for every later write. */
+export function isAccessFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const details = error instanceof S3ReadError ? error : readErrorDetails(error);
+  if (details.status === 401 || details.status === 403 ||
+      ['AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch', 'ExpiredToken', 'InvalidToken'].includes(details.code ?? '')) return true;
+  const cause = error instanceof Error ? error.cause : undefined;
+  return !!cause && cause !== error && isAccessFailure(cause);
 }

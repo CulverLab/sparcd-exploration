@@ -10,7 +10,9 @@ import {
   DeleteObjectCommand, ListObjectsV2Command, HeadBucketCommand,
   CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+import { importLogin } from '../cli.mjs';
 import {
   startMinio, stopMinio, seed, startProxy, caller, rawSignedRequest, rawTarget,
   stalledPut, chunked, spawnServer, MASTER_KEY,
@@ -22,6 +24,7 @@ let endpoint;
 let root;
 let proxy;
 let origin;
+let config;
 let admin;
 const people = {};
 const invites = {};
@@ -47,7 +50,7 @@ const status = async (promise) => {
 before(async () => {
   endpoint = await startMinio();
   root = await seed(endpoint);
-  ({ proxy, origin, admin } = await startProxy(endpoint));
+  ({ proxy, origin, config, admin } = await startProxy(endpoint));
   people.admin = caller(origin, admin);
 
   const invite = async (name, memberships) => {
@@ -526,6 +529,15 @@ describe('the access table', () => {
     );
   });
 
+  test('the Tagger\'s original baseline is writable at identify, once', async () => {
+    const key = `${prefixA}/.sparcd-tagger-original/media.csv`;
+    const write = () => people.carol.raw('PUT', `/${BUCKET_A}/${key}`, {
+      body: 'first', headers: { 'if-none-match': '*' },
+    });
+    assert.equal((await write()).status, 200);
+    assert.equal((await write()).status, 412);
+  });
+
   test('DeleteObject needs run', async () => {
     const key = `${prefixA}/doomed.jpg`;
     await people.bob.s3().send(new PutObjectCommand({ Bucket: BUCKET_A, Key: key, Body: 'x' }));
@@ -868,6 +880,25 @@ describe('signature handling', () => {
     const tooLong = await fetch(await people.alice.presign(path, 7200));
     assert.equal(tooLong.status, 403);
     assert.match(await tooLong.text(), /exceeds one hour/);
+  });
+
+  test('a presigned GET from the AWS SDK presigner works', async () => {
+    const url = await getSignedUrl(
+      people.alice.s3(), new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }),
+      { expiresIn: 3600 },
+    );
+    const res = await fetch(url);
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.equal(await res.text(), `image-bytes-${UUID_A}`);
+  });
+
+  test('a presigned GET honours the unsigned Range a video seek sends', async () => {
+    const res = await fetch(await people.alice.presign(path, 900), {
+      headers: { range: 'bytes=6-10' },
+    });
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), `bytes 6-10/${`image-bytes-${UUID_A}`.length}`);
+    assert.equal(await res.text(), 'bytes');
   });
 
   test('a presigned GET still obeys the rules', async () => {
@@ -1649,6 +1680,47 @@ describe('round 3 follow-ups', () => {
     assert.equal(res.body.error.code, 'last_admin');
     // The key still works, so nothing half-happened.
     assert.equal((await people.admin.api('GET', '/-/admin/people')).status, 200);
+  });
+});
+
+describe('importing an existing login', () => {
+  // A MinIO-shaped id: nothing like the proxy's own SPK + base32.
+  const login = { accessKey: 'ana.perez', secret: 'minio-secret-ana' };
+
+  test('the old key and secret sign in, see only what they are granted, and a reset retires them', async () => {
+    const out = await importLogin({ name: 'Ana', email: 'ana@example.org', ...login, config });
+    assert.equal(JSON.stringify(out).includes(login.secret), false, 'the secret is not echoed');
+    await proxy.store.reload();
+
+    const ana = caller(origin, { accessKey: login.accessKey, secretKey: login.secret });
+    const names = async () =>
+      (await ana.s3().send(new ListBucketsCommand({}))).Buckets.map((b) => b.Name).sort();
+    assert.deepEqual(await names(), [SETTINGS], 'no memberships until an admin grants one');
+
+    const list = await people.admin.api('GET', '/-/admin/people');
+    const person = list.body.people.find((p) => p.email === 'ana@example.org');
+    assert.equal(person.status, 'active');
+    assert.equal(person.admin, false);
+    assert.equal(
+      (await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${person.id}`, { access: 'look' })).status,
+      200);
+    assert.deepEqual(await names(), [BUCKET_A, SETTINGS].sort());
+    assert.equal((await ana.api('GET', '/-/whoami')).status, 200);
+
+    const wrong = caller(origin, { accessKey: login.accessKey, secretKey: 'minio-secret-wrong' });
+    assert.equal(await status(wrong.s3().send(new ListBucketsCommand({}))), 403);
+
+    assert.equal((await people.admin.api('POST', `/-/admin/people/${person.id}/reset`)).status, 200);
+    assert.equal(await status(ana.s3().send(new ListBucketsCommand({}))), 403);
+  });
+
+  test('the same key id or email cannot be imported twice', async () => {
+    await assert.rejects(
+      () => importLogin({ name: 'Other', email: 'other@example.org', ...login, config }),
+      /access key already belongs/);
+    await assert.rejects(
+      () => importLogin({ name: 'Ana again', email: 'ANA@example.org', accessKey: 'ana.two', secret: login.secret, config }),
+      /email already belongs/);
   });
 });
 

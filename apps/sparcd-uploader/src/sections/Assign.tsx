@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { InfoTooltip } from '../components/InfoTooltip';
 import { useQueryClient } from '@tanstack/react-query';
 import { Connection, OfflineBanner, loadPersistedConnection, useOnline } from '@sparcd/auth-ui';
-import { PreparedAssignmentGate } from '../components/PreparedAssignmentGate';
 import { testConnection } from '@sparcd/s3-safe';
 import { useStore } from '../store';
 import { Spinner } from '../components/Spinner';
@@ -100,11 +99,6 @@ export function Assign() {
   const requireCollectionSelection = useStore((s) => s.requireCollectionSelection);
   const elevationUnit = useStore((s) => s.elevationUnit);
   const files = useStore((s) => s.files);
-  const flipId = useStore((s) => s.flipId);
-  const speciesScope = `${connectionId}/${selectedBucket}/${flipId}`;
-  const [speciesReadyScope, setSpeciesReadyScope] = useState<string | null>(null);
-  const speciesAssignmentReady = speciesReadyScope === speciesScope;
-  const setSpeciesAssignmentReady = useCallback((ready: boolean) => setSpeciesReadyScope(ready ? speciesScope : null), [speciesScope]);
 
   const {
     data,
@@ -228,7 +222,7 @@ export function Assign() {
   // Background processing finishing is no longer part of this gate: Upload
   // streams blobs as files individually become ready and only publishes once
   // processing genuinely completes, so there's nothing to wait for here.
-  const baseReady = online && !!location && !!slug && !!collection && !!uploadTimeZone && !!mountainRange.trim() && !!dateCollected && (!flipId || speciesAssignmentReady);
+  const baseReady = online && !!location && !!slug && !!collection && !!uploadTimeZone && !!mountainRange.trim() && !!dateCollected;
   const continueHint = !online ? 'Connect online before continuing to upload' : !location
     ? 'Select a deployment location first'
     : !collection
@@ -241,7 +235,7 @@ export function Assign() {
             ? 'Enter a mountain range before continuing'
             : !dateCollected
               ? 'Enter a date collected before continuing'
-              : flipId && !speciesAssignmentReady ? 'Review prepared species before continuing' : null;
+              : null;
 
   function handleContinue() {
     if (!baseReady) return;
@@ -519,8 +513,6 @@ export function Assign() {
           </p>
         </div>
       </section>
-
-      <PreparedAssignmentGate collection={collection} onReady={setSpeciesAssignmentReady} />
 
       {!baseReady && continueHint && (
         <p id="upload-continue-help" role="status" className="font-body text-[12px] text-warn">

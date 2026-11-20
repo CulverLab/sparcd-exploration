@@ -19,7 +19,7 @@ import { readDiscovery, writeDiscovery } from './discoveryCache';
  * run in the background on every connect rather than at the staleTime the
  * in-session cache uses; once it lands, normal staleTime takes over.
  */
-export function useCollections(cfg: S3Config | null, connectionId: number) {
+export function useCollections(cfg: S3Config | null, connectionId: number, enabled = true) {
   const remembered = cfg ? readDiscovery(cfg)?.collections : undefined;
   return useQuery<CollectionRef[]>({
     queryKey: ['collections', connectionId, cfg?.endpoint],
@@ -28,7 +28,7 @@ export function useCollections(cfg: S3Config | null, connectionId: number) {
       writeDiscovery(cfg!, { collections: refs });
       return refs;
     },
-    enabled: !!cfg,
+    enabled: !!cfg && enabled,
     initialData: remembered,
     initialDataUpdatedAt: remembered ? 1 : undefined,
     staleTime: 5 * 60 * 1000,

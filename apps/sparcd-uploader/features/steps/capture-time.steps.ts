@@ -331,6 +331,7 @@ When('the batch is returned to Inspect before local tagging', async ({ app }) =>
 Then('the hand-off gives the Tagger the overridden time', async ({ app }) => {
   await app.stubTagger();
   await app.page.getByRole('button', { name: 'Tag species before upload' }).click();
+  await app.page.getByRole('dialog', { name: 'Choose a species list' }).getByRole('button', { name: 'Continue' }).click();
   await app.page.waitForURL(/\/tagger\/\?batch=/);
   const [record] = await app.readFlipRecords();
   expect(record.files[0]).toMatchObject({
