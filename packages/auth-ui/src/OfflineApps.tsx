@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-const workerUrl = '/sparcd-exploration/offline-worker.js';
+const familyRoot = (import.meta.env.BASE_URL || '/').replace(/[^/]+\/$/, '');
+const workerUrl = `${familyRoot}offline-worker.js`;
 export async function offlineAppStatus(worker: ServiceWorker, repair = false): Promise<boolean> {
   return new Promise(resolve => {
     const channel = new MessageChannel();
@@ -13,7 +14,7 @@ let downloading: Promise<{ ready: boolean; waiting: boolean }> | null = null;
 export function storeOfflineApps(): Promise<{ ready: boolean; waiting: boolean }> {
   if (downloading) return downloading;
   downloading = (async () => {
-    const registration = await navigator.serviceWorker.register(workerUrl, { scope: '/sparcd-exploration/', updateViaCache: 'none' });
+    const registration = await navigator.serviceWorker.register(workerUrl, { scope: familyRoot, updateViaCache: 'none' });
     await registration.update();
     const installing = registration.installing;
     if (installing) await new Promise<void>((resolve, reject) => {
@@ -40,7 +41,7 @@ export function OfflineApps() {
     if (!('serviceWorker' in navigator)) return;
     let current = true;
     const check = async () => {
-      const registration = await navigator.serviceWorker.getRegistration('/sparcd-exploration/');
+      const registration = await navigator.serviceWorker.getRegistration(familyRoot);
       const ready = !!registration?.active && await offlineAppStatus(registration.active);
       if (!current) return;
       if (!ready && navigator.onLine === false) setMessage('Uploader is not fully available offline. Keep this window open and reconnect to finish downloading. Your saved batch is unchanged.');

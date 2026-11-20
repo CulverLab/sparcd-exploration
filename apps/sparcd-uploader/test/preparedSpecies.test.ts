@@ -18,6 +18,8 @@ describe('prepared vocabulary', () => {
     expect(snapshot.overrides).toEqual({ 'Canis latrans': 'y' });
     expect(snapshot.profileId).toBe(keyProfileId(cfg.endpoint, cfg.accessKey));
     expect(snapshot.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.ownerScope).toMatch(/^flip-owner-v1:[a-f0-9]{64}$/);
+    expect(JSON.stringify(snapshot)).not.toContain(cfg.accessKey);
     expect(snapshot.species).toEqual(species);
     expect(JSON.stringify(snapshot)).not.toContain(cfg.secretKey);
     species[0].commonName = 'Changed after preparation';

@@ -2485,10 +2485,11 @@ def _(
         for _row in _page_df.iter_rows(named=True):
             _is_video = (_row.get("mime_type") or "").startswith("video/")
             # A video keeps requesting ranges as it plays and seeks, so its URL has to
-            # outlast a long stay on the page, not just the first load.
+            # outlast a long stay on the page, not just the first load. An hour is the
+            # longest the access proxy accepts.
             _url = _presign_row(
                 _row["bucket"], _row["media_path"],
-                timedelta(hours=12) if _is_video else timedelta(minutes=30),
+                timedelta(hours=1) if _is_video else timedelta(minutes=30),
             )
             _tag = _parse_tags(_row.get("tags") or "")
             _sci = _row.get("scientific_name") or ""

@@ -34,6 +34,8 @@ export function useFocusExplanation(description: string) {
 
   return {
     id,
+    show: (element: HTMLElement) => { anchor.current = element; setOpen(true); },
+    hide: () => setOpen(false),
     triggerProps: {
       onFocus: (event: FocusEvent<HTMLElement>) => { anchor.current = event.currentTarget; setOpen(true); },
       onBlur: () => setOpen(false),

@@ -91,9 +91,8 @@ export function SpeciesHelp({ onClose }: { onClose: () => void }) {
                 Drag it onto an image to add it there.
               </li>
               <li>
-                Type to filter the visible list. Enter adds the first species in the original list
-                whose common or scientific name contains your text; that may differ from the top
-                visible row, and fuzzy-only matches are not added.
+                Type to filter the visible list. Enter adds the top displayed result, including
+                close spelling matches. An empty filter or a search with no results adds nothing.
               </li>
               <li>A ✓ means that species is already on the focused image.</li>
             </ul>
@@ -112,7 +111,9 @@ export function SpeciesHelp({ onClose }: { onClose: () => void }) {
             </h3>
             <p>
               Hover (or focus) a row to assign or change its key, or to clear it. A
-              struck-through key means another species is already using it.
+              struck-through key means another species is already using it. Shift and Control
+              can also be assigned: tap either side by itself and release to tag. Using them
+              with another key or a mouse action keeps their normal behavior.
             </p>
           </section>
 

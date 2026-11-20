@@ -21,10 +21,27 @@ import { hasUnfinishedEditor, useEditorState } from '../lib/editorState';
 import { draftRevisionOf } from '../lib/draftRevision';
 
 const initial: SaveView = { phase: 'loading', message: 'Opening automatic saving…', pending: false, undoReason: 'Undo is unavailable while opening save recovery.', canEdit: false };
-export const useAutomaticSave = create<{ view: SaveView; saver: AutomaticSaver | null; repair: boolean; repairError?: string }>(() => ({ view: initial, saver: null, repair: false }));
-function retryAutomaticSave(): Promise<boolean> {
+export const useAutomaticSave = create<{ view: SaveView; saver: AutomaticSaver | null; repair: boolean; repairError?: string; setupRevision: number; setupCheckTarget?: string }>(() => ({ view: initial, saver: null, repair: false, setupRevision: 0 }));
+class RecoveryOwnershipError extends Error {}
+export function retryAutomaticSetup(target: { scope: string; collectionKey: string; prefix: string }): void {
+  const state = useStore.getState();
+  const automatic = useAutomaticSave.getState();
+  if (automatic.saver || !state.s3Config || accountScope(state.s3Config) !== target.scope ||
+      state.selectedCollectionKey !== target.collectionKey || state.selectedUploadPrefix !== target.prefix) return;
+  useAutomaticSave.setState(s => ({
+    setupCheckTarget: automaticId(target.scope, parseCollectionKey(target.collectionKey).bucket, target.prefix),
+    ...(s.view.setupFailed ? { setupRevision: s.setupRevision + 1, view: { ...initial, pending: s.view.pending } } : {}),
+  }));
+}
+export function retryAutomaticSave(target?: { scope: string; collectionKey: string; prefix: string }): Promise<boolean> {
+  const state = useStore.getState();
+  if (target && (!state.s3Config || accountScope(state.s3Config) !== target.scope ||
+      state.selectedCollectionKey !== target.collectionKey || state.selectedUploadPrefix !== target.prefix)) return Promise.resolve(false);
   const saver = useAutomaticSave.getState().saver;
-  if (saver) return saver.retry();
+  if (saver) {
+    if (target && (saver.record.scope !== target.scope || saver.record.collectionKey !== target.collectionKey || saver.record.uploadPrefix !== target.prefix)) return Promise.resolve(false);
+    return saver.retry();
+  }
   // A read failure can precede coordinator creation after reload. Refresh only
   // this connection's query generation; retain selection, identity and journals.
   useStore.setState(state => ({ connectionId: state.connectionId + 1 }));
@@ -101,6 +118,7 @@ async function compileActions(actions: EditAction[], starting: import('../lib/sy
 }
 
 export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
+  const setupRevision = useAutomaticSave(s => s.setupRevision);
   const cfg = useStore(s => s.s3Config);
   const connectionId = useStore(s => s.connectionId);
   const collectionKey = useStore(s => s.selectedCollectionKey);
@@ -184,7 +202,7 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       const existing = await db.automatic.get(id);
       const others = await db.automatic.where('[bucket+uploadPrefix]').equals([bucket, prefix]).toArray();
-      if (!existing?.flight && others.some(r => r.id !== id && (r.actions.length || r.flight || r.adoptionRequired || r.recoveryBranches?.length))) throw new Error('Pending recovery for this upload belongs to another account or destination. Reconnect with that account to recover it.');
+      if (!existing?.flight && others.some(r => r.id !== id && (r.actions.length || r.flight || r.adoptionRequired || r.recoveryBranches?.length))) throw new RecoveryOwnershipError('Pending recovery for this upload belongs to another account or destination. Reconnect with that account to recover it.');
       const legacyJournal = await loadSyncJournal(bucket, prefix);
       const state = useDraftStore.getState();
       if (existing?.pendingDrafts) {
@@ -333,8 +351,11 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
         },
       });
       useAutomaticSave.setState({ saver });
-      await saver.open();
+      const checkOnly = useAutomaticSave.getState().setupCheckTarget === id;
+      await saver.open({ checkOnly });
       if (cancelled) { saver.dispose(); return; }
+      if (checkOnly && useAutomaticSave.getState().setupCheckTarget === id)
+        useAutomaticSave.setState({ setupCheckTarget: undefined });
       saver.setOnline(navigator.onLine);
       removeEdits = installEditLifecycle({
         canEdit: () => !!saver?.view.canEdit,
@@ -368,12 +389,15 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
         // owner instead of trapping them behind the failed open.
         removeNavigation?.();
         removeNavigation = undefined;
-        useAutomaticSave.setState({ view: { ...initial, phase: 'recovery', message: String(error), pending: false } });
+        saver?.dispose();
+        const ownership = error instanceof RecoveryOwnershipError;
+        useAutomaticSave.setState({ saver: null, view: { ...initial,
+          phase: ownership ? 'recovery' : 'failed', setupFailed: !ownership, message: String(error), pending: false } });
       }
     });
     return () => { cancelled = true; removeEdits?.(); removeNavigation?.(); saver?.dispose(); };
   // Query data updates must not replace a coordinator with an in-flight write.
-  }, [scope, collectionKey, prefix, queriesReady, queriesReady ? false : images.isError, queriesReady ? false : deployment.isError, client]);
+  }, [scope, collectionKey, prefix, setupRevision, queriesReady, queriesReady ? false : images.isError, queriesReady ? false : deployment.isError, client]);
 
   useEffect(() => { useAutomaticSave.getState().saver?.setOnline(online); }, [online]);
   useEffect(() => {

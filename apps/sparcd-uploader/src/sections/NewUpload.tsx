@@ -1,11 +1,11 @@
 import { useOnline } from '@sparcd/auth-ui';
-import { selectPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
+import { deriveFlipOwnerScope, selectPreparedSpecies, type PreparedSpecies } from '@sparcd/flip';
 import { WorkflowNotice } from '../components/WorkflowNotice';
 import { choosePreparationSpecies } from '../lib/preparation';
 import { SpeciesListChooser } from '../components/SpeciesListChooser';
 import { PreparationRecovery, PreparationSaveStatus } from '../components/PreparationRecovery';
-import { flushPreparation, recoveryGuard } from '../lib/preparation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushPreparation, recoveryGuard, missingRemovalStatus, missingRemovalVersion, subscribeMissingRemoval, retryMissingOriginalRemovals, isMissingRemovalPending } from '../lib/preparation';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../store';
 import type { Severity } from '../lib/validation';
 import { StepIndicator } from '../components/StepIndicator';
@@ -23,6 +23,7 @@ import {
   adoptRecord,
   reselectFlip,
   handOffToTagger,
+  returningFlipOwnerScope,
   reopenTagger,
   resumeFromFlip,
   returningFlipId,
@@ -121,7 +122,14 @@ export function NewUpload() {
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
   const summary = useMemo(() => summarize(files, validations), [files, validations]);
   const tagged = useMemo(() => files.filter((f) => f.preTags?.length).length, [files]);
-  const missingOriginals = files.filter(file => file.needsOriginal);
+  const removalVersion = useSyncExternalStore(subscribeMissingRemoval, missingRemovalVersion);
+  const removalMessage = useSyncExternalStore(subscribeMissingRemoval, missingRemovalStatus);
+  const removalPending = files.some(file => isMissingRemovalPending(file.id));
+  const missingOriginals = files.filter(file => file.needsOriginal && !isMissingRemovalPending(file.id));
+  const removalRetryNeeded = removalPending || /could not (prepare|save|finish|replay)|removal is saved/i.test(removalMessage);
+  const recoveryHeading = useRef<HTMLHeadingElement>(null);
+  const showRecoveryRegion = missingOriginals.length > 0 || removalPending || removalMessage.startsWith('Removed ');
+  void removalVersion;
 
   const cancelSpeciesChooser = useCallback(() => {
     setSpeciesChooserOpen(false);
@@ -132,7 +140,13 @@ export function NewUpload() {
     const guard = recoveryGuard();
     await flushPreparation();
     guard();
-    if (flipId) await selectPreparedSpecies(flipId, snapshot);
+    if (flipId) {
+      const cfg = useStore.getState().s3Config;
+      const ownerScope = cfg ? await deriveFlipOwnerScope(cfg) : returningFlipOwnerScope() ?? undefined;
+      guard();
+      if (!ownerScope) throw new Error('Reconnect with the login that owns this batch before reopening Tagger.');
+      await selectPreparedSpecies(flipId, snapshot, ownerScope);
+    }
     else await choosePreparationSpecies(snapshot);
     guard();
     await (flipId ? reopenTagger(flipId) : handOffToTagger());
@@ -177,7 +191,7 @@ export function NewUpload() {
         <StepIndicator current={step} />
         {step === 'inspect' && (
           <button
-            disabled={!summary.ready || tagging}
+            disabled={!summary.ready || tagging || removalPending}
             onClick={() => {
               setTagError('');
               setTagging(true);
@@ -191,7 +205,7 @@ export function NewUpload() {
                   : 'Resolve files that need attention first'
             }
             className={`min-h-[44px] sm:min-h-0 bg-mark text-ink border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-              summary.ready && !tagging ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
+              summary.ready && !tagging && !removalPending ? 'hover:bg-paperHover' : 'opacity-40 cursor-not-allowed'
             }`}
           >
             {flipId ? 'Edit tags' : 'Tag species before upload'}
@@ -210,6 +224,13 @@ export function NewUpload() {
       {step === 'drop' && !flip && <ResumeNotice />}
       {notice && <WorkflowNotice title={notice.title} onClose={() => setNotice(null)}><p>{notice.message}</p></WorkflowNotice>}
       <PreparationSaveStatus />
+      {removalMessage && <div className="my-2 border border-warn p-3 text-sm" role={removalRetryNeeded || removalPending ? 'alert' : 'status'}>
+        <p>{removalMessage}</p>
+        {removalRetryNeeded && <button type="button" className="mt-2 min-h-11 border border-ink px-3" onClick={() => {
+          const batchIsLoaded = removalPending || files.some(file => file.needsOriginal);
+          void retryMissingOriginalRemovals().then(() => { if (!batchIsLoaded) window.location.reload(); }).catch(() => {});
+        }}>Retry removal</button>}
+      </div>}
       {tagError && <p role="alert" className="text-warn">{tagError}</p>}
 
       {step === 'drop' &&
@@ -224,13 +245,18 @@ export function NewUpload() {
 
       {step === 'inspect' && (
         <div className="space-y-4">
-          {missingOriginals.length > 0 && <section aria-label="Original files need recovery" className="border border-warn p-3 space-y-2">
+          {showRecoveryRegion && <section aria-label="Original files need recovery" className="border border-warn p-3 space-y-2">
+            <h2 ref={recoveryHeading} tabIndex={-1} className="font-body text-[14px] font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Original files need recovery</h2>
+            {missingOriginals.length > 0 && <>
             <p role="alert">Verified files and saved tags were restored. {missingOriginals.length} original {missingOriginals.length === 1 ? 'file needs' : 'files need'} recovery before continuing. Their saved hashes and tags are retained.</p>
             <ul>{missingOriginals.map(file => <li key={file.id} className="break-words">{file.relPath}: {file.processError}</li>)}</ul>
-            <button type="button" className="min-h-11 border border-ink px-3" onClick={() => {
+            <button type="button" disabled={removalPending} className="min-h-11 border border-ink px-3 disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => {
               const guard = recoveryGuard();
               void flushPreparation().then(() => { guard(); setStep('drop'); }).catch(error => setTagError((error as Error).message));
             }}>Reselect original files</button>
+            </>}
+            {removalPending && <p role="status">Removal is still being saved. Retry it before leaving this batch.</p>}
+            {!missingOriginals.length && !removalPending && <p role="status">No unavailable originals remain in this batch.</p>}
           </section>}
           <div className="space-y-3">
             <p className="font-body text-[14px] text-inkSoft">
@@ -294,18 +320,19 @@ export function NewUpload() {
             </p>
             <div className="flex justify-center gap-3">
               <button
+                disabled={removalPending}
                 onClick={resetBatch}
                 title="Discard this batch and return to Choose"
-                className="min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                className="min-h-[44px] sm:min-h-0 border border-ink text-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body hover:bg-paperHover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Back
               </button>
               <button
-                disabled={!summary.ready}
-                onClick={() => online ? setStep('assign') : setNotice({title:'Connect before Describe',message:'Connect online before Describe so locations and collections can be loaded. Your files and tags are saved on this device.'})}
-                title={summary.ready ? 'Continue to Describe' : 'Resolve files that need attention first'}
+                disabled={!summary.ready || removalPending}
+                onClick={() => setStep('assign')}
+                title={summary.ready ? 'Continue to assignment' : 'Resolve files that need attention first'}
                 className={`min-h-[44px] sm:min-h-0 bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 text-[14px] font-body font-[600] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
-                  summary.ready
+                  summary.ready && !removalPending
                     ? `hover:opacity-90 hover:animate-none ${throb ? 'animate-throb' : ''}`
                     : 'opacity-40 cursor-not-allowed'
                 }`}
@@ -323,13 +350,13 @@ export function NewUpload() {
             <span aria-hidden>{showFiles ? '▾' : '▸'}</span>
             {showFiles ? 'Hide files' : 'Show files'}
           </button>
-          {showFiles && <FileList severityFilter={severityFilter} />}
+          {showFiles && <FileList severityFilter={severityFilter} onEmptyRemovalFocus={() => recoveryHeading.current?.focus()} />}
           {(showFiles || summary.noCameraTime > 0) && (
             <p className="font-body text-[13px] text-inkMute">
               {showFiles && (
                 <>
-                  Press <span className="font-mono">D</span> to drop a flagged duplicate — it's
-                  kept otherwise.{' '}
+                  Press <span className="font-mono">D</span> to remove the active file. Missing
+                  or changed originals are removed from the saved preparation and Tagger handoff too.{' '}
                 </>
               )}
               {summary.noCameraTime > 0 && 'A timestamp needs review in Assign before upload.'}
@@ -357,9 +384,8 @@ function useFlipReturn(): FlipPending | null {
   useEffect(() => {
     const id = returningFlipId();
     if (!id) return;
-    void resumeFromFlip(id).then((r) => setState(r.kind === 'restored' ? null : r)).catch(async () => {
-      const { readFlipRecord } = await import('@sparcd/flip');
-      try { const record = await readFlipRecord(id); setState(record ? { kind: 'needs-reselect', record } : { kind: 'not-found' }); } catch { setState({ kind: 'not-found' }); }
+    void resumeFromFlip(id).then((r) => setState(r.kind === 'restored' ? null : r)).catch(() => {
+      setState({ kind: 'not-found', message: 'This batch is unavailable for the connected login. Its saved work has been kept.' });
     });
   }, []);
 

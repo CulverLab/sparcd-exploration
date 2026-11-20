@@ -5,9 +5,10 @@ import { resolve, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const appRoot = fileURLToPath(new URL('../../', import.meta.url));
+const pagesRoot = process.env.PAGES_ROOT ?? '/sparcd-exploration/';
 const roots = new Map([
-  ['/sparcd-exploration/uploader/', resolve(appRoot, 'dist')],
-  ['/sparcd-exploration/tagger/', resolve(appRoot, '../sparcd-tagger/dist')],
+  [`${pagesRoot}uploader/`, resolve(appRoot, 'dist')],
+  [`${pagesRoot}tagger/`, resolve(appRoot, '../sparcd-tagger/dist')],
 ]);
 const mime = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -16,7 +17,7 @@ const mime = {
   '.ico': 'image/x-icon', '.gif': 'image/gif', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.webmanifest': 'application/manifest+json',
 };
 
-export function productionServer(builds = roots) {
+export function productionServer(builds = roots, base = pagesRoot) {
   return createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -24,13 +25,13 @@ export function productionServer(builds = roots) {
     try {
       const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
       // A deliberately uncached network probe, not an app shell or mock asset.
-      if (path === '/__offline-harness/probe.html' || path === '/sparcd-exploration/__offline-harness/probe.html') {
+      if (path === '/__offline-harness/probe.html' || path === `${base}__offline-harness/probe.html`) {
         res.setHeader('Content-Type', mime['.html']);
         res.end(req.method === 'HEAD' ? undefined : '<!doctype html><title>Network probe</title>');
         return;
       }
-      if (path === '/sparcd-exploration/offline-worker.js') {
-        const bytes = await readFile(resolve(builds.get('/sparcd-exploration/uploader/'), 'offline-worker.js'));
+      if (path === `${base}offline-worker.js`) {
+        const bytes = await readFile(resolve(builds.get(`${base}uploader/`), 'offline-worker.js'));
         res.setHeader('Content-Type', mime['.js']);
         res.end(req.method === 'HEAD' ? undefined : bytes); return;
       }

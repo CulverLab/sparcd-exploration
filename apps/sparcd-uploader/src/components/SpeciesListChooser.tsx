@@ -21,7 +21,8 @@ const MASTER = '__master__';
 /** Selects a vocabulary only; it never changes the batch's upload destination. */
 export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: Props) {
   const connectionId = useStore(s => s.connectionId);
-  const collections = useCollections(cfg, connectionId, open && online);
+  const canLoadOnline = online && !!cfg;
+  const collections = useCollections(cfg, connectionId, open && canLoadOnline);
   const dialog = useRef<HTMLDivElement>(null);
   const [choice, setChoice] = useState(MASTER);
   const [collectionKey, setCollectionKey] = useState('');
@@ -36,12 +37,12 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
   }, [onCancel]);
 
   useEffect(() => {
-    if (!open || online) return;
+    if (!open || canLoadOnline) return;
     let live = true;
     void listSpeciesVocabularies().then(items => { if (live) setCached(items); })
       .catch(() => { if (live) setCached([]); });
     return () => { live = false; };
-  }, [open, online]);
+  }, [open, canLoadOnline]);
 
   const cachedOptions = useMemo(() => {
     const byCollection = new Map<string, PreparedSpecies>();
@@ -55,9 +56,9 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
   const selectedCached = cachedOptions.find(([key]) => key === choice)?.[1];
 
   useEffect(() => {
-    if (!open || online || cachedOptions.length === 0 || cachedOptions.some(([key]) => key === choice)) return;
+    if (!open || canLoadOnline || cachedOptions.length === 0 || cachedOptions.some(([key]) => key === choice)) return;
     setChoice(cachedOptions[0][0]);
-  }, [open, online, cachedOptions, choice]);
+  }, [open, canLoadOnline, cachedOptions, choice]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,7 +93,7 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
     setBusy(true); setError('');
     try {
       let snapshot: PreparedSpecies;
-      if (!online) {
+      if (!canLoadOnline) {
         if (!selectedCached) return;
         snapshot = selectedCached;
         stageSavedPreparation(snapshot);
@@ -131,7 +132,7 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
   return createPortal(<div className="fixed inset-0 z-[180] grid place-items-center bg-ink/40 p-4" onMouseDown={event => { if (event.target === event.currentTarget && !busy) cancel(); }}>
     <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="species-list-title" className="max-h-[90svh] w-full max-w-xl overflow-auto border border-rule bg-paper p-5 shadow-xl">
       <h2 id="species-list-title" className="font-display text-[20px] text-ink">Choose a species list</h2>
-      {online ? <div className="mt-4 space-y-4">
+      {canLoadOnline ? <div className="mt-4 space-y-4">
         <label className="flex min-h-11 cursor-pointer items-center gap-3 border border-ruleSoft p-3">
           <input type="radio" name="species-list-choice" checked={choice === MASTER} onChange={() => { setChoice(MASTER); setError(''); }} />
           <span><span className="block font-body text-[14px] text-ink">Master species list</span><span className="block text-[12px] text-inkSoft">Settings/species.json</span></span>
@@ -154,7 +155,7 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
         </div>
       </div> : <div className="mt-4 space-y-3">
         {cachedOptions.length > 0 ? <>
-          <p className="text-[14px] text-ink">You’re offline. Only species lists saved on this device are available.</p>
+          <p className="text-[14px] text-ink">{online ? 'You’re not connected to storage.' : 'You’re offline.'} Only species lists saved on this device are available.</p>
           <fieldset className="space-y-2">
           <legend className="mb-2 text-[13px] text-inkSoft">Available saved species lists</legend>
           {cachedOptions.map(([key, item]) => <label key={key} className="flex min-h-11 cursor-pointer items-start gap-3 border border-ruleSoft p-3">
@@ -162,12 +163,12 @@ export function SpeciesListChooser({ open, online, cfg, onCancel, onContinue }: 
             <span><span className="block font-body text-[14px] text-ink">{key === MASTER ? 'Master species list' : item.collectionName}</span><span className="block text-[12px] text-inkSoft">{item.species.length} {item.species.length === 1 ? 'species' : 'species'}</span></span>
           </label>)}
           </fieldset>
-        </> : <p className="text-[14px] text-inkSoft">You’re offline, and no species lists are saved on this device.</p>}
+        </> : <p className="text-[14px] text-inkSoft">{online ? 'You’re not connected to storage' : 'You’re offline'}, and no species lists are saved on this device.</p>}
       </div>}
       {error && <p role="alert" className="mt-3 text-[13px] text-warn">{error}</p>}
       <footer className="mt-5 flex flex-wrap justify-end gap-2 border-t border-ruleSoft pt-4">
         <button type="button" disabled={busy} onClick={cancel} className="min-h-11 border border-ink px-4 text-[14px] disabled:opacity-50">Cancel</button>
-        {(online || cachedOptions.length > 0) && <button type="button" disabled={busy || (online && choice === 'collection' && !collectionKey)} onClick={() => void proceed()} className="min-h-11 border border-ink bg-ink px-4 text-[14px] text-paper disabled:opacity-50">{busy ? 'Loading species…' : 'Continue'}</button>}
+        {(canLoadOnline || cachedOptions.length > 0) && <button type="button" disabled={busy || (canLoadOnline && choice === 'collection' && !collectionKey)} onClick={() => void proceed()} className="min-h-11 border border-ink bg-ink px-4 text-[14px] text-paper disabled:opacity-50">{busy ? 'Loading species…' : 'Continue'}</button>}
       </footer>
     </section>
   </div>, document.body);

@@ -51,10 +51,29 @@ Feature: Tag a batch that has not been uploaded yet
     Then the batch records Coyote against that image
 
   @A1
+  Scenario: A handoff carries only the hashed owner scope
+    Then the local record contains its owner scope and no login credentials
+
+  @A1
+  Scenario: A different connected login cannot reopen another login's handoff
+    When the batch is opened while a different login is connected
+    Then the handoff is blocked with owner guidance and its stored Inspect data is unchanged
+
+  Scenario: The same login at a different endpoint cannot reopen the handoff
+    When the batch is opened at a different endpoint with the same login
+    Then the handoff is blocked with owner guidance and its stored Inspect data is unchanged
+
+  @A1
+  Scenario: A legacy handoff without owner scope remains quarantined
+    When a legacy handoff with no owner scope is opened
+    Then the legacy handoff stays quarantined and is not deleted
+
+  @A1
   Scenario: Handing the batch back returns to the Uploader with the tags
     Given a species has been applied to an image
     When "Done · back to Uploader" is chosen
     Then the batch carries the tag for the Uploader to read
+    And the owner scope survives local tagging unchanged
     And the browser goes back to the Uploader carrying the batch's id
 
   @unmapped
