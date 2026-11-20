@@ -24,7 +24,7 @@ const GROUPS: { title: string; rows: Shortcut[] }[] = [
     title: 'Tag',
     rows: [
       { keys: ['Space'], action: 'Open species filter' },
-      { keys: ['Enter'], action: 'Add top filter match (add-only)' },
+      { keys: ['Enter'], action: 'Add top displayed species result (add-only)' },
       { keys: ['key'], action: 'Add the species bound to that key' },
       { keys: ['✕'], action: 'Chip ✕ removes one; Clear Species clears all' },
       { keys: ['⇧Space'], action: 'Toggle Need expert' },
