@@ -38,7 +38,7 @@ export function PreparedSpeciesPanel({ onReady }: { onReady: (ready: boolean) =>
       // verified scope as file recovery and reopening Tagger.
       const ownerScope = cfg ? await deriveFlipOwnerScope(cfg) : returningFlipOwnerScope();
       const saved = flipId
-        ? ownerScope ? (await readFlipRecord(flipId, ownerScope))?.preparedSpecies : null
+        ? ownerScope ? (await readFlipRecord(flipId, ownerScope))?.preparedSpecies : await readBoundPreparationSpecies()
         : useStore.getState().files.length ? await readBoundPreparationSpecies() : await loadPreparedSpecies(cfg ?? undefined);
       if (generation.current !== attempt) return;
       if (validPreparedSpecies(saved)) { setSnapshot(saved); acceptPreparationSpecies(saved); onReady(true); }

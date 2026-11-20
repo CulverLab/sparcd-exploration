@@ -1,8 +1,8 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 
 const flows = defineBddConfig({
-  features: ['features/connect-and-session.feature', 'features/tag-before-upload.feature', 'features/prepared-species.feature', 'features/settings-and-local-data.feature'],
+  features: ['features/connect-and-session.feature', 'features/tag-before-upload.feature', 'features/prepared-species.feature', 'features/settings-and-local-data.feature', 'features/missing-photo-removal.feature'],
   steps: 'features/steps/**/*.ts',
   outputDir: 'features/.features-gen-production',
   tags: '@offline or @cross-tool or @preparation-cleanup',
@@ -25,7 +25,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'production-infrastructure', testDir: 'e2e/production', testMatch: '**/*.spec.ts' },
-    { name: 'production-existing-flows', testDir: flows },
+    { name: 'production-existing-flows', testDir: flows, grepInvert: /touch at a narrow viewport/ },
+    { name: 'production-touch-removal', testDir: flows, grep: /touch at a narrow viewport/, use: { ...devices['Pixel 7'], channel: 'chrome' } },
   ],
   webServer: {
     command: 'node e2e/production/server.mjs',

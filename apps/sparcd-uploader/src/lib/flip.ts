@@ -26,7 +26,7 @@ import { assertPreparedSpecies } from './preparedSpecies';
 import { useStore, type FileEntry } from '../store';
 import { restoreFromHandle, reconcileReselect, reselectFolder, type ReconcileProblem } from './resume';
 import type { ScannedFile } from './scanFiles';
-import { flushPreparation, readPreparation, bindCurrentPreparationSpecies, recoveryGuard, readPreparationForFlip } from './preparation';
+import { flushPreparation, readPreparation, bindCurrentPreparationSpecies, recoveryGuard, readPreparationForFlip, replayMissingRemovalIntents } from './preparation';
 import { formatNaive } from './exifTime';
 import { estimateCaptureTimes, type CaptureEstimate } from './estimateCaptureTime';
 import { taggerBatchUrl, uploaderReturnUrl } from './siblings';
@@ -192,8 +192,14 @@ export async function resumeFromFlip(flipId: string): Promise<FlipReturn> {
   const config = useStore.getState().s3Config;
   const ownerScope = config ? await deriveFlipOwnerScope(config) : returningFlipOwnerScope();
   if (!ownerScope) return { kind: 'not-found', message: 'Reconnect with the login that owns this batch to return it to Uploader. The saved batch has been kept.' };
-  const record = await readFlipRecord(flipId, ownerScope);
+  let record = await readFlipRecord(flipId, ownerScope);
   guard();
+  if (!record) return { kind: 'not-found', message: await flipRecordUnavailableReason(flipId, ownerScope) };
+  // Resolve only this batch's pending removals. A conflict in a sibling batch
+  // must not prevent an unrelated Tagger hand-back from being recovered.
+  await replayMissingRemovalIntents({ flipId });
+  guard();
+  record = await readFlipRecord(flipId, ownerScope);
   if (!record) return { kind: 'not-found', message: await flipRecordUnavailableReason(flipId, ownerScope) };
   return adoptRecord(record);
 }

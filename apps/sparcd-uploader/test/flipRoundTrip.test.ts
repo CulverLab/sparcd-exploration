@@ -39,7 +39,7 @@ vi.mock('@sparcd/flip', async (importOriginal) => {
     stored.record && (!expectedOwnerScope || stored.record.ownerScope === expectedOwnerScope) ? stored.record : undefined,
   };
 });
-vi.mock('../src/lib/preparation', () => ({ recoveryGuard: () => () => {}, flushPreparation: async () => {}, readPreparation: async () => stored.preparation, readPreparationForFlip: async () => stored.preparation, bindCurrentPreparationSpecies: () => {} }));
+vi.mock('../src/lib/preparation', () => ({ recoveryGuard: () => () => {}, flushPreparation: async () => {}, readPreparation: async () => stored.preparation, readPreparationForFlip: async () => stored.preparation, bindCurrentPreparationSpecies: () => {}, replayMissingRemovalIntents: async () => {} }));
 // Model the worker's hash result; provenance assertions still use real restore.
 vi.mock('../src/lib/processPool', () => ({ processBatch: (items: any[], _started: any, result: any) => {
   for (const item of items) result({ id: item.id, sha256: `sha-${item.file.name}`, mediaKind: 'image' });

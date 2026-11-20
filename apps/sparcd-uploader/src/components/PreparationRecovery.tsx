@@ -2,25 +2,38 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { recoveryGuard, listPreparations, recoverPreparation, recoverPreparationFromHandle, preparationStatus, subscribePreparation, retryPreparation, type LocalPreparation } from '../lib/preparation';
 import { reselectFolder } from '../lib/resume';
 import { canPickFolder, supportsDirectoryHandle } from '../lib/scanFiles';
+import { flipDb, isValidFlipOwnerScope } from '@sparcd/flip';
+import { taggerBatchUrl } from '../lib/siblings';
 export function PreparationSaveStatus() {
   const message = useSyncExternalStore(subscribePreparation, preparationStatus);
   return message ? <div className="p-3 text-sm"><p role={message.includes('could not') ? 'alert' : 'status'}>{message}</p>{message.includes('could not') && <button type="button" onClick={retryPreparation} className="border px-3 py-2">Retry saving preparation</button>}</div> : null;
 }
 export function PreparationRecovery() {
   const [saved, setSaved] = useState<LocalPreparation | null>(null);
-  const [unavailable, setUnavailable] = useState<string[]>([]);
+  const [unavailable, setUnavailable] = useState<{ id: string; reason: string; fileName?: string }[]>([]);
   const [choices, setChoices] = useState<LocalPreparation[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [taggerHref, setTaggerHref] = useState('');
   const ref = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
   const inputAttempt = useRef<{ saved: LocalPreparation; guard: () => void; kind: 'files' | 'folder' } | null>(null);
   useEffect(() => {
-    const skipped: string[] = [];
-    void listPreparations(id => skipped.push(id)).then(items => {
+    const skipped: { id: string; reason: string; fileName?: string }[] = [];
+    void listPreparations((id, reason, fileName) => skipped.push({ id, reason: reason ?? 'Saved data is damaged or from an unsupported version.', fileName })).then(items => {
       setChoices(items); setSaved(items[0] ?? null); setUnavailable(skipped);
     }).catch(e => setError(e.message));
   }, []);
+  useEffect(() => {
+    let current = true;
+    setTaggerHref('');
+    if (saved?.flipId) {
+      void flipDb.records.get(saved.flipId).then(record => {
+        if (current && record && isValidFlipOwnerScope(record.ownerScope)) setTaggerHref(taggerBatchUrl(saved.flipId!, record.ownerScope));
+      }).catch(() => {});
+    }
+    return () => { current = false; };
+  }, [saved?.flipId]);
   async function choose(list?: FileList, attempt = { saved, guard: recoveryGuard() }) {
     if (!attempt.saved) return;
     setBusy(true); setError('');
@@ -60,9 +73,9 @@ export function PreparationRecovery() {
       }} className="min-h-11 border border-ink px-3">Reselect saved files</button>
       <input aria-label="Saved preparation folder" ref={ref} type="file" multiple hidden {...{ webkitdirectory: '', directory: '' }} onChange={e => consumeSelection(e, 'folder')} />
       <input aria-label="Saved preparation files" ref={filesRef} type="file" multiple accept="image/jpeg,video/mp4" hidden onChange={e => consumeSelection(e, 'files')} />
-      {saved.flipId && <a className="underline block" href={`../tagger/?batch=${encodeURIComponent(saved.flipId)}`}>Reopen saved tags using thumbnails</a>}
+      {saved.flipId && taggerHref && <a className="underline block" href={taggerHref}>Reopen saved tags using thumbnails</a>}
     </>}
-    {unavailable.length > 0 && <p role="alert">{unavailable.length} saved {unavailable.length === 1 ? 'batch is' : 'batches are'} damaged or from an unsupported version. {unavailable.length === 1 ? 'Its' : 'Their'} stored data has been kept. Reopen a compatible app to recover {unavailable.length === 1 ? 'it' : 'them'}; other saved batches remain available.</p>}
+    {unavailable.length > 0 && <div role="alert" className="space-y-1"><p>{unavailable.length} saved {unavailable.length === 1 ? 'batch needs' : 'batches need'} attention. Their stored data has been kept; other recoverable batches remain available.</p><ul className="list-disc pl-5">{unavailable.map(item => <li key={item.id}>{item.fileName ? `${item.fileName}: ` : ''}{item.reason}</li>)}</ul></div>}
     {error && <p role="alert">{error}</p>}
   </section> : null;
 }

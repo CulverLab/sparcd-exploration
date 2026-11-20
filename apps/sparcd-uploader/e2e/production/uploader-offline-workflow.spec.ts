@@ -8,13 +8,12 @@ import { waitForOfflineApps } from './offline-readiness';
 
 const original = jpegAt('OFFLINE.JPG', '2026:07:01 12:00:00');
 
-for (const login of ['Login Later', 'credentials']) test(`${login} selects and inspects offline; missing catalog and Describe are explained only when chosen`, async ({ page, context }) => {
+test('Login Later allows offline inspection; unavailable species and online-only Describe are explained when chosen', async ({ page, context }) => {
   const s3 = new S3Mock(); seedDefaultStorage(s3); const app = new App(page, s3);
   await app.open(); await waitForOfflineApps(page);
   await context.setOffline(true); s3.offline = true;
   await page.reload();
-  if (login === 'Login Later') await page.getByRole('button', { name: 'Login later', exact: true }).click();
-  else { await app.fillConnection(); await page.getByRole('button', { name: 'Connect', exact: true }).click(); }
+  await page.getByRole('button', { name: 'Login later', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Offline preparation' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Prepare species for local tagging' })).toHaveCount(0);
   await app.dropFolder([original]); await app.waitForInspected();
@@ -23,11 +22,16 @@ for (const login of ['Login Later', 'credentials']) test(`${login} selects and i
   await expect(popup).toContainText('The species list is not available on this device');
   await popup.getByRole('button', { name: 'OK', exact: true }).click();
   await app.continueButton().click();
-  const describeNotice=page.getByRole('alertdialog',{name:'Connect before Describe'});
-  await expect(describeNotice).toContainText('Connect online before Describe');
-  await describeNotice.getByRole('button', { name: 'OK', exact: true }).click();
+  const connectionForm = app.connectForm();
+  await expect(connectionForm).toBeVisible();
+  await expect(connectionForm.getByRole('status')).toContainText('connecting needs a network connection');
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
   await app.expectStep('Verify');
+  const files = await app.listedFiles();
+  expect(files).toHaveLength(1);
+  expect(files[0]).toMatchObject({ name: 'OFFLINE.JPG', relPath: 'SDCARD/OFFLINE.JPG', status: 'OK', issues: 'Valid' });
   expect(await app.readFlipRecords()).toEqual([]);
+  expect(s3.puts).toHaveLength(0);
 });
 
 test('automatic master cache supports offline optional tagging, while a failed refresh and changed official list preserve the batch', async ({ page, context }) => {

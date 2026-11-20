@@ -28,7 +28,9 @@ async function handOff(app: App): Promise<string> {
 
 /** Come back the way the Tagger's Done button does. */
 async function handBack(app: App, id: string): Promise<void> {
-  await app.page.goto(`${APP_PATH}?flip=${id}`);
+  const record = (await app.readFlipRecords()).find(item => item.id === id);
+  if (!record?.ownerScope) throw new Error('The returned batch has no verified owner scope.');
+  await app.page.goto(`${APP_PATH}?flip=${encodeURIComponent(id)}&ownerScope=${encodeURIComponent(record.ownerScope)}`);
 }
 
 // --- offering the hand-off --------------------------------------------------

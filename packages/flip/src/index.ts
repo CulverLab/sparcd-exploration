@@ -128,6 +128,7 @@ export interface FlipRecord {
 class FlipDb extends Dexie {
   records!: Table<FlipRecord, string>;
   preparations!: Table<{ id: string; value: unknown }, string>;
+  removalIntents!: Table<{ id: string; value: unknown }, string>;
   vocabularies!: Table<{ id: string; snapshot: PreparedSpecies }, string>;
 
   constructor() {
@@ -136,6 +137,7 @@ class FlipDb extends Dexie {
     this.version(2).stores({ records: 'id', vocabularies: 'id' });
     this.version(3).stores({ records: 'id', vocabularies: 'id', preparations: 'id' });
     this.version(4).stores({ records: 'id, ownerScope', vocabularies: 'id', preparations: 'id' });
+    this.version(5).stores({ records: 'id, ownerScope', vocabularies: 'id', preparations: 'id', removalIntents: 'id' });
   }
 }
 

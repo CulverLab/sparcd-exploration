@@ -1,12 +1,10 @@
 // The page-driving helper every step goes through. Keeps the Gherkin steps
 // declarative: they say what happened, this says how.
 
-import { fileURLToPath } from 'node:url';
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { S3Mock } from './s3mock';
 
 export const APP_PATH = '/sparcd-exploration/uploader/';
-const FLIP_MODULE = fileURLToPath(new URL('../../../../packages/flip/src/index.ts', import.meta.url));
 export const S3_ORIGIN = `http://localhost:${process.env.UPLOADER_TEST_PORT ?? 5311}`;
 export const ACCESS_KEY = 'AKIATESTKEY0001';
 export const SECRET_KEY = 'test-secret-key';
@@ -340,6 +338,10 @@ export class App {
     );
   }
 
+  async unstubTagger(): Promise<void> {
+    await this.page.unroute(/\/sparcd-exploration\/tagger\//);
+  }
+
   /** Every hand-off record, with blobs reduced to whether they are there. */
   async readFlipRecords(): Promise<Record<string, any>[]> {
     return this.page.evaluate(async () => {
@@ -385,20 +387,37 @@ export class App {
     );
   }
 
-  /**
-   * The Tagger's own hand-back write, through the real `@sparcd/flip` module
-   * served by the dev server — so it stamps the record exactly as the Tagger
-   * would, last-used time included.
-   */
+  /** Simulate Tagger's final hand-back directly in IndexedDB. Keeping this
+   * fixture independent of Vite's dev-only @fs source route lets production
+   * Chrome coverage use the same helper against the built offline apps. */
   async finishFlipRecord(id: string, tags: Record<string, unknown>, taggerUser: string): Promise<void> {
     await this.page.evaluate(
-      async ({ url, id, tags, taggerUser }) => {
-        const flip = await import(/* @vite-ignore */ url);
-        const record = await flip.flipDb.records.get(id);
-        if (!record?.ownerScope) throw new Error('The prepared handoff has no verified owner scope.');
-        await flip.finishFlipRecord(id, tags, taggerUser, record.ownerScope);
+      async ({ id, tags, taggerUser }) => {
+        const open = indexedDB.open('sparcd-flip');
+        const db: IDBDatabase = await new Promise((resolve, reject) => {
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => resolve(open.result);
+        });
+        try {
+          const tx = db.transaction('records', 'readwrite');
+          const store = tx.objectStore('records');
+          const done = new Promise<void>((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error ?? new Error('Tagger hand-back transaction was aborted.'));
+          });
+          const record: Record<string, any> = await new Promise((resolve, reject) => {
+            const req = store.get(id);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => resolve(req.result);
+          });
+          if (!record?.ownerScope) throw new Error('The prepared handoff has no verified owner scope.');
+          const req = store.put({ ...record, tags: { ...(record.tags ?? {}), ...tags }, taggerUser, usedAt: new Date().toISOString(), revision: (record.revision ?? 0) + 1 });
+          req.onerror = () => {};
+          await done;
+        } finally { db.close(); }
       },
-      { url: `${APP_PATH}@fs${FLIP_MODULE}`, id, tags, taggerUser },
+      { id, tags, taggerUser },
     );
   }
 
