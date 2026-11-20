@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { parseObservations } from '@sparcd/camtrap';
 import {
   Given,
+  uploadRow,
   When,
   Then,
   expect,
@@ -1277,11 +1278,7 @@ Given('an upload whose canonical media list has no images is opened', async ({ p
   await page.reload();
   await connect(page);
   await selectCollection(page);
-  await page
-    .locator('button')
-    .filter({ hasText: 'priortagger' })
-    .filter({ hasText: 'Open →' })
-    .click();
+  await uploadRow(page, 'priortagger').getByRole('button', { name: 'Open →', exact: true }).click();
 });
 
 Then('the workspace states that the upload has no taggable images', async ({ page }) => {
