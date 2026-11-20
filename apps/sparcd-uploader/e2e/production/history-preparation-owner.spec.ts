@@ -40,7 +40,7 @@ for (const legacy of [false, true]) test(`finishing ${legacy ? 'legacy' : 'owned
   await app.dropFolder(b); await app.waitForInspected();
   await app.continueToAssign(); await app.setDescription('Keep these B notes');
   await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   const savedB = (await preparations(page)).find(row => row.value.files[0].fileName === 'SAVED-B.JPG');
   expect(savedB.value.inputs.uploadDescription).toBe('Keep these B notes');
   expect(savedB.value.species.collectionName).toBe('Settings master list');

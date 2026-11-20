@@ -7,11 +7,14 @@ import { useStore, type FileEntry } from '../store';
 import { reconcileReselect, restoreFromHandle, type RestoreOk } from './resume';
 import type { ScannedFile } from './scanFiles';
 import { PreparationQueue } from './preparationQueue';
+import { summarizeSourceFolders, type SourceFolderSummary } from './sourceFolders';
 export type LocalPreparation = {
   v: 1;
   id: string;
   dirHandle?: FileSystemDirectoryHandle;
   savedAt: string;
+  /** Optional for older v1 journals; recoverable from relPath when possible. */
+  sourceFolders?: SourceFolderSummary;
   files: (Omit<FileEntry, 'file'> & { lastModified: number })[];
   flipId: string | null;
   /** Owner of the Tagger handoff, retained so saved tags can be read offline. */
@@ -33,6 +36,7 @@ export function isMissingRemovalPending(fileId: string): boolean { return pendin
 export function isAnyMissingRemovalPending(): boolean { return pendingMissingRemovals.size > 0; }
 let installed = false;
 let batchSpecies: PreparedSpecies | null = null;
+let batchSourceFolders: SourceFolderSummary | null = null;
 let lastToken = -1;
 let preparationId = '';
 let nextSpecies: PreparedSpecies | null = null;
@@ -47,9 +51,10 @@ export function recoveryGuard(): () => void {
     if (current.batchToken !== batchToken || current.connectionId !== connectionId) throw new Error('The batch or connection changed. Your saved preparation is unchanged.');
   };
 }
-export function bindCurrentPreparationSpecies(species: PreparedSpecies | null | undefined, id?: string): void {
+export function bindCurrentPreparationSpecies(species: PreparedSpecies | null | undefined, id?: string, sourceFolders?: SourceFolderSummary): void {
   preparationId = id ?? crypto.randomUUID();
   batchSpecies = species ?? null;
+  batchSourceFolders = sourceFolders ?? null;
   speciesRead = Promise.resolve(batchSpecies);
   lastToken = useStore.getState().batchToken + 1;
 }
@@ -83,14 +88,21 @@ export async function choosePreparationSpecies(species: PreparedSpecies): Promis
   retryPreparation();
 }
 const listeners = new Set<() => void>();
-let status = '';
+export type PreparationSaveStatus =
+  | { kind: 'saving' }
+  | { kind: 'failed' }
+  | { kind: 'saved'; sourceFolders: SourceFolderSummary }
+  | null;
+let status: PreparationSaveStatus = null;
 let hasPreparation = false;
-const writes = new PreparationQueue(failed => report(failed
-  ? 'Local preparation could not be saved. Keep this tab open, free browser storage, and retry before leaving.'
-  : hasPreparation ? 'Local preparation saved. Original files remain in your folder.' : ''));
+const writes = new PreparationQueue(failed => {
+  if (failed) report({ kind: 'failed' });
+  else if (hasPreparation) report({ kind: 'saved', sourceFolders: batchSourceFolders ?? summarizeSourceFolders(useStore.getState().files.map(file => file.relPath)) });
+  else report(null);
+});
 export const preparationStatus = () => status;
 export const subscribePreparation = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-function report(message: string) { status = message; for (const listener of listeners) listener(); }
+function report(message: PreparationSaveStatus) { status = message; for (const listener of listeners) listener(); }
 function removeStoreFileAfterDurableCommit(fileId: string): void {
   skipNextPreparationFileSnapshot = true;
   try { useStore.getState().removeFile(fileId); }
@@ -341,6 +353,8 @@ function validatePreparation(raw: unknown): LocalPreparation | null {
   if (!value) return null;
   const valid = value.v === 1 && typeof value.id === 'string' && !!value.id && Number.isFinite(Date.parse(value.savedAt)) &&
     Array.isArray(value.files) && value.files.length > 0 && new Set(value.files.map(f => f?.relPath)).size === value.files.length &&
+    (value.sourceFolders === undefined || (value.sourceFolders && Array.isArray(value.sourceFolders.names) &&
+      value.sourceFolders.names.every(name => typeof name === 'string' && !!name) && Number.isInteger(value.sourceFolders.unknownCount) && value.sourceFolders.unknownCount >= 0)) &&
     value.files.every(f => f && typeof f.id === 'string' && typeof f.relPath === 'string' && !!f.relPath && typeof f.fileName === 'string' &&
       Number.isFinite(f.size) && f.size >= 0 && Number.isFinite(f.lastModified) && ['image', 'video'].includes(f.mediaKind) &&
       ['queued', 'processing', 'ready', 'error'].includes(f.processState) && (f.processState !== 'ready' || typeof f.sha256 === 'string')) &&
@@ -393,6 +407,7 @@ export function startPreparationJournal(): void {
     // Capture ownership before queuing writes. Other windows have independent IDs.
     if (s.files.length && lastToken !== s.batchToken) {
       batchSpecies = null;
+      batchSourceFolders = summarizeSourceFolders(s.files.map(file => file.relPath));
       speciesRead = nextConnection === s.s3Config && validPreparedSpecies(nextSpecies) ? Promise.resolve(nextSpecies) : loadMasterSpecies(s.s3Config ?? undefined);
       preparationId = crypto.randomUUID();
       lastToken = s.batchToken;
@@ -400,10 +415,11 @@ export function startPreparationJournal(): void {
     if (s.files.length && !preparationId) preparationId = crypto.randomUUID();
     const id = preparationId;
     const speciesPromise = validPreparedSpecies(batchSpecies) ? Promise.resolve(batchSpecies) : speciesRead;
+    const sourceFolders = batchSourceFolders ?? summarizeSourceFolders(files.map(file => file.relPath));
     if (!files.length) preparationId = '';
     if (!id) return;
     hasPreparation = files.length > 0;
-    report('Saving local preparation…');
+    report({ kind: 'saving' });
     writes.enqueue(id, async () => {
       if (!files.length) { if (id) await flipDb.preparations.delete(id); }
       else {
@@ -426,7 +442,7 @@ export function startPreparationJournal(): void {
             throw new Error('The saved Tagger batch owner changed. Its preparation was kept; reconnect to the original login before continuing.');
           }
           const ownerScope = recordOwnerScope ?? priorOwnerScope;
-          const value: LocalPreparation = { v: 1, id, dirHandle: s.dirHandle ?? undefined, savedAt: new Date().toISOString(), files: retainedFiles.map(({ file, ...entry }) => ({ ...entry, lastModified: file.lastModified })), flipId: s.flipId, ...(ownerScope ? { ownerScope } : {}), species, inputs };
+          const value: LocalPreparation = { v: 1, id, dirHandle: s.dirHandle ?? undefined, savedAt: new Date().toISOString(), sourceFolders, files: retainedFiles.map(({ file, ...entry }) => ({ ...entry, lastModified: file.lastModified })), flipId: s.flipId, ...(ownerScope ? { ownerScope } : {}), species, inputs };
           await flipDb.preparations.put({ id, value });
           // Retire only this batch's legacy singleton after its replacement is durable.
           const legacy = await flipDb.preparations.get('active');
@@ -506,6 +522,7 @@ async function applyRecoveredPreparation(saved: LocalPreparation, result: Pick<R
   });
   // Legacy singleton journals remain recoverable, but new writes have batch keys.
   preparationId = saved.id;
+  batchSourceFolders = saved.sourceFolders ?? summarizeSourceFolders(saved.files.map(file => file.relPath));
   speciesRead = Promise.resolve(flip?.preparedSpecies ?? saved.species);
   batchSpecies = flip?.preparedSpecies ?? saved.species;
   lastToken = useStore.getState().batchToken + 1;

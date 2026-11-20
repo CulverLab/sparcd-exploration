@@ -31,7 +31,7 @@ for (const kind of ['folder', 'files'] as const) {
       const saved = [jpegAt('SAVED.JPG', '2026:07:01 12:00:00')];
       if (kind === 'folder') await app.dropFolder(saved); else await app.pickFiles(saved);
       await app.waitForInspected();
-      const savedStatus = page.getByText('Local preparation saved. Original files remain in your folder.', { exact: true });
+      const savedStatus = page.getByText('Local preparation saved.', { exact: true });
       await expect(savedStatus).toBeVisible();
       const [original] = await preparations(page);
       await page.reload();
