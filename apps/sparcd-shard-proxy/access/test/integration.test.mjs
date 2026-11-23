@@ -63,11 +63,11 @@ before(async () => {
   };
 
   await invite('alice', [
-    { bucket: BUCKET_A, access: 'run', exactLocations: true }, { bucket: BUCKET_B, access: 'look' },
+    { bucket: BUCKET_A, access: ['look', 'identify', 'upload', 'run'], exactLocations: true }, { bucket: BUCKET_B, access: ['look'] },
   ]);
-  await invite('bob', [{ bucket: BUCKET_A, access: 'upload' }]);
+  await invite('bob', [{ bucket: BUCKET_A, access: ['look', 'identify', 'upload'] }]);
   await invite('carol', [
-    { bucket: BUCKET_A, access: 'identify', exactLocations: true }, { bucket: BUCKET_B, access: 'run' },
+    { bucket: BUCKET_A, access: ['look', 'identify'], exactLocations: true }, { bucket: BUCKET_B, access: ['look', 'identify', 'upload', 'run'] },
   ]);
 
   for (const name of ['alice', 'bob', 'carol']) {
@@ -602,6 +602,56 @@ describe('the access table', () => {
   });
 });
 
+describe('upload without look', () => {
+  let dana;
+
+  before(async () => {
+    const created = await people.admin.api('POST', '/-/admin/people', {
+      name: 'dana', email: 'dana@example.org', memberships: [{ bucket: BUCKET_A, access: ['upload'] }],
+    });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const joined = await fetch(`${origin}/-/join`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: created.body.invite.token }),
+    });
+    dana = caller(origin, await joined.json());
+  });
+
+  test('sends images in and reads back only what finishing an upload needs', async () => {
+    const s3 = dana.s3();
+    const mine = `Collections/${UUID_A}/Uploads/2026.02.02.00.00.00_dana`;
+    assert.equal(await status(s3.send(new PutObjectCommand({
+      Bucket: BUCKET_A, Key: `${mine}/b.jpg`, Body: 'img',
+    }))), 200);
+    assert.equal(await status(s3.send(new HeadObjectCommand({ Bucket: BUCKET_A, Key: `${mine}/b.jpg` }))), 200);
+    assert.equal(await status(s3.send(new ListObjectsV2Command({ Bucket: BUCKET_A, Prefix: `${mine}/` }))), 200);
+    for (const key of [`Collections/${UUID_A}/collection.json`, `Collections/${UUID_A}/locations.json`,
+      `${prefixA}/media.csv`]) {
+      assert.equal(await status(s3.send(new GetObjectCommand({ Bucket: BUCKET_A, Key: key }))), 200, key);
+    }
+
+    assert.equal(await status(s3.send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${mine}/b.jpg` }))), 403);
+    assert.equal(await status(s3.send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }))), 403);
+    assert.equal(await status(s3.send(new ListObjectsV2Command({ Bucket: BUCKET_A }))), 403);
+    assert.equal(await status(s3.send(new ListObjectsV2Command({
+      Bucket: BUCKET_A, Prefix: `Collections/${UUID_A}/Uploads/`, Delimiter: '/',
+    }))), 403);
+    assert.equal(await status(s3.send(new HeadBucketCommand({ Bucket: BUCKET_A }))), 403);
+    assert.equal(await status(s3.send(new DeleteObjectCommand({ Bucket: BUCKET_A, Key: `${mine}/b.jpg` }))), 403);
+    assert.equal(await status(s3.send(new GetObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/a.jpg` }))), 403);
+  });
+
+  test('a repeated prefix is no prefix at all', async () => {
+    const mine = encodeURIComponent(`Collections/${UUID_A}/Uploads/2026.02.02.00.00.00_dana/`);
+    const res = await rawSignedRequest({
+      origin, key: dana.accessKey, secret: dana.secretKey,
+      path: `/${BUCKET_A}?list-type=2&prefix=${mine}&prefix=`,
+    });
+    assert.equal(res.status, 403);
+  });
+});
+
 describe('invariant 4: access data is proxy-owned', () => {
   const protectedKeys = [
     [SETTINGS, 'Settings/access/generation.json'],
@@ -699,7 +749,9 @@ describe('joining, pausing and resetting', () => {
     const res = await people.carol.api('GET', '/-/whoami');
     assert.equal(res.status, 200);
     const byBucket = Object.fromEntries(res.body.collections.map((c) => [c.bucket, c.access]));
-    assert.deepEqual(byBucket, { [BUCKET_A]: 'identify', [BUCKET_B]: 'run' });
+    assert.deepEqual(byBucket, {
+      [BUCKET_A]: ['look', 'identify'], [BUCKET_B]: ['look', 'identify', 'upload', 'run'],
+    });
     assert.equal(res.body.admin, false);
   });
 
@@ -731,7 +783,7 @@ describe('joining, pausing and resetting', () => {
     const aliceId = list.body.people.find((p) => p.name === 'alice').id;
     // Carol is the only runner on B in the base fixture. Give Alice a
     // temporary second runner role so reset can exercise key retirement.
-    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'run' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: ['look', 'identify', 'upload', 'run'] });
     const before = await status(
       people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` })));
     assert.equal(before, 200);
@@ -752,7 +804,7 @@ describe('joining, pausing and resetting', () => {
       await status(people.carol.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: `${prefixA}/a.jpg` }))),
       200,
     );
-    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: 'look' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_B}/members/${aliceId}`, { access: ['look'] });
   });
 });
 
@@ -769,7 +821,7 @@ describe('conflicts', () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const id = (name) => list.body.people.find((p) => p.name === name).id;
     const res = await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
-      members: [{ personId: id('alice'), access: 'look' }, { personId: id('bob'), access: 'upload' }],
+      members: [{ personId: id('alice'), access: ['look'] }, { personId: id('bob'), access: ['look', 'identify', 'upload'] }],
     }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 409);
     assert.equal(res.body.error.code, 'last_runner');
@@ -780,9 +832,9 @@ describe('conflicts', () => {
     const id = (name) => list.body.people.find((p) => p.name === name).id;
     const res = await people.alice.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
       members: [
-        { personId: id('alice'), access: 'run' },
-        { personId: id('bob'), access: 'upload' },
-        { personId: id('carol'), access: 'identify' },
+        { personId: id('alice'), access: ['look', 'identify', 'upload', 'run'] },
+        { personId: id('bob'), access: ['look', 'identify', 'upload'] },
+        { personId: id('carol'), access: ['look', 'identify'] },
       ],
     }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 200);
@@ -815,7 +867,7 @@ describe('conflicts', () => {
     assert.equal(written, (await root.getJson(bucket, key)).etag);
 
     const res = await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members`, {
-      members: [{ personId: id('alice'), access: 'run' }],
+      members: [{ personId: id('alice'), access: ['look', 'identify', 'upload', 'run'] }],
     }, { 'if-match': await membersVersion(BUCKET_A) });
     assert.equal(res.status, 412);
     assert.equal(res.body.error.code, 'changed_elsewhere');
@@ -825,7 +877,7 @@ describe('conflicts', () => {
   test('a members edit without the version it read is refused', async () => {
     const list = await people.admin.api('GET', '/-/admin/people');
     const id = (name) => list.body.people.find((p) => p.name === name).id;
-    const members = [{ personId: id('alice'), access: 'run' }];
+    const members = [{ personId: id('alice'), access: ['look', 'identify', 'upload', 'run'] }];
     const naked = await people.admin.api(
       'PUT', `/-/admin/collections/${BUCKET_A}/members`, { members });
     assert.equal(naked.status, 412);
@@ -984,7 +1036,7 @@ describe('activity', () => {
     const carolId = list.body.people.find((p) => p.name === 'carol').id;
     // Alice is the only runner on A in the base fixture. Add a temporary
     // alternate runner so pausing her exercises the activity audit path.
-    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'run' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: ['look', 'identify', 'upload', 'run'] });
 
     const downloadKey = `${prefixA}/a.jpg`;
     await people.alice.s3().send(new GetObjectCommand({ Bucket: BUCKET_A, Key: downloadKey }));
@@ -992,7 +1044,7 @@ describe('activity', () => {
       new PutObjectCommand({ Bucket: BUCKET_B, Key: `${prefixB}/nope.jpg`, Body: 'x' })));
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'paused' });
     await people.admin.api('PATCH', `/-/admin/people/${aliceId}`, { status: 'active' });
-    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: 'identify' });
+    await people.admin.api('PUT', `/-/admin/collections/${BUCKET_A}/members/${carolId}`, { access: ['look', 'identify'] });
 
     const all = await people.admin.api('GET', '/-/admin/activity?limit=1000');
     assert.equal(all.status, 200);
@@ -1019,7 +1071,7 @@ describe('activity', () => {
     // A membership grant says which collection and what it became.
     const added = all.body.events.find((e) => e.detail?.change === 'added' && e.detail?.bucket);
     assert.equal(typeof added.detail.collectionName, 'string');
-    assert.ok(['look', 'identify', 'upload', 'run'].includes(added.detail.after.access));
+    assert.ok(Array.isArray(added.detail.after.access) && added.detail.after.access.length > 0);
 
     // Newest first.
     const ts = all.body.events.map((e) => e.ts);
@@ -1364,11 +1416,11 @@ describe('hardening', () => {
 
     const added = await people.admin.api(
       'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('bob')}`,
-      { access: 'upload', exactLocations: true });
+      { access: ['look', 'identify', 'upload'], exactLocations: true });
     assert.equal(added.status, 200);
     assert.ok(added.body.membersVersion);
     const bobOnB = added.body.members.find((m) => m.personId === id('bob'));
-    assert.equal(bobOnB.access, 'upload');
+    assert.deepEqual(bobOnB.access, ['look', 'identify', 'upload']);
     assert.equal(bobOnB.exactLocations, true);
     assert.equal(
       await status(people.bob.s3().send(
@@ -1409,7 +1461,7 @@ describe('hardening', () => {
     }), { ifMatch: current.etag }));
 
     const res = await people.admin.api(
-      'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('alice')}`, { access: 'look' });
+      'PUT', `/-/admin/collections/${BUCKET_B}/members/${id('alice')}`, { access: ['look'] });
     assert.equal(res.status, 200, JSON.stringify(res.body));
   });
 

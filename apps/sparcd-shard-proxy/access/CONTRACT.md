@@ -1,4 +1,4 @@
-# Access proxy contract — version 1.1
+# Access proxy contract — version 2.0
 
 Per-person access for SPARC'd on storage that offers one S3 identity per project
 (Jetstream2 Ceph RGW). The proxy verifies each request's SigV4 signature against a
@@ -65,22 +65,51 @@ Settings bucket:
 
 Collection bucket:
 - `Collections/<uuid>/members.json`
-  `{ schemaVersion: 1, members: [{ personId, access: "look"|"identify"|"upload"|"run",
+  `{ schemaVersion: 2, members: [{ personId, access: ["look", "identify", "upload", "run"],
      exactLocations: boolean, grantedBy, grantedAt }] }`
 
-## What each access level allows (S3 requests on the collection bucket)
+`access` is a non-empty set of permissions, stored as an array in the order
+look, identify, upload, run, with no repeats. `identify` and `run` each imply
+`look`: the API adds `look` whenever either is present, so stored data always
+has it. `upload` stands alone. `exactLocations` is separate and unchanged.
 
-| level | allows |
+Schema 1 stored one cumulative level as a string. The proxy still reads it, as
+the set that level used to include: `"look"` is `["look"]`, `"identify"` is
+`["look","identify"]`, `"upload"` is `["look","identify","upload"]`, `"run"` is all
+four. Every write emits arrays and `schemaVersion: 2`. An entry that names no
+known permission grants nothing.
+
+## What each permission allows (S3 requests on the collection bucket)
+
+A member may make a request when any one permission in their set allows it.
+
+| permission | allows |
 | --- | --- |
 | look | GetObject, HeadObject, ListObjectsV2, HeadBucket, GetBucketLocation |
-| identify | look, plus PutObject on the files the Tagger writes (see `rules.js`) |
-| upload | identify, plus PutObject and multipart create/part/complete/abort/list-parts under `Collections/<uuid>/Uploads/` |
-| run | upload, plus DeleteObject under `Collections/<uuid>/Uploads/`, PutObject on `Collections/<uuid>/collection.json`, `species.json`, `locations.json` |
+| identify | PutObject on the files the Tagger writes (see `taggerWriteKey` in `rules.mjs`) |
+| upload | PutObject and multipart create/part/complete/abort/list-parts under `Collections/<uuid>/Uploads/`, plus the Uploader reads below |
+| run | DeleteObject under `Collections/<uuid>/Uploads/`, PutObject on `Collections/<uuid>/collection.json`, `species.json`, `locations.json`, and editing members through the API |
+
+The Uploader reads that `upload` allows without `look` (`uploaderReadAllowed` in
+`rules.mjs`), each one the Uploader needs to offer the collection, pick a location
+and finish or resume a run:
+
+| request | key or prefix | why |
+| --- | --- | --- |
+| GetObject, HeadObject | `Collections/<uuid>/collection.json` | the collection picker |
+| GetObject, HeadObject | `Collections/<uuid>/locations.json` | the location list (redacted as for any reader) |
+| HeadObject | anything under `Collections/<uuid>/Uploads/` | size and `x-amz-meta-sha256` check of a blob on resume and in the final review |
+| GetObject | `Collections/<uuid>/Uploads/<one folder>/` + `deployments.csv`, `media.csv`, `observations.csv`, `UploadMeta.json` or `UploadComplete.json` | byte comparison when a resumed run finds a metadata file already written |
+| ListObjectsV2 | a `prefix` that starts with `Collections/<uuid>/Uploads/<one folder>/`, given exactly once | the final review of one upload |
+
+Without `look`, a member cannot read a media file, list the collection or the
+`Uploads/` folder itself, read snapshots, `species.json` or anything else, or call
+HeadBucket or GetBucketLocation.
 
 Every active person: GetObject/HeadObject/ListObjectsV2 on the settings bucket under
 `Settings/`, minus `Settings/access/` and `Settings/activity/`. Admins: everything in
 the namespace except invariant 4, plus reading `Settings/activity/**`.
-A person sees a collection bucket in ListBuckets only with a membership; everyone
+A person sees a collection bucket in ListBuckets only with a membership (any set); everyone
 active sees the settings bucket. Paused or invited people get 403 on everything.
 `exactLocations` controls coordinate redaction. For non-admin callers, the proxy always
 redacts `latProperty`/`lngProperty` from `Settings/locations.json`; it redacts those
@@ -104,7 +133,7 @@ object. The hidden metadata digest is excluded from that decision, so retry
 status cannot be used to test digest guesses; a change to public fields remains
 a 412 conflict.
 
-An upload-only member may create or replace a canonical `deployments.csv` only
+A member without `exactLocations` may create or replace a canonical `deployments.csv` only
 when both coordinate columns are blank and the write carries a signed S3
 precondition. The proxy fills coordinates from the collection's non-empty
 `locations.json`, falling back to `Settings/locations.json` only when the
@@ -162,13 +191,20 @@ one of exactly these:
 - `GET /-/health` → `{ ok: true }`
 - `POST /-/join` `{ token }` → `{ endpoint, accessKey, secretKey, name }` once. Marks the
   person active and burns the token. 404 for unknown, used or expired tokens.
-- `GET /-/whoami` → `{ id, name, email, admin, collections: [{ bucket, uuid, name, access, exactLocations }] }`
+- `GET /-/whoami` → `{ id, name, email, admin, collections: [{ bucket, uuid, name, access, exactLocations }] }`,
+  `access` an array as stored. The same holds wherever the API returns `access`.
 
 Admin only:
 - `GET /-/admin/people` → `{ people: [{ id, name, email, status, admin, lastActiveAt, collections: [{ bucket, uuid, name, access, exactLocations }] }] }`.
   `lastActiveAt` is an ISO 8601 instant or `null`.
 - `POST /-/admin/people` `{ name, email, admin?, memberships?: [{ bucket, access, exactLocations? }] }`
-  → `{ person, invite: { token, expiresAt } }` (token valid 7 days, single use; the app builds the link)
+  → `{ person, invite: { token, expiresAt } }` (token valid 7 days, single use; the app builds the link).
+  Memberships are checked before the person is created: an unknown bucket is 404
+  `not_found`, a malformed entry 400 `invalid`.
+
+In every request body, `access` is a non-empty array of permission names. A string,
+an empty array, or an unknown name is 400 `invalid`. Repeats are dropped, the order is
+made canonical, and `look` is added to `identify` and `run`.
 - `PATCH /-/admin/people/:id` `{ name?, email?, admin?, status?: "active"|"paused" }` → `{ person }`.
   `admin` must be a boolean and `status` one of the two words, or 400 `invalid`. The
   last active admin cannot be paused or demoted (409 `last_admin`), checked against the
@@ -183,7 +219,8 @@ Admin only:
 - `PUT /-/admin/collections/:bucket/members` `{ members: [{ personId, access, exactLocations }] }`
   → `{ members, membersVersion }`. Requires `If-Match: <membersVersion>`, or
   `If-None-Match: *` when it was `null`. A stale version is 412 `changed_elsewhere`.
-  People with `run` on that collection may call it too. At least one member with `run`
+  A person may appear in the list once; a repeat is 400 `invalid`.
+  People whose set on that collection includes `run` may call it too. At least one member with `run`
   whose person is active is required (409 `last_runner`): a list whose only runner is
   still `invited`, or `paused`, is refused.
 - `PUT /-/admin/collections/:bucket/members/:personId` `{ access, exactLocations? }` and
@@ -235,6 +272,9 @@ detail: {
   after?:  { access, exactLocations }
 }
 ```
+
+`access` here is an array. Lines written before version 2 hold a single level string,
+which readers expand the same way as a schema 1 `members.json` entry.
 
 One event per change, so a single call that both renames a person and grants them admin
 writes two.

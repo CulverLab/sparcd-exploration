@@ -7,6 +7,7 @@
 
 import { KINDS, MAX_RANGE_DAYS, rangeTooWide } from './activity.mjs';
 import { Conflict } from './store.mjs';
+import { PERMISSIONS, normalizeAccess } from './rules.mjs';
 import {
   INVITE_TTL_MS, inviteMatches, newAccessKeyId, newInvite, newPersonId,
   newSecretKey, wrapSecret,
@@ -50,13 +51,30 @@ function parseKinds(raw) {
   return kinds.length ? kinds : undefined;
 }
 
-const ACCESS_LEVELS = ['look', 'identify', 'upload', 'run'];
-
 const publicPerson = (p) => ({
   id: p.id, name: p.name, email: p.email, status: p.status, admin: !!p.admin,
 });
 
-const membership = (m) => (m ? { access: m.access, exactLocations: !!m.exactLocations } : undefined);
+const membership = (m) => (m ? { access: [...m.access], exactLocations: !!m.exactLocations } : undefined);
+
+const runs = (m) => m.access.includes('run');
+
+/** A request's `access`: a non-empty array of known permissions, or a 400. */
+function parseAccess(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    fail('invalid', 'access must be a non-empty list of permissions');
+  }
+  for (const p of value) {
+    if (!PERMISSIONS.includes(p)) fail('invalid', `unknown permission ${p}`);
+  }
+  return normalizeAccess(value);
+}
+
+function parseExactLocations(value) {
+  if (value !== undefined && typeof value !== 'boolean') {
+    fail('invalid', 'exactLocations must be a boolean');
+  }
+}
 
 export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive }) {
   const collectionsFor = (personId) =>
@@ -301,6 +319,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
     if (input.admin !== undefined && typeof input.admin !== 'boolean') {
       fail('invalid', 'admin must be a boolean');
     }
+    // Checked before the person exists, so a bad membership cannot leave
+    // behind an invited person nobody asked for.
+    if (input.memberships !== undefined && !Array.isArray(input.memberships)) {
+      fail('invalid', 'memberships must be a list');
+    }
+    for (const m of input.memberships ?? []) {
+      if (!m || typeof m !== 'object') fail('invalid', 'each membership must be an object');
+      if (!store.collection(m.bucket)) fail('not_found', `no such collection ${m.bucket}`);
+      parseAccess(m.access);
+      parseExactLocations(m.exactLocations);
+    }
     const { token, record } = newInvite();
     const now = new Date().toISOString();
     const person = {
@@ -424,17 +453,17 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   function mayEdit(actor, collection) {
     const mine = collection.members.find((m) => m.personId === actor.id);
-    if (!actor.admin && mine?.access !== 'run') {
+    if (!actor.admin && !mine?.access.includes('run')) {
       fail('forbidden', 'admin or run access on this collection is required');
     }
   }
 
+  /** The member as it will be stored, or a 400. */
   function validMember(m) {
+    if (!m || typeof m !== 'object') fail('invalid', 'each member must be an object');
     if (!store.person(m.personId)) fail('invalid', `no such person ${m.personId}`);
-    if (!ACCESS_LEVELS.includes(m.access)) fail('invalid', `unknown access level ${m.access}`);
-    if (m.exactLocations !== undefined && typeof m.exactLocations !== 'boolean') {
-      fail('invalid', 'exactLocations must be a boolean');
-    }
+    parseExactLocations(m.exactLocations);
+    return { ...m, access: parseAccess(m.access) };
   }
 
   const stamp = (actor, m) => ({
@@ -448,7 +477,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   // Invited and paused people cannot use collection access. A runner guard
   // therefore counts only members whose person record is currently active.
   const hasRunner = (members) => members.some((m) =>
-    m.access === 'run' && store.person(m.personId)?.status === 'active');
+    runs(m) && store.person(m.personId)?.status === 'active');
 
   function requireRunner(members) {
     if (!hasRunner(members)) {
@@ -469,7 +498,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
 
   /** True when `personId` runs a collection that no other active member runs. */
   const soleRunner = (personId) => store.collections().some((c) =>
-    c.members.some((m) => m.personId === personId && m.access === 'run')
+    c.members.some((m) => m.personId === personId && runs(m))
     && !hasRunner(c.members.filter((m) => m.personId !== personId)));
 
   function requireActiveRunnerForPerson(personId) {
@@ -505,7 +534,12 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       fail('changed_elsewhere', 'membersVersion is stale');
     }
 
-    const members = (input.members ?? []).map((m) => { validMember(m); return stamp(actor, m); });
+    if (input.members !== undefined && !Array.isArray(input.members)) fail('invalid', 'members must be a list');
+    const members = (input.members ?? []).map((m) => stamp(actor, validMember(m)));
+    // Rules read a person's first entry; a second one would only fool the runner check.
+    if (new Set(members.map((m) => m.personId)).size !== members.length) {
+      fail('invalid', 'a person may appear once');
+    }
     requireRunner(members);
 
     const before = collection.members;
@@ -560,8 +594,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
   }
 
   function setOneMember(actor, bucket, personId, input, requestId, options) {
-    const member = { personId, access: input.access, exactLocations: input.exactLocations };
-    validMember(member);
+    const member = validMember({ personId, access: input.access, exactLocations: input.exactLocations });
     return editOneMember(actor, bucket, (members) => [
       ...members.filter((m) => m.personId !== personId),
       stamp(actor, member),
@@ -583,7 +616,7 @@ export function makeApi({ store, activity, masterKey, publicEndpoint, lastActive
       const old = was.get(id);
       const target = store.person(id) ?? { id, name: null };
       if (!old) logChange(actor, requestId, 'added', target, { ...context, after: membership(m) });
-      else if (old.access !== m.access || !!old.exactLocations !== !!m.exactLocations) {
+      else if (old.access.join() !== m.access.join() || !!old.exactLocations !== !!m.exactLocations) {
         logChange(actor, requestId, 'changed', target, {
           ...context, before: membership(old), after: membership(m),
         });

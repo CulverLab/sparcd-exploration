@@ -7,7 +7,30 @@
 // `?versioning` all land there). `decide` then matches the operation and key
 // against the contract's table. No match is a deny.
 
-export const LEVELS = { look: 1, identify: 2, upload: 3, run: 4 };
+/** Canonical order. A membership's `access` is a non-empty subset of these. */
+export const PERMISSIONS = ['look', 'identify', 'upload', 'run'];
+
+// Before schema 2 a membership held one level, and each level included the
+// ones below it.
+const LEGACY_LEVEL = {
+  look: ['look'],
+  identify: ['look', 'identify'],
+  upload: ['look', 'identify', 'upload'],
+  run: ['look', 'identify', 'upload', 'run'],
+};
+
+/**
+ * The canonical set: known names only, no duplicates, in PERMISSIONS order,
+ * with `look` added wherever `identify` or `run` is present. A legacy string
+ * level expands to the set it used to include.
+ */
+export function normalizeAccess(value) {
+  const given = typeof value === 'string' ? (LEGACY_LEVEL[value] ?? []) : value;
+  if (!Array.isArray(given)) return [];
+  const has = new Set(given);
+  if (has.has('identify') || has.has('run')) has.add('look');
+  return PERMISSIONS.filter((p) => has.has(p));
+}
 
 // Query keys that belong to an operation we serve. Anything else makes the
 // request unclassifiable, which is a deny.
@@ -130,6 +153,40 @@ export function runDocumentKey(key, uuid) {
     .test(key);
 }
 
+// The files the Uploader writes at the top of an upload folder, and reads back
+// when a resumed run finds one already there (apps/sparcd-uploader/src/lib/upload.ts,
+// writeMetadata).
+const UPLOAD_METADATA = '(deployments\\.csv|media\\.csv|observations\\.csv|UploadMeta\\.json|UploadComplete\\.json)';
+
+/**
+ * The reads `upload` carries without `look`: what the Uploader needs to offer
+ * the collection, pick a location and finish or resume a run, and nothing that
+ * enumerates the collection's uploads or opens a media file.
+ *   GetObject/HeadObject collection.json — the collection picker
+ *     (packages/s3-safe/src/index.ts, listCollections)
+ *   GetObject/HeadObject locations.json — the location list
+ *     (apps/sparcd-uploader/src/lib/s3.ts, fetchLocations)
+ *   HeadObject under Uploads/ — size and sha256 check of a blob on resume and
+ *     in the final review (apps/sparcd-uploader/src/lib/upload.ts)
+ *   GetObject of the five metadata files directly in one upload folder — the
+ *     byte comparison after a 412 on resume
+ *   ListObjectsV2 with a prefix inside one upload folder — the final review
+ */
+export function uploaderReadAllowed({ op, key, prefix, uuid }) {
+  const u = escapeRe(uuid);
+  if (op === 'HeadObject' || op === 'GetObject') {
+    if (new RegExp(`^Collections/${u}/(collection|locations)\\.json$`).test(key)) return true;
+    if (op === 'HeadObject') return uploadsKey(key, uuid) && safeSegments(key);
+    return new RegExp(`^Collections/${u}/Uploads/${SEG}/${UPLOAD_METADATA}$`).test(key);
+  }
+  if (op === 'ListObjectsV2') {
+    return new RegExp(`^Collections/${u}/Uploads/${SEG}/`).test(prefix ?? '');
+  }
+  return false;
+}
+
+const safeSegments = (key) => key.split('/').every((s) => s !== '.' && s !== '..');
+
 const METADATA_LEAVES = new Set([
   'deployments.csv', 'media.csv', 'observations.csv',
   'UploadMeta.json', 'UploadComplete.json', 'manifest.json',
@@ -147,11 +204,12 @@ function escapeRe(s) {
 
 /**
  * @param person   { admin, status }
- * @param context  { op, key, bucket, isSettings, uuid, level }
- *                 `level` is the person's access on this collection, or null.
+ * @param context  { op, key, prefix, bucket, isSettings, uuid, access }
+ *                 `access` is the person's permission set on this collection,
+ *                 empty or null without a membership. `prefix` is a listing's.
  * @returns { allow: boolean, reason?: string }
  */
-export function decide(person, { op, key, isSettings, uuid, level }) {
+export function decide(person, { op, key, prefix, isSettings, uuid, access }) {
   if (!op) return deny('unknown operation');
   if (person.status !== 'active') return deny(`person is ${person.status}`);
 
@@ -176,28 +234,32 @@ export function decide(person, { op, key, isSettings, uuid, level }) {
   }
 
   if (person.admin) return { allow: true };
-  if (!level) return deny('no membership on this collection');
-  const rank = LEVELS[level];
-  if (!rank) return deny('unknown access level');
+  const has = new Set(access ?? []);
+  if (has.size === 0) return deny('no membership on this collection');
+  const held = [...has].join(',');
 
-  if (LIST_OPS.has(op) || READ_OPS.has(op)) return { allow: true };
+  if (LIST_OPS.has(op) || READ_OPS.has(op)) {
+    if (has.has('look')) return { allow: true };
+    if (has.has('upload') && uploaderReadAllowed({ op, key, prefix, uuid })) return { allow: true };
+    return deny(`${held} may not read ${key || prefix || 'this collection'}`);
+  }
 
   if (op === 'PutObject') {
-    if (rank >= LEVELS.run && runDocumentKey(key, uuid)) return { allow: true };
-    if (rank >= LEVELS.upload && uploadsKey(key, uuid)) return { allow: true };
-    if (rank >= LEVELS.identify && taggerWriteKey(key, uuid)) return { allow: true };
-    return deny(`${level} may not write ${key}`);
+    if (has.has('run') && runDocumentKey(key, uuid)) return { allow: true };
+    if (has.has('upload') && uploadsKey(key, uuid)) return { allow: true };
+    if (has.has('identify') && taggerWriteKey(key, uuid)) return { allow: true };
+    return deny(`${held} may not write ${key}`);
   }
 
   if (MULTIPART_OPS.has(op)) {
     if (op === 'ListMultipartUploads') return deny('bucket-wide multipart listing is not served');
-    if (rank >= LEVELS.upload && uploadsKey(key, uuid)) return { allow: true };
-    return deny(`${level} may not upload to ${key}`);
+    if (has.has('upload') && uploadsKey(key, uuid)) return { allow: true };
+    return deny(`${held} may not upload to ${key}`);
   }
 
   if (op === 'DeleteObject') {
-    if (rank >= LEVELS.run && uploadsKey(key, uuid)) return { allow: true };
-    return deny(`${level} may not delete ${key}`);
+    if (has.has('run') && uploadsKey(key, uuid)) return { allow: true };
+    return deny(`${held} may not delete ${key}`);
   }
 
   return deny('unknown operation');

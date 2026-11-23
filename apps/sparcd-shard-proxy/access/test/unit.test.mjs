@@ -13,6 +13,7 @@ import {
 } from '../namespace.mjs';
 import {
   classify, decide, eventKind, taggerWriteKey, uploadsKey, runDocumentKey, buildListing,
+  normalizeAccess,
 } from '../rules.mjs';
 import {
   loadMasterKey, wrapSecret, unwrapSecret, newAccessKeyId, newSecretKey,
@@ -303,9 +304,12 @@ describe('the access table', () => {
   const uuid = '8dbd9c43-5c3d-411d-8778-617d4693c69b';
   const base = `Collections/${uuid}`;
   const admin = { status: 'active', admin: true, id: 'a' };
-  const person = (level) => ({ status: 'active', admin: false, id: 'p', level });
-  const at = (op, key, level, who = person(level)) =>
-    decide(who, { op, key, isSettings: false, uuid, level });
+  const person = () => ({ status: 'active', admin: false, id: 'p' });
+  // A level name reads as the set that level used to mean, so these tables
+  // also pin what a legacy member keeps.
+  const at = (op, key, access, prefix = '') => decide(person(), {
+    op, key, prefix, isSettings: false, uuid, access: normalizeAccess(access),
+  });
 
   const media = `${base}/Uploads/2026.01.01.00.00.00_jo/img/a.jpg`;
   const taggerCsv = `${base}/Uploads/2026.01.01.00.00.00_jo/observations.csv`;
@@ -350,7 +354,7 @@ describe('the access table', () => {
       `Settings/${upload}/deployments.csv`,
     ]) assert.equal(at('PutObject', key, 'identify').allow, false, key);
     assert.equal(
-      decide(person('identify'), { op: 'PutObject', key: 'Settings/deployments.csv', isSettings: true, uuid, level: 'identify' }).allow,
+      decide(person(), { op: 'PutObject', key: 'Settings/deployments.csv', isSettings: true, uuid, access: ['look', 'identify'] }).allow,
       false, 'settings bucket',
     );
   });
@@ -425,8 +429,89 @@ describe('the access table', () => {
     assert.equal(at('PutObject', `${base}/other.json`, 'run').allow, false);
   });
 
+  test('upload without look sends images in and reads only what finishing needs', () => {
+    const upload = `${base}/Uploads/2026.01.01.00.00.00_jo`;
+    const only = ['upload'];
+    assert.equal(at('PutObject', media, only).allow, true);
+    for (const op of ['CreateMultipartUpload', 'UploadPart', 'CompleteMultipartUpload',
+      'AbortMultipartUpload', 'ListParts']) {
+      assert.equal(at(op, media, only).allow, true, op);
+    }
+    // What the Uploader reads to offer the collection, pick a location, and
+    // check or resume a run.
+    for (const [op, key] of [
+      ['GetObject', `${base}/collection.json`],
+      ['HeadObject', `${base}/collection.json`],
+      ['GetObject', `${base}/locations.json`],
+      ['HeadObject', media],
+      ['HeadObject', `${upload}/UploadComplete.json`],
+      ...['deployments.csv', 'media.csv', 'observations.csv', 'UploadMeta.json', 'UploadComplete.json']
+        .map((leaf) => ['GetObject', `${upload}/${leaf}`]),
+    ]) assert.equal(at(op, key, only).allow, true, `${op} ${key}`);
+    assert.equal(at('ListObjectsV2', '', only, `${upload}/`).allow, true);
+    assert.equal(at('ListObjectsV2', '', only, `${upload}/img/`).allow, true);
+
+    // Nothing that opens an image, enumerates uploads, or reads elsewhere.
+    for (const [op, key] of [
+      ['GetObject', media],
+      ['GetObject', `${base}/species.json`],
+      ['GetObject', `${base}/members.json`],
+      ['GetObject', `${upload}/.sparcd-tagger-snapshots/jo/2026/media.csv`],
+      ['GetObject', `${upload}/img/media.csv`],
+      ['GetObject', `${base}/Uploads/../collection.json`],
+      ['GetObject', `${base}/Uploads/./media.csv`],
+      ['HeadObject', `${base}/species.json`],
+      ['HeadObject', `${base}/Uploads/../species.json`],
+      ['GetObject', `Collections/00000000-0000-0000-0000-000000000000/collection.json`],
+      ['HeadBucket', ''],
+      ['GetBucketLocation', ''],
+    ]) assert.equal(at(op, key, only).allow, false, `${op} ${key}`);
+    for (const prefix of ['', 'Collections/', `${base}/`, `${base}/Uploads/`, `${base}/Uploads/2026`,
+      `${base}/Uploads/../`, `${base}/Uploads//`, `${base}/collection.json`]) {
+      assert.equal(at('ListObjectsV2', '', only, prefix).allow, false, prefix);
+    }
+    assert.equal(at('PutObject', `${upload}/observations.csv`, only).allow, true);
+    assert.equal(at('PutObject', `${base}/species.json`, only).allow, false);
+    assert.equal(at('DeleteObject', media, only).allow, false);
+  });
+
+  test('identify and run each bring look with them', () => {
+    assert.deepEqual(normalizeAccess(['identify']), ['look', 'identify']);
+    assert.deepEqual(normalizeAccess(['run']), ['look', 'run']);
+    assert.deepEqual(normalizeAccess(['upload']), ['upload']);
+    assert.deepEqual(normalizeAccess(['run', 'upload', 'run', 'identify']), ['look', 'identify', 'upload', 'run']);
+    assert.equal(at('GetObject', media, ['identify']).allow, true);
+    assert.equal(at('ListObjectsV2', '', ['run']).allow, true);
+  });
+
+  test('run without upload removes uploads but cannot add to them', () => {
+    const runner = ['look', 'run'];
+    assert.equal(at('DeleteObject', media, runner).allow, true);
+    assert.equal(at('PutObject', `${base}/species.json`, runner).allow, true);
+    assert.equal(at('PutObject', media, runner).allow, false);
+    assert.equal(at('CreateMultipartUpload', media, runner).allow, false);
+    assert.equal(at('PutObject', `${base}/Uploads/s/observations.csv`, runner).allow, false);
+  });
+
+  test('upload and identify without run cannot delete or touch the collection documents', () => {
+    const both = ['look', 'identify', 'upload'];
+    assert.equal(at('DeleteObject', media, both).allow, false);
+    assert.equal(at('PutObject', `${base}/locations.json`, both).allow, false);
+  });
+
+  test('legacy levels expand to the set they used to include', () => {
+    assert.deepEqual(normalizeAccess('look'), ['look']);
+    assert.deepEqual(normalizeAccess('identify'), ['look', 'identify']);
+    assert.deepEqual(normalizeAccess('upload'), ['look', 'identify', 'upload']);
+    assert.deepEqual(normalizeAccess('run'), ['look', 'identify', 'upload', 'run']);
+    assert.deepEqual(normalizeAccess('owner'), []);
+    assert.deepEqual(normalizeAccess(['look', 'owner']), ['look']);
+    assert.deepEqual(normalizeAccess(undefined), []);
+  });
+
   test('no membership is a deny, and so is a non-active person', () => {
     assert.equal(at('GetObject', media, null).allow, false);
+    assert.equal(at('GetObject', media, []).allow, false);
     assert.equal(decide({ status: 'paused', admin: true }, { op: 'GetObject', key: media }).allow, false);
     assert.equal(decide({ status: 'invited', admin: false }, { op: 'GetObject', key: media }).allow, false);
   });
@@ -437,14 +522,14 @@ describe('the access table', () => {
 
   test('invariant 4: the access tree is off limits to everyone', () => {
     const s = (op, key, who) => decide(who, { op, key, isSettings: true });
-    for (const who of [admin, person('run')]) {
+    for (const who of [admin, person()]) {
       assert.equal(s('GetObject', 'Settings/access/people/x.json', who).allow, false);
       assert.equal(s('PutObject', 'Settings/access/generation.json', who).allow, false);
       assert.equal(s('PutObject', 'Settings/activity/2026-01-01/x.ndjson', who).allow, false);
       assert.equal(s('DeleteObject', 'Settings/access/people/x.json', who).allow, false);
     }
     assert.equal(s('GetObject', 'Settings/activity/2026-01-01/x.ndjson', admin).allow, true);
-    assert.equal(s('GetObject', 'Settings/activity/2026-01-01/x.ndjson', person('run')).allow, false);
+    assert.equal(s('GetObject', 'Settings/activity/2026-01-01/x.ndjson', person()).allow, false);
     assert.equal(
       decide(admin, { op: 'PutObject', key: `${base}/members.json`, isSettings: false, uuid }).allow,
       false,
@@ -456,7 +541,7 @@ describe('the access table', () => {
   });
 
   test('the settings bucket is readable under Settings/ by anyone active', () => {
-    const who = person('look');
+    const who = person();
     assert.equal(decide(who, { op: 'GetObject', key: 'Settings/locations.json', isSettings: true }).allow, true);
     assert.equal(decide(who, { op: 'GetObject', key: 'elsewhere.json', isSettings: true }).allow, false);
     assert.equal(decide(who, { op: 'PutObject', key: 'Settings/locations.json', isSettings: true }).allow, false);
