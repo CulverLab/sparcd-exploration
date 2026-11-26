@@ -493,7 +493,7 @@ export function Tag() {
   const imageFilterSummary = [
     imageFilter.text && `“${imageFilter.text}”`,
     imageFilter.scope !== 'all' && { filename: 'Filename', species: 'Species', date: 'Date' }[imageFilter.scope],
-    imageFilter.tagged !== 'all' && ({ tagged: 'Tagged only', untagged: 'Untagged only', questionable: 'Questionable only', 'not-questionable': 'Not questionable only' }[imageFilter.tagged]),
+    imageFilter.tagged !== 'all' && ({ tagged: 'Tagged only', untagged: 'Untagged only', questionable: 'Need expert only', 'not-questionable': 'No expert needed only' }[imageFilter.tagged]),
     ...(['year', 'month', 'day', 'hour', 'minute'] as const).map((part) =>
       imageFilter[part] && `${part}: ${imageFilter[part]}`),
   ].filter(Boolean).join(' · ');
@@ -1483,8 +1483,8 @@ export function Tag() {
               type="button"
               disabled={!identityReady}
               aria-pressed={!!eff?.questionable}
-              aria-label={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
-              title={eff?.questionable ? 'Clear questionable flag' : 'Mark image questionable'}
+              aria-label={eff?.questionable ? 'Need expert: clear request for expert opinion' : 'Need expert: mark image for expert opinion'}
+              title={eff?.questionable ? 'Need expert: clear request for expert opinion' : 'Need expert: mark image for expert opinion'}
               onClick={() => {
                 const targets = targetsOf();
                 if (targets.length) setQuestionableManyFn(ctx, targets, !eff?.questionable);
@@ -1493,7 +1493,7 @@ export function Tag() {
                 eff?.questionable ? 'border-warn text-warn' : 'border-rule text-inkMute hover:text-ink'
               }`}
             >
-              {eff?.questionable ? 'Questionable' : 'Mark questionable'}
+              Need expert
             </button>
           )}
         </div>
