@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useId, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useId, type ReactNode, type RefObject } from 'react';
 import { create } from 'zustand';
 import { useQueryClient } from '@tanstack/react-query';
 import tzlookup from 'tz-lookup';
@@ -20,7 +20,7 @@ import { AutomaticSaver, SaveConflict, type SaveView, type RemoteView } from '..
 import { hasUnfinishedEditor, useEditorState } from '../lib/editorState';
 import { draftRevisionOf } from '../lib/draftRevision';
 
-const initial: SaveView = { phase: 'loading', message: 'Opening automatic saving…', pending: false, undoReason: 'Undo is unavailable while opening save recovery.', canEdit: false };
+const initial: SaveView = { phase: 'loading', message: 'Opening automatic saving…', pending: false, hasUndo: false, undoReason: 'Undo is unavailable while opening save recovery.', canEdit: false };
 export const useAutomaticSave = create<{ view: SaveView; saver: AutomaticSaver | null; repair: boolean; repairError?: string; setupRevision: number; setupCheckTarget?: string }>(() => ({ view: initial, saver: null, repair: false, setupRevision: 0 }));
 class RecoveryOwnershipError extends Error {}
 export function retryAutomaticSetup(target: { scope: string; collectionKey: string; prefix: string }): void {
@@ -164,13 +164,14 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         const pending = !!record && !!(record.actions.length || record.flight || record.adoptionRequired || record.recoveryBranches?.length);
         const error = images.error || deployment.error;
-        useAutomaticSave.setState({ view: { ...initial, pending, phase: error ? 'failed' : 'loading',
+        useAutomaticSave.setState({ view: { ...initial, pending, hasUndo: !!record?.undo, phase: error ? 'failed' : 'loading',
           message: error ? `${pending ? 'Save recovery blocked' : 'Upload data could not be read'} — ${String(error)}. Pending work is retained. Retry or repair credentials for this account.` : initial.message } });
       }).catch(error => { if (!cancelled) useAutomaticSave.setState({ view: { ...initial, phase: 'failed', pending: true, message: `Could not read local recovery: ${String(error)}. Keep this tab open and retry.` } }); });
       return () => { cancelled = true; removeEdits(); removeNavigation(); };
     }
     let cancelled = false;
     let saver: AutomaticSaver | undefined;
+    let knownHasUndo = false;
     let removeEdits: (() => void) | undefined;
     let removeNavigation: (() => void) | undefined;
     const { bucket } = parseCollectionKey(collectionKey);
@@ -198,9 +199,12 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
       return patch;
     };
     void (async () => {
+      const existing = await db.automatic.get(id);
+      if (cancelled) return;
+      knownHasUndo = !!existing?.undo;
+      useAutomaticSave.setState({ view: { ...initial, pending: true, hasUndo: knownHasUndo } });
       await useDraftStore.getState().loadUpload(ctx);
       if (cancelled) return;
-      const existing = await db.automatic.get(id);
       const others = await db.automatic.where('[bucket+uploadPrefix]').equals([bucket, prefix]).toArray();
       if (!existing?.flight && others.some(r => r.id !== id && (r.actions.length || r.flight || r.adoptionRequired || r.recoveryBranches?.length))) throw new RecoveryOwnershipError('Pending recovery for this upload belongs to another account or destination. Reconnect with that account to recover it.');
       const legacyJournal = await loadSyncJournal(bucket, prefix);
@@ -391,7 +395,7 @@ export function AutomaticSaveProvider({ children }: { children: ReactNode }) {
         removeNavigation = undefined;
         saver?.dispose();
         const ownership = error instanceof RecoveryOwnershipError;
-        useAutomaticSave.setState({ saver: null, view: { ...initial,
+        useAutomaticSave.setState({ saver: null, view: { ...initial, hasUndo: knownHasUndo,
           phase: ownership ? 'recovery' : 'failed', setupFailed: !ownership, message: String(error), pending: false } });
       }
     });
@@ -443,12 +447,13 @@ export function AutomaticSaveStatus() {
   const { view, saver, repair, repairError } = useAutomaticSave();
   const unfinished = useEditorState(s => Object.keys(s.unfinished).length > 0);
   const cfg = useStore(s => s.s3Config);
-  const actor = useStore(s => s.taggerUser);
-  if (!useStore(s => s.selectedUploadPrefix)) return null;
+  const prefix = useStore(s => s.selectedUploadPrefix);
+  const section = useStore(s => s.section);
+  const statusRef = useRef<HTMLSpanElement>(null);
+  if (!prefix || section === 'browse') return null;
   return <div className="border-b border-rule px-4 py-2 text-[13px] flex flex-wrap items-center gap-3" data-testid="automatic-save">
-    <span role="status" aria-live="polite" aria-atomic="true">{unfinished && view.phase === 'saved' ? 'Uncommitted input — finish editing to save.' : view.message}</span>
-    <button type="button" onClick={() => void saver?.undo()} disabled={!!view.undoReason || unfinished || !actor.trim()} aria-describedby="automatic-undo-help" className="min-h-11 underline disabled:opacity-50">Undo latest action</button>
-    <span id="automatic-undo-help">{!actor.trim() ? 'Set the Tagger identity before Undo.' : unfinished ? 'Finish the active input before Undo.' : view.undoReason}</span>
+    <span ref={statusRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true">{unfinished && view.phase === 'saved' ? 'Uncommitted input — finish editing to save.' : view.message}</span>
+    <UndoControls statusRef={statusRef} />
     {['failed', 'pending'].includes(view.phase) && <>
       <button type="button" onClick={() => void retryAutomaticSave()} className="min-h-11 underline">Retry save</button>
       <button type="button" onClick={() => useAutomaticSave.setState({ repair: !repair })} className="min-h-11 underline">Repair credentials for this account</button>
@@ -507,16 +512,43 @@ function ConflictReview() {
   </div>;
 }
 
-export function FocusSaveControls({ onReview }: { onReview: () => void }) {
+/** Both Undo presentations share visibility and keyboard-focus behavior. */
+function UndoControls({ statusRef, compact = false }: { statusRef: RefObject<HTMLSpanElement>; compact?: boolean }) {
   const { saver, view } = useAutomaticSave();
   const actor = useStore(s => s.taggerUser);
-  const id = useId();
   const unfinished = useEditorState(s => Object.keys(s.unfinished).length > 0);
+  const id = useId();
+  const focused = useRef(false);
+  useLayoutEffect(() => {
+    if (!view.hasUndo) {
+      // Disabling the button during Undo can blur it before it disappears.
+      // Do not override focus if the user has moved to another control.
+      if (focused.current && document.activeElement === document.body) statusRef.current?.focus();
+      focused.current = false;
+    }
+  }, [view.hasUndo, statusRef]);
   const reason = !actor.trim() ? 'Set the Tagger identity before Undo.' : unfinished ? 'Finish the active input before Undo.' : view.undoReason;
-  return <div className="flex items-center gap-1 text-[12px] min-w-0">
-    <span role="status" aria-live="polite" className="max-w-24 truncate" title={view.message}>{unfinished && view.phase === 'saved' ? 'Uncommitted input — finish editing to save.' : view.message}</span>
-    <button type="button" disabled={!!reason} aria-describedby={id} title={reason || 'Undo the latest completed action'} aria-label="Undo latest action" className="min-h-11 min-w-11 underline disabled:opacity-40" onClick={() => void saver?.undo()}>Undo</button>
-    <span id={id} className="sr-only">{reason}</span>
+  if (!view.hasUndo) return null;
+  return <>
+    <button type="button" onFocus={() => { focused.current = true; }}
+      onBlur={event => { if (event.relatedTarget) focused.current = false; }}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ' && !event.shiftKey) event.stopPropagation(); }}
+      onClick={() => void saver?.undo()} disabled={!!reason} aria-describedby={id} aria-label="Undo latest action"
+      title={compact ? reason || 'Undo the latest completed action' : undefined}
+      className={`min-h-11 underline disabled:opacity-50 ${compact ? 'min-w-11' : ''}`}>
+      {compact ? 'Undo' : 'Undo latest action'}
+    </button>
+    <span id={id} data-testid="automatic-undo-help" className={compact ? 'sr-only' : undefined}>{reason}</span>
+  </>;
+}
+
+export function FocusSaveControls({ onReview }: { onReview: () => void }) {
+  const { view } = useAutomaticSave();
+  const statusRef = useRef<HTMLSpanElement>(null);
+  const unfinished = useEditorState(s => Object.keys(s.unfinished).length > 0);
+  return <div data-testid="focus-save-controls" className="flex items-center gap-1 text-[12px] min-w-0">
+    <span ref={statusRef} tabIndex={-1} role="status" aria-live="polite" className="max-w-24 truncate" title={view.message}>{unfinished && view.phase === 'saved' ? 'Uncommitted input — finish editing to save.' : view.message}</span>
+    <UndoControls compact statusRef={statusRef} />
     {['failed', 'conflict', 'pending', 'recovery'].includes(view.phase) && <button type="button" aria-label="Review save problem" className="min-h-11 min-w-11 underline" onClick={onReview}>!</button>}
   </div>;
 }

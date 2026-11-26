@@ -44,7 +44,8 @@ Then('the current upload remains active until saving succeeds', async ({ page })
 Then('the requested upload opens after all writes commit', async ({ page }) => { await expect(gridCell(page, 'FOX001.JPG')).toBeVisible(); });
 When('the held save is released with a permission failure', async ({ scratch }) => { scratch.failHeldSave = true; (scratch.saveRelease as () => void)(); });
 Then('the failed upload remains active with retained work and Retry', async ({ page }) => {
-  await expect(status(page)).toContainText('Save failed'); await sectionTab(page, 'Tag').click();
+  await expect(status(page)).toHaveCount(0); await sectionTab(page, 'Tag').click();
+  await expect(status(page)).toContainText('Save failed');
   await expect(page.getByTestId('tag-workspace')).toHaveAttribute('data-upload-prefix', PREFIX_A);
   await expect(status(page).getByRole('button', { name: 'Retry save' })).toBeEnabled();
   expect((await readStore(page, 'automatic') as { actions: unknown[] }[])[0].actions).toHaveLength(1);

@@ -8,7 +8,7 @@ const ready = { fetching: false, failed: false, ready: true };
 const waiting = { fetching: true, failed: false, ready: false };
 const failed = { fetching: false, failed: true, ready: false };
 const pending: AutomaticRecord = { id: 'one', bucket: 'bucket', scope: 'account', collectionKey: 'collection', uploadPrefix: 'one/', actions: [{ id: 'edit', user: 'person', at: '', changes: [] }], undo: null };
-const live = (phase: SaveView['phase'], extra = {}): SaveView => ({ phase, pending: true, message: '', undoReason: '', canEdit: false, ...extra });
+const live = (phase: SaveView['phase'], extra = {}): SaveView => ({ phase, pending: true, message: '', hasUndo: false, undoReason: '', canEdit: false, ...extra });
 beforeEach(async () => { await db.open(); await Promise.all([db.automatic.clear(), db.drafts.clear(), db.uploads.clear(), db.syncJournals.clear()]); });
 
 describe('Browse save status', () => {

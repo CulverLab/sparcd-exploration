@@ -5,7 +5,7 @@ import type { TagImage } from './workspace';
 import type { Deployment } from '@sparcd/camtrap';
 
 export type SavePhase = 'loading' | 'saved' | 'saving' | 'pending' | 'failed' | 'conflict' | 'recovery';
-export type SaveView = { phase: SavePhase; message: string; pending: boolean; undoReason: string; canEdit: boolean; failure?: 'repair' | 'retry'; retrying?: boolean; setupFailed?: boolean; updatedAt?: number };
+export type SaveView = { phase: SavePhase; message: string; pending: boolean; hasUndo: boolean; undoReason: string; canEdit: boolean; failure?: 'repair' | 'retry'; retrying?: boolean; setupFailed?: boolean; updatedAt?: number };
 export type RemoteView = { images: TagImage[]; location: Deployment | null; writtenFields?: import('./automaticModel').ValueChange['field'][]; canonical?: import('./sync').CanonicalState };
 export class SaveConflict extends Error {}
 export type SaveServices = {
@@ -22,7 +22,7 @@ export type SaveServices = {
  * immediately, with its own durable Undo boundary, before a write can start. */
 export class AutomaticSaver {
   record: AutomaticRecord;
-  view: SaveView = { phase: 'loading', message: 'Opening save recovery…', pending: false, undoReason: 'Opening upload', canEdit: false };
+  view: SaveView = { phase: 'loading', message: 'Opening save recovery…', pending: false, hasUndo: false, undoReason: 'Opening upload', canEdit: false };
   private version = 0;
   private readonly branchId = crypto.randomUUID();
   private writes: Promise<void> = Promise.resolve();
@@ -59,7 +59,7 @@ export class AutomaticSaver {
     const pending = !!this.record.actions.length || !!this.record.flight || !!this.record.adoptionRequired || !!this.record.recoveryBranches?.length || !!this.persistenceError;
     const reason = !this.online ? 'Undo requires an online connection.' : phase !== 'saved' || pending
       ? 'Undo is unavailable while saving or recovering pending work.' : this.record.undoReason ?? (!this.record.undo ? 'No completed action to undo for this account and upload.' : '');
-    this.view = { phase, message, pending, updatedAt: Date.now(), undoReason: reason, failure: phase === 'failed' ? (this.record.saveFailure === 'repair' ? 'repair' : 'retry') : undefined, retrying: this.retrying && phase === 'saving', canEdit: this.online && !this.committing && !['loading', 'pending', 'conflict', 'recovery', 'failed'].includes(phase) && !this.persistenceError && !this.undoing };
+    this.view = { phase, message, pending, updatedAt: Date.now(), hasUndo: !!this.record.undo, undoReason: reason, failure: phase === 'failed' ? (this.record.saveFailure === 'repair' ? 'repair' : 'retry') : undefined, retrying: this.retrying && phase === 'saving', canEdit: this.online && !this.committing && !['loading', 'pending', 'conflict', 'recovery', 'failed'].includes(phase) && !this.persistenceError && !this.undoing };
     if (!this.disposed) this.services.changed(this.view);
   }
   private persist(clearJournal = false, drafts: import('./db').DraftRecord[] = []): Promise<void> {

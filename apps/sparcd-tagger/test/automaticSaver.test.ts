@@ -27,6 +27,35 @@ beforeEach(async () => {
 afterEach(() => { savers.forEach(s => s.dispose()); vi.useRealTimers(); });
 
 describe('durable automatic saving', () => {
+  it('distinguishes absent Undo from temporary unavailability and clears it only after a durable reversal', async () => {
+    const s = services(), saver = await start(s);
+    expect(saver.view.hasUndo).toBe(false);
+    saver.setOnline(false);
+    expect(saver.view.hasUndo).toBe(false);
+    saver.setOnline(true);
+    saver.accept(action('first'));
+    expect(saver.view.hasUndo).toBe(true);
+    expect(saver.view.undoReason).not.toBe('');
+    await saver.flush();
+    expect(saver.view).toMatchObject({ hasUndo: true, undoReason: '' });
+    saver.setOnline(false);
+    expect(saver.view).toMatchObject({ hasUndo: true, undoReason: 'Undo requires an online connection.' });
+    saver.setOnline(true); await saver.flush();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    s.save = vi.fn(async () => { entered(); await gate; return remote; });
+    const undo = saver.undo(); await writing;
+    expect(saver.view).toMatchObject({ hasUndo: true, phase: 'saving' });
+    release(); await undo;
+    expect(saver.view).toMatchObject({ hasUndo: false, phase: 'saved' });
+    saver.dispose();
+    const reopened = await start();
+    expect(reopened.view.hasUndo).toBe(false);
+    reopened.accept(action('new'));
+    await reopened.flush();
+    expect(reopened.view).toMatchObject({ hasUndo: true, undoReason: '' });
+  });
   it('persists action and Undo boundaries before the debounce, and announces Saving immediately', async () => {
     const s = services(), saver = await start(s);
     saver.accept(action('first')); saver.accept(action('second'));
