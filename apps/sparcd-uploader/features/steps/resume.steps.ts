@@ -645,20 +645,175 @@ Then('no data is lost', async ({ app }) => {
 
 // --- discarding ------------------------------------------------------------
 
+async function watchHistoryRemoval(app: App): Promise<void> {
+  app.notes.storedKeys = app.s3.writtenKeys();
+  app.notes.historyDeletionRequests = [] as string[];
+  app.page.on('request', (request) => {
+    if (request.method() === 'DELETE' || new URL(request.url()).searchParams.has('delete')) {
+      (app.notes.historyDeletionRequests as string[]).push(request.url());
+    }
+  });
+}
+
+Given('an unfinished upload is awaiting History removal', async ({ app }) => {
+  await producePartialRun(app);
+  await watchHistoryRemoval(app);
+  app.notes.savedRecovery = {
+    batches: await app.readBatchRecords(),
+    files: await app.readFileRecords(),
+    bundles: await app.readBundleRecords(),
+  };
+  await app.gotoSection('History');
+  await app.page.getByRole('button', { name: 'Remove from history', exact: true }).click();
+  const dialog = app.page.getByRole('dialog', { name: 'Remove saved upload progress?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('You won’t be able to resume this upload from History.');
+  await expect(dialog).toContainText('Files already uploaded will remain on the server.');
+  await expect(dialog.getByRole('button', { name: 'Keep upload progress' })).toBeFocused();
+});
+
+Then('History explains that removal leaves original and server files unchanged', async ({ app }) => {
+  await expect(app.page.locator('#history-removal-guidance')).toHaveText(
+    'Removes the saved upload record from this browser. Files on the server and your computer are unchanged.',
+  );
+});
+
+When('removal is cancelled with the keyboard', async ({ app }) => {
+  await app.page.keyboard.press('Enter');
+  await expect(app.page.getByRole('dialog')).not.toBeVisible();
+  await expect(app.page.getByRole('button', { name: 'Remove from history', exact: true })).toBeFocused();
+  await app.page.keyboard.press('Enter');
+  await expect(app.page.getByRole('dialog')).toBeVisible();
+  await app.page.keyboard.press('Escape');
+  await expect(app.page.getByRole('dialog')).not.toBeVisible();
+});
+
+When('History removal is confirmed with the keyboard', async ({ app }) => {
+  const dialog = app.page.getByRole('dialog');
+  await app.page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Remove from history', exact: true })).toBeFocused();
+  await app.page.keyboard.press('Enter');
+});
+
+Then('the empty History message has focus', async ({ app }) => {
+  await expect(app.page.getByText('No uploads yet', { exact: true })).toBeFocused();
+});
+
+When('the confirmation is invoked as {string} starts', async ({ app }, activity: string) => {
+  const confirm = app.page.getByRole('dialog').getByRole('button', { name: 'Remove from history', exact: true });
+  await confirm.evaluate(async (button, activity) => {
+    const path = '/sparcd-exploration/uploader/src/store.ts';
+    const { useStore } = await import(/* @vite-ignore */ path);
+    const snapshot = useStore.getState().activeSnap;
+    // Invoke before React renders the disabled control, exercising the handler's
+    // current-state guard rather than just the button's disabled attribute.
+    if (activity === 'resume preparation') {
+      useStore.getState().beginHistoryResumePreparation(snapshot.sessionId);
+    } else {
+      useStore.setState({ activeSnap: { ...snapshot, phase: 'blobs' } });
+    }
+    (button as HTMLButtonElement).click();
+  }, activity);
+  await expect(app.page.getByRole('dialog')).not.toBeVisible();
+});
+
+Then('the live upload recovery records are unchanged', async ({ app }) => {
+  await expect(app.page.getByRole('button', { name: 'Remove from history', exact: true })).toBeDisabled();
+  expect({ batches: await app.readBatchRecords(), files: await app.readFileRecords(), bundles: await app.readBundleRecords() })
+    .toEqual(app.notes.savedRecovery);
+  expect(app.notes.historyDeletionRequests).toEqual([]);
+});
+
+Then('the saved upload progress is unchanged and can still be resumed', async ({ app }) => {
+  expect({ batches: await app.readBatchRecords(), files: await app.readFileRecords(), bundles: await app.readBundleRecords() })
+    .toEqual(app.notes.savedRecovery);
+  app.s3.putHooks.length = 0;
+  await resumeFromHistory(app);
+  await app.waitForRunPhase('done');
+});
+
+Given('a completed upload and an unrelated saved session are in History', async ({ app }) => {
+  await produceCompleteRun(app);
+  await watchHistoryRemoval(app);
+  const [batch] = await app.readBatchRecords();
+  const files = await app.readFileRecords();
+  const [bundle] = await app.readBundleRecords();
+  expect(bundle).toBeTruthy();
+  await app.page.evaluate(async ({ batch, files, bundle }) => {
+    const open = indexedDB.open('sparcd-uploader');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    try {
+      const tx = db.transaction(['batches', 'files', 'bundles'], 'readwrite');
+      tx.objectStore('batches').put({ ...batch, id: 'unrelated-session', completedAt: undefined });
+      for (const file of files) tx.objectStore('files').put({ ...file, id: `unrelated-${file.id}`, sessionId: 'unrelated-session' });
+      tx.objectStore('bundles').put({ ...bundle, sessionId: 'unrelated-session' });
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, { batch, files, bundle });
+  app.notes.unrelatedRecovery = {
+    batches: (await app.readBatchRecords()).filter((row) => row.id === 'unrelated-session'),
+    files: (await app.readFileRecords()).filter((row) => row.sessionId === 'unrelated-session'),
+    bundles: (await app.readBundleRecords()).filter((row) => row.sessionId === 'unrelated-session'),
+  };
+  await app.gotoSection('History');
+});
+
+When('the completed upload is removed from History', async ({ app }) => {
+  const row = app.page.getByRole('listitem').filter({ has: app.page.getByText('complete', { exact: true }) });
+  await row.getByRole('button', { name: 'Remove from history', exact: true }).click();
+  await expect(app.page.getByRole('dialog')).not.toBeVisible();
+  await expect.poll(async () => (await app.readBatchRecords()).length).toBe(1);
+});
+
+Then('only the unrelated session and its recovery records remain', async ({ app }) => {
+  expect({ batches: await app.readBatchRecords(), files: await app.readFileRecords(), bundles: await app.readBundleRecords() })
+    .toEqual(app.notes.unrelatedRecovery);
+  await expect(app.page.locator('#history-removal-guidance')).toBeFocused();
+});
+
+Then('the removal confirmation fits a narrow screen', async ({ app }) => {
+  await app.page.setViewportSize({ width: 320, height: 568 });
+  const dialog = app.page.getByRole('dialog');
+  for (const locator of [dialog, dialog.getByRole('button', { name: 'Keep upload progress' }), dialog.getByRole('button', { name: 'Remove from history', exact: true })]) {
+    const box = await locator.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(568);
+  }
+});
+
 When('an upload is discarded from History', async ({ app }) => {
   await producePartialRun(app);
   app.notes.storedKeys = app.s3.writtenKeys();
   await app.gotoSection('History');
-  await app.page.getByRole('button', { name: 'Discard' }).first().click();
+  await watchHistoryRemoval(app);
+  await app.page.getByRole('button', { name: 'Remove from history', exact: true }).first().click();
+  const dialog = app.page.getByRole('dialog', { name: 'Remove saved upload progress?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Files already uploaded will remain on the server.');
+  await dialog.getByRole('button', { name: 'Remove from history', exact: true }).click();
 });
 
 Then('its local record and file states are removed from this machine', async ({ app }) => {
   await expect(app.page.getByText('No uploads yet')).toBeVisible();
   expect(await app.readBatchRecords()).toHaveLength(0);
   expect(await app.readFileRecords()).toHaveLength(0);
+  expect(await app.readBundleRecords()).toHaveLength(0);
 });
 
 Then('nothing stored in the collection is touched', async ({ app }) => {
+  expect(app.notes.historyDeletionRequests ?? []).toEqual([]);
   for (const key of app.notes.storedKeys as string[]) {
     const [bucket, ...rest] = key.split('/');
     expect(app.s3.has(bucket, rest.join('/'))).toBe(true);
@@ -714,7 +869,7 @@ When('the user leaves History and returns while the resume is running', async ({
 
 Then('the resumed session cannot be resumed or discarded', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' }).first()).toBeDisabled();
-  await expect(app.page.getByRole('button', { name: 'Discard' }).first()).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Remove from history', exact: true }).first()).toBeDisabled();
   expect(await app.readBatchRecords()).toHaveLength(1);
 });
 
@@ -742,7 +897,7 @@ When('History is opened during the fresh upload', async ({ app }) => {
 
 Then('its live local session cannot be resumed or discarded', async ({ app }) => {
   await expect(app.page.getByRole('button', { name: 'Resume' })).toBeDisabled();
-  await expect(app.page.getByRole('button', { name: 'Discard' }).first()).toBeDisabled();
+  await expect(app.page.getByRole('button', { name: 'Remove from history', exact: true }).first()).toBeDisabled();
   expect(await app.readBatchRecords()).toHaveLength(1);
   await app.gotoSection('New upload');
   await app.page.getByRole('button', { name: 'Cancel' }).click();
