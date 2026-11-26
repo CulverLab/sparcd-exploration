@@ -2,8 +2,8 @@
 // Completed batches are a record; open batches (no completedAt) offer Resume —
 // which restores local file access (durable handle or reselect-and-reconcile)
 // and then hands the prepared session to the wizard's Upload step, which owns
-// the run UI. Discard drops the local session row only; it never touches remote
-// state.
+// the run UI. Removal drops the local session, file progress and bundle;
+// it never touches remote state.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OfflineBanner, useOnline } from '@sparcd/auth-ui';
@@ -106,6 +106,26 @@ export function History() {
 
   const [rows, setRows] = useState<Row[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<BatchRecord | null>(null);
+  const removalDialog = useRef<HTMLDialogElement>(null);
+  const removalTrigger = useRef<HTMLButtonElement | null>(null);
+  const removalFocusTarget = useRef<HTMLParagraphElement>(null);
+  const removedSessionToFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const sessionId = removedSessionToFocus.current;
+    if (sessionId && rows && !rows.some(({ batch }) => batch.id === sessionId)) {
+      removedSessionToFocus.current = null;
+      removalFocusTarget.current?.focus();
+    }
+  }, [rows]);
+  useEffect(() => {
+    if (pendingRemoval) removalDialog.current?.showModal();
+  }, [pendingRemoval]);
+  const closeRemoval = () => {
+    setPendingRemoval(null);
+    removalDialog.current?.close();
+    if (removalTrigger.current?.isConnected) removalTrigger.current.focus();
+  };
   const [problems, setProblems] = useState<ReconcileProblem[]>([]);
   // True while the fallback <input> picker is open. Separate from the shared
   // preparation lock because a cancelled native picker may fire no change event.
@@ -407,7 +427,7 @@ export function History() {
     [launchWithBundle, beginActiveRun, beginPreparation, setPreparationProgress, clearPreparation, clearActiveRun, closePicker],
   );
 
-  const discard = useCallback(
+  const removeFromHistory = useCallback(
     async (sessionId: string) => {
       const state = useStore.getState();
       const matchingSnap = state.activeSnap?.sessionId === sessionId ? state.activeSnap : null;
@@ -420,6 +440,7 @@ export function History() {
       // too so a stale render or programmatic click can never delete a live ledger.
       if (matchingRunIsLive || preparationIsLive) return;
       await discardSession(sessionId);
+      removedSessionToFocus.current = sessionId;
       await refresh();
     },
     [refresh],
@@ -437,7 +458,7 @@ export function History() {
     return (
       <div className="px-6 py-6 max-w-2xl mx-auto space-y-8">
         <div className="border border-ruleSoft bg-panel px-6 py-12 text-center">
-          <p className="font-display text-[18px] text-ink mb-1">No uploads yet</p>
+          <p ref={removalFocusTarget} tabIndex={-1} className="font-display text-[18px] text-ink mb-1">No uploads yet</p>
           <p className="font-body text-[14px] text-inkSoft">
             Normal uploads are tracked here for resume — date, collection, deployment, file count, and
             status. Dry runs write nothing, so they are not recorded.
@@ -486,6 +507,45 @@ export function History() {
           </ul>
         </div>
       )}
+
+      <p ref={removalFocusTarget} tabIndex={-1} id="history-removal-guidance" className="font-body text-[13px] text-inkSoft">
+        Removes the saved upload record from this browser. Files on the server and your computer are unchanged.
+      </p>
+
+      <dialog
+        ref={removalDialog}
+        aria-labelledby="history-removal-title"
+        aria-describedby="history-removal-description"
+        onCancel={(event) => {
+          event.preventDefault();
+          closeRemoval();
+        }}
+        className="w-[440px] max-w-[calc(100%-2rem)] max-h-[90dvh] p-0 border border-ink bg-paper text-ink shadow-xl backdrop:bg-ink/40"
+      >
+        <div className="p-5 space-y-4">
+          <h2 id="history-removal-title" className="font-display text-[18px]">Remove saved upload progress?</h2>
+          <p id="history-removal-description" className="font-body text-[14px]">
+            You won’t be able to resume this upload from History. Files already uploaded will remain on the server.
+          </p>
+          <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+            <button autoFocus onClick={closeRemoval} className="border border-ink px-3 py-2 text-[13px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+              Keep upload progress
+            </button>
+            <button
+              disabled={pendingRemoval !== null && (activeSessionId === pendingRemoval.id || preparation?.sessionId === pendingRemoval.id)}
+              onClick={() => {
+                if (!pendingRemoval) return;
+                const sessionId = pendingRemoval.id;
+                closeRemoval();
+                void removeFromHistory(sessionId);
+              }}
+              className="border border-warn text-warn px-3 py-2 text-[13px] font-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              Remove from history
+            </button>
+          </div>
+        </div>
+      </dialog>
 
       <ul className="space-y-3">
         {rows.map(({ batch, counts, refused }) => {
@@ -580,10 +640,19 @@ export function History() {
                 )}
                 <button
                   disabled={(running && isActive) || isPreparing}
-                  onClick={() => void discard(batch.id)}
+                  title="Removes the saved upload record from this browser. Files on the server and your computer are unchanged."
+                  aria-describedby="history-removal-guidance"
+                  onClick={(event) => {
+                    if (batch.completedAt) {
+                      void removeFromHistory(batch.id);
+                    } else {
+                      removalTrigger.current = event.currentTarget;
+                      setPendingRemoval(batch);
+                    }
+                  }}
                   className="border border-ink text-ink min-h-[44px] sm:min-h-0 px-4 sm:px-3 py-1 text-[13px] font-body hover:bg-paperHover"
                 >
-                  Discard
+                  Remove from history
                 </button>
               </div>
             </li>

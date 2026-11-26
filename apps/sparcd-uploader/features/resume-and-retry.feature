@@ -188,6 +188,43 @@ Feature: Resume an interrupted upload and retry a failed one
     And nothing stored in the collection is touched
 
   @unmapped
+  Scenario: Cancelling History removal preserves upload recovery
+    Given an unfinished upload is awaiting History removal
+    Then History explains that removal leaves original and server files unchanged
+    When removal is cancelled with the keyboard
+    Then the saved upload progress is unchanged and can still be resumed
+
+  @unmapped
+  Scenario: Keyboard confirmation removes the last History entry and focuses the empty state
+    Given an unfinished upload is awaiting History removal
+    When History removal is confirmed with the keyboard
+    Then its local record and file states are removed from this machine
+    And the empty History message has focus
+    And nothing stored in the collection is touched
+
+  @unmapped
+  Scenario Outline: Stale History confirmation preserves live recovery records
+    Given an unfinished upload is awaiting History removal
+    When the confirmation is invoked as "<activity>" starts
+    Then the live upload recovery records are unchanged
+    Examples:
+      | activity           |
+      | resume preparation |
+      | upload             |
+
+  @unmapped
+  Scenario: Removing completed History clears only the selected session
+    Given a completed upload and an unrelated saved session are in History
+    When the completed upload is removed from History
+    Then only the unrelated session and its recovery records remain
+    And nothing stored in the collection is touched
+
+  @unmapped
+  Scenario: History removal confirmation fits a narrow screen
+    Given an unfinished upload is awaiting History removal
+    Then the removal confirmation fits a narrow screen
+
+  @unmapped
   Scenario: A resume in progress can be watched and cancelled
     Given a resume is running
     Then the same per-file progress and byte totals are shown, and the same run log is kept, as for a fresh upload
