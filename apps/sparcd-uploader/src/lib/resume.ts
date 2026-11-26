@@ -15,7 +15,7 @@
 // hashes buys nothing and costs seconds. `restoreFromHandleTrusted` covers
 // that case by matching on path + size and trusting the persisted hashes.
 
-import type { BatchRecord, FileRecord, BundleRecord } from './db';
+import type { BatchRecord, FileRecord, BundleRecord, LoadedSession } from './db';
 import { attachBundle, updateFileRecords } from './db';
 import {
   pickDirectory,
@@ -191,7 +191,7 @@ function hashAll(
       items,
       () => {},
       (r) => {
-        if (r.sha256) out.set(r.id, r);
+        if (r.sha256 && !r.error) out.set(r.id, r);
         done++;
         const now = Date.now();
         if (onProgress && (now - lastReported >= 150 || done === items.length)) {
@@ -253,7 +253,7 @@ export async function reconcileReselect(
       problems.push({
         localPath: c.record.localPath,
         fileName: c.record.fileName,
-        reason: 'content hash differs from the original',
+        reason: !r?.sha256 ? 'could not be inspected; check that the source file is readable and try again' : 'content hash differs from the original',
       });
       continue;
     }
@@ -279,10 +279,37 @@ export async function reselectFolder(
   return null;
 }
 
+/** Recover incomplete processing using File objects already owned by this session. */
+export async function recoverLocalProcessing(
+  session: Pick<LoadedSession, 'batch' | 'files' | 'bundle'>,
+  attached: Map<string, File>,
+  onProgress?: (done: number, total: number) => void,
+  isCurrent: () => boolean = () => true,
+): Promise<{ ok: true; processed: ProcessResponse[] } | { ok: false; problems: ReconcileProblem[] }> {
+  const missing = session.files.filter((rec) => rec.state !== 'done' &&
+    (!attached.has(rec.localPath) || attached.get(rec.localPath)!.size !== rec.size));
+  if (missing.length) return { ok: false, problems: missing.map((rec) => ({
+    localPath: rec.localPath, fileName: rec.fileName,
+    reason: 'source file is unavailable; open History and reselect the original folder',
+  })) };
+  const needsProcessing = session.files.filter(needsInspection);
+  const resolved = await hashAll(needsProcessing.filter((rec) => attached.has(rec.localPath)).map((rec) => ({
+    id: rec.localPath, file: attached.get(rec.localPath)!,
+    fileKind: rec.mediaKind ?? (/\.mp4$/i.test(rec.fileName) ? 'video' : 'image'),
+  })), onProgress);
+  if (!isCurrent()) throw new Error('Resume preparation was cancelled.');
+  const result = await ensureBundle(session.batch, session, resolved, attached);
+  return result.ok ? { ok: true, processed: [...resolved.values()] } : result;
+}
+
+function needsInspection(rec: FileRecord): boolean {
+  return rec.state === 'awaiting-processing' || !rec.sha256 || !rec.captureTimestamp || !rec.remoteKey;
+}
+
 export type EnsureBundleResult = { ok: true } | { ok: false; problems: ReconcileProblem[] };
 
 /**
- * Resolve every still-`awaiting-processing` record from this reconciliation
+ * Resolve incomplete records, including failed processing, from this reconciliation
  * pass's own re-hash results, then build and attach the metadata bundle a
  * session that was interrupted before it ever reached publish never got.
  * Reuses the batch's already-persisted `uploadPrefix` verbatim (not a fresh
@@ -304,7 +331,7 @@ export async function ensureBundle(
   resolved: Map<string, ProcessResponse>,
   attached: Map<string, File>,
 ): Promise<EnsureBundleResult> {
-  if (session.bundle) return { ok: true };
+  if (session.bundle && !session.files.some(needsInspection)) return { ok: true };
 
   const naming = namingForUploadPath(
     batch.uploadPrefix,
@@ -316,18 +343,16 @@ export async function ensureBundle(
   const inspected = new Map<string, ProcessResponse>();
 
   for (const rec of session.files) {
-    if (rec.state !== 'awaiting-processing') {
-      // Finished the original run without a hash or a time (Inspect failed it):
-      // there is nothing to plan against, so say so instead of publishing a
-      // blank row.
-      if (!rec.sha256 || !rec.captureTimestamp) {
-        problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be recovered from the interrupted run' });
-      }
+    if (!needsInspection(rec)) {
       continue;
     }
     const r = resolved.get(rec.localPath);
-    if (!r || !r.sha256) {
-      problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be inspected' });
+    if (!r || !r.sha256 || r.error) {
+      problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'could not be inspected; check that the source file is readable and try again' });
+      continue;
+    }
+    if (rec.sha256 && rec.sha256 !== r.sha256) {
+      problems.push({ localPath: rec.localPath, fileName: rec.fileName, reason: 'content hash differs from the original' });
       continue;
     }
     inspected.set(rec.localPath, r);
@@ -391,6 +416,8 @@ export async function ensureBundle(
     updated.push({
       ...rec,
       state: 'pending',
+      lastError: undefined,
+      refused: false,
       sanitizedObjectName: objectName,
       relPathInBundle: objectName,
       remoteKey: key,

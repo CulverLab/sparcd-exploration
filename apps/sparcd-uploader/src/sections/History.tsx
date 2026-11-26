@@ -27,6 +27,7 @@ import {
   reconcileReselect,
   reselectFolder,
   ensureBundle,
+  recoverLocalProcessing,
   type ReconcileProblem,
 } from '../lib/resume';
 import { scanFileList, supportsDirectoryHandle } from '../lib/scanFiles';
@@ -232,7 +233,7 @@ export function History() {
         );
         return;
       }
-      const finalSession = session.bundle ? session : await loadSession(batch.id);
+      const finalSession = await loadSession(batch.id);
       if (!ownsPreparation(batch.id, expectedConnectionId, generation)) return;
       if (!finalSession) {
         setMessage('Session record is missing.');
@@ -246,7 +247,12 @@ export function History() {
   const beginResume = useCallback(
     async (batch: BatchRecord) => {
       setProblems([]);
-      const expectedConnectionId = useStore.getState().connectionId;
+      setMessage(null);
+      const current = useStore.getState();
+      const localFiles = current.activeSnap?.sessionId === batch.id
+        ? current.attachedFiles ?? new Map(current.files.map((f) => [f.relPath, f.file]))
+        : null;
+      const expectedConnectionId = current.connectionId;
       const generation = beginActiveRun();
       if (generation === null) {
         setMessage('Another upload is already active. Finish or cancel it before resuming this batch.');
@@ -256,6 +262,26 @@ export function History() {
       try {
         if (!s3Config) {
           setMessage('Connect to a storage endpoint before resuming.');
+          return;
+        }
+        if (localFiles) {
+          const session = await loadSession(batch.id);
+          if (!ownsPreparation(batch.id, expectedConnectionId, generation)) return;
+          if (!session) throw new Error('The saved upload record is missing.');
+          const result = await recoverLocalProcessing(session, localFiles, (done, total) =>
+            setPreparationProgress(batch.id, done, total),
+            () => ownsPreparation(batch.id, expectedConnectionId, generation));
+          if (!ownsPreparation(batch.id, expectedConnectionId, generation)) return;
+          if (!result.ok) {
+            setProblems(result.problems);
+            setMessage('Some source files could not be processed. Check the files and try Resume again.');
+            return;
+          }
+          const restored = await loadSession(batch.id);
+          if (!ownsPreparation(batch.id, expectedConnectionId, generation)) return;
+          if (!restored) throw new Error('The saved upload record disappeared during recovery.');
+          useStore.getState().applyProgress([], result.processed);
+          launch(restored, localFiles, [], expectedConnectionId, generation);
           return;
         }
         // The first await below must be the actual gated call — permission
@@ -326,7 +352,8 @@ export function History() {
           // fires no change event, so onReselectInput never runs. onReselectInput
           // re-acquires the lock itself when files actually arrive.
           clearPreparation(batch.id);
-          clearActiveRun();
+          if (current.activeSnap) useStore.getState().setActiveSnap(current.activeSnap, generation);
+          else clearActiveRun();
           pickerOpenRef.current = true;
           setPickerOpen(true);
           pendingReselect.current = batch;
@@ -350,6 +377,10 @@ export function History() {
           };
           input.click();
         }
+      } catch (error) {
+        if (ownsPreparation(batch.id, expectedConnectionId, generation)) {
+          setMessage(`Couldn't prepare this upload for resume: ${error instanceof Error ? error.message : String(error)}. Check access to the original folder and try again.`);
+        }
       } finally {
         clearPreparation(batch.id);
         const state = useStore.getState();
@@ -359,11 +390,12 @@ export function History() {
           !state.activeRun &&
           state.pendingResume?.generation !== generation
         ) {
-          clearActiveRun();
+          if (current.activeSnap) useStore.getState().setActiveSnap(current.activeSnap, generation);
+          else clearActiveRun();
         }
       }
     },
-    [s3Config, launchWithBundle, beginActiveRun, beginPreparation, setPreparationProgress, clearPreparation, clearActiveRun, closePicker],
+    [s3Config, launch, launchWithBundle, beginActiveRun, beginPreparation, setPreparationProgress, clearPreparation, clearActiveRun, closePicker],
   );
 
   const onReselectInput = useCallback(
@@ -372,7 +404,8 @@ export function History() {
       const batch = pendingReselect.current;
       pendingReselect.current = null;
       if (!batch || !list || list.length === 0) return;
-      const expectedConnectionId = useStore.getState().connectionId;
+      const current = useStore.getState();
+      const expectedConnectionId = current.connectionId;
       const generation = beginActiveRun();
       if (generation === null) {
         setMessage('Another upload is already active. Finish or cancel it before resuming this batch.');
@@ -391,6 +424,10 @@ export function History() {
         );
         if (!ownsPreparation(batch.id, expectedConnectionId, generation)) return;
         await launchWithBundle(batch, session, attached, probs, resolved, expectedConnectionId, generation);
+      } catch (error) {
+        if (ownsPreparation(batch.id, expectedConnectionId, generation)) {
+          setMessage(`Couldn't prepare this upload for resume: ${error instanceof Error ? error.message : String(error)}. Check access to the original folder and try again.`);
+        }
       } finally {
         clearPreparation(batch.id);
         const state = useStore.getState();
@@ -400,7 +437,8 @@ export function History() {
           !state.activeRun &&
           state.pendingResume?.generation !== generation
         ) {
-          clearActiveRun();
+          if (current.activeSnap) useStore.getState().setActiveSnap(current.activeSnap, generation);
+          else clearActiveRun();
         }
       }
     },
@@ -545,11 +583,11 @@ export function History() {
                 </p>
               )}
 
-              {isPreparing && verifyProgress && (
+              {isPreparing && (
                 <p className="font-body text-[12px] text-inkSoft">
-                  Resuming <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
+                  {verifyProgress ? <>Resuming <span className="font-mono text-ink">{verifyProgress.done}</span> of{' '}
                   <span className="font-mono text-ink">{verifyProgress.total}</span> files against
-                  the original folder…
+                  the original folder…</> : 'Preparing resume…'}
                 </p>
               )}
 

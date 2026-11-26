@@ -549,6 +549,10 @@ Then(
 When('an upload is resumed', async ({ app }) => {
   await producePartialRun(app);
   app.s3.putHooks.length = 0;
+  // Reselection after a reload must re-check disk contents. Within the same
+  // session, History now reuses the File objects it already owns.
+  await app.reopen();
+  await app.seedPickedFolder(app.notes.sourceSpecs as FileSpec[]);
   // Same path and size, but one already-stored file's bytes have changed.
   await app.editPickedFolder(
     `${FOLDER}/IMG_0003.JPG`,
@@ -586,6 +590,8 @@ Given(
   async ({ app }) => {
     await producePartialRun(app);
     app.s3.putHooks.length = 0;
+    await app.reopen();
+    await app.seedPickedFolder(app.notes.sourceSpecs as FileSpec[]);
     await app.editPickedFolder(`${FOLDER}/${FAILING_FILE}`, null);
     await resumeFromHistory(app);
   },

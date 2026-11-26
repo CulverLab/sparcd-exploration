@@ -17,8 +17,7 @@ import {
   type ConcurrencyControl,
 } from '../lib/upload';
 import { probeShardClients } from '../lib/s3';
-import type { ProcessResponse } from '../lib/processPool';
-import { ensureBundle } from '../lib/resume';
+import { recoverLocalProcessing } from '../lib/resume';
 import { Note, RunMonitor } from '../components/RunMonitor';
 import { UploadCompleteDialog } from '../components/UploadCompleteDialog';
 
@@ -301,18 +300,21 @@ export function Upload() {
   }, [flipId, s3Config, connectionId, snap?.phase, snap?.dryRun]);
 
   const retryPending = useRef(false);
+  const [recoveryProgress, setRecoveryProgress] = useState<{ done: number; total: number } | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retryRecordMissing, setRetryRecordMissing] = useState(false);
   const retryFailed = useCallback(async () => {
     // The async gap before resumeUpload's first emit leaves the Retry button
     // mounted — guard so a double-click can't start two concurrent runs.
-    if (!snap || !s3Config || retryPending.current) return;
+    if (!snap || !s3Config || retryPending.current || useStore.getState().historyResumePreparation) return;
     const expectedConnectionId = connectionId;
     const connectionIsCurrent = () => {
       const state = useStore.getState();
       return !!state.s3Config && state.connectionId === expectedConnectionId;
     };
     retryPending.current = true;
+    useStore.getState().beginHistoryResumePreparation(snap.sessionId);
+    setRecoveryProgress({ done: 0, total: 0 });
     setRetryError(null);
     setCompleteDismissed(false);
     try {
@@ -324,43 +326,19 @@ export function Upload() {
       if (!session) throw new MissingUploadRecordError('no saved record for this session');
       const attached = attachedRef.current ?? new Map(files.map((f) => [f.relPath, f.file]));
 
-      // A run that hit the systemic-failure abort (e.g. many concurrent
-      // blobs failing at once when the network drops) never reaches the
-      // publish step, so it has no bundle — same gap History's Resume
-      // fixes, resolved here from the files already in memory instead of a
-      // disk re-hash pass, since they never left the page.
-      if (!session.bundle) {
-        const resolved = new Map<string, ProcessResponse>(
-          files
-            .filter((f) => f.processState === 'ready' && f.sha256)
-            .map((f) => [
-              f.relPath,
-              {
-                id: f.relPath,
-                sha256: f.sha256,
-                exifNaive: f.exifNaive,
-                exifTimestampSource: f.exifTimestampSource,
-                exifCamera: f.exifCamera,
-                gps: f.gps,
-                width: f.width,
-                height: f.height,
-                mediaKind: f.mediaKind,
-                mimeType: f.mimeType,
-              },
-            ]),
-        );
-        const attached = new Map(files.map((f) => [f.relPath, f.file]));
-        const result = await ensureBundle(session.batch, session, resolved, attached);
-        if (!connectionIsCurrent()) return;
-        if (!result.ok) {
-          const reasons = result.problems.map((p) => `${p.fileName}: ${p.reason}`).slice(0, 3).join('; ');
-          throw new Error(`${result.problems.length} file(s) couldn't be resolved (${reasons})`);
-        }
+      const result = await recoverLocalProcessing(session, attached, (done, total) => {
+        setRecoveryProgress({ done, total });
+        useStore.getState().setHistoryResumeProgress(snap.sessionId, done, total);
+      }, connectionIsCurrent);
+      if (!connectionIsCurrent()) return;
+      if (!result.ok) {
+        const reasons = result.problems.map((p) => `${p.fileName}: ${p.reason}`).slice(0, 3).join('; ');
+        throw new Error(`${result.problems.length} file(s) couldn't be resolved (${reasons})`);
       }
-
-      const finalSession = session.bundle ? session : await loadSession(snap.sessionId);
+      const finalSession = await loadSession(snap.sessionId);
       if (!connectionIsCurrent()) return;
       if (!finalSession) throw new MissingUploadRecordError('session record disappeared while resolving it');
+      useStore.getState().applyProgress([], result.processed);
 
       const config = useStore.getState().s3Config;
       if (!config || !connectionIsCurrent()) return;
@@ -377,6 +355,7 @@ export function Upload() {
       );
       setActiveRun(run, generation);
     } catch (e) {
+      if (!connectionIsCurrent()) return;
       const missing = e instanceof MissingUploadRecordError;
       setRetryRecordMissing(missing);
       const guidance = missing
@@ -384,6 +363,8 @@ export function Upload() {
         : 'Retry again, or open History and resume this saved upload. This batch remains locked to prevent duplicate uploads.';
       setRetryError(`Couldn't resume this upload (${e instanceof Error ? e.message : String(e)}). ${guidance}`);
     } finally {
+      useStore.getState().clearHistoryResumePreparation(snap.sessionId);
+      setRecoveryProgress(null);
       retryPending.current = false;
     }
   }, [snap, s3Config, connectionId, files, beginActiveRun, setActiveRun, setActiveSnap]);
@@ -578,6 +559,11 @@ export function Upload() {
       {/* Live run */}
       {snap && <RunMonitor snap={snap} />}
 
+      {recoveryProgress && <p role="status" className="font-body text-[13px] text-inkSoft">
+        {recoveryProgress.total > 0
+          ? `Preparing resume: processed ${recoveryProgress.done} of ${recoveryProgress.total} files…`
+          : 'Preparing resume…'}
+      </p>}
       {retryError && (
         <div className="space-y-2">
           <Note tone="warn" message={retryError} />
@@ -647,12 +633,12 @@ export function Upload() {
           ) : (snap?.phase === 'partial' || snap?.phase === 'error') && !snap.dryRun ? (
             <button
               onClick={retryFailed}
-              disabled={!realUploadAllowed}
+              disabled={!realUploadAllowed || recoveryProgress !== null}
               title={!realUploadAllowed ? "You're offline — reconnect or choose Try upload anyway" : undefined}
               aria-describedby={!realUploadAllowed ? uploadConnectivityStatusId : undefined}
               className={`bg-ink text-paper border border-ink px-3.5 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 text-[14px] font-body font-[600] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${!realUploadAllowed ? 'cursor-not-allowed opacity-40' : ''}`}
             >
-              {snap.phase === 'error' ? 'Resume upload' : 'Retry failed files'}
+              {recoveryProgress ? 'Preparing resume…' : snap.phase === 'error' ? 'Resume upload' : 'Retry failed files'}
             </button>
           ) : (
             <button

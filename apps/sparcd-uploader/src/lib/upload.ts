@@ -1552,15 +1552,9 @@ export function resumeUpload(
     return { cancel: runner.cancel, done };
   }
 
-  // A row with no hash can never be uploaded: no content digest, no object
-  // key, nothing for the CSVs to describe. That is a file which failed Inspect
-  // after Start (`close` records it `failed`), or one the session never got to
-  // inspect at all. The persisted bundle was built from the ready files only,
-  // so publishing it here would omit those files silently — exactly the short
-  // publish the fresh run refuses to make, just one Retry click later. Refuse
-  // it too: there is no resume that can complete this batch, and re-inspecting
-  // outside the live wizard is out of scope, so the only way forward is a
-  // fresh upload of a batch the user has fixed.
+  // Recovery must process hashless records before handing them to the runner.
+  // Keep this guard for direct callers so an incomplete bundle cannot publish
+  // successfully while silently omitting failed files.
   const unresolvable = files.filter((r) => r.sha256 === undefined);
   if (unresolvable.length > 0) {
     const done = (async () => {
@@ -1576,8 +1570,8 @@ export function resumeUpload(
       runner.snap.phase = 'error';
       runner.snap.error =
         `${unresolvable.length} file${unresolvable.length === 1 ? '' : 's'} failed inspection and cannot be uploaded, ` +
-        'so this batch can never be published as it stands. Fix or remove them and start the upload over — ' +
-        'files already uploaded will be detected and skipped automatically.';
+        'so publication is blocked. Open History and resume with the original folder to process them again. ' +
+        'Files already uploaded will be verified and skipped.';
       for (const r of unresolvable.slice(0, 10)) {
         runner.log('error', `${r.fileName}: ${r.lastError ?? 'failed inspection'}`);
       }
