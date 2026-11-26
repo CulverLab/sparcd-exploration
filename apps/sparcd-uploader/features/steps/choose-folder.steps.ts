@@ -204,9 +204,9 @@ Then('no lasting access to that folder is retained', async ({ app }) => {
   expect(batches[0].dirHandle).toBeUndefined();
 });
 
-Then('a later resume of that upload asks for the folder to be selected again', async ({ app }) => {
+Then('resuming that upload after reload asks for the folder to be selected again', async ({ app }) => {
   // Make the session resumable again by clearing its completion marker, then
-  // check Resume raises a file picker rather than reading the folder silently.
+  // reload to lose the in-memory File objects. Resume must then request access.
   await app.page.evaluate(async () => {
     const open = indexedDB.open('sparcd-uploader');
     const db: IDBDatabase = await new Promise((resolve) => {
@@ -215,16 +215,20 @@ Then('a later resume of that upload asks for the folder to be selected again', a
     const tx = db.transaction('batches', 'readwrite');
     const store = tx.objectStore('batches');
     const all: IDBRequest<Record<string, unknown>[]> = store.getAll();
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       all.onsuccess = () => {
         for (const row of all.result) {
           delete row.completedAt;
           store.put(row);
         }
-        resolve(null);
       };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
     });
   });
+  // Reload with no durable picker so Resume must use the fallback file chooser.
+  await app.makeFolderPickerUnavailable();
   await app.gotoSection('History');
   const chooser = app.page.waitForEvent('filechooser', { timeout: 20_000 });
   await app.page.getByRole('button', { name: 'Resume' }).click();
