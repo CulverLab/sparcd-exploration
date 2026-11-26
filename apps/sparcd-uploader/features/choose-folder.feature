@@ -72,10 +72,10 @@ Feature: Choose the folder of media to upload
     And a later resume of that upload can read the same files after asking permission
 
   @unmapped
-  Scenario: A dragged folder requires re-selection when an upload is resumed
+  Scenario: A dragged folder requires re-selection when an upload is resumed after reload
     When a folder is supplied by dragging it onto the page
     Then no lasting access to that folder is retained
-    And a later resume of that upload asks for the folder to be selected again
+    And resuming that upload after reload asks for the folder to be selected again
 
   @unmapped
   Scenario: Scanning is visible while it runs

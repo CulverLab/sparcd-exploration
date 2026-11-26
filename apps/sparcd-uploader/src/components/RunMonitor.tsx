@@ -79,7 +79,8 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
         {virtualizer.getVirtualItems().map((vi) => {
           const f = files[vi.index];
           const pct = f.size > 0 ? Math.min(100, (f.loaded / f.size) * 100) : 100;
-          const tail = f.key.slice(f.key.lastIndexOf('/') + 1);
+          const sourcePath = f.id || f.key;
+          const tail = sourcePath.slice(sourcePath.lastIndexOf('/') + 1);
           return (
             <div
               key={f.id}
@@ -94,7 +95,7 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
                 aria-hidden
               />
               <span className="min-w-0 col-span-2 sm:col-span-1">
-                <span className="block truncate font-mono text-[12px] text-ink" title={f.key}>
+                <span className="block truncate font-mono text-[12px] text-ink" title={sourcePath}>
                   {tail}
                 </span>
                 {f.error && (

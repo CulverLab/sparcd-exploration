@@ -624,6 +624,7 @@ export const useStore = create<UploaderState>()(
               : {
                   ...f,
                   processState: 'ready' as const,
+                  processError: undefined,
                   sha256: result.sha256,
                   exifNaive: result.exifNaive,
                   exifTimestampSource: result.exifTimestampSource,
@@ -803,7 +804,7 @@ export const useStore = create<UploaderState>()(
       retryPartialRun: async () => {
         if (retryPartialRunPending !== null) return;
         const { s3Config, connectionId, activeSnap, attachedFiles, files } = get();
-        if (!s3Config || activeSnap?.phase !== 'partial' || activeSnap.dryRun) return;
+        if (!s3Config || activeSnap?.phase !== 'partial' || activeSnap.dryRun || get().historyResumePreparation) return;
         const attempt = ++retryPartialRunGeneration;
         retryPartialRunPending = attempt;
         try {

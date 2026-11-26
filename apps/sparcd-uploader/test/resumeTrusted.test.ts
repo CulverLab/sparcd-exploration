@@ -19,9 +19,10 @@ vi.mock('../src/lib/db', () => ({ attachBundle, updateFileRecords }));
 
 let restoreFromHandleTrusted: typeof import('../src/lib/resume')['restoreFromHandleTrusted'];
 let ensureBundle: typeof import('../src/lib/resume')['ensureBundle'];
+let recoverLocalProcessing: typeof import('../src/lib/resume')['recoverLocalProcessing'];
 
 beforeAll(async () => {
-  ({ restoreFromHandleTrusted, ensureBundle } = await import('../src/lib/resume'));
+  ({ restoreFromHandleTrusted, ensureBundle, recoverLocalProcessing } = await import('../src/lib/resume'));
 });
 
 // Minimal stand-ins for the File System Access API: jsdom has no real handles.
@@ -255,6 +256,57 @@ describe('ensureBundle capture times', () => {
     const bundle = { observationsCsv: 'existing published bytes' };
     expect(await ensureBundle({ ...batch, uploaderUser: 'Different Uploader' }, { bundle, files: [] }, new Map(), new Map())).toEqual({ ok: true });
     expect(bundle.observationsCsv).toBe('existing published bytes');
+    expect(attachBundle).not.toHaveBeenCalled();
+  });
+
+  it('reprocesses a failed hashless file and keeps completed records and their destination', async () => {
+    const done: FileRecord = {
+      ...awaiting('t/DONE.JPG'), state: 'done', sha256: 'original-hash',
+      remoteKey: `${batch.uploadPrefix}/DONE.JPG`, captureTimestamp: '2024-01-10T15:00:00.000Z',
+    };
+    const failed: FileRecord = { ...awaiting('t/FAILED.JPG'), state: 'failed', lastError: 'Network error', refused: true };
+    processBatch.mockImplementationOnce((items, _start, result) => {
+      expect(items.map((item: { id: string }) => item.id)).toEqual(['t/FAILED.JPG']);
+      result(inspected('t/FAILED.JPG', { year: 2024, month: 1, day: 10, hour: 8, minute: 5, second: 0 }));
+      return { done: Promise.resolve() };
+    });
+    const result = await recoverLocalProcessing(
+      { batch, bundle: null, files: [done, failed] }, attachedFor(['t/FAILED.JPG']),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.processed).toEqual([expect.objectContaining({ id: 't/FAILED.JPG', sha256: expect.any(String) })]);
+    const [updated] = updateFileRecords.mock.calls[0][0] as FileRecord[];
+    expect(updated).toMatchObject({ state: 'pending', sessionId: batch.id, refused: false });
+    expect(updated.lastError).toBeUndefined();
+    expect(updated.remoteKey).toMatch(new RegExp(`^${batch.uploadPrefix}/`));
+    expect(attachBundle.mock.calls[0][0].mediaCsv).toContain('DONE.JPG');
+    expect(attachBundle.mock.calls[0][0].mediaCsv).toContain('FAILED.JPG');
+  });
+
+  it('leaves the ledger and bundle intact when processing still fails', async () => {
+    const files: FileRecord[] = [{ ...awaiting('t/FAILED.JPG'), state: 'failed', lastError: 'Network error' }];
+    processBatch.mockImplementationOnce((_items, _start, result) => {
+      result({ id: 't/FAILED.JPG', error: 'NotReadableError' });
+      return { done: Promise.resolve() };
+    });
+    const result = await recoverLocalProcessing({ batch, bundle: null, files }, attachedFor(['t/FAILED.JPG']));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problems[0]).toMatchObject({ fileName: 'FAILED.JPG', reason: expect.stringContaining('readable') });
+    expect(updateFileRecords).not.toHaveBeenCalled();
+    expect(attachBundle).not.toHaveBeenCalled();
+    expect(files[0].state).toBe('failed');
+  });
+
+  it('does not save recovery results after the connection or preparation changes', async () => {
+    const files = [awaiting('t/FAILED.JPG')];
+    processBatch.mockImplementationOnce((_items, _start, result) => {
+      result(inspected('t/FAILED.JPG'));
+      return { done: Promise.resolve() };
+    });
+    await expect(recoverLocalProcessing(
+      { batch, bundle: null, files }, attachedFor(['t/FAILED.JPG']), undefined, () => false,
+    )).rejects.toThrow('cancelled');
+    expect(updateFileRecords).not.toHaveBeenCalled();
     expect(attachBundle).not.toHaveBeenCalled();
   });
 
