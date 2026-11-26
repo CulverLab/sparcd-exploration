@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHistoryBatchStart, formatUploadDate, formatUploadHeader } from '../src/lib/uploadDisplay';
+import { formatHistoryBatchStart, summarizeUploadFiles, formatTransferBreakdown, formatUploadDate, formatUploadHeader } from '../src/lib/uploadDisplay';
 import { formatDateTime24, type UploadMetaJson } from '@sparcd/camtrap';
 
 const meta: UploadMetaJson = {
@@ -37,5 +37,16 @@ describe('uploadDisplay', () => {
   it('formats the timestamp used by History through its display helper', () => {
     expect(formatHistoryBatchStart('2026-09-11T22:15:10.000Z', 'UTC')).toBe('2026-09-11 22:15:10');
     expect(formatHistoryBatchStart('2026-09-11T00:05:10.000Z', 'UTC')).toBe('2026-09-11 00:05:10');
+  });
+});
+
+describe('verified upload completion', () => {
+  it('counts stored verified files as complete without calling them newly uploaded', () => {
+    const result = summarizeUploadFiles([
+      { state: 'done' }, { state: 'skipped' }, { state: 'skipped' },
+      { state: 'failed' }, { state: 'pending' }, { state: 'uploading' },
+    ]);
+    expect(result).toEqual({ uploaded: 1, verified: 2, complete: 3, failed: 1 });
+    expect(formatTransferBreakdown(result.uploaded, result.verified)).toBe('1 uploaded this attempt; 2 already stored and verified.');
   });
 });

@@ -1,11 +1,14 @@
 import { useEffect } from 'react';
+import { formatTransferBreakdown } from '../lib/uploadDisplay';
 
 export function UploadCompleteDialog({
-  doneCount,
+  uploadedCount,
+  verifiedCount,
   collectionId,
   onClose,
 }: {
-  doneCount: number;
+  uploadedCount: number;
+  verifiedCount: number;
   collectionId: string;
   onClose: () => void;
 }) {
@@ -33,8 +36,9 @@ export function UploadCompleteDialog({
             Upload complete
           </h2>
           <p className="font-body text-[14px] text-ink">
-            Published {doneCount} file{doneCount === 1 ? '' : 's'} to {collectionId}.
+            Published {uploadedCount + verifiedCount} file{uploadedCount + verifiedCount === 1 ? '' : 's'} to {collectionId}.
           </p>
+          <p className="font-body text-[14px] text-inkSoft">{formatTransferBreakdown(uploadedCount, verifiedCount)}</p>
         </div>
         <footer className="flex items-center justify-end border-t border-rule px-5 py-3">
           <button

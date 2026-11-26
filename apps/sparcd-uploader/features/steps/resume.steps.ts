@@ -562,7 +562,7 @@ When('an upload is resumed', async ({ app }) => {
 Then(
   'each recorded file is matched against the selected folder by its relative path, its size and its content fingerprint',
   async ({ app }) => {
-    await expect(app.page.getByText(/could not be reconciled/)).toBeVisible({ timeout: 60_000 });
+    await expect(app.page.getByText(/could not be matched to the selected originals/)).toBeVisible({ timeout: 60_000 });
     const records = await app.readFileRecords();
     expect(records.map((r) => r.localPath).sort()).toEqual(
       (app.notes.sourceSpecs as FileSpec[]).map((s) => s.path).sort(),

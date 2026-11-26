@@ -632,10 +632,10 @@ Then('each file shows its own state and percentage', async ({ app }) => {
 });
 
 Then(
-  'the batch shows bytes uploaded against the total, and counts of done, skipped and failed files',
+  'the batch shows bytes uploaded against the total, and counts of complete, newly uploaded, verified existing and failed files',
   async ({ app }) => {
     await expect(app.page.getByText(/[\d.]+ (B|KB|MB|GB) \/ [\d.]+ (B|KB|MB|GB)/)).toBeVisible();
-    await expect(app.page.getByText(/\d+ done/)).toBeVisible();
+    await expect(app.page.getByText(/\d+ complete/)).toBeVisible();
   },
 );
 

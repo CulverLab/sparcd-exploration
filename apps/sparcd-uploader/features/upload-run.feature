@@ -174,7 +174,7 @@ Feature: Upload and publish a batch
   Scenario: Progress is reported per file and for the batch as a whole
     Given a run is in progress
     Then each file shows its own state and percentage
-    And the batch shows bytes uploaded against the total, and counts of done, skipped and failed files
+    And the batch shows bytes uploaded against the total, and counts of complete, newly uploaded, verified existing and failed files
     And the run log records each retry, each warning and each metadata write
     # Correction: a real upload does not log successful blob writes at all — the
     # log carries retries, warnings, skips, and the five metadata writes. The
