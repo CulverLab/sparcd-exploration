@@ -29,7 +29,7 @@ test('mixed preparation recovery restores verified tags and retains every origin
   expect(changed.bytes!.length).toBe(specs[2].bytes!.length);
   for (let attempt = 0; attempt < 2; attempt++) {
     await page.reload(); await app.seedPickedFolder([specs[0], changed]);
-    await page.getByRole('button', { name: 'Reselect saved batch folder', exact: true }).click();
+    await page.getByRole('button', { name: 'Choose original folder', exact: true }).click();
     const problems = page.getByRole('region', { name: 'Original files need recovery' });
     await expect(problems).toContainText('2 original files need recovery');
     await expect(problems).toContainText('MISSING.JPG: not in the selected folder');
@@ -40,7 +40,7 @@ test('mixed preparation recovery restores verified tags and retains every origin
   }
   await page.getByRole('button', { name: 'Reselect original files', exact: true }).click();
   await app.seedPickedFolder(specs);
-  await page.getByRole('button', { name: 'Reselect saved batch folder', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose original folder', exact: true }).click();
   await app.waitForInspected();
   await expect(page.getByRole('region', { name: 'Original files need recovery' })).toHaveCount(0);
   await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();

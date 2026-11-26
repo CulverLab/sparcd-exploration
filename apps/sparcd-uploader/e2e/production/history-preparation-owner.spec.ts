@@ -77,5 +77,5 @@ for (const legacy of [false, true]) test(`finishing ${legacy ? 'legacy' : 'owned
   expect(rows.find(row => row.id === savedB.id)).toEqual(savedB);
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
   await expect(recovery).toContainText('1 inspected file');
-  await expect(recovery.getByRole('button', { name: 'Reselect saved batch folder', exact: true })).toBeEnabled();
+  await expect(recovery.getByRole('button', { name: 'Choose original folder', exact: true })).toBeEnabled();
 });

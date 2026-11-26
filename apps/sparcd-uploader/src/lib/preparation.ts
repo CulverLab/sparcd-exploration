@@ -1,3 +1,4 @@
+import { listBatches } from './db';
 import { loadMasterSpecies } from './masterSpecies';
 // The pre-upload journal is separate from real-upload sessions and credentials.
 // A single IndexedDB transaction replaces the snapshot: interrupted writes keep
@@ -520,6 +521,13 @@ async function applyRecoveredPreparation(saved: LocalPreparation, result: Pick<R
     }
     return { ...entry, ...(entry.sha256 ? {} : fresh), id: entry.id, ...tags, file: new File([original], original.name, { type: original.type, lastModified }), processState: 'ready', processError: undefined, needsOriginal: undefined };
   });
+  const linked = (await listBatches()).find(upload => upload.preparationId === saved.id);
+  guard();
+  const snap = useStore.getState().activeSnap;
+  if (linked || (snap && !snap.dryRun && snap.preparationId === saved.id)) {
+    throw new Error('This preparation already has an upload. Open History to continue the existing upload instead of starting a new one. Your saved work is unchanged.');
+  }
+
   // Legacy singleton journals remain recoverable, but new writes have batch keys.
   preparationId = saved.id;
   batchSourceFolders = saved.sourceFolders ?? summarizeSourceFolders(saved.files.map(file => file.relPath));

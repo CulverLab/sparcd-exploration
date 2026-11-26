@@ -57,7 +57,7 @@ for (const installed of [false, true]) test(`${installed ? 'PWA' : 'browser'} co
     await page.getByRole('button', { name: 'Login later', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Saved local preparation' })).toContainText('1 inspected file');
     await app.seedPickedFolder(specs);
-    await page.getByRole('button', { name: 'Reselect saved batch folder' }).click();
+    await page.getByRole('button', { name: 'Choose original folder' }).click();
     await app.waitForInspected();
     const tag = page.getByRole('button', { name: 'Tag species before upload', exact: true });
     await expect(tag).toBeEnabled();

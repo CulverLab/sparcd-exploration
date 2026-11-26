@@ -56,10 +56,10 @@ test('prepared production apps and inspected batch survive a real offline Chrome
     const recovery = page.getByRole('region', { name: 'Saved local preparation' });
     await expect(recovery).toContainText('1 inspected file');
     await app.seedPickedFolder([jpegAt('OFFLINE.JPG', '2026:07:02 12:00:00')]);
-    await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
+    await recovery.getByRole('button', { name: 'Choose original folder' }).click();
     await expect(recovery.getByRole('alert')).toContainText('content hash differs');
     await app.seedPickedFolder(specs);
-    await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
+    await recovery.getByRole('button', { name: 'Choose original folder' }).click();
     await app.waitForInspected();
     await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
     await continueWithMasterSpecies(page);

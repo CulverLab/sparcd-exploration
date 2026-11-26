@@ -22,7 +22,7 @@ test('a sibling master refresh preserves the batch snapshot until an explicit sp
   expect((await a.readFlipRecords())[0].preparedSpecies.species[0].scientificName).toBe('Beta species');
   await sibling.reload();
   const recovery=sibling.getByRole('region',{name:'Saved local preparation'});
-  await expect(recovery.getByRole('combobox',{name:'Saved batch'})).toBeVisible();
+  await expect(recovery.getByRole('combobox',{name:'Choose saved preparation'})).toBeVisible();
   await expect(recovery.getByRole('option').filter({hasText:'ALPHA.JPG'})).toHaveCount(1);
   await expect(recovery.getByRole('option').filter({hasText:'BETA.JPG'})).toHaveCount(1);
 });
