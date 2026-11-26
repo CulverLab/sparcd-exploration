@@ -8,15 +8,31 @@ import { taggerBatchUrl } from '../lib/siblings';
 export function PreparationSaveStatus() {
   const message = useSyncExternalStore(subscribePreparation, preparationStatus);
   if (!message) return null;
-  if (message.kind === 'saving') return <div className="p-3 text-sm"><p role="status">Saving local preparation…</p></div>;
-  if (message.kind === 'failed') return <div className="p-3 text-sm"><p role="alert">Local preparation could not be saved. Keep this tab open, free browser storage, and retry before leaving.</p><button type="button" onClick={retryPreparation} className="border px-3 py-2">Retry saving preparation</button></div>;
-
-  const copy = sourceFolderCopy(message.sourceFolders);
-  return <div className="p-3 text-sm"><p role="status" className="min-w-0 break-words select-text">
-    <span>Local preparation saved.</span> {copy.beforeNames}{copy.names.map((name, index) => <span key={`${name}-${index}`}>
-      {index > 0 ? ', ' : ''}<strong className="font-[700]">{name}</strong>
-    </span>)}{copy.afterNames}
-  </p></div>;
+  const copy = message.sourceFolders ? sourceFolderCopy(message.sourceFolders) : null;
+  const failed = message.kind === 'failed' && message.preparationId !== null;
+  const saveText = message.kind === 'saving'
+    ? message.hasSaved ? 'Saving latest changes…' : 'Saving local preparation…'
+    : failed
+      ? message.hasSaved
+        ? 'Latest changes could not be saved. Keep this tab open, check browser storage, and retry.'
+        : 'Local preparation could not be saved. Keep this tab open, check browser storage, and retry.'
+      : 'All changes saved.';
+  return <div key={message.preparationId ?? 'other-preparations'} data-testid="preparation-save-status"
+    className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_22rem] items-start gap-2 lg:gap-6 p-3 text-sm">
+    <p data-testid="preparation-save-context" className="min-w-0 break-words select-text">
+      {message.hasSaved && <><span>Local preparation saved.</span>{' '}</>}
+      {copy && <>{copy.beforeNames}{copy.names.map((name, index) => <span key={`${name}-${index}`}>
+        {index > 0 ? ', ' : ''}<strong className="font-[700]">{name}</strong>
+      </span>)}{copy.afterNames}</>}
+    </p>
+    <div className="min-h-11 min-w-0 space-y-2 lg:text-right">
+      {message.preparationId && <p data-testid="preparation-save-progress" role={failed ? 'alert' : undefined}>{saveText}</p>}
+      {message.otherFailures && <p role="alert">Another preparation could not be saved. Keep this tab open, check browser storage, and retry.</p>}
+      {(failed || message.otherFailures) && <button type="button" onClick={retryPreparation}
+        className="min-h-11 border px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Retry saving preparation</button>}
+    </div>
+    <span role="status" className="sr-only">{message.hasSaved ? 'A recoverable preparation is available in this browser.' : ''}</span>
+  </div>;
 }
 export function PreparationRecovery() {
   const [saved, setSaved] = useState<LocalPreparation | null>(null);

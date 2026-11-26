@@ -12,7 +12,7 @@ for (const legacy of [true, false]) test(`recovery preserves a ${legacy ? 'legac
   const original = await app.cachedSpecies();
   const specs = [jpegAt('ALPHA.JPG','2026:07:01 12:00:00')];
   await app.dropFolder(specs); await app.waitForInspected();
-  await expect(page.getByText('Local preparation saved.',{exact:true})).toBeVisible();
+  await expect(page.getByTestId('preparation-save-progress')).toHaveText('All changes saved.');
   // Model an already-saved legacy batch; recovery itself uses real journal and file verification.
   const expected = legacy ? {...original, collectionKey:`${BUCKET_B}::${UUID_B}`, collectionName:'Legacy collection',sourceKey:`Collections/${UUID_B}/species.json`} : original;
   await page.evaluate(async species => {
@@ -67,7 +67,7 @@ test('a damaged sibling journal does not hide a healthy saved batch', async ({ p
   const s3 = new S3Mock(); seedDefaultStorage(s3);
   const app = new App(page, s3); await app.connect(); await prepare(app, 'Alpha Collection');
   await app.dropFolder([jpegAt('HEALTHY.JPG', '2026:07:01 12:00:00')]); await app.waitForInspected();
-  await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('preparation-save-progress')).toHaveText('All changes saved.');
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.open('sparcd-flip');
