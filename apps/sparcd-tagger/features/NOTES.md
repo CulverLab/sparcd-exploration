@@ -16,6 +16,7 @@ fixture. Browser verification uses independent Google Chrome sessions.
 | H1, navigation, display preferences | Examination, responsive layouts, keyboard/popup behavior, image loading and transient display controls |
 | Browse and collection visibility | Listing, metadata, filtering, permission/loading states, responsive columns and accessible explanations |
 | Location/time correction | Registry-only location selection, targeted correction, timestamp eligibility, bulk targets and automatic publication |
+| `need-expert-terminology.feature` | Focus Need expert label, mark/clear descriptions and pressed state, toolbar/badge agreement, saved set/clear after reload at desktop and narrow widths; navigation coverage checks expert filter labels, active summaries and result counts |
 | Classification/expert badges | Grid/List/Focus, coexistence, accessibility, touch, fresh sessions and fullscreen exclusion |
 | `local-batch.feature` | No online collection controls, offline tagging, attribution and Done return |
 

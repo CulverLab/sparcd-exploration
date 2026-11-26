@@ -54,12 +54,14 @@ Feature: Move through an upload and choose which images an action applies to
     Then only IMG005.JPG remains in the Overview
 
   @unmapped
-  Scenario: The Tag state filter can isolate questionable or not-questionable images
+  Scenario: The Tag state filter can isolate images that need or do not need an expert
     Given it is marked questionable
-    When the image filter limits Tag state to Questionable only
+    When the image filter limits Tag state to Need expert only
     Then only "IMG001.JPG" remains in the Overview
-    When the image filter limits Tag state to Not questionable only
+    And the active image filter says "Need expert only" with 1 matching image
+    When the image filter limits Tag state to No expert needed only
     Then IMG001.JPG is absent from the Overview
+    And the active image filter says "No expert needed only" with 5 matching images
 
   @unmapped
   Scenario: An unclassified questionable image exposes only the Questionable status to assistive technology

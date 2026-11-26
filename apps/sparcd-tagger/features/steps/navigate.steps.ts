@@ -101,14 +101,14 @@ Then('the focused tile announces its species and review status', async ({ page }
   );
 });
 
-When('the image filter limits Tag state to Questionable only', async ({ page }) => {
+When('the image filter limits Tag state to Need expert only', async ({ page }) => {
   await openFindFilter(page);
-  await page.getByRole('group', { name: 'Tag state', exact: true }).getByRole('radio', { name: 'Questionable only', exact: true }).check();
+  await page.getByRole('group', { name: 'Tag state', exact: true }).getByRole('radio', { name: 'Need expert only', exact: true }).check();
 });
 
-When('the image filter limits Tag state to Not questionable only', async ({ page }) => {
+When('the image filter limits Tag state to No expert needed only', async ({ page }) => {
   await openFindFilter(page);
-  await page.getByRole('group', { name: 'Tag state', exact: true }).getByRole('radio', { name: 'Not questionable only', exact: true }).check();
+  await page.getByRole('group', { name: 'Tag state', exact: true }).getByRole('radio', { name: 'No expert needed only', exact: true }).check();
 });
 
 Then('IMG001.JPG is absent from the Overview', async ({ page }) => {
@@ -1498,4 +1498,13 @@ Then('the sorted exhausted focus remains on IMG005 in {string}', async ({ page }
     await expect(positionReadout(page)).toHaveText('5 / 6');
     await expect(focusedTile(page)).toHaveCount(0);
   }
+});
+
+Then('the active image filter says {string} with {int} matching image(s)', async ({ page }, label: string, count: number) => {
+  // Closing the rail resets filters. Returning from Focus hides it while
+  // retaining the chosen status, exposing the active-filter summary.
+  await page.getByTestId('overview-image').first().dblclick();
+  await closeFocusView(page);
+  await expect(page.getByLabel('Active image filter', { exact: true })).toContainText(`${label} · ${count}/6`);
+  await expect(page.getByTestId('overview-image')).toHaveCount(count);
 });

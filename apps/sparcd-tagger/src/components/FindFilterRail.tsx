@@ -161,7 +161,7 @@ export function FindFilterRail({ open, docked, onClose, findRef, query, setQuery
           <legend className="text-[12px] font-mono">{group === 'scope' ? 'Search in' : 'Tag state'}</legend>
           {(group === 'scope'
             ? [['all', 'All fields'], ['filename', 'Filename'], ['species', 'Species'], ['date', 'Date']]
-            : [['all', 'All images'], ['tagged', 'Tagged only'], ['untagged', 'Untagged only'], ['questionable', 'Questionable only'], ['not-questionable', 'Not questionable only']]
+            : [['all', 'All images'], ['tagged', 'Tagged only'], ['untagged', 'Untagged only'], ['questionable', 'Need expert only'], ['not-questionable', 'No expert needed only']]
           ).map(([value, label]) => (
             <label key={value} className="flex min-h-9 items-center gap-2 text-[13px]">
               <input type="radio" name={`image-filter-${group}`} value={value}
