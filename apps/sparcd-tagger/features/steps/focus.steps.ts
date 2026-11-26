@@ -1048,19 +1048,26 @@ When('the viewport is narrowed to a phone size', async ({ page }) => {
 });
 
 Then('the Adjust control stays clear of status badges and zoom controls', async ({ page }) => {
-  const adjust = await adjustToggle(page).boundingBox();
-  expect(adjust).not.toBeNull();
-  const canvas = (await page.getByTestId('focus-drop-zone').boundingBox())!;
-  expect(adjust!.x).toBeGreaterThanOrEqual(canvas.x);
-  expect(adjust!.x + adjust!.width).toBeLessThanOrEqual(Math.min(canvas.x + canvas.width, 390));
-  expect(adjust!.y).toBeGreaterThanOrEqual(canvas.y);
-  expect(adjust!.y + adjust!.height).toBeLessThanOrEqual(Math.min(canvas.y + canvas.height, 844));
-  const obstructions = page.locator('[data-testid="focus-image-status-badges"] [role="img"], button[aria-label="Open fullscreen"], button[aria-label="Zoom in"], button[aria-label="Zoom out"]');
-  for (const obstruction of await obstructions.all()) {
-    const box = (await obstruction.boundingBox())!;
-    expect(adjust!.x < box.x + box.width && adjust!.x + adjust!.width > box.x && adjust!.y < box.y + box.height && adjust!.y + adjust!.height > box.y,
-      JSON.stringify({ adjust, obstruction: box })).toBe(false);
-  }
+  // ResizeObserver repositions the image and controls after a viewport change.
+  // Read all rectangles in one browser task and wait for that layout to settle.
+  await expect.poll(() => adjustToggle(page).evaluate((button) => {
+    const adjust = button.getBoundingClientRect();
+    const canvas = document.querySelector('[data-testid="focus-drop-zone"]')!.getBoundingClientRect();
+    const problems: string[] = [];
+    if (adjust.width === 0 || adjust.height === 0) problems.push('Adjust is not visible');
+    if (adjust.left < canvas.left || adjust.right > Math.min(canvas.right, window.innerWidth) ||
+        adjust.top < canvas.top || adjust.bottom > Math.min(canvas.bottom, window.innerHeight)) {
+      problems.push(JSON.stringify({ reason: 'Adjust leaves the canvas or viewport', adjust, canvas }));
+    }
+    const obstructions = document.querySelectorAll('[data-testid="focus-image-status-badges"] [role="img"], button[aria-label="Open fullscreen"], button[aria-label="Zoom in"], button[aria-label="Zoom out"]');
+    for (const obstruction of obstructions) {
+      const box = obstruction.getBoundingClientRect();
+      if (adjust.left < box.right && adjust.right > box.left && adjust.top < box.bottom && adjust.bottom > box.top) {
+        problems.push(JSON.stringify({ reason: 'Adjust overlaps a badge or zoom control', adjust, obstruction: box }));
+      }
+    }
+    return problems;
+  })).toEqual([]);
   await expect(adjustToggle(page)).toHaveCount(1);
 });
 
