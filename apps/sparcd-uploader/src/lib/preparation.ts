@@ -88,18 +88,34 @@ export async function choosePreparationSpecies(species: PreparedSpecies): Promis
   retryPreparation();
 }
 const listeners = new Set<() => void>();
-export type PreparationSaveStatus =
-  | { kind: 'saving' }
-  | { kind: 'failed' }
-  | { kind: 'saved'; sourceFolders: SourceFolderSummary }
-  | null;
+export type PreparationSaveStatus = {
+  kind: 'saving' | 'failed' | 'saved';
+  preparationId: string | null;
+  sourceFolders: SourceFolderSummary | null;
+  hasSaved: boolean;
+  otherFailures: boolean;
+} | null;
 let status: PreparationSaveStatus = null;
 let hasPreparation = false;
-const writes = new PreparationQueue(failed => {
-  if (failed) report({ kind: 'failed' });
-  else if (hasPreparation) report({ kind: 'saved', sourceFolders: batchSourceFolders ?? summarizeSourceFolders(useStore.getState().files.map(file => file.relPath)) });
-  else report(null);
+// A pending update must not hide an earlier durable copy or borrow another
+// batch's successful save. Add IDs only after commit or validated recovery.
+const committedPreparations = new Set<string>();
+const writes = new PreparationQueue(() => {
+  const failed = writes.failedIds();
+  reportSaveStatus(failed.includes(preparationId) ? 'failed' : 'saved');
 });
+function reportSaveStatus(kind: NonNullable<PreparationSaveStatus>['kind']): void {
+  const id = hasPreparation ? preparationId : null;
+  const otherFailures = writes.failedIds().some(failed => failed !== id);
+  if (!id && !otherFailures) { report(null); return; }
+  report({
+    kind: id ? kind : 'failed',
+    preparationId: id,
+    sourceFolders: id ? batchSourceFolders ?? summarizeSourceFolders(useStore.getState().files.map(file => file.relPath)) : null,
+    hasSaved: !!id && committedPreparations.has(id),
+    otherFailures,
+  });
+}
 export const preparationStatus = () => status;
 export const subscribePreparation = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 function report(message: PreparationSaveStatus) { status = message; for (const listener of listeners) listener(); }
@@ -134,7 +150,9 @@ export async function readPreparationForFlip(flipId: string): Promise<LocalPrepa
   // strand a healthy Flip return. A damaged matching record remains an error.
   const rows = await flipDb.preparations.toArray();
   const matching = rows.filter(row => row.value && typeof row.value === 'object' && 'flipId' in row.value && row.value.flipId === flipId);
-  return matching.map(row => validatePreparation(row.value)!).sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0] ?? null;
+  const saved = matching.map(row => validatePreparation(row.value)!).sort((a, b) => b.savedAt.localeCompare(a.savedAt))[0] ?? null;
+  if (saved) committedPreparations.add(saved.id);
+  return saved;
 }
 
 function sameRemovalTarget(file: { relPath?: unknown; size?: unknown; sha256?: unknown }, intent: MissingRemovalIntent): boolean {
@@ -395,6 +413,7 @@ export function startPreparationJournal(): void {
           const legacy = await flipDb.preparations.get('active');
           if (legacy?.value && (legacy.value as LocalPreparation).id === publishedId) await flipDb.preparations.delete('active');
         });
+        committedPreparations.delete(publishedId);
       });
       if (currentPublished) return;
     }
@@ -419,19 +438,19 @@ export function startPreparationJournal(): void {
     if (!files.length) preparationId = '';
     if (!id) return;
     hasPreparation = files.length > 0;
-    report({ kind: 'saving' });
+    reportSaveStatus('saving');
     writes.enqueue(id, async () => {
-      if (!files.length) { if (id) await flipDb.preparations.delete(id); }
+      if (!files.length) { if (id) await flipDb.preparations.delete(id); committedPreparations.delete(id); }
       else {
         const species = await speciesPromise;
-        await flipDb.transaction('rw', flipDb.preparations, flipDb.removalIntents, flipDb.records, async () => {
+        const saved = await flipDb.transaction('rw', flipDb.preparations, flipDb.removalIntents, flipDb.records, async () => {
           const tombstones = (await flipDb.removalIntents.toArray())
             .map(row => row.value as MissingRemovalIntent)
             .filter(intent => intent?.preparationId === id && !!intent.appliedAt);
           const retainedFiles = files.filter(file => !tombstones.some(intent => intent.relPath === file.relPath && sameRemovalTarget(file, intent)));
           if (!retainedFiles.length) {
             await flipDb.preparations.delete(id);
-            return;
+            return false;
           }
           const previous = await flipDb.preparations.get(id);
           const priorValue = previous?.value as LocalPreparation | undefined;
@@ -447,7 +466,11 @@ export function startPreparationJournal(): void {
           // Retire only this batch's legacy singleton after its replacement is durable.
           const legacy = await flipDb.preparations.get('active');
           if (legacy?.value && (legacy.value as LocalPreparation).id === id) await flipDb.preparations.delete('active');
+          return true;
         });
+        if (saved) committedPreparations.add(id);
+        else committedPreparations.delete(id);
+        if (id === preparationId && hasPreparation) reportSaveStatus('saving');
       }
     });
   });
@@ -522,6 +545,7 @@ async function applyRecoveredPreparation(saved: LocalPreparation, result: Pick<R
   });
   // Legacy singleton journals remain recoverable, but new writes have batch keys.
   preparationId = saved.id;
+  committedPreparations.add(saved.id);
   batchSourceFolders = saved.sourceFolders ?? summarizeSourceFolders(saved.files.map(file => file.relPath));
   speciesRead = Promise.resolve(flip?.preparedSpecies ?? saved.species);
   batchSpecies = flip?.preparedSpecies ?? saved.species;

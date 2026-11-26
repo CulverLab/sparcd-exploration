@@ -31,8 +31,8 @@ for (const kind of ['folder', 'files'] as const) {
       const saved = [jpegAt('SAVED.JPG', '2026:07:01 12:00:00')];
       if (kind === 'folder') await app.dropFolder(saved); else await app.pickFiles(saved);
       await app.waitForInspected();
-      const savedStatus = page.getByText('Local preparation saved.', { exact: true });
-      await expect(savedStatus).toBeVisible();
+      const savedStatus = page.getByTestId('preparation-save-progress');
+      await expect(savedStatus).toHaveText('All changes saved.');
       const [original] = await preparations(page);
       await page.reload();
       const recovery = page.getByRole('region', { name: 'Saved local preparation' });
@@ -44,7 +44,7 @@ for (const kind of ['folder', 'files'] as const) {
       else await app.pickFiles(fresh);
       await app.waitForInspected();
       expect((await app.listedFiles()).map(file => file.name)).toEqual(['NEW.JPG']);
-      await expect(savedStatus).toBeVisible();
+      await expect(savedStatus).toHaveText('All changes saved.');
       const rows = await preparations(page);
       expect(rows).toHaveLength(2);
       expect(rows.find(row => row.id === original.id)).toEqual(original);
@@ -59,7 +59,7 @@ for (const kind of ['folder', 'files'] as const) {
       } else await (await chooser).setFiles({ name: 'SAVED.JPG', mimeType: 'image/jpeg', buffer: saved[0].bytes! });
       await app.waitForInspected();
       expect((await app.listedFiles()).map(file => file.name)).toEqual(['SAVED.JPG']);
-      await expect(savedStatus).toBeVisible();
+      await expect(savedStatus).toHaveText('All changes saved.');
       expect(await preparations(page)).toHaveLength(2);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });

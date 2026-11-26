@@ -13,7 +13,7 @@ const folderBatch = (folders: string[]) => folders.map((folder, index) => ({
 }));
 
 function savedStatus(page: Page) {
-  return page.locator('p[role="status"]').filter({ hasText: 'Local preparation saved.' });
+  return page.getByTestId('preparation-save-context');
 }
 
 async function readPreparations(page: Page): Promise<any[]> {

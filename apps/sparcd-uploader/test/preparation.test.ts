@@ -14,7 +14,66 @@ vi.mock('../src/lib/processPool', () => ({ processBatch: (items: any[], _started
 } }));
 let store: typeof import('../src/store')['useStore'];
 let journal: typeof import('../src/lib/preparation');
+function statusFile(folder: string) {
+  const file = new File(['original bytes'], 'status.jpg');
+  return { id: `${folder}/status.jpg`, relPath: `${folder}/status.jpg`, fileName: file.name, size: file.size, mediaKind: 'image' as const, file };
+}
+function deferredStatusWrite() {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
 beforeAll(async () => { ({ useStore: store } = await import('../src/store')); journal = await import('../src/lib/preparation'); journal.startPreparationJournal(); });
+it('claims a saved copy only after commit and retains it through later failures and retry', async () => {
+  const held = deferredStatusWrite(), entered = deferredStatusWrite();
+  memory.hold = held.promise; memory.entered = entered.release;
+  try {
+    store.getState().setFiles([statusFile('First-save')]); await entered.promise;
+    expect(journal.preparationStatus()).toMatchObject({ kind: 'saving', hasSaved: false, sourceFolders: { names: ['First-save'] } });
+    memory.fail = true; held.release();
+    await expect(journal.flushPreparation()).rejects.toThrow('could not be saved');
+    expect(journal.preparationStatus()).toMatchObject({ kind: 'failed', hasSaved: false });
+    memory.fail = false; memory.hold = null;
+    journal.retryPreparation(); await journal.flushPreparation();
+    expect(journal.preparationStatus()).toMatchObject({ kind: 'saved', hasSaved: true });
+    memory.fail = true; store.getState().setUploadDescription('latest notes');
+    expect(journal.preparationStatus()).toMatchObject({ kind: 'saving', hasSaved: true });
+    await expect(journal.flushPreparation()).rejects.toThrow('could not be saved');
+    expect(journal.preparationStatus()).toMatchObject({ kind: 'failed', hasSaved: true });
+  } finally {
+    held.release(); memory.fail = false; memory.hold = null; memory.entered = () => {};
+    journal.retryPreparation(); await journal.flushPreparation();
+    store.getState().resetBatch(); await journal.flushPreparation();
+  }
+});
+it('does not attribute an older batch commit to the newly selected batch', async () => {
+  const old = deferredStatusWrite(), oldEntered = deferredStatusWrite();
+  const current = deferredStatusWrite(), currentEntered = deferredStatusWrite();
+  memory.hold = old.promise; memory.entered = oldEntered.release;
+  try {
+    store.getState().setFiles([statusFile('Older')]); await oldEntered.promise;
+    store.getState().setFiles([statusFile('Current')]);
+    const id = journal.preparationStatus()!.preparationId;
+    memory.hold = current.promise; memory.entered = currentEntered.release;
+    old.release(); await currentEntered.promise;
+    expect(journal.preparationStatus()).toMatchObject({ preparationId: id, kind: 'saving', hasSaved: false, sourceFolders: { names: ['Current'] } });
+    current.release(); await journal.flushPreparation();
+    expect(journal.preparationStatus()).toMatchObject({ preparationId: id, kind: 'saved', hasSaved: true });
+  } finally {
+    old.release(); current.release(); memory.hold = null; memory.entered = () => {};
+    await journal.flushPreparation(); store.getState().resetBatch(); await journal.flushPreparation();
+  }
+});
+it('keeps older failed saves visible after the current batch succeeds', async () => {
+  memory.fail = true; store.getState().setFiles([statusFile('Failed')]);
+  await expect(journal.flushPreparation()).rejects.toThrow('could not be saved');
+  memory.fail = false; store.getState().setFiles([statusFile('New')]);
+  await expect(journal.flushPreparation()).rejects.toThrow('could not be saved');
+  expect(journal.preparationStatus()).toMatchObject({ kind: 'saved', hasSaved: true, otherFailures: true });
+  journal.retryPreparation(); await journal.flushPreparation();
+  expect(journal.preparationStatus()).toMatchObject({ kind: 'saved', hasSaved: true, otherFailures: false });
+  store.getState().resetBatch(); await journal.flushPreparation();
+});
 it('persists only non-secret batch data, survives failed writes, retries, and validates originals before recovery', async () => {
   const file = new File(['original bytes'], 'original.jpg', { lastModified: 123 });
   store.getState().setFiles([{ id: 'SD/a.jpg', relPath: 'SD/a.jpg', fileName: 'a.jpg', size: file.size, mediaKind: 'image', file }]);

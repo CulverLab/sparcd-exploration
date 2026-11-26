@@ -17,6 +17,8 @@ export class PreparationQueue {
 
   ids(): string[] { return [...new Set([...this.waiting.keys(), ...this.failed.keys(), ...(this.active ? [this.active] : [])])]; }
 
+  failedIds(): string[] { return [...this.failed.keys()]; }
+
   retry(): void {
     for (const [id, write] of this.failed) {
       if (id !== this.active && !this.waiting.has(id)) this.waiting.set(id, write);
