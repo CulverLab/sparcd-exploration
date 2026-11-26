@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatBytes } from '../lib/scanFiles';
+import { summarizeUploadFiles, formatTransferBreakdown } from '../lib/uploadDisplay';
 import type { FileState, UploadSnapshot } from '../lib/upload';
 
 // Skipped is a satisfied state (verified already uploaded), not a warning —
@@ -14,7 +15,7 @@ const STATE_DOT: Record<FileState, string> = {
   pending: 'bg-ruleSoft',
   uploading: 'bg-accent',
   done: 'bg-ok',
-  skipped: 'bg-inkMute',
+  skipped: 'bg-ok',
   failed: 'bg-warn',
 };
 
@@ -90,13 +91,16 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
             >
               <span
                 className={`w-2 h-2 rounded-full ${STATE_DOT[f.state]}`}
-                title={f.error ?? f.state}
+                title={f.error ?? (f.state === 'skipped' ? 'Done — already stored and verified' : f.state)}
                 aria-hidden
               />
               <span className="min-w-0 col-span-2 sm:col-span-1">
                 <span className="block truncate font-mono text-[12px] text-ink" title={f.key}>
                   {tail}
                 </span>
+                {f.state === 'skipped' && (
+                  <span className="block font-body text-[11px] text-ok">Already stored on server — verified</span>
+                )}
                 {f.error && (
                   <span className="block truncate font-body text-[11px] text-warn" title={f.error}>
                     {f.error}
@@ -110,7 +114,7 @@ function ProgressList({ snap }: { snap: UploadSnapshot }) {
                 />
               </span>
               <span className="col-start-3 row-start-2 sm:col-start-4 sm:row-start-1 font-mono text-[11px] text-inkSoft text-right">
-                {f.state === 'uploading' ? `${Math.round(pct)}%` : f.state}
+                {f.state === 'uploading' ? `${Math.round(pct)}%` : f.state === 'skipped' ? 'done' : f.state}
               </span>
             </div>
           );
@@ -233,11 +237,15 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
     (a, f) => ((a[f.state] = (a[f.state] ?? 0) + 1), a),
     {} as Record<FileState, number>,
   );
-  const failed = counts.failed ?? 0;
+  const { uploaded, verified, complete, failed } = summarizeUploadFiles(snap.files);
   const pct = snap.totalBytes > 0 ? (snap.uploadedBytes / snap.totalBytes) * 100 : 0;
 
   return (
     <section className="space-y-3">
+      {snap.automaticRecovery && <p role="status" className="font-body text-[13px] text-inkSoft">
+        {['preparing', 'blobs', 'metadata'].includes(snap.phase) ? 'Automatic recovery: continuing the existing upload after an interruption.' : 'This upload resumed automatically after an interruption.'}{' '}
+        Files already stored are verified instead of being sent again.
+      </p>}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <p className="font-body text-[13px] text-inkSoft">
           <span className="font-mono text-ink uppercase tracking-[0.12em] text-[11px]">
@@ -245,7 +253,8 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
           </span>
           {snap.dryRun && <span className="ml-2 text-warn">dry run</span>}
           {' · '}
-          <span className="font-mono text-ok">{counts.done ?? 0}</span> done
+          <span className="font-mono text-ok">{complete}</span> complete
+          {!snap.dryRun && <> · {uploaded} uploaded this attempt · {verified} already stored and verified</>}
           {counts.inspecting ? (
             <>
               {' · '}
@@ -259,12 +268,6 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
               in flight
             </>
           ) : null}
-          {counts.skipped ? (
-            <>
-              {' · '}
-              <span className="font-mono text-inkSoft">{counts.skipped}</span> skipped
-            </>
-          ) : null}
           {counts.failed ? (
             <>
               {' · '}
@@ -273,7 +276,7 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
           ) : null}
         </p>
         <p className="shrink-0 font-mono text-[12px] text-inkSoft">
-          {formatBytes(snap.uploadedBytes)} / {formatBytes(snap.totalBytes)}
+          {formatBytes(snap.uploadedBytes)} / {formatBytes(snap.totalBytes)} complete
         </p>
       </div>
 
@@ -291,7 +294,7 @@ export function RunMonitor({ snap }: { snap: UploadSnapshot }) {
           message={
             snap.dryRun
               ? `Dry run complete — ${snap.files.length} files would publish under ${snap.uploadPath}/. Nothing was written.`
-              : `Published ${snap.files.length} files under ${snap.uploadPath}/. Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
+              : `Published ${complete} files under ${snap.uploadPath}/. ${formatTransferBreakdown(uploaded, verified)} Bundle hash ${snap.metadataBundleSha256?.slice(0, 16)}…`
           }
         />
       )}

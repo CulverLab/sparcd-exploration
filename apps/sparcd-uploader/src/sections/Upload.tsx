@@ -7,6 +7,7 @@ import { findAllowedLocation } from '../lib/allowedLocations';
 import { useCollections } from '../lib/useCollections';
 import { sanitizeUploaderUser } from '../lib/normalize';
 import { formatUploadComments } from '../lib/uploadComments';
+import { summarizeUploadFiles } from '../lib/uploadDisplay';
 import { formatBytes } from '../lib/scanFiles';
 import { preparationIdForUpload } from '../lib/preparation';
 import { loadSession, type BatchRecord } from '../lib/db';
@@ -409,6 +410,7 @@ export function Upload() {
 
   // Estimating and overriding belongs to Assign; this step only states what
   // the batch will publish so nobody is surprised by the deployment flag.
+  const completionCounts = summarizeUploadFiles(snap?.files ?? []);
   const noCameraTime = files.filter(
     (f) => f.processState === 'ready' && (!f.exifNaive || f.exifTimestampSource === 'exif-modify'),
   ).length;
@@ -557,8 +559,9 @@ export function Upload() {
         <div className="border border-warn/40 bg-paper px-3 py-2.5 space-y-1">
           <p className="font-body text-[13px] text-warn">
             {resumeProblems.length} file{resumeProblems.length === 1 ? '' : 's'} could not be
-            reconciled and will be skipped:
+            matched to the selected originals:
           </p>
+          <p className="font-body text-[12px] text-inkSoft">These local files have not been re-uploaded. Existing server copies must pass verification; otherwise restore the originals and resume again.</p>
           <ul className="font-mono text-[11px] text-inkSoft max-h-32 overflow-auto">
             {resumeProblems.slice(0, 50).map((p) => (
               <li key={p.localPath} className="truncate" title={`${p.localPath} — ${p.reason}`}>
@@ -670,7 +673,8 @@ export function Upload() {
 
       {snap?.phase === 'done' && !snap.dryRun && !completeDismissed && (
         <UploadCompleteDialog
-          doneCount={snap.files.filter((f) => f.state === 'done').length}
+          uploadedCount={completionCounts.uploaded}
+          verifiedCount={completionCounts.verified}
           collectionId={snap.collectionUuid}
           onClose={() => setCompleteDismissed(true)}
         />

@@ -112,6 +112,8 @@ export type UploadSnapshot = {
   // A partial run whose every failure was a lost connection: nothing needs
   // fixing, so the app retries it on its own.
   autoRetry?: boolean;
+  /** Identifies an automatically started attempt, including after completion. */
+  automaticRecovery?: boolean;
 };
 
 /**
@@ -138,6 +140,7 @@ export type ResumeParams = {
   session: LoadedSession;
   attached: Map<string, File>; // localPath → reattached source file
   concurrency: ConcurrencyControl;
+  automaticRecovery?: boolean;
 };
 
 export type UploadRun = { cancel: () => void; done: Promise<void> };
@@ -1537,6 +1540,7 @@ export function resumeUpload(
     isResume: true,
     dryRun: false,
   });
+  runner.snap.automaticRecovery = params.automaticRecovery ?? false;
   runner.snap.preparationId = batch.preparationId;
   runner.snap.sessionId = batch.id;
   runner.snap.collectionUuid = batch.collectionUuid;

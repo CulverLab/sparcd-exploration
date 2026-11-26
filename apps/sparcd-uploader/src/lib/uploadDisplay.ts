@@ -28,3 +28,20 @@ export function formatUploadHeader(meta: UploadMetaJson): string {
 export function formatHistoryBatchStart(startedAt: Date | string, timeZone?: string): string {
   return formatDateTime24(startedAt, timeZone);
 }
+
+/** Verified existing files are complete, but contributed no new transfer. */
+export function summarizeUploadFiles(files: readonly { state: string }[]): {
+  uploaded: number; verified: number; complete: number; failed: number;
+} {
+  let uploaded = 0, verified = 0, failed = 0;
+  for (const file of files) {
+    if (file.state === 'done') uploaded++;
+    else if (file.state === 'skipped') verified++;
+    else if (file.state === 'failed') failed++;
+  }
+  return { uploaded, verified, complete: uploaded + verified, failed };
+}
+
+export function formatTransferBreakdown(uploaded: number, verified: number): string {
+  return `${uploaded} uploaded this attempt; ${verified} already stored and verified.`;
+}

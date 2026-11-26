@@ -826,7 +826,7 @@ export const useStore = create<UploaderState>()(
           const generation = get().beginActiveRun();
           if (generation === null) return;
           const run = resumeUpload(
-            { config: s3Config, session, attached, concurrency },
+            { config: s3Config, session, attached, concurrency, automaticRecovery: true },
             (next) => get().setActiveSnap(next, generation),
           );
           get().setActiveRun(run, generation);

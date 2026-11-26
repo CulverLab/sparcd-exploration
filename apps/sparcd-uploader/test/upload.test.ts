@@ -1113,7 +1113,7 @@ describe('upload runs continue past per-file blob failures', () => {
     expect(mocks.markBatchComplete).not.toHaveBeenCalled();
   });
 
-  it('accounts verified skips as skipped rather than transferred bytes', async () => {
+  it.each([false, true])('keeps verified bytes separate from transfers (automatic recovery: %s)', async (automaticRecovery) => {
     const session = makeSession(['done', 'done', 'pending', 'pending']);
     mocks.client = makeClient(session.files);
     // Only a real transfer reports progress; the two 'done' files take the
@@ -1132,7 +1132,7 @@ describe('upload runs continue past per-file blob failures', () => {
     let last: UploadSnapshot | null = null;
 
     const run = resumeUpload(
-      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2) },
+      { config: CONFIG, session, attached: attachedFor(session.files), concurrency: manual(2), ...(automaticRecovery ? { automaticRecovery: true } : {}) },
       (snap) => {
         last = snap;
       },
@@ -1140,6 +1140,7 @@ describe('upload runs continue past per-file blob failures', () => {
     const snap = await collect(run, () => last);
 
     expect(snap.phase).toBe('done');
+    expect(snap.automaticRecovery).toBe(automaticRecovery);
     expect(snap.collectionUuid).toBe('collection');
     expect(snap.files.filter((f) => f.state === 'skipped')).toHaveLength(2);
     expect(snap.skippedBytes).toBe(session.files[0].size + session.files[1].size);
