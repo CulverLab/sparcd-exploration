@@ -50,9 +50,9 @@ for (const kind of ['folder', 'files'] as const) {
       expect(rows.find(row => row.id === original.id)).toEqual(original);
       // A separate explicit recovery action still restores the original batch.
       await page.reload();
-      await recovery.getByRole('combobox', { name: 'Saved batch' }).selectOption(original.id);
+      await recovery.getByRole('combobox', { name: 'Choose saved preparation' }).selectOption(original.id);
       const chooser = page.waitForEvent('filechooser');
-      await recovery.getByRole('button', { name: kind === 'folder' ? 'Reselect saved batch folder' : 'Reselect saved files', exact: true }).click();
+      await recovery.getByRole('button', { name: kind === 'folder' ? 'Choose original folder' : 'Choose original files', exact: true }).click();
       if (kind === 'folder') {
         const path = await app.writeFolderToDisk(saved, join(directory, 'saved', FOLDER));
         await (await chooser).setFiles(path);

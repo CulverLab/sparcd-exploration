@@ -28,7 +28,7 @@ for (const legacy of [true, false]) test(`recovery preserves a ${legacy ? 'legac
   await reopened.getByRole('button',{name:'Connect',exact:true}).click();
   await expect(reopened.getByRole('button',{name:'Logout',exact:true})).toBeVisible();
   await expect.poll(async () => (await recovered.cachedSpecies())?.species[0].scientificName).toBe('Later species');
-  await recovered.seedPickedFolder(specs);await reopened.getByRole('button',{name:'Reselect saved batch folder',exact:true}).click();await recovered.waitForInspected();
+  await recovered.seedPickedFolder(specs);await reopened.getByRole('button',{name:'Choose original folder',exact:true}).click();await recovered.waitForInspected();
   expect(await savedBatchSpecies(reopened, 'ALPHA.JPG')).toEqual(expected);
   await reopened.getByRole('button',{name:'Tag species before upload',exact:true}).click(); await continueWithMasterSpecies(reopened); await reopened.waitForURL(/\/tagger\/\?batch=/);
   expect((await recovered.readFlipRecords())[0].preparedSpecies.species[0].scientificName).toBe('Later species');
@@ -83,9 +83,9 @@ test('a damaged sibling journal does not hide a healthy saved batch', async ({ p
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
   await expect(recovery.getByRole('alert')).toContainText('1 saved batch needs attention');
   await expect(recovery.getByRole('alert')).toContainText('Saved data is damaged or from an unsupported version.');
-  await expect(recovery.getByRole('button', { name: 'Reselect saved batch folder' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Choose original folder' })).toBeVisible();
   await app.seedPickedFolder([jpegAt('HEALTHY.JPG', '2026:07:01 12:00:00')]);
-  await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
+  await recovery.getByRole('button', { name: 'Choose original folder' }).click();
   await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
   await continueWithMasterSpecies(page);

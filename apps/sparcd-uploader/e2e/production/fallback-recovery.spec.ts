@@ -25,7 +25,7 @@ for (const path of ['Flip files', 'Flip directory', 'preparation directory'] as 
         const record = (await app.readFlipRecords())[0];
         await page.goto(record.returnUrl);
       } else await page.reload();
-      const button = page.getByRole('button', { name: path === 'Flip files' ? 'Choose photos or videos' : path === 'Flip directory' ? 'Choose folder' : 'Reselect saved batch folder', exact: true });
+      const button = page.getByRole('button', { name: path === 'Flip files' ? 'Choose photos or videos' : path === 'Flip directory' ? 'Choose folder' : 'Choose original folder', exact: true });
       async function openPicker() {
         const pending = page.waitForEvent('filechooser');
         await button.click();

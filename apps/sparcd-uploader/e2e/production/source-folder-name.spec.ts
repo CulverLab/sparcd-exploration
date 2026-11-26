@@ -111,7 +111,7 @@ test('a restored preparation retains its selected folder name', async ({ page })
   await app.reopen();
   await app.seedPickedFolder(specs);
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
-  await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click();
+  await recovery.getByRole('button', { name: 'Choose original folder' }).click();
   await app.waitForInspected();
   await expect(savedStatus(page).locator('strong')).toHaveText('WHE19_09.28.26_119.images');
 });

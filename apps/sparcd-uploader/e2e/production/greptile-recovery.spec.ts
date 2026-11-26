@@ -34,10 +34,13 @@ for (const nativeFolderAPI of [false, true]) test(`individual-file preparation r
     await page.close();
   } else await current.reload();
   const recovery = current.getByRole('region', { name: 'Saved local preparation' });
-  if (!nativeFolderAPI) await expect(recovery.getByRole('button', { name: 'Reselect saved batch folder' })).toHaveCount(0);
+  if (!nativeFolderAPI) await expect(recovery.getByRole('button', { name: 'Choose original folder' })).toHaveCount(0);
   async function select(bytes: Buffer) {
     const pending = current.waitForEvent('filechooser');
-    await recovery.getByRole('button', { name: 'Reselect saved files', exact: true }).click();
+    if (await recovery.locator('details').getAttribute('open') === null) {
+      await recovery.getByText('Choose individual files instead', { exact: true }).click();
+    }
+    await recovery.getByRole('button', { name: 'Choose original files', exact: true }).click();
     await (await pending).setFiles({ name: 'ROOT.JPG', mimeType: 'image/jpeg', buffer: bytes });
   }
   const edited = jpegAt('ROOT.JPG', '2026:07:02 12:00:00');
@@ -126,11 +129,11 @@ for (const source of ['saved handle', 'newly selected handle']) test(`recovery p
   await app.waitForInspected(); await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   await page.reload();
   const recovery = page.getByRole('region', { name: 'Saved local preparation' });
-  if (source === 'saved handle') await recovery.getByRole('button', { name: 'Reopen saved folder' }).click();
-  else { await useRealHandle(); await recovery.getByRole('button', { name: 'Reselect saved batch folder' }).click(); }
+  if (source === 'saved handle') await recovery.getByRole('button', { name: 'Reopen original folder' }).click();
+  else { await useRealHandle(); await recovery.getByRole('button', { name: 'Choose original folder' }).click(); }
   await app.waitForInspected(); await expect(page.getByText('Local preparation saved.', { exact: true })).toBeVisible();
   await page.reload();
-  await recovery.getByRole('button', { name: 'Reopen saved folder' }).click();
+  await recovery.getByRole('button', { name: 'Reopen original folder' }).click();
   await app.waitForInspected();
   await page.getByRole('button', { name: 'Tag species before upload', exact: true }).click();
   await continueWithMasterSpecies(page);

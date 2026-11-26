@@ -12,9 +12,25 @@ vi.mock('../src/lib/processPool', () => ({ processBatch: (items: any[], _started
   for (const item of items) result({ id: item.id, sha256: item.file.name === 'edited.jpg' ? 'changed' : 'original', mediaKind: 'image' });
   return { done: Promise.resolve(), cancel() {} };
 } }));
+const listBatches = vi.hoisted(() => vi.fn(async () => [] as { id: string; preparationId: string }[]));
+vi.mock('../src/lib/db', async original => ({ ...(await original<typeof import('../src/lib/db')>()), listBatches }));
 let store: typeof import('../src/store')['useStore'];
 let journal: typeof import('../src/lib/preparation');
 beforeAll(async () => { ({ useStore: store } = await import('../src/store')); journal = await import('../src/lib/preparation'); journal.startPreparationJournal(); });
+it('keeps a preparation unchanged when a stale recovery action targets an upload that already started', async () => {
+  const file = new File(['original bytes'], 'original.jpg');
+  const scanned = { id: 'SD/original.jpg', relPath: 'SD/original.jpg', fileName: file.name, size: file.size, mediaKind: 'image' as const, file };
+  store.getState().setFiles([scanned]);
+  store.setState({ files: [{ ...store.getState().files[0], processState: 'ready', sha256: 'original' }] });
+  await journal.flushPreparation();
+  const saved = (await journal.readPreparation())!;
+  const before = store.getState();
+  listBatches.mockResolvedValueOnce([{ id: 'existing-upload', preparationId: saved.id }]);
+  await expect(journal.recoverPreparation(saved, [scanned])).rejects.toThrow('Open History');
+  expect(store.getState().files).toBe(before.files);
+  expect(store.getState().batchToken).toBe(before.batchToken);
+  expect(await journal.readPreparation()).toEqual(saved);
+});
 it('persists only non-secret batch data, survives failed writes, retries, and validates originals before recovery', async () => {
   const file = new File(['original bytes'], 'original.jpg', { lastModified: 123 });
   store.getState().setFiles([{ id: 'SD/a.jpg', relPath: 'SD/a.jpg', fileName: 'a.jpg', size: file.size, mediaKind: 'image', file }]);
