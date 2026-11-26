@@ -76,7 +76,7 @@ Then('missing attribution prevents mouse keyboard drag and write actions', async
   await page.keyboard.press('ArrowDown'); await expect(gridCell(page, 'IMG003.JPG')).toHaveAttribute('aria-current', 'true');
   expect((await readStore(page, 'drafts')).filter((draft: any) => draft.dirty)).toHaveLength(0);
   await expect(page.getByRole('button', { name: 'Sync…', exact: true })).toHaveCount(0);
-  await expect(page.getByTestId('automatic-save').getByRole('button', { name: 'Undo latest action' })).toBeDisabled();
+  await expect(page.getByTestId('automatic-save').getByRole('button', { name: 'Undo latest action' })).toHaveCount(0);
   const errors = await page.evaluate(async url => {
     const { performSync, performRestore } = await import(/* @vite-ignore */ url);
     return Promise.all([performSync, performRestore].map(async fn => {

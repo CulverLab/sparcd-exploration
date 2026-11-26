@@ -6,6 +6,7 @@ fixture. Browser verification uses independent Google Chrome sessions.
 
 | Feature group | Coverage |
 | --- | --- |
+| `undo-status-visibility.feature` | Empty/exhausted Undo visibility, desktop/mobile keyboard focus, no focus theft, reload/new action, Browse row removal, background success/failure and restored retry; Settings visibility retained; blocked collection reads and local setup failures preserve saved Undo as disabled, keep empty Undo absent, and restore availability after repair without consuming it |
 | `automatic-saving.feature` | Saving/Saved/offline states, in-flight edits, reload Undo, reviews, location reversal, completed/invalid count input, partial-save and Undo retries, explicit conflict resolution, unrelated remote edits, #463, actual cross-tab recovery and duplicate Undo protection |
 | `sync-identifications-to-the-collection.feature` | Automatic detag publication, bulk species/time target sets and Undo, shared Need expert and unsupported conditional storage |
 | `legacy-save-recovery.feature` | Explicit account adoption and idempotent pre-upgrade manual Sync/snapshot-restore recovery, including a PUT whose local receipt was interrupted; historical objects retained |

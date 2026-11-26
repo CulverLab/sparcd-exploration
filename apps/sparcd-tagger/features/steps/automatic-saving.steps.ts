@@ -30,7 +30,7 @@ Then('the Coyote addition is reversed and its audit history remains', async ({ p
   expect(parseObservations(s3.text(BUCKET, `${PREFIX_A}observations.csv`)).filter(o => o.mediaId === path && o.scientificName)).toEqual([]);
   const meta = JSON.parse(s3.text(BUCKET, `${PREFIX_A}UploadMeta.json`));
   expect(meta.taggerActions).toHaveLength(2); expect(meta.taggerActions[1].undoOf).toBe(meta.taggerActions[0].id);
-  await expect(page.getByRole('button', { name: 'Undo latest action', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Undo latest action', exact: true })).toHaveCount(0);
 });
 When('two species edits straddle an automatic save', async ({ page }) => {
   let release!: () => void;
@@ -202,9 +202,10 @@ Then('the location Undo journal is cleared without repeating media', async ({ pa
   const { readStore } = await import('./support/flows');
   expect(await readStore(page, 'syncJournals')).toEqual([]);
   expect(s3.puts.slice(scratch.locationUndoPuts as number).filter(write => write.key === `${PREFIX_A}media.csv`)).toHaveLength(1);
-  await expect(status(page).getByRole('button', { name: 'Undo latest action', exact: true })).toBeDisabled();
+  await expect(status(page).getByRole('button', { name: 'Undo latest action', exact: true })).toHaveCount(0);
 });
-When('an unfinished count is paused by {string}', async ({ page }, pause: string) => {
+When('an unfinished count is paused by {string}', async ({ page, scratch }, pause: string) => {
+  scratch.pausedCompletedAction = pause !== 'connectivity';
   await focusFrame(page, 'IMG001.JPG');
   const count = page.getByRole('spinbutton', { name: 'Count for Mule Deer' });
   if (pause === 'connectivity') {
@@ -226,10 +227,16 @@ When('an unfinished count is paused by {string}', async ({ page }, pause: string
     await expect(status(page)).toContainText('Save failed');
   }
 });
-Then('the unfinished count remains visible with editing disabled', async ({ page }) => {
+Then('the unfinished count remains visible with editing disabled', async ({ page, scratch }) => {
   const count = page.getByRole('spinbutton', { name: 'Count for Mule Deer' });
   await expect(count).toBeVisible(); await expect(count).toBeDisabled(); await expect(count).toHaveValue('12');
-  await expect(status(page)).toContainText('Finish the active input before Undo.');
+  if (scratch.pausedCompletedAction) {
+    await expect(status(page)).toContainText('Finish the active input before Undo.');
+    await expect(status(page).getByRole('button', { name: 'Undo latest action', exact: true })).toBeDisabled();
+  } else {
+    await expect(status(page).getByRole('button', { name: 'Undo latest action', exact: true })).toHaveCount(0);
+    await expect(status(page).getByTestId('automatic-undo-help')).toHaveCount(0);
+  }
   await expect(page.getByRole('button', { name: 'Remove Mule Deer', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Clear Species', exact: true })).toBeDisabled();
 });

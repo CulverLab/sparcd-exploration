@@ -41,7 +41,7 @@ When('a pre-upgrade {string} journal with {string} receipts is loaded', async ({
 Then('recovery requires explicit confirmation of the connected account', async ({ page, s3, scratch }) => {
   await expect(page.getByTestId('automatic-save')).toContainText('Existing pending work needs recovery confirmation');
   expect(s3.puts.length).toBe(scratch.legacyPutsBefore);
-  await expect(page.getByTestId('automatic-save').getByRole('button', { name: 'Undo latest action' })).toBeDisabled();
+  await expect(page.getByTestId('automatic-save').getByRole('button', { name: 'Undo latest action' })).toHaveCount(0);
 });
 When('existing pending work is adopted for this account', async ({ page }) => {
   await page.getByRole('button', { name: 'Recover pending work for this account and upload' }).click();
